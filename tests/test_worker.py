@@ -1,0 +1,166 @@
+import base64
+import importlib.util
+import io
+import os
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from unittest.mock import Mock, patch
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def load(name, file):
+    spec = importlib.util.spec_from_file_location(name, file)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+worker = load('bot_worker', ROOT / 'python/worker.py')
+image_api = load('bot_image_api', ROOT / 'skills/image-generation/scripts/image_api.py')
+media_api = load('bot_media_analysis', ROOT / 'skills/media-analysis/scripts/media_api.py')
+
+
+class WorkerTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(dir=ROOT / '.codex')
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+
+    def job(self, operation, source=None, **params):
+        return dict(id='test', scope='scope', operation=operation, deadline=time.time()*1000+30000,
+                    inputs=[dict(path=str(source), name=source.name, kind='file', mime='application/octet-stream')] if source else [],
+                    parameters=params, output=str(self.root), endpoint=dict(baseUrl='https://example.invalid/v1', model='fixture', keyEnv='TEST_PROVIDER_KEY'))
+
+    def test_documents_use_actual_contents_and_preserve_unicode(self):
+        from docx import Document
+        from openpyxl import Workbook
+        text = self.root / 'text.txt'; text.write_text('你好，文档内容', encoding='utf-8')
+        self.assertEqual(worker.execute(self.job('document_read', text))['text'], '你好，文档内容')
+        csv = self.root / 'data.csv'; csv.write_text('name,value\n猫,7', encoding='utf-8')
+        self.assertIn('猫,7', worker.execute(self.job('document_read', csv))['text'])
+        doc = Document(); doc.add_paragraph('document fixture 42'); file = self.root / 'document.docx'; doc.save(file)
+        self.assertIn('fixture 42', worker.execute(self.job('document_read', file))['text'])
+        book = Workbook(); book.active.append(['known cell', 63]); file = self.root / 'sheet.xlsx'; book.save(file); book.close()
+        self.assertIn('known cell\t63', worker.execute(self.job('document_read', file))['text'])
+
+    def test_scanned_pdf_returns_pixels_for_native_chat_without_vision_service(self):
+        from pypdf import PdfWriter
+        file = self.root / 'scan.pdf'; writer = PdfWriter(); writer.add_blank_page(width=200, height=200)
+        with file.open('wb') as handle: writer.write(handle)
+        job = self.job('document_read', file); job['endpoint'] = None
+        with patch('requests.Session') as request:
+            result = worker.execute(job); request.assert_not_called()
+        self.assertFalse(result['incomplete']); self.assertIn('当前聊天模型', result['text'])
+        self.assertEqual(result['coverage'], 'DOCUMENT_TEXT_AND_PAGE_PIXELS')
+        from PIL import Image
+        with Image.open(result['contextAssets'][0]['path']) as page:
+            self.assertEqual(page.format, 'JPEG'); self.assertGreater(page.width, 0)
+
+    def test_scan_render_limit_reports_unread_pages(self):
+        from pypdf import PdfWriter
+        file=self.root/'many-pages.pdf'; writer=PdfWriter()
+        for _ in range(11): writer.add_blank_page(width=200,height=200)
+        with file.open('wb') as handle: writer.write(handle)
+        job=self.job('document_read',file);job['endpoint']=None
+        result=worker.execute(job);self.assertTrue(result['incomplete']);self.assertEqual(len(result['contextAssets']),10)
+
+    def test_reference_edit_requires_real_input_and_canonical_client(self):
+        with self.assertRaisesRegex(worker.JobError, 'REFERENCE_IMAGE_REQUIRED'): worker.execute(self.job('image_edit', prompt='edit'))
+        from PIL import Image
+        file = self.root / 'ref.png'; Image.new('RGB', (20, 20), 'green').save(file)
+        job = self.job('image_edit', file, prompt='edit this'); job['inputs'][0]['kind'] = 'image'
+        def fake(command, **kwargs):
+            self.assertEqual(Path(command[1]), ROOT / 'skills/image-generation/scripts/image_api.py')
+            self.assertIn('--image', command); self.assertIn(str(file), command)
+            self.assertEqual(command[command.index('--api-key-env')+1], 'TEST_PROVIDER_KEY')
+            output = self.root / 'generated.jpg'; Image.new('RGB',(10,10),'blue').save(output)
+            (self.root / 'image-result.json').write_text(json.dumps({'outputs':[str(output)]}),encoding='utf-8')
+            return Mock(returncode=0)
+        with patch.object(worker.subprocess, 'run', side_effect=fake): self.assertEqual(len(worker.execute(job)['assets']), 1)
+
+    def test_image_client_normalizes_jpeg_and_does_not_replay_paid_requests(self):
+        from PIL import Image
+        buf = io.BytesIO(); Image.new('RGBA', (12,12), (0,255,0,100)).save(buf, 'PNG')
+        files = image_api.save_images([(buf.getvalue(),'image/png')],self.root,'fixture')
+        self.assertEqual(len(files),1)
+        with Image.open(files[0]) as result: self.assertEqual(result.format,'JPEG')
+        session = Mock(); session.request.side_effect=TimeoutError('uncertain upstream outcome')
+        with self.assertRaises(TimeoutError): image_api.request_with_retry(session,'POST','https://example.invalid',headers={},timeout=1)
+        self.assertEqual(session.request.call_count,1)
+
+    def test_shared_image_cli_inherits_extension_variables(self):
+        with patch.dict(os.environ,dict(BOT_IMAGE_BASE_URL='https://example.com/v1',BOT_IMAGE_MODEL='custom-model',BOT_IMAGE_KEY_ENV='CUSTOM_IMAGE_KEY'),clear=True),patch.object(sys,'argv',['image_api.py','generate','--prompt','test','--dry-run']):
+            args=image_api.parse_args();self.assertEqual(args.base_url,'https://example.com/v1');self.assertEqual(args.model,'custom-model');self.assertEqual(args.api_key_env,'CUSTOM_IMAGE_KEY')
+
+    @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'ffmpeg not installed')
+    def test_audio_analysis_sends_actual_wav_and_detects_missing_media(self):
+        import wave
+        file=self.root/'audio.wav'
+        with wave.open(str(file),'wb') as wav:
+            wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000);wav.writeframes(b'\0\0'*1600)
+        job=self.job('transcribe',file,question='转写');job['endpoint']['protocol']='chat_completions'
+        def response(body):return {'choices':[{'finish_reason':'stop','message':{'content':json.dumps(body)}}]}
+        value={'received_media':True,'transcript':'known phrase','summary':'测试','uncertainty':[]}
+        with patch.object(media_api,'request',return_value=response(value)) as request:
+            result=media_api.execute(job);self.assertEqual(json.loads(result['text'])['transcript'],'known phrase')
+            payload=request.call_args.kwargs['body'];self.assertEqual(payload['model'],'fixture');self.assertEqual(request.call_args.args[1],'/chat/completions')
+            audio=payload['messages'][0]['content'][1]['input_audio'];self.assertEqual(audio['format'],'wav');self.assertTrue(base64.b64decode(audio['data']).startswith(b'RIFF'))
+            self.assertNotIn('TEST_PROVIDER_KEY',json.dumps(payload));self.assertGreater(json.loads(result['text'])['coverage']['endSeconds'],0)
+        with patch.object(media_api,'request',return_value=response({'received_media':False})):
+            with self.assertRaisesRegex(media_api.AnalysisError,'MEDIA_NOT_RECEIVED'):media_api.execute(job)
+        job['endpoint']['protocol']='transcriptions'
+        with patch.object(media_api,'request',return_value={'text':'known phrase'}) as request:
+            self.assertEqual(json.loads(media_api.execute(job)['text'])['transcript'],'known phrase');self.assertIn('file',request.call_args.kwargs['files'])
+        with patch.object(media_api,'request',return_value={'text':''}):
+            with self.assertRaisesRegex(media_api.AnalysisError,'EMPTY_TRANSCRIPT'):media_api.execute(job)
+
+    def test_analysis_http_uses_only_injected_key_and_does_not_retry_uncertain_requests(self):
+        import requests
+        session=Mock();session.__enter__=Mock(return_value=session);session.__exit__=Mock(return_value=False)
+        response=Mock();response.__enter__=Mock(return_value=response);response.__exit__=Mock(return_value=False)
+        response.status_code=200;response.iter_content.return_value=[b'{"text":"ok"}'];session.post.return_value=response
+        with patch.dict(os.environ,{'TEST_PROVIDER_KEY':'fixture-secret'},clear=True),patch('requests.Session',return_value=session):
+            result=media_api.request(self.job('transcribe'),'/chat/completions',body={'model':'fixture'})
+            self.assertEqual(result['text'],'ok');self.assertEqual(session.post.call_args.kwargs['headers']['Authorization'],'Bearer fixture-secret')
+            self.assertFalse(session.post.call_args.kwargs['allow_redirects']);self.assertFalse(session.trust_env)
+            session.post.reset_mock();session.post.side_effect=requests.Timeout('secret must not appear')
+            with self.assertRaisesRegex(media_api.AnalysisError,'MODEL_TIMEOUT_MAY_BE_BILLED'):media_api.request(self.job('transcribe'),'/chat/completions')
+            self.assertEqual(session.post.call_count,1)
+
+    @unittest.skipUnless(shutil.which('ffmpeg'), 'ffmpeg not installed')
+    def test_video_payload_contains_actual_mp4_and_checks_reported_media(self):
+        from video_understanding_core.backend import BackendConfig,ChatCompletionsGemini,validate_result
+        from video_understanding_core.models import Limits,MediaProbe,PreparedMedia,VideoError
+        source=self.root/'clip.mp4'
+        subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=c=red:s=96x96:d=1','-c:v','libx264',str(source)],check=True,capture_output=True)
+        prepared=PreparedMedia(source,MediaProbe(1,True,False,source.stat().st_size),1,0,1)
+        backend=ChatCompletionsGemini(BackendConfig('https://example.invalid/v1','test-secret','fixture'),Limits())
+        payload=json.loads(backend.payload(prepared,'画面是什么？'))
+        data=payload['messages'][0]['content'][1]['image_url']['url'];self.assertTrue(data.startswith('data:video/mp4;base64,'));self.assertEqual(base64.b64decode(data.split(',',1)[1]),source.read_bytes())
+        with self.assertRaisesRegex(VideoError,'MEDIA_NOT_RECEIVED'):validate_result('{"received_media":false}',prepared)
+        value={'received_media':True,'summary':'red','visual_observations':[{'at_seconds':0,'text':'red'}],'audio_observations':[{'at_seconds':0,'text':'fabricated'}],'spoken_quotes':[],'onscreen_text':[],'inferences':[],'uncertainty':[],'warnings':[]}
+        self.assertEqual(validate_result(json.dumps(value),prepared)['audio_observations'],[])
+
+    @unittest.skipUnless(shutil.which('ffmpeg'), 'ffmpeg not installed')
+    def test_real_fixed_ffmpeg_conversion(self):
+        source=self.root/'clip.mp4'
+        subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=c=red:s=96x96:d=1','-c:v','libx264',str(source)],check=True,capture_output=True)
+        result=worker.execute(self.job('convert_gif',source,durationSeconds=0.5))
+        from PIL import Image
+        with Image.open(result['assets'][0]['path']) as image: self.assertEqual(image.format,'GIF')
+        with self.assertRaisesRegex(worker.JobError,'INVALID_MEDIA_RANGE'):worker.execute(self.job('convert_mp4',source,durationSeconds=999))
+
+    def test_worker_protocol_rejects_arbitrary_operation_and_expired_jobs(self):
+        for job,code in [(self.job('run_script'),'UNKNOWN_MEDIA_OPERATION'),(self.job('speak'),'UNKNOWN_MEDIA_OPERATION'),({**self.job('transcribe'),'deadline':0},'JOB_EXPIRED')]:
+            result=subprocess.run([sys.executable,str(ROOT/'python/worker.py')],input=json.dumps(job),capture_output=True,text=True)
+            self.assertEqual(result.returncode,1);self.assertEqual(json.loads(result.stdout)['error']['code'],code)
+
+
+if __name__ == '__main__': unittest.main()

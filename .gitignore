@@ -1,0 +1,17 @@
+/node_modules/
+/dist/
+/packages/*/dist/
+/.codex/
+/coverage/
+*.tgz
+*.db
+*.db-*
+*.sqlite*
+*.log
+.env
+.env.*
+!.env.example
+**/__pycache__/
+*.py[cod]
+/.runtime/
+/.venv/

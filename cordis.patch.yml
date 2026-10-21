@@ -1,0 +1,4 @@
+- insert:
+    - id: bot-integration
+      name: dsh-plugin-integration-qq-wechat-bot
+      config: {}
