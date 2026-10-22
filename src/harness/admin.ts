@@ -9,15 +9,19 @@ import type { BotInstance, LoginState } from '../core/types.js';
 import type {} from '@deepseek-ai/dsh-session-query';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import {resolveImageSkill,imageSkillEnabled} from '../core/image-skill.js';
+import {defaultWorkspaceRoot,workingDirectory} from '../core/workspaces.js';
+import {openDirectory} from './open-directory.js';
 
 export class Admin {
   readonly attempts=new Map<string,{botId:string;ticket:string;expires:number}>();
-  constructor(readonly ctx:Context,readonly runtime:BotRuntime,readonly token:string){}
+  constructor(readonly ctx:Context,readonly runtime:BotRuntime,readonly token:string,readonly revealDirectory:(directory:string)=>Promise<void>=openDirectory){}
   async invoke(action:string,input:any):Promise<unknown>{
     const {store}=this.runtime;
     switch(action){
       case 'state':return{configs:store.configs(),bots:await Promise.all(store.bots().map(async b=>({...b,status:this.runtime.states.get(b.id)??'stopped',activeSessions:this.runtime.activeSessions(b.id),credentialConfigured:!!await this.runtime.credentials.read(b.id)}))),sessions:store.list<any>('binding').map(binding=>{const snapshot=store.get<any>('turn-snapshot',binding.sessionId);return {...binding,turn:snapshot?{configId:snapshot.config.id,revision:snapshot.config.revision,startedAt:snapshot.startedAt}:null};}),jobs:store.list('job'),failures:store.list('failure'),deliveries:store.deliveries().slice(-200).map(({reply,...delivery})=>delivery),versions:store.list('config-version')};
       case 'models':return Promise.all(this.ctx.llm.listProviders().map(async p=>({id:p.id,models:(await this.ctx.llm.listModels(p.id)).map(m=>({id:m.id,name:m.name}))})));
+      case 'directories':return{workspaceRoot:defaultWorkspaceRoot(),configDirectory:store.home,sessions:store.list<any>('binding').map(binding=>({sessionId:binding.sessionId,botId:binding.scope.botId,directory:workingDirectory(store.bot(binding.scope.botId),binding.key)}))};
+      case 'config.directory.open':{const value=z.object({botId:z.string().optional(),configId:z.string().optional()}).strict().parse(input);if(value.botId)store.bot(value.botId);if(value.configId)store.config(value.configId);await this.revealDirectory(store.home);return{opened:true,directory:store.home};}
       case 'skill.image.status':return Object.fromEntries(store.configs().map(config=>{try{const endpoint=resolveImageSkill(config);return [config.id,{enabled:imageSkillEnabled(config),model:endpoint.model,keyEnv:endpoint.keyEnv,keyConfigured:!!process.env[endpoint.keyEnv],overridden:!!(config.media.image?.baseUrl||config.media.image?.model||config.media.image?.keyEnv)}];}catch(error){return [config.id,{enabled:false,error:error instanceof Error?error.message:'IMAGE_SKILL_CONFIGURATION_INVALID'}];}}));
       case 'skill.media.status':return Object.fromEntries(await Promise.all(store.configs().map(async config=>[config.id,Object.fromEntries(await Promise.all((['asr','video'] as const).map(async role=>[role,await this.runtime.media.analysisStatus(config,role)])))])));
       case 'capability.list':return store.list('capability-status');

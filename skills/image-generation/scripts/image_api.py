@@ -24,7 +24,7 @@ import requests
 from PIL import Image, ImageOps
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
-DEFAULT_MODEL = "gpt-image-1"
+DEFAULT_MODEL = "gpt-image-2"
 MAX_IMAGE_BYTES = 24 * 1024 * 1024
 MAX_MULTIPART_BYTES = 22 * 1024 * 1024
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024

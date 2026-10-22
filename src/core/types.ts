@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import path from 'node:path';
 
 export const idSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
 export const modelSchema = z.object({ provider: z.string().min(1).max(150), model: z.string().min(1).max(200), reasoningEffort: z.string().optional() });
@@ -25,6 +26,7 @@ export const botSchema = z.object({
   accountId: z.string().max(200).default(''), configId: idSchema.default('default'),
   enabled: z.boolean().default(false), archived: z.boolean().default(false),
   trustedUsers: z.array(z.string().min(1).max(200)).max(200).default([]),
+  workingDirectory:z.string().trim().max(32767).refine(value=>!value||path.isAbsolute(value)&&!/[\x00-\x1f]/.test(value),'工作目录须为绝对路径').transform(value=>value||undefined).optional(),
 });
 export type BotInstance = z.infer<typeof botSchema>;
 export interface CallerScope { botId: string; platform: 'qq' | 'weixin'; accountId: string; kind: 'private' | 'group'; channelId: string; senderId: string }

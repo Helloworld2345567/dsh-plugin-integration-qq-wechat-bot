@@ -23,7 +23,7 @@ flowchart LR
 ## 对象
 
 - `BotConfig`：稳定 ID、人格、版本、聊天与分析模型引用、可选图片变量覆盖、工具和技能、图片风格。
-- `BotInstance`：固定渠道身份、凭据引用、可信用户、启停和配置绑定。配置共享不共享身份或数据。
+- `BotInstance`：固定渠道身份、凭据引用、可信用户、启停、配置绑定与可选工作目录。配置共享不共享身份或数据；自定义目录只影响指定 bot。
 - `TurnSnapshot`：在原生 `turn/start` 冻结配置；原生模型选择接口控制本轮全部步骤。模型切换通过 Harness 记录，不重载插件或对已聊天 Agent 调用模式切换。
 - `SessionBinding`：bot、平台、账号、群／私聊、会话位置、发送者的组合哈希。QQ 群内按发送者隔离。`/reset` 增加代次并更换 Harness session。
 - `Asset`：按作用域授权的附件 ID；worker 输入只能由宿主解析，模型不能提交路径或脚本。
@@ -32,6 +32,8 @@ flowchart LR
 ## 数据与恢复
 
 SQLite WAL 保存配置版本、bot、inbox、binding、outbox、媒体任务、偏好与来源删除标记。原生会话日志和附件服务由 Harness 保存。主 Agent idle 后显式执行 `sessions.flush`，随后原子写入 outbox 与 inbox 完成状态。
+
+默认工作区位于安装仓库的 `.runtime/workspaces/<scope-key>`，由安装时持久化的 `workspace.json` 和启动环境传递，排除在 Git 和发布包之外。自定义工作目录属于 bot 实例；每轮开始前通过 Harness 原生 `workingDirectory.set` 切换并持久记录，session 和历史不变，在途任务及子任务保留原目录。只有面板管理员可以修改目录或请求本机打开固定的 SQLite 配置目录；普通用户的文件权限不因此扩大。
 
 启动时先取得数据目录运行所有权，随后将遗留 `processing` 置为 `interrupted`，将遗留 `sending` 置为 `unknown`。不重新执行结果未知的模型／媒体任务。若在原生会话已落盘、outbox 尚未提交之间崩溃，可能没有平台回复；面板保留中断状态以便人工核对。
 

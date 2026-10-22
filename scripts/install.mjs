@@ -2,9 +2,12 @@ import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { productHome,run } from './runtime.mjs';
+import { productHome,run,workspaceRoot } from './runtime.mjs';
 import YAML from 'yaml';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+await mkdir(productHome,{recursive:true});
+try{await writeFile(path.join(productHome,'workspace.json'),JSON.stringify({root:workspaceRoot},null,2)+'\n',{flag:'wx'});}catch(error){if(error.code!=='EEXIST')throw error;}
+await mkdir(workspaceRoot,{recursive:true});
 const command=(file,args)=>new Promise((resolve,reject)=>{const child=spawn(file,args,{stdio:'inherit',windowsHide:true});child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(new Error(`${file} exited ${code}`)));});
 const mediaEnv=path.join(productHome,'media-venv');
 const python=process.env.BOT_PYTHON||path.join(mediaEnv,process.platform==='win32'?'Scripts/python.exe':'bin/python');

@@ -1,6 +1,6 @@
 // Test-only bundle: real Harness loop and persistence, deterministic local model, no provider calls.
 import assert from 'node:assert/strict';
-import {writeFile} from 'node:fs/promises';
+import {writeFile,mkdir,realpath} from 'node:fs/promises';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import z from '@deepseek-ai/schemastery';
@@ -11,7 +11,7 @@ import type {} from '../src/index.js';
 import type {NativeHarness} from '../src/harness/bridge.js';
 import {scopeKey} from '../src/core/store.js';
 import {botSchema,type InboundMessage} from '../src/core/types.js';
-export const inject=['botIntegration','llm','settings','credentials','sessionQuery','agents','agentPresets','tools','skills','systemPrompt','attachments','permissionPresets','sessions','sessionPersistence'];
+export const inject=['botIntegration','llm','settings','credentials','sessionQuery','agents','agentPresets','tools','skills','systemPrompt','attachments','permissionPresets','sessions','sessionPersistence','workingDirectory'];
 export const name='bot-native-fixture';
 export const Config=z.object({baseURL:z.string().default('https://fixture.invalid/v1').volatile(),apiKeyEnv:z.string().default('BOT_TEST_ANALYSIS_KEY').volatile(),api:z.string().default('openai-completions').volatile()});
 export async function apply(ctx:Context){
@@ -64,7 +64,13 @@ export async function apply(ctx:Context){
     await bridge.run(binding,[msg('trusted','可信私聊测试')],AbortSignal.timeout(30000));
     assert.equal(ctx.permissionPresets.current(agent.session),'danger-full-access');assert.ok(ctx.tools.schemas(agent).some(t=>t.name==='pwsh'));
     const executed=await ctx.tools.execute({name:'pwsh',arguments:{command:"Write-Output 'trusted-fixture'"},callId:ToolCallId('trusted-command'),agent,signal:AbortSignal.timeout(15000)});assert.equal(executed.isError,false,JSON.stringify(executed));
+    const originalCwd=ctx.workingDirectory.get(agent.session);const customCwd=path.join(store.home,'custom-workspace 空格 & literal');await mkdir(customCwd,{recursive:true});await writeFile(path.join(customCwd,'workspace-proof.txt'),'CUSTOM_WORKSPACE_PROOF');
+    runtime.saveBot({...store.bot('fixture'),workingDirectory:customCwd});assert.equal(ctx.workingDirectory.get(agent.session),originalCwd,'saving does not mutate the current turn cwd');
+    await bridge.run(binding,[msg('workspace-switch','在指定目录中继续对话')],AbortSignal.timeout(30000));assert.equal(agent.id,binding.sessionId);assert.equal(ctx.workingDirectory.get(agent.session),await realpath(customCwd));assert.ok(JSON.stringify(requests.at(-1)!.messages).includes('我喜欢绿茶'));
+    const inDirectory=await ctx.tools.execute({name:'pwsh',arguments:{command:"Get-Content -LiteralPath './workspace-proof.txt'"},callId:ToolCallId('workspace-command'),agent,signal:AbortSignal.timeout(15000)});assert.equal(inDirectory.isError,false,JSON.stringify(inDirectory));assert.ok(JSON.stringify(inDirectory).includes('CUSTOM_WORKSPACE_PROOF'),JSON.stringify(inDirectory));
+    const delivered=await ctx.tools.execute({name:'bot_send_file',arguments:{path:'workspace-proof.txt'},callId:ToolCallId('workspace-file'),agent,signal:AbortSignal.timeout(5000)});assert.equal(delivered.isError,false,JSON.stringify(delivered));
     const child=await ctx.agents.create({sessionId:('child-'+binding.sessionId) as any,parentAgent:agent,agentOptions:{provider:'bot-fixture',model:'second'}});
+    assert.equal(ctx.workingDirectory.get(child.agent.session),await realpath(customCwd));
     runtime.saveBot({...store.bot('fixture'),configId:'default'});await bridge.run(binding,[msg('switch-back','父轮切回默认')],AbortSignal.timeout(30000));
     child.agent.followup({id:MessageId('child-input'),role:'user',content:[{type:'text',text:'子任务沿用创建时的配置'}],source:{kind:'user'}});await child.agent.whenIdle();
     const childRequest=requests.find(r=>r.sessionId===child.agent.id)!;assert.equal(childRequest?.model,'second');assert.ok(JSON.stringify(childRequest.messages).includes('PERSONA_B'));
@@ -73,7 +79,7 @@ export async function apply(ctx:Context){
     assert.equal(childCancelled,true,'revocation cancels children even after the parent inbox turn has finished');
     const revoked=await ctx.tools.execute({name:'pwsh',arguments:{command:'Write-Output must-not-run'},callId:ToolCallId('revoked-child'),agent:child.agent,signal:AbortSignal.timeout(5000)});assert.equal(revoked.isError,true);await child.dispose();
     await bridge.dispose(binding.sessionId);
-    await bridge.run(binding,[msg('third','重启恢复历史')],AbortSignal.timeout(30000));assert.ok(JSON.stringify(requests.at(-1)!.messages).includes('我喜欢绿茶'));
+    await bridge.run(binding,[msg('third','重启恢复历史')],AbortSignal.timeout(30000));assert.ok(JSON.stringify(requests.at(-1)!.messages).includes('我喜欢绿茶'));assert.equal(ctx.workingDirectory.get(bridge.live.get(binding.sessionId)!.handle.agent.session),await realpath(customCwd));
     await ctx.credentials.set(credentialRef('BOT_TEST_ANALYSIS_KEY'),'fixture-analysis-key');
     const inherited=await runtime.media.analysisProvider!.resolve(store.config('default'),'asr');assert.equal(inherited.endpoint.baseUrl,'https://fixture.invalid/v1');assert.equal(inherited.endpoint.model,'first');assert.equal(inherited.apiKey,'fixture-analysis-key');
     const skill=await ctx.tools.execute({name:'skill',arguments:{name:'media-analysis'},callId:ToolCallId('analysis-skill'),agent:bridge.live.get(binding.sessionId)!.handle.agent,signal:AbortSignal.timeout(5000)});assert.equal(skill.isError,false);assert.ok(JSON.stringify(skill.content).includes('media_analysis'));
@@ -90,17 +96,22 @@ export async function apply(ctx:Context){
     mediaCall={name:'bot_media',args:{operation:'document_read',inputs:[scan.id]}};
     const docResult=await bridge.run(binding,[msg('ocr','读取扫描页')],AbortSignal.timeout(30000));assert.deepEqual(docResult.outputs,[{type:'text',text:'FINAL_ONLY'}]);
     assert.ok(requests.at(-1)!.messages.some(m=>m.role==='tool'&&m.content.some(b=>b.type==='image')),'scanned page pixels must reach the current chat model');
-    const mediaRun=runtime.media.run.bind(runtime.media);let imageCalls=0;
-    runtime.media.run=async(scope,operation,config,inputs)=>{assert.equal(config.media.image,undefined);assert.equal(operation,'image_edit');assert.deepEqual(inputs,[asset.id]);imageCalls++;return{assetIds:[asset.id]};};
+    const mediaRun=runtime.media.run.bind(runtime.media);let imageCalls=0;let imageEntered!:()=>void;let finishImage!:()=>void;
+    const imageReady=new Promise<void>(resolve=>{imageEntered=resolve;});const imageFinish=new Promise<void>(resolve=>{finishImage=resolve;});
+    runtime.media.run=async(scope,operation,config,inputs)=>{assert.equal(config.media.image,undefined);assert.equal(operation,'image_edit');assert.deepEqual(inputs,[asset.id]);imageCalls++;if(imageCalls<=2)throw Error('IMAGE_PROVIDER_FAILED');imageEntered();await imageFinish;return{assetIds:[asset.id]};};
     try{
       mediaCall={name:'image_generation',args:{operation:'edit',prompt:'Use the real reference on the moon',inputs:[asset.id]}};
       const generated=await bridge.run(binding,[msg('image-skill','按参考图生成图片')],AbortSignal.timeout(30000));
-      assert.equal(imageCalls,1);assert.deepEqual(generated.outputs,[{type:'text',text:'FINAL_ONLY'},{type:'asset',assetId:asset.id}]);
+      assert.equal(imageCalls,1);assert.deepEqual(generated.outputs,[{type:'text',text:'FINAL_ONLY'}]);
       const parent=bridge.live.get(binding.sessionId)!.handle.agent;
-      const duplicate=await ctx.tools.execute({name:'bot_media',arguments:{operation:'image_generate',prompt:'duplicate'},callId:ToolCallId('duplicate-image'),agent:parent,signal:AbortSignal.timeout(5000)});assert.equal(duplicate.isError,true);assert.equal(imageCalls,1);
+      const retry=await ctx.tools.execute({name:'image_generation',arguments:{operation:'edit',prompt:'Retry after failure',inputs:[asset.id]},callId:ToolCallId('retry-image'),agent:parent,signal:AbortSignal.timeout(5000)});assert.equal(retry.isError,true);assert.equal(imageCalls,2,'a failed attempt must not consume the turn image allowance');
+      const recoveredPromise=ctx.tools.execute({name:'bot_media',arguments:{operation:'image_edit',prompt:'Retry via compatibility tool',inputs:[asset.id]},callId:ToolCallId('recover-image'),agent:parent,signal:AbortSignal.timeout(5000)});
+      await imageReady;const parallel=await ctx.tools.execute({name:'image_generation',arguments:{operation:'edit',prompt:'Must not run concurrently',inputs:[asset.id]},callId:ToolCallId('parallel-image'),agent:parent,signal:AbortSignal.timeout(5000)});finishImage();assert.equal(parallel.isError,true);assert.equal(imageCalls,3);
+      const recovered=await recoveredPromise;assert.equal(recovered.isError,false,JSON.stringify(recovered));assert.equal(imageCalls,3);assert.deepEqual(bridge.live.get(binding.sessionId)!.assets,[{type:'asset',assetId:asset.id}]);
+      const duplicate=await ctx.tools.execute({name:'bot_media',arguments:{operation:'image_generate',prompt:'duplicate'},callId:ToolCallId('duplicate-image'),agent:parent,signal:AbortSignal.timeout(5000)});assert.equal(duplicate.isError,true);assert.equal(imageCalls,3);
       const c=store.config('default');await runtime.saveConfig({...c,media:{image:{enabled:false}}},c.revision);
-      const disabled=await ctx.tools.execute({name:'image_generation',arguments:{prompt:'disabled'},callId:ToolCallId('disabled-image'),agent:parent,signal:AbortSignal.timeout(5000)});assert.equal(disabled.isError,true);assert.equal(imageCalls,1);
-    }finally{runtime.media.run=mediaRun;}
+      const disabled=await ctx.tools.execute({name:'image_generation',arguments:{prompt:'disabled'},callId:ToolCallId('disabled-image'),agent:parent,signal:AbortSignal.timeout(5000)});assert.equal(disabled.isError,true);assert.equal(imageCalls,3);
+    }finally{finishImage();runtime.media.run=mediaRun;}
     const audio=await runtime.assets.save(binding.key,{kind:'audio',name:'voice.wav',mime:'audio/wav'},Buffer.from('fixture'));
     let analysisCalls=0;runtime.media.run=async(scope,operation,config,inputs)=>{assert.equal(operation,'transcribe');assert.deepEqual(inputs,[audio.id]);assert.equal(config.model?.model,'first');analysisCalls++;return{text:'SCRIPT_TRANSCRIPT',coverage:'AUDIO_MODEL_ANALYSIS',assetIds:[]};};
     try{
@@ -120,7 +131,7 @@ export async function apply(ctx:Context){
       const revoked=await ctx.tools.execute({name:'web_fetch',arguments:{url:'https://example.com/'},callId:ToolCallId('revoked-web'),agent:parent,signal:AbortSignal.timeout(5000)});assert.equal(revoked.isError,true);
       webChecks.push('installed dsh-web-tools exposes native web tools to ordinary bot session','actual public page fetch returns Example Domain without host access','missing search key remains explicit error','web permission revocation denies later calls');
     }
-    await writeFile(resultPath,JSON.stringify({status:'PASS',requests:requests.length,compactions,checks:['real native turn and business tool','final text excludes reasoning','snapshot holds across tool steps','next-turn persona/model switch preserves session/history','ordinary host tools hidden and denied','trusted PowerShell execution without per-call approval','frozen child persona/model after parent switches','revoked permission denied in child agent','private skill read denied','durable session resume','native provider settings and credentials inherited without copying secrets','published media-analysis skill readable by ordinary user','native automatic long-context compaction','image bytes loaded into native chat model without vision service','scanned PDF rendered and passed to native chat model','image skill inherits environment with no WebUI media setup','reference edit auto-registers one image for delivery','compatibility call cannot bypass image attempt limit','image skill disable immediately denies calls','audio analysis selects same-session recent attachment and returns script result','analysis revocation denies dedicated and compatibility tools and skill reads',...webChecks]}));
+    await writeFile(resultPath,JSON.stringify({status:'PASS',requests:requests.length,compactions,checks:['real native turn and business tool','final text excludes reasoning','snapshot holds across tool steps','next-turn persona/model switch preserves session/history','ordinary host tools hidden and denied','trusted PowerShell execution without per-call approval','frozen child persona/model after parent switches','revoked permission denied in child agent','private skill read denied','durable session resume','working directory switches next turn without losing session or history','native PowerShell and file delivery use custom directory','children and resumed sessions preserve configured working directory','native provider settings and credentials inherited without copying secrets','published media-analysis skill readable by ordinary user','native automatic long-context compaction','image bytes loaded into native chat model without vision service','scanned PDF rendered and passed to native chat model','image skill inherits environment with no WebUI media setup','reference edit auto-registers one image for delivery','failed image attempts can retry through dedicated and compatibility tools','parallel image calls denied while a retry is running','compatibility call cannot bypass one successful image limit','image skill disable immediately denies calls','audio analysis selects same-session recent attachment and returns script result','analysis revocation denies dedicated and compatibility tools and skill reads',...webChecks]}));
   };
   setImmediate(()=>void test().catch(async error=>{await writeFile(resultPath,JSON.stringify({status:'FAIL',error:error.stack??String(error),failures:store.list('failure'),events:[...bridge.live.values()].flatMap(l=>l.handle.agent.session.snapshotEvents()).filter(e=>e.type==='turn/end').slice(-2)}));}));
 }

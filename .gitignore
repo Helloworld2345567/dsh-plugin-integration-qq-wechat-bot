@@ -13,5 +13,6 @@
 !.env.example
 **/__pycache__/
 *.py[cod]
+# Default bot workspaces and local runtime material stay outside Git.
 /.runtime/
 /.venv/

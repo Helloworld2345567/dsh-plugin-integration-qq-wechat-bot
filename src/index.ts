@@ -16,7 +16,7 @@ import { WeixinAdapter } from './channels/weixin.js';
 import {HarnessMediaProvider} from './harness/media-provider.js';
 
 export const name='bot-integration';
-export const inject=['agents','agentPresets','llm','settings','tools','skills','systemPrompt','attachments','credentials','webServer','permissionPresets','sessions','sessionPersistence','sessionQuery'];
+export const inject=['agents','agentPresets','llm','settings','tools','skills','systemPrompt','attachments','credentials','webServer','permissionPresets','sessions','sessionPersistence','sessionQuery','workingDirectory'];
 export interface Config { dataDir?:string; python?:string; debounceMs?:number }
 declare module '@deepseek-ai/cordis' {interface Context {botIntegration:BotRuntime}}
 export async function apply(ctx:Context,config:Config={}):Promise<void>{

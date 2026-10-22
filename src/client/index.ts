@@ -12,9 +12,11 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
     const [question,setQuestion]=React.useState(null);
     const [imageSkills,setImageSkills]=React.useState({});
     const [mediaSkills,setMediaSkills]=React.useState({});
+    const [directories,setDirectories]=React.useState({workspaceRoot:'',configDirectory:'',sessions:[]});
+    const [workspaceEdits,setWorkspaceEdits]=React.useState({});
     const ask=(title:string,value=''):Promise<string|null>=>new Promise(resolve=>setQuestion({title,value,resolve}));
     const answer=(value:string|null)=>{question?.resolve(value);setQuestion(null);};
-    const refresh=async()=>{setState(await api('state'));setCapabilities(await api('capability.list'));setImageSkills(await api('skill.image.status'));setMediaSkills(await api('skill.media.status'));};
+    const refresh=async()=>{setState(await api('state'));setCapabilities(await api('capability.list'));setImageSkills(await api('skill.image.status'));setMediaSkills(await api('skill.media.status'));setDirectories(await api('directories'));};
     React.useEffect(()=>{let stopped=false;void refresh().catch((e:Error)=>setError(e.message));void api('models').then(setModels).catch(()=>{});const timer=setInterval(()=>{if(!stopped)void refresh().catch(()=>{});},4000);return()=>{stopped=true;clearInterval(timer);};},[]);
     React.useEffect(()=>{if(!qr?.attempt||qr.status!=='pending')return;const abort=new AbortController();const poll=async()=>{while(!abort.signal.aborted){try{const result=await api('login.poll',{attempt:qr.attempt},abort.signal);if(result.status!=='pending'){setQr((old:any)=>({...old,status:result.status}));await refresh();return;}}catch(e){if(!abort.signal.aborted)setError((e as Error).message);return;}await new Promise(resolve=>setTimeout(resolve,2000));}};void poll();return()=>abort.abort();},[qr?.attempt]);
     const perform=async(action:string,input:any={},message='已保存；配置在下一轮生效')=>{setBusy(true);setError('');setNotice('');try{const result=await api(action,input);await refresh();setNotice(message);return result;}catch(e){setError((e as Error).message);return null;}finally{setBusy(false);}};
@@ -27,6 +29,9 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
     if(tab==='bots')body=h('div',null,
       ...state.bots.filter((b:any)=>!b.archived).map((bot:any)=>h('section',{key:bot.id,className:'card'},h('div',{className:'row'},h('strong',null,bot.name),h('span',null,bot.channel==='qq'?'QQ 官方':'微信 iLink'),h('small',null,`${bot.accountId||'未授权'} · ${bot.status} · 活动会话 ${bot.activeSessions??0}`)),
         select('使用配置',bot.configId,configs,value=>void perform('bot.save',{...bot,configId:value})),
+        h('div',{className:'row'},field('工作目录（绝对路径，留空使用默认）',workspaceEdits[bot.id]??bot.workingDirectory??'',v=>setWorkspaceEdits({...workspaceEdits,[bot.id]:v}),'text',{placeholder:directories.workspaceRoot}),button('保存工作目录',async()=>{const result=await perform('bot.save',{...bot,workingDirectory:workspaceEdits[bot.id]??bot.workingDirectory??''},'工作目录已保存；下一轮生效，会话历史保留');if(result)setWorkspaceEdits((old:any)=>{const next={...old};delete next[bot.id];return next;});})),
+        h('small',null,bot.workingDirectory?'此机器人使用指定目录；它的可信用户共享该目录中的文件。':`默认目录：${directories.workspaceRoot}，各会话使用独立子目录。`),
+        h('div',{className:'row'},button('打开配置目录',()=>perform('config.directory.open',{botId:bot.id},'已在本机打开配置目录；机器人与人格配置存储于 bots.sqlite')),h('small',null,directories.configDirectory)),
         field('可信私聊用户 ID（逗号分隔）',bot.trustedUsers.join(', '),()=>{},'text',{readOnly:true}),
         h('div',{className:'row'},button('修改可信用户',async()=>{const value=await ask('可信私聊用户 ID，逗号分隔；留空关闭本机命令权限',bot.trustedUsers.join(','));if(value!==null)void perform('bot.save',{...bot,trustedUsers:value.split(',').map(v=>v.trim()).filter(Boolean)});}),
           button('扫码授权',async()=>{const result=await perform('login.begin',{id:bot.id},'请使用手机扫码确认');if(result)setQr({...result,botId:bot.id});},{disabled:busy||bot.enabled}),
@@ -44,6 +49,7 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
       const update=(value:any)=>setEdit({...selected,...value});
       body=h('div',{className:'split'},h('aside',null,...configs.map((c:any)=>h('div',{key:c.id,className:'row'},button(c.name,()=>setEdit(structuredClone(c)),{className:selected?.id===c.id?'selected':''}))),button('新建配置',()=>setEdit({schemaVersion:2,id:'',name:'',revision:1,personaPrompt:'你是自然、具体的中文助手。',model:null,media:{},tools:['bot_media','bot_send_file','bot_remember','bot_forget_memory','bot_read_social'],skills:['image-generation','media-analysis'],allowHostTools:true,hostTools:[],imageStyle:'',archived:false}))),selected?h('section',{className:'card'},
         h('h3',null,`${selected.name||'新配置'} · v${selected.revision}`),h('small',null,`关联 ${state.bots.filter((b:any)=>!b.archived&&b.configId===selected.id).length} 个 bot。保存后各自下一轮生效，历史保留。`),
+        state.configs.some((c:any)=>c.id===selected.id)?h('div',{className:'row'},button('打开配置目录',()=>perform('config.directory.open',{configId:selected.id},'已在本机打开配置目录；配置存储于 bots.sqlite')),h('small',null,directories.configDirectory)):null,
         h('div',{className:'row'},field('配置 ID',selected.id,v=>update({id:v}),'text',{readOnly:state.configs.some((c:any)=>c.id===selected.id)}),field('名称',selected.name,v=>update({name:v}))),
         h('label',null,'人格提示词',h('textarea',{value:selected.personaPrompt,onChange:(e:any)=>update({personaPrompt:e.target.value}),rows:9})),
         h('div',{className:'row'},select('聊天提供商',selected.model?.provider??'',[{id:'',name:'请选择'},...models],v=>update({model:v?{provider:v,model:''}:null})),select('聊天模型',selected.model?.model??'',[{id:'',name:'请选择'},...(models.find((p:any)=>p.id===selected.model?.provider)?.models??[])],v=>update({model:{...selected.model,model:v}}))),

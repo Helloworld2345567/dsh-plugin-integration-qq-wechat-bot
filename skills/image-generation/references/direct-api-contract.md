@@ -5,7 +5,7 @@ This describes `scripts/image_api.py` shipped with this skill, rather than a pro
 ## Connection and credentials
 
 - Default base URL: `https://api.openai.com/v1`; override through `--base-url` or `OPENAI_BASE_URL`.
-- Default model: `gpt-image-1`; override through `--model` for the chosen provider.
+- Default model: `gpt-image-2`; override through `--model` for the chosen provider.
 - Default credential variable: `SAKURA_IMAGE_API_KEY`; select another with `--api-key-env VARIABLE_NAME`.
 - Credentials are read from the environment and sent as a Bearer header. Only HTTPS API URLs without embedded credentials, query or fragment are accepted. Redirects are disabled.
 - Standalone CLI use can prompt for a missing key; the plugin preflights the variable before starting the client. Configure unattended jobs with a process environment variable.

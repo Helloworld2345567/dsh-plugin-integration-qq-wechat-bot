@@ -3,6 +3,8 @@ import { Assets, MediaService } from './media.js';
 import type { BotConfig, BotInstance, ChannelAdapter, Credential, InboundMessage, SessionBinding, Output, TurnSnapshot } from './types.js';
 import {randomUUID} from 'node:crypto';
 import {permissionsRevoked} from './policy.js';
+import {botSchema} from './types.js';
+import {validateWorkingDirectory} from './workspaces.js';
 
 export interface HarnessResult { turnId:string; outputs:Output[]; snapshot:TurnSnapshot }
 export interface HarnessPort {
@@ -36,7 +38,7 @@ export class BotRuntime {
     const {configSchema}=await import('./types.js');const parsed=configSchema.parse(input);if(!parsed.archived)await this.harness.validateModel(parsed);
     const saved=this.store.saveConfig(parsed,expectedRevision);this.recheckPermissions();return saved;
   }
-  saveBot(input:unknown):BotInstance{const previous=(input&&typeof input==='object'&&'id' in input)?this.store.get<BotInstance>('bot',String(input.id)):undefined;if(previous&&input&&typeof input==='object'&&(('accountId' in input&&previous.accountId!==input.accountId)||('channel' in input&&previous.channel!==input.channel)))throw new Error('已有机器人的渠道身份不可修改；请创建新机器人');const next=this.store.saveBot(input);this.recheckPermissions();return next;}
+  saveBot(input:unknown):BotInstance{const candidate=botSchema.parse(input);const previous=this.store.get<BotInstance>('bot',candidate.id);if(previous&&(previous.accountId!==candidate.accountId||previous.channel!==candidate.channel))throw new Error('已有机器人的渠道身份不可修改；请创建新机器人');if(candidate.workingDirectory)validateWorkingDirectory(candidate.workingDirectory);const next=this.store.saveBot(candidate);this.recheckPermissions();return next;}
   private recheckPermissions():void{
     this.harness.recheckPermissions?.();
     // A changed policy cancels in-flight work; new privileges still wait for the next frozen turn.
