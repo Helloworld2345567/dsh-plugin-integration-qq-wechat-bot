@@ -1,10 +1,13 @@
 {
   "name": "dsh-plugin-integration-qq-wechat-bot",
-  "version": "0.1.6",
+  "version": "0.2.2",
   "description": "Native DeepSeek Harness QQ and WeChat bots with hot-switchable personas and media tools",
   "type": "module",
   "license": "MIT",
-  "repository": {"type":"git","url":"https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot.git"},
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot.git"
+  },
   "engines": {
     "node": ">=24.0.0"
   },
@@ -29,7 +32,10 @@
     "docs",
     "README.md",
     "LICENSE",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "packages/bot-lifecycle",
+    "scripts/installation.mjs",
+    "scripts/supervisor.mjs"
   ],
   "dsh": {
     "bundle": {
@@ -52,7 +58,9 @@
     "test:python": "python -m unittest discover -s tests -p test_*.py",
     "check:release": "node scripts/check-release.mjs",
     "start": "node scripts/start.mjs",
-    "stop": "node scripts/stop.mjs"
+    "stop": "node scripts/stop.mjs",
+    "test:lifecycle-native": "node scripts/test-lifecycle-native.mjs",
+    "test:install-smoke": "node scripts/test-install-smoke.mjs"
   },
   "dependencies": {
     "@deepseek-ai/dsh": "0.2.1-rc.2",
@@ -72,7 +80,10 @@
     "@deepseek-ai/dsh-scope": "0.2.1-rc.2",
     "@deepseek-ai/dsh-settings": "0.2.1-rc.2",
     "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-working-directory": "0.2.1-rc.2"
+    "@deepseek-ai/dsh-working-directory": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-commands": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-skill": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-terminal": "0.2.1-rc.2"
   },
   "devDependencies": {
     "@types/json-bigint": "^1.0.4",

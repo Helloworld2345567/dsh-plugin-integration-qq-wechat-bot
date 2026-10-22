@@ -1,0 +1,10 @@
+{
+  "name": "dsh-bot-lifecycle",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "exports": "./dist/index.js",
+  "files": ["dist/*.js", "cordis.patch.yml", "README.md", "LICENSE"],
+  "dsh": {"bundle": {"patch": "./cordis.patch.yml"}},
+  "peerDependencies": {"@deepseek-ai/cordis": "~4.0.5", "@deepseek-ai/dsh-plugin-manager": "0.2.1-rc.2"}
+}

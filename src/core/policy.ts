@@ -1,12 +1,15 @@
 import type { BotConfig, BotInstance, CallerScope, TurnSnapshot } from './types.js';
 import {imageSkillEnabled} from './image-skill.js';
 import {analysisEnabled} from './analysis.js';
-export const BUSINESS_TOOLS = new Set(['media_analysis','image_generation','bot_media','bot_send_file','bot_remember','bot_forget_memory','bot_read_social','skill']);
+export const BUSINESS_TOOLS = new Set(['media_analysis','image_generation','bot_media','bot_send_file','bot_remember','bot_forget_memory','bot_read_social','skill','bot_stats','bot_evolve','bot_model','bot_session','bot_persona','bot_skills']);
 export const NATIVE_HOST_TOOLS = new Set(['pwsh','bash','read','write','edit','read_file','write_file','str_replace','list_directory','glob','grep','terminal','read_terminal','write_terminal']);
 export const CHANNEL_WEB_TOOLS=new Set(['web_search','web_fetch']);
 export function trusted(bot:BotInstance,scope:CallerScope):boolean { return scope.kind==='private' && bot.trustedUsers.includes(scope.senderId); }
 export function permitted(name:string,config:BotConfig,bot:BotInstance,scope:CallerScope):boolean {
   if(!bot.enabled || bot.archived) return false;
+  if(name==='bot_session'||name==='bot_skills')return true;
+  if(name==='bot_stats'||name==='bot_model'||name==='bot_persona')return trusted(bot,scope);
+  if(name==='bot_evolve')return trusted(bot,scope)&&config.allowHostTools;
   if(name==='image_generation')return imageSkillEnabled(config);
   if(name==='media_analysis')return analysisEnabled(config);
   if(CHANNEL_WEB_TOOLS.has(name))return config.tools.includes(name);

@@ -38,6 +38,8 @@ def image(job):
                "--base-url", endpoint["baseUrl"], "--api-key-env", endpoint["keyEnv"],
                "--output-dir", job["output"], "--output-format", "jpeg", "--n", "1",
                "--timeout", "120", "--record", str(record)]
+    if job.get('usagePath'):
+        command.extend(['--usage-record', job['usagePath']])
     if operation == "edit":
         for source in job["inputs"]:
             if source["kind"] != "image":

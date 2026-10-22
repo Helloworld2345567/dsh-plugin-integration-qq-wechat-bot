@@ -191,6 +191,7 @@ def common_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--n", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=300.0)
     parser.add_argument("--record", type=Path, help="optional JSON request/result record")
+    parser.add_argument("--usage-record", type=Path, help="optional durable media dispatch journal (bundled worker)")
     parser.add_argument("--dry-run", action="store_true")
 
 
@@ -271,8 +272,15 @@ def main() -> int:
     headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
     session = requests.Session()
     opened = []
+    usage_call = None
+    usage_job = None
+    if args.usage_record:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'python'))
+        from model_usage import journal
+        usage_job = {'usagePath': str(args.usage_record), 'output': str(args.output_dir), 'endpoint': {'model': args.model}}
     try:
         if args.operation == "generate":
+            if usage_job: usage_call = journal(usage_job)
             response = request_with_retry(session, "POST", endpoint, headers={**headers, "Content-Type": "application/json"}, timeout=args.timeout, json=body)
         else:
             data = {key: str(value) for key, value in body.items()}
@@ -282,8 +290,17 @@ def main() -> int:
                 mask_handle = args.mask.open("rb")
                 opened.append((mask_handle, args.mask))
                 multipart.append(("mask", (args.mask.name, mask_handle, "image/png")))
+            if usage_job: usage_call = journal(usage_job)
             response = request_with_retry(session, "POST", endpoint, headers=headers, timeout=args.timeout, data=data, files=multipart)
         record["http_status"] = response.status_code
+        try:
+            accounting = response.json()
+            if usage_job: journal(usage_job, usage_call, accounting)
+            if isinstance(accounting, dict):
+                record['response_model'] = accounting.get('model')
+                record['usage'] = accounting.get('usage')
+        except ValueError:
+            pass  # Binary image responses have unknown token usage.
         if response.status_code != 200:
             try:
                 error_payload = response.json()

@@ -1,0 +1,3 @@
+- insert:
+    - id: bot-lifecycle
+      name: dsh-bot-lifecycle

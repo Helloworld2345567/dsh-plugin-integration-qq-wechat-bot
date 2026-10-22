@@ -1,5 +1,6 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {randomBytes,createCipheriv} from 'node:crypto';
-import {decryptBinding,qqInbound,QQAdapter} from '../src/channels/qq.js';import {decodeMediaKey,weixinInbound,WeixinAdapter} from '../src/channels/weixin.js';import {botSchema} from '../src/core/types.js';
+import {decryptBinding,qqInbound,qqGroupObservation,QQAdapter} from '../src/channels/qq.js';import {decodeMediaKey,weixinInbound,WeixinAdapter} from '../src/channels/weixin.js';import {botSchema} from '../src/core/types.js';
+import {EventEmitter} from 'node:events';
 const qq=botSchema.parse({id:'qq',name:'QQ',channel:'qq',accountId:'app'});const wx=botSchema.parse({id:'wx',name:'WX',channel:'weixin',accountId:'bot'});
 test('QQ QR secret requires authentic AES-GCM and never returns key to UI',async()=>{
  let key:Buffer;const request:any=async(url:string,init:any)=>{if(url.endsWith('create_bind_task')){key=Buffer.from(JSON.parse(init.body).key,'base64');return{data:{task_id:'ticket'}};}const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',key,iv);return{data:{status:2,bot_appid:'app',bot_encrypt_secret:Buffer.concat([iv,cipher.update('fixture-secret'),cipher.final(),cipher.getAuthTag()]).toString('base64')}};};
@@ -32,4 +33,31 @@ test('iLink preserves uint64 receipt and recognizes explicit accepted ack withou
  const b=new WeixinAdapter({} as any,undefined,fake('{"ret":0}'));assert.equal(await b.send(wx,{accountId:'bot'},delivery,undefined,AbortSignal.timeout(1000)),'ilink-accepted:unique');
  const c=new WeixinAdapter({} as any,undefined,fake('{}'));await assert.rejects(c.send(wx,{accountId:'bot'},delivery,undefined,AbortSignal.timeout(1000)),/RECEIPT_MISSING/);
  for(const body of ['{"ret":-14,"errcode":0}','{"ret":0,"errcode":-14}']){const expired=new WeixinAdapter({} as any,undefined,fake(body));await assert.rejects(expired.send(wx,{accountId:'bot'},delivery,undefined,AbortSignal.timeout(1000)),/ILINK_AUTH_EXPIRED/);}
+});
+
+test('QQ group membership distinguishes observed messages, joins and removals',()=>{
+  assert.equal(qqGroupObservation(qq,{t:'GROUP_ADD_ROBOT',d:{group_openid:'room',group_name:'Room',timestamp:'2026-10-22T08:00:00+08:00'}})?.event,'joined');
+  assert.equal(qqGroupObservation(qq,{t:'GROUP_DEL_ROBOT',d:{group_openid:'room'}})?.event,'left');
+  assert.equal(qqGroupObservation(qq,{t:'GROUP_AT_MESSAGE_CREATE',d:{group_openid:'room'}})?.event,'observed');
+  assert.equal(qqGroupObservation(qq,{t:'GROUP_ADD_ROBOT',d:{user_openid:'user'}}),undefined);
+});
+test('iLink remains connecting until a successful poll and stops after cancellation',async()=>{
+  const states:string[]=[];let resolve!:(response:Response)=>void;const controller=new AbortController();
+  const request=(async()=>new Promise<Response>(r=>{resolve=r;})) as typeof fetch;
+  const adapter=new WeixinAdapter({get:()=>'',put:()=>{controller.abort();}} as any,undefined,request);
+  const running=adapter.connect(wx,{accountId:'wx'},async()=>{},controller.signal,state=>states.push(state));
+  assert.deepEqual(states,['connecting']);resolve(new Response('{"ret":0,"get_updates_buf":"cursor"}'));await running;
+  assert.deepEqual(states,['connecting','connected','stopped']);
+});
+test('QQ clears connected immediately on socket close before reconnect backoff',async()=>{
+  const states:string[]=[];const controller=new AbortController();const socket=new EventEmitter() as any;socket.readyState=1;socket.send=()=>{};socket.terminate=()=>socket.emit('close');socket.close=()=>socket.emit('close');
+  const adapter=new QQAdapter((async(url:string)=>url.includes('getAppAccessToken')?{access_token:'fixture',expires_in:7200}:{url:'wss://fixture.invalid'}) as any,undefined,()=>{queueMicrotask(()=>{socket.emit('message',JSON.stringify({t:'READY',d:{session_id:'fixture'}}));socket.emit('close');});return socket;});
+  await adapter.connect(qq,{accountId:'qq',appSecret:'fixture'},async()=>{},controller.signal,state=>{states.push(state);if(state==='reconnecting')controller.abort();});
+  assert.deepEqual(states,['connecting','connected','reconnecting','stopped']);
+});
+test('QQ missed heartbeat ack invalidates an online connection',async()=>{
+  const states:string[]=[];const controller=new AbortController();const socket=new EventEmitter() as any;socket.readyState=1;socket.send=()=>{};socket.terminate=()=>socket.emit('close');socket.close=()=>socket.emit('close');
+  const adapter=new QQAdapter((async(url:string)=>url.includes('getAppAccessToken')?{access_token:'fixture',expires_in:7200}:{url:'wss://fixture.invalid'}) as any,undefined,()=>{queueMicrotask(()=>{socket.emit('message',JSON.stringify({op:10,d:{heartbeat_interval:5}}));socket.emit('message',JSON.stringify({t:'READY',d:{session_id:'fixture'}}));});return socket;});
+  await adapter.connect(qq,{accountId:'qq',appSecret:'fixture'},async()=>{},controller.signal,state=>{states.push(state);if(state==='reconnecting')controller.abort();});
+  assert.ok(states.includes('connected'));assert.equal(states.at(-2),'reconnecting');assert.equal(states.at(-1),'stopped');
 });

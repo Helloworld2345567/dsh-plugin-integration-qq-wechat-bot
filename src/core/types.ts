@@ -3,6 +3,7 @@ import path from 'node:path';
 
 export const idSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
 export const modelSchema = z.object({ provider: z.string().min(1).max(150), model: z.string().min(1).max(200), reasoningEffort: z.string().optional() });
+export const skillNameSchema = z.string().max(64).regex(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/);
 export const endpointSchema = z.object({
   baseUrl: z.url().refine(value=>{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&!u.search&&!u.hash;},'媒体 API 必须使用无凭据、查询或片段的 HTTPS 地址'), model: z.string().min(1), keyEnv: z.string().regex(/^[A-Z_][A-Z0-9_]*$/),
 });
@@ -15,7 +16,8 @@ export const configSchema = z.object({
   // Legacy vision/TTS services and duplicated analysis connection fields are discarded.
   media: z.object({image:imageSkillOverrideSchema.optional(),asr:analysisSkillSchema.optional(),video:analysisSkillSchema.optional()}).default({}),
   tools: z.array(z.string().max(100)).max(100).default(['bot_media', 'bot_send_file', 'bot_remember', 'bot_forget_memory', 'bot_read_social']),
-  skills: z.array(z.enum(['image-generation','media-analysis'])).max(2).default(['image-generation','media-analysis']),
+  skills: z.array(skillNameSchema).max(100).refine(value=>new Set(value).size===value.length,'技能名称不得重复').default(['image-generation','media-analysis']),
+  skillVersions:z.record(skillNameSchema,z.string().regex(/^[a-f0-9]{64}$/)).default({}),
   allowHostTools: z.boolean().default(true), hostTools: z.array(z.string().max(100)).max(100).default([]),
   imageStyle: z.string().max(4000).default(''),
   archived: z.boolean().default(false),
@@ -40,11 +42,12 @@ export interface InboundMessage {
   quoted?: { id?: string; text?: string; attachments?: MediaInput[] };
   reply: Record<string, string>; timestamp: number;
 }
-export interface SessionBinding { key: string; scope: CallerScope; sessionId: string; generation: number; persisted: boolean }
+export interface SessionBinding { key: string; scope: CallerScope; sessionId: string; generation: number; persisted: boolean; personaId?:string; modelOverride?:z.infer<typeof modelSchema>; recentSince?:number }
+export interface SessionRecord { id:string; scopeKey:string; scope:CallerScope; generation:number; persisted:boolean; createdAt:number; updatedAt:number; personaId?:string; modelOverride?:z.infer<typeof modelSchema>; recentSince?:number }
 export interface TurnSnapshot { config: Readonly<BotConfig>; botId: string; trusted: boolean; sourceIds: string[]; startedAt: number }
-export interface Asset { id: string; scopeKey: string; name: string; mime: string; path: string; size: number; kind: MediaInput['kind']; createdAt: number; jobId?: string }
+export interface Asset { id: string; scopeKey: string; name: string; mime: string; path: string; size: number; kind: MediaInput['kind']; createdAt: number; jobId?: string; sessionId?:string }
 export interface Output { type: 'text' | 'asset'; text?: string; assetId?: string }
-export interface Delivery { id: string; scopeKey: string; botId: string; sessionId: string; sourceId: string; turnId: string; index: number; output: Output; reply: Record<string,string>; state: 'pending'|'sending'|'sent'|'unknown'|'failed'|'cancelled'; receipt?: string; error?: string }
+export interface Delivery { id: string; scopeKey: string; botId: string; sessionId: string; sourceId: string; turnId: string; index: number; output: Output; reply: Record<string,string>; state: 'pending'|'sending'|'sent'|'unknown'|'failed'|'cancelled'; receipt?: string; error?: string; createdAt?:number; updatedAt?:number; sentAt?:number }
 export interface Credential { accountId: string; token?: string; appSecret?: string; baseUrl?: string }
 export interface LoginState { status: 'pending'|'confirmed'|'expired'|'denied'; qr?: string; ticket?: string; credential?: Credential }
 export interface ChannelAdapter {

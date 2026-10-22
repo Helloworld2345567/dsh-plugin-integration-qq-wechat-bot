@@ -2,14 +2,17 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { botSchema, configSchema, type BotConfig, type BotInstance, type CallerScope, type InboundMessage, type SessionBinding, type Delivery, type Output, type Asset } from './types.js';
+import { botSchema, configSchema, type BotConfig, type BotInstance, type CallerScope, type InboundMessage, type SessionBinding, type SessionRecord, type Delivery, type Output, type Asset } from './types.js';
+import {PersonaFiles,defaultPersonasRoot,sameConfig} from './personas.js';
 
 export function scopeKey(scope: CallerScope): string { return createHash('sha256').update(JSON.stringify([scope.platform, scope.botId, scope.accountId, scope.kind, scope.channelId, scope.senderId])).digest('hex'); }
 export class ConflictError extends Error { constructor(message='配置已被其他操作修改，请刷新后重试') { super(message); } }
 export class Store {
   readonly db: DatabaseSync;
-  constructor(readonly home: string) {
+  readonly personas:PersonaFiles;
+  constructor(readonly home: string,personasRoot=defaultPersonasRoot(home)) {
     mkdirSync(home, { recursive:true }); this.db = new DatabaseSync(path.join(home, 'bots.sqlite'));
+    this.personas=new PersonaFiles(personasRoot);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
       CREATE TABLE IF NOT EXISTS records(kind TEXT NOT NULL,id TEXT NOT NULL,json TEXT NOT NULL,PRIMARY KEY(kind,id));
       CREATE TABLE IF NOT EXISTS inbox(scope TEXT NOT NULL,id TEXT NOT NULL,json TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',PRIMARY KEY(scope,id));
@@ -17,6 +20,10 @@ export class Store {
       CREATE TABLE IF NOT EXISTS memory(scope TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,source TEXT NOT NULL,quote TEXT NOT NULL,version INTEGER NOT NULL,deleted INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL,PRIMARY KEY(scope,key));
       CREATE TABLE IF NOT EXISTS forgotten(scope TEXT NOT NULL,source TEXT NOT NULL,key TEXT NOT NULL,PRIMARY KEY(scope,source,key));
       CREATE TABLE IF NOT EXISTS memory_sources(scope TEXT NOT NULL,key TEXT NOT NULL,source TEXT NOT NULL,PRIMARY KEY(scope,key,source));`);
+    for(const id of this.personas.ids()){
+      // Preserve externally changed files and their journal; the panel exposes the recovery error.
+      try{this.personas.recover(id,this.get<BotConfig>('config',id));}catch{}
+    }
     if (!this.get('config','default')) {
       this.put('config', 'default', configSchema.parse({ id:'default', name:'默认', personaPrompt:'你是自然、真诚、具体的中文聊天伙伴。回应用户实际意图，默认简洁，任务结果按需要展开。不编造记忆、工具执行或媒体内容。保留工具、skills和运行环境信息。' }));
       this.put('config', 'sakura', configSchema.parse({ id:'sakura', name:'小樱', personaPrompt:'你是成年猫娘小樱：银白长发、翠绿色眼睛、白色猫耳和尾巴、黑白女仆装。自然简短地交流，日常文字尽量不超过100字，任务结果可以展开。按用户意图决定是否调用图片工具，每轮最多一张生成图。参考图编辑必须使用真实原图。不输出配图描述，不编造工具或媒体观察。' }));
@@ -26,10 +33,20 @@ export class Store {
         // Keep historical revisions intact; publish one migrated effective configuration.
         if(!this.get('config-version',`${raw.id}:${raw.revision}`))this.put('config-version',`${raw.id}:${raw.revision}`,raw);
         const media={...raw.media};for(const role of ['asr','video'] as const){if(media[role]&&('baseUrl' in media[role]||'keyEnv' in media[role]))media[role]={enabled:true,protocol:'chat_completions'};}
-        this.saveConfig({...raw,media,skills:[...new Set([...raw.skills,'media-analysis'])]},raw.revision);
+        const next=configSchema.parse({...raw,media,skills:[...new Set([...raw.skills,'media-analysis'])],revision:raw.revision+1});
+        this.transaction(()=>{this.put('config-version',`${next.id}:${next.revision}`,next);this.put('config',next.id,next);});
       }
     }
     for(const config of this.configs())if(!this.get('config-version',`${config.id}:${config.revision}`))this.put('config-version',`${config.id}:${config.revision}`,config);
+    for(const config of this.configs()){
+      try{
+        const baseline=this.get<{digest:string}>('persona-files',config.id);
+        const unchanged=baseline?.digest===this.personas.currentDigest(config.id);
+        if(!this.personas.hasFiles(config.id)||(unchanged&&!sameConfig(this.personas.read(config.id).config,config)))this.personas.publish(config,fingerprint=>this.transaction(()=>this.put('persona-files',config.id,{digest:fingerprint})));
+        else if(!this.get('persona-files',config.id)&&sameConfig(this.personas.read(config.id).config,config))this.put('persona-files',config.id,{digest:this.personas.currentDigest(config.id)});
+      }catch{/* An invalid draft must not stop bots using the last applied configuration. */}
+    }
+    this.backfillSessions();
   }
   close(): void { this.db.close(); }
   recover():void {this.db.exec("UPDATE inbox SET state='interrupted' WHERE state='processing'; UPDATE deliveries SET state='unknown' WHERE state='sending'");}
@@ -41,15 +58,32 @@ export class Store {
   put(kind:string,id:string,value:unknown):void { this.db.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET json=excluded.json').run(kind,id,JSON.stringify(value)); }
   configs():BotConfig[] { return this.list<BotConfig>('config').map(c=>configSchema.parse(c)); }
   config(id:string):BotConfig { const c=this.get<BotConfig>('config',id); if (!c || c.archived) throw new Error('配置不存在或已归档'); return configSchema.parse(c); }
-  saveConfig(input:unknown,expectedRevision?:number):BotConfig {
+  personaStatus(id:string):{id:string;directory:string;state:'synced'|'draft'|'error';error?:string} {
+    try{
+      const directory=this.personas.directory(id);const file=this.personas.read(id);const baseline=this.get<{digest:string}>('persona-files',id);
+      return{id,directory,state:baseline?.digest===file.digest&&sameConfig(file.config,this.get<BotConfig>('config',id)!)?'synced':'draft'};
+    }catch(error){return{id,directory:path.join(this.personas.root,id),state:'error',error:error instanceof Error?error.message:'PERSONA_FILES_INVALID'};}
+  }
+  saveConfig(input:unknown,expectedRevision?:number,fileDigest?:string):BotConfig {
     const value=configSchema.parse(input);
-    return this.transaction(()=>{
+    const check=()=>{
       const previous=this.get<BotConfig>('config',value.id);
       if(previous && previous.revision!==expectedRevision) throw new ConflictError();
-      if(value.archived && this.bots().some(b=>!b.archived && b.configId===value.id)) throw new Error('请先解除机器人配置绑定');
-      const next={...value,revision:previous ? previous.revision+1 : 1};
-      this.put('config-version',`${next.id}:${next.revision}`,next); this.put('config',next.id,next); return next;
-    });
+      if(value.archived && (this.bots().some(b=>!b.archived && b.configId===value.id)||this.list<SessionBinding>('binding').some(b=>b.personaId===value.id))) throw new Error('请先解除机器人或活动会话配置绑定');
+      return previous;
+    };
+    this.personas.recover(value.id,this.get<BotConfig>('config',value.id));
+    const previous=check();const baseline=this.get<{digest:string}>('persona-files',value.id);
+    if(fileDigest!==undefined){
+      if(this.personas.read(value.id).digest!==fileDigest)throw new ConflictError('人格文件在校验期间被修改，请重新应用');
+    }else if(this.personas.hasFiles(value.id)&&(!baseline||this.personas.currentDigest(value.id)!==baseline.digest))throw new ConflictError('人格文件有未应用修改，请先校验并应用文件，或恢复文件后再保存面板');
+    if(fileDigest!==undefined&&previous&&sameConfig(previous,value)){
+      this.transaction(()=>{check();this.put('persona-files',value.id,{digest:fileDigest});});return previous;
+    }
+    const next={...value,revision:previous ? previous.revision+1 : 1};
+    return this.personas.publish(next,fingerprint=>this.transaction(()=>{
+      check();this.put('config-version',`${next.id}:${next.revision}`,next);this.put('config',next.id,next);this.put('persona-files',next.id,{digest:fingerprint});return next;
+    }));
   }
   bots():BotInstance[] { return this.list<BotInstance>('bot'); }
   bot(id:string):BotInstance { const bot=this.get<BotInstance>('bot',id); if(!bot) throw new Error('机器人不存在'); return bot; }
@@ -68,17 +102,42 @@ export class Store {
   updateMessage(scope:string,message:InboundMessage):void {this.db.prepare('UPDATE inbox SET json=? WHERE scope=? AND id=?').run(JSON.stringify(message),scope,message.id);}
   mark(scope:string,ids:string[],state:string):void { for(const id of ids) this.db.prepare('UPDATE inbox SET state=? WHERE scope=? AND id=?').run(state,scope,id); }
   scopesWithPending(states=['pending']):string[] { return (this.db.prepare(`SELECT DISTINCT scope FROM inbox WHERE state IN (${states.map(()=>'?').join(',')})`).all(...states) as {scope:string}[]).map(r=>r.scope); }
-  binding(scope:CallerScope):SessionBinding { const key=scopeKey(scope); let b=this.get<SessionBinding>('binding',key); if(!b) { b={key,scope,sessionId:randomUUID(),generation:0,persisted:false}; this.put('binding',key,b); } return b; }
-  reset(scope:CallerScope):SessionBinding { const old=this.binding(scope); const next={...old,sessionId:randomUUID(),generation:old.generation+1,persisted:false}; this.put('binding',old.key,next); return next; }
+  binding(scope:CallerScope):SessionBinding { const key=scopeKey(scope); let b=this.get<SessionBinding>('binding',key); if(!b) { b={key,scope,sessionId:randomUUID(),generation:0,persisted:false,recentSince:Date.now()}; this.updateSession(b); } else this.recordSession(b); return b; }
+  private recordSession(binding:SessionBinding):void {
+    const previous=this.get<SessionRecord>('session',binding.sessionId);if(previous&&previous.scopeKey!==binding.key)throw new Error('SESSION_OWNERSHIP_MISMATCH');
+    const now=Date.now();this.put('session',binding.sessionId,{id:binding.sessionId,scopeKey:binding.key,scope:binding.scope,generation:binding.generation,persisted:binding.persisted,createdAt:previous?.createdAt??now,updatedAt:now,personaId:binding.personaId,modelOverride:binding.modelOverride,recentSince:binding.recentSince} satisfies SessionRecord);
+  }
+  updateSession(binding:SessionBinding):SessionBinding {if(binding.key!==scopeKey(binding.scope))throw new Error('SESSION_OWNERSHIP_MISMATCH');this.recordSession(binding);this.put('binding',binding.key,binding);return binding;}
+  markSessionPersisted(binding:SessionBinding):void {const current=this.get<SessionBinding>('binding',binding.key);if(current?.sessionId===binding.sessionId)this.updateSession({...current,persisted:true});else{const record=this.session(binding.scope,binding.sessionId);this.put('session',record.id,{...record,persisted:true,updatedAt:Date.now()});}}
+  private backfillSessions():void {
+    const bindings=this.list<SessionBinding>('binding').filter(binding=>{
+      const scope=binding?.scope;if(!scope||!['qq','weixin'].includes(scope.platform)||!['private','group'].includes(scope.kind))return false;
+      if(![scope.botId,scope.accountId,scope.channelId,scope.senderId,binding.sessionId].every(value=>typeof value==='string'&&value.length>0))return false;
+      return binding.key===scopeKey(scope);
+    });
+    for(const binding of bindings)this.recordSession(binding);
+    // Delivery rows prove an old session belongs to an existing channel identity; no global history scan.
+    for(const delivery of this.deliveries()){
+      if(this.get('session',delivery.sessionId))continue;const owner=bindings.find(b=>b.key===delivery.scopeKey&&b.scope.botId===delivery.botId);if(!owner)continue;
+      this.put('session',delivery.sessionId,{id:delivery.sessionId,scopeKey:owner.key,scope:owner.scope,generation:0,persisted:true,createdAt:delivery.createdAt??0,updatedAt:delivery.updatedAt??delivery.createdAt??0} satisfies SessionRecord);
+    }
+  }
+  session(scope:CallerScope,id:string):SessionRecord {const record=this.get<SessionRecord>('session',id);if(!record||record.scopeKey!==scopeKey(scope))throw new Error('会话不存在或不属于当前渠道身份');return record;}
+  sessions(scope:CallerScope):SessionRecord[]{this.binding(scope);return this.list<SessionRecord>('session').filter(item=>item.scopeKey===scopeKey(scope)).sort((a,b)=>b.updatedAt-a.updatedAt);}
+  effectiveConfig(binding:SessionBinding):BotConfig {const config=this.config(binding.personaId??this.bot(binding.scope.botId).configId);return binding.modelOverride?{...config,model:{...binding.modelOverride}}:config;}
+  recentSince(key:string):number{return this.get<SessionBinding>('binding',key)?.recentSince??0;}
+  sessionRecentSince(key:string):number{return this.recentSince(key);}
+  reset(scope:CallerScope):SessionBinding {const old=this.binding(scope);const next={...old,sessionId:randomUUID(),generation:old.generation+1,persisted:false,recentSince:Date.now()};return this.updateSession(next);}
+  activateSession(scope:CallerScope,id:string):SessionBinding {const old=this.binding(scope);const record=this.session(scope,id);return this.updateSession({key:old.key,scope,sessionId:id,generation:old.generation+1,persisted:record.persisted,personaId:record.personaId,modelOverride:record.modelOverride,recentSince:record.recentSince});}
   enqueue(binding:SessionBinding,sourceId:string,turnId:string,outputs:Output[],reply:Record<string,string>):void {
     outputs.forEach((output,index)=>{
       const id=createHash('sha256').update(JSON.stringify([binding.key,binding.sessionId,sourceId,turnId,index])).digest('hex');
-      const d:Delivery={id,scopeKey:binding.key,botId:binding.scope.botId,sessionId:binding.sessionId,sourceId,turnId,index,output,reply,state:'pending'};
+      const now=Date.now();const d:Delivery={id,scopeKey:binding.key,botId:binding.scope.botId,sessionId:binding.sessionId,sourceId,turnId,index,output,reply,state:'pending',createdAt:now,updatedAt:now};
       this.db.prepare('INSERT OR IGNORE INTO deliveries VALUES(?,?,?,?)').run(id,binding.key,JSON.stringify(d),'pending');
     });
   }
   deliveries(states?:string[]):Delivery[] { const where=states?.length ? ` WHERE state IN (${states.map(()=>'?').join(',')})` : ''; return (this.db.prepare(`SELECT json,state FROM deliveries${where} ORDER BY rowid`).all(...(states??[])) as {json:string;state:Delivery['state']}[]).map(r=>({...JSON.parse(r.json),state:r.state})); }
-  deliveryState(delivery:Delivery,state:Delivery['state'],receipt?:string,error?:string):void { this.db.prepare('UPDATE deliveries SET json=?,state=? WHERE id=?').run(JSON.stringify({...delivery,state,receipt,error}),state,delivery.id); }
+  deliveryState(delivery:Delivery,state:Delivery['state'],receipt?:string,error?:string):void {const now=Date.now();this.db.prepare('UPDATE deliveries SET json=?,state=? WHERE id=?').run(JSON.stringify({...delivery,state,receipt,error,updatedAt:now,...(state==='sent'?{sentAt:now}:{})}),state,delivery.id); }
   remember(scope:string,key:string,value:string,source:string,quote:string):void {
     if(!key.trim() || key.length>100 || value.length>500) throw new Error('记忆长度无效');
     const input=this.source(scope,source);

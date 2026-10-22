@@ -30,11 +30,12 @@ export class WeixinAdapter implements ChannelAdapter{
   async beginLogin(signal?:AbortSignal):Promise<LoginState>{const result:any=await this.request(`${BASE}/ilink/bot/get_bot_qrcode?bot_type=3`,{signal});if(!result.qrcode||!result.qrcode_img_content)throw new Error('ILINK_QR_INVALID_RESPONSE');return{status:'pending',ticket:result.qrcode,qr:result.qrcode_img_content};}
   async pollLogin(ticket:string,signal?:AbortSignal):Promise<LoginState>{const data:any=await this.request(`${BASE}/ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(ticket)}`,{headers:{'iLink-App-ClientVersion':'1'},signal},40000);if(data.status==='confirmed'){if(!data.bot_token||!data.ilink_bot_id)throw new Error('ILINK_CREDENTIAL_MISSING');ilinkUrl(data.baseurl??BASE,'ilink/bot/getupdates');return{status:'confirmed',credential:{accountId:data.ilink_bot_id,token:data.bot_token,baseUrl:data.baseurl??BASE}};}return{status:data.status==='expired'?'expired':['cancel','canceled','denied'].includes(data.status)?'denied':'pending'};}
   async connect(bot:BotInstance,credential:Credential,receive:(message:InboundMessage)=>Promise<void>,signal:AbortSignal,status:(state:string)=>void):Promise<void>{
-    let attempt=0;let cursor=this.store.get<string>('cursor',bot.id)??'';status('connected');
+    let attempt=0;let cursor=this.store.get<string>('cursor',bot.id)??'';status('connecting');
     while(!signal.aborted){try{
       const data=await this.api(credential,'ilink/bot/getupdates',{get_updates_buf:cursor},signal,40000);
+      attempt=0;status('connected');
       for(const raw of data.msgs??[]){const message=weixinInbound(bot,raw);if(message)await receive(message);}
-      if(typeof data.get_updates_buf==='string'){cursor=data.get_updates_buf;this.store.put('cursor',bot.id,cursor);}attempt=0;status('connected');
+      if(typeof data.get_updates_buf==='string'){cursor=data.get_updates_buf;this.store.put('cursor',bot.id,cursor);}
     }catch(error){if(signal.aborted)break;if(error instanceof Error&&error.message==='ILINK_AUTH_EXPIRED'){status('reauthorize');return;}status(`reconnecting: ${error instanceof Error?error.message:'ILINK_CONNECTION_FAILED'}`);await backoff(attempt++,signal).catch(()=>{});}}
     status('stopped');
   }

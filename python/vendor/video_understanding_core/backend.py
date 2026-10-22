@@ -110,8 +110,9 @@ async def provider_http_error(response):
 
 
 class ChatCompletionsGemini:
-    def __init__(self, config: BackendConfig, limits):
+    def __init__(self, config: BackendConfig, limits, usage_observer=None):
         self.config, self.limits = config, limits
+        self.usage_observer = usage_observer
 
     @property
     def version(self):
@@ -151,6 +152,7 @@ class ChatCompletionsGemini:
         try:
             async with aiohttp.ClientSession(trust_env=False,
                     timeout=aiohttp.ClientTimeout(total=self.limits.model_timeout)) as client:
+                call = self.usage_observer() if self.usage_observer else None
                 async with client.post(self.config.base_url.rstrip("/") + "/chat/completions",
                                        data=body, headers=headers, allow_redirects=False) as response:
                     if response.status != 200:
@@ -161,6 +163,8 @@ class ChatCompletionsGemini:
                         if len(raw) > 1024**2:
                             raise VideoError("INVALID_MODEL_RESULT")
             response_json = json.loads(raw)
+            if self.usage_observer:
+                self.usage_observer(call, response_json)
             choice = response_json["choices"][0]
             if choice.get("finish_reason") != "stop":
                 raise VideoError("MODEL_OUTPUT_TRUNCATED")
@@ -169,7 +173,7 @@ class ChatCompletionsGemini:
             def tokens(name):
                 value = usage.get(name)
                 return value if type(value) is int and value >= 0 else None
-            result["usage"] = {"model": self.config.model, "input_tokens": tokens("prompt_tokens"),
+            result["usage"] = {"model": response_json.get('model', self.config.model), "input_tokens": tokens("prompt_tokens"),
                                "output_tokens": tokens("completion_tokens")}
             return result
         except TimeoutError:

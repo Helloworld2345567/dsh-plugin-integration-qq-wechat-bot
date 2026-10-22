@@ -27,7 +27,9 @@ export async function download(url:string,signal:AbortSignal,limit=50*1024*1024,
   if(!addresses.length || addresses.some(a=>!publicAddress(a.address))) throw new RemoteError('PRIVATE_MEDIA_ADDRESS');
   const chosen=addresses[0];
   return new Promise<Buffer>((resolve,reject)=>{
-    const request=https.get(parsed,{signal,timeout:30000,lookup:((_h:any,_o:any,cb:any)=>cb(null,chosen.address,chosen.family)) as any},response=>{
+    // Node's autoSelectFamily requests all:true and expects an address array.
+    // Return only the already validated/pinned address in either callback form.
+    const request=https.get(parsed,{signal,timeout:30000,lookup:((_h:any,options:any,cb:any)=>options?.all?cb(null,[chosen]):cb(null,chosen.address,chosen.family)) as any},response=>{
       if(response.statusCode && response.statusCode>=300 && response.statusCode<400 && response.headers.location){ response.resume(); void download(new URL(response.headers.location,parsed).href,signal,limit,redirects+1).then(resolve,reject); return; }
       if(response.statusCode!==200){response.resume();reject(new RemoteError('MEDIA_DOWNLOAD_FAILED',response.statusCode));return;}
       if(Number(response.headers['content-length']??0)>limit){response.destroy();reject(new RemoteError('MEDIA_TOO_LARGE'));return;}

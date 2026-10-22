@@ -35,9 +35,10 @@ test('bot working directory saves preserve bindings and permissions; invalid pat
   assert.equal(f.store.bot(f.bot.id).workingDirectory,directory);assert.equal((await realpath(directory)).toLowerCase(),directory.toLowerCase());
   const cleared=runtime.saveBot({...saved,workingDirectory:''});assert.equal(cleared.workingDirectory,undefined);assert.notEqual(workingDirectory(cleared,binding.key),directory);
 });
-test('configuration directory action opens only the fixed storage directory and rejects arbitrary path requests',async t=>{
+test('configuration directory action opens only the selected persona directory and rejects arbitrary path requests',async t=>{
   const f=await fixture(t);const opened:string[]=[];const admin=new Admin({} as any,{store:f.store} as any,'fixture',async directory=>{opened.push(directory);});
-  const result=await admin.invoke('config.directory.open',{botId:f.bot.id,configId:'sakura'});assert.deepEqual(result,{opened:true,directory:f.store.home});assert.deepEqual(opened,[f.store.home]);
+  const directory=f.store.personas.directory('sakura');
+  const result=await admin.invoke('config.directory.open',{botId:f.bot.id,configId:'sakura'});assert.deepEqual(result,{opened:true,directory});assert.deepEqual(opened,[directory]);
   await assert.rejects(admin.invoke('config.directory.open',{path:f.folder}));await assert.rejects(admin.invoke('config.directory.open',{botId:'missing'}));assert.equal(opened.length,1);
   const failing=new Admin({} as any,{store:f.store} as any,'fixture',async()=>{throw Error('未确认配置目录窗口已打开');});
   await assert.rejects(failing.invoke('config.directory.open',{botId:f.bot.id}),/未确认配置目录窗口已打开/);

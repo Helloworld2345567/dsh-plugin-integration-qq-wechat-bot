@@ -1,5 +1,65 @@
 # 验证记录
 
+## 0.2.2：自然语言会话、人格与技能管理（2026-10-22）
+
+新增 `bot_session`、`bot_persona`、`bot_skills`，与已有模型、统计、自修改工具共同覆盖聊天命令。基础操作整句可在模型前识别，其他表达通过原生模型工具处理；只有当前主任务可以提交管理变更。原有斜杠命令继续可用，权限保持一致。
+
+会话变更持久化为 `session-action`，工具先返回排队状态，当前轮结束后执行并通过投递队列确认。执行前及异步校验后核对真实会话、来源、人格版本和当前权限；停止会取消待执行操作。启动时只继续排队项，执行中断的项记为结果未知并保留诊断。
+
+| 类别 | 状态 | 本次证据与边界 |
+| --- | --- | --- |
+| TypeScript 全量 | PASS | 160/160，`.codex/test-natural-final.log`；整句自然控制及否定/引用反例、来源与归属、排队去重、自等待规避、停止与压缩取消、身份和人格变更竞态、恢复及技能目录；升级排空期间停止仅取消本身份待执行或校验中的操作 |
+| Python 媒体 | PASS | 13/13，`.codex/test-natural-python.log`；本次未修改媒体 Python 逻辑 |
+| 类型检查 | PASS | `npm run typecheck` |
+| 原生 Harness 集成 | PASS | `.codex/native-1792640469829/result.json`：53 次本地模型请求、4 次压缩、52 项检查。真实 receive/process 路径验证排队压缩与新会话，模型工具返回后才执行，宿主结果持久化投递，新会话不含旧历史；普通用户基本工具、可信私聊无本机权限目录及子任务只读边界通过 |
+| 构建与发布扫描 | PASS | `npm run build`、`npm run check:release`；48 个发布文件，不含运行数据、凭据或本机路径 |
+| 真实提供商与平台主动收发 | NOT_RUN | 本次不调用真实模型提供商，不发送主动平台测试消息；自然语言理解效果由实际聊天验证 |
+
+基线保存在 `.codex/baselines/natural-language-20261022/`；保留此前未提交的人格、媒体、自修改、命令和统计实现。
+
+## 0.2.1：自然语言切换模型与图片输入故障修复（2026-10-22）
+
+新增 `bot_model` 的 `list / set / reset`：可信私聊用户可用自然语言切换当前会话模型，无需本机工具权限；下一轮生效，当前轮及已启动子任务使用冻结配置。普通用户、群聊与已撤销可信身份的调用仍拒绝。
+
+本次图片故障发生在附件准备阶段：Node.js 24 的自动地址选择要求 pinned DNS lookup 在 `all: true` 时返回地址数组，旧实现返回单个地址字符串，触发 `Invalid IP address: undefined`。原参考编辑请求尚未到达模型，也没有创建新图片编辑任务；该失败不能归因于图片模型不支持识别。修复保留原有公网地址校验与重定向检查，并补充持久化失败反馈及同会话后续追问上下文。
+
+| 类别 | 状态 | 本次证据与边界 |
+| --- | --- | --- |
+| Node.js 24 下载定向回归 | PASS | 原实现经实际 `download()` 与 Node 原生连接路径复现同一错误；修复后覆盖 `all: true` 数组回调、IPv4/IPv6 单地址回调、私网拒绝及重定向检查。传输为本地 fixture，无提供商调用 |
+| 真实故障参考图下载与解码 | PASS | 只读读取原故障请求的附件信息，用修复后的 `download()` 获取 101001 bytes；Pillow `verify()` 与完整像素 `load()` 均通过，JPEG / RGB，1268 × 868。脱敏记录位于 `.codex/image-model-diagnosis/incident.json`，未修改实际运行数据库 |
+| 类型检查、TypeScript 全量与 Python | PASS | `npm run typecheck`；TypeScript 122/122，`.codex/test-image-model-final.log`；Python 13/13，`.codex/test-image-model-python.log`。覆盖模型切换与撤权、静默图片失败、重复事件、排队追问以及跨 bot 投递失败归属 |
+| 原生 Harness 集成 | PASS | `.codex/native-1792638798948/result.json`：47 次本地模型请求、3 次原生压缩；可信私聊无本机权限时可调用模型工具，切换当前轮继续用旧模型、下一轮生效、既有子任务保持模型；照片像素与附件 ID 同步传入，经真实 PiAiAdapter 编码后本地 provider callback 获得精确 variant base64 字节，无外部 HTTP；失败追问及终端权限关闭后重新开启通过 |
+| 构建与发布扫描 | PASS | `npm run build`、`npm run check:release`；48 个发布文件，运行数据、凭据与故障参考图未进入包 |
+| 实际提供商图片识别／参考编辑 | NOT_RUN | 本次未发起付费提供商请求。下载与像素解码通过不代表语义识别或参考编辑通过 |
+| QQ／微信主动验证消息 | NOT_RUN | 本次诊断未主动发送平台消息；真实附件下载不替代平台收发验收 |
+
+下列 0.2.0 数量仅属于该版本，不沿用为 0.2.1 验证结果。故障参考图、原始日志及实际运行数据库均只在本地保留，不加入发布包。原生回归还发现并修复了已有持久终端阻止权限降级的问题：从当前 Agent 保留的人格模式作用域取得终端服务，关闭该 Agent 的终端后再改变权限；未完成的终端创建继续阻止切换。重新启用权限时，只针对已关闭终端的精确失效 ID 重试一次安全的目录初始化。
+
+## 0.2.0：自修改、命令与统计（2026-10-22）
+
+本次保留并复用了未提交的人格文件功能；原有 `personas.ts` 与人格测试保持原内容。变更前副本位于 `.codex/baselines/evolution-20261022/`。未修改实际使用的 BOT_HOME、平台凭据或账号连接，未提交、推送或发布远程仓库。
+
+| 类别 | 状态 | 本次证据与边界 |
+| --- | --- | --- |
+| 类型检查、构建与发布扫描 | PASS | `npm run typecheck`、`npm run build`、`npm run check:release` |
+| TypeScript 全量 | PASS | 108/108，`.codex/test-final.log`；会话归属、配置优先级、命令并发和取消、最近附件会话隔离、动态技能冲突与回退、生命周期恢复、用量去重、北京时间边界及权限拒绝 |
+| Python 媒体 | PASS | 13/13，`.codex/python-final.log`；沿用真实本地文件/媒体处理，新增真实请求用量 sidecar 的成功和失败记录；提供商响应为模拟 |
+| 原生 Harness 集成 | PASS | `.codex/native-1792634911367/result.json`：39 次本地模拟模型请求、3 次原生压缩。覆盖手动压缩、人格/模型/新会话、父子任务固定技能版本、可信工具执行和即时撤权、实际主/子/压缩统计；多文件 Python 技能在父子 shell 执行后无字节码污染 |
+| 独立生命周期与故障回退 | PASS | `.codex/lifecycle-native-1792635177924/result.json`；真实 Plugin Manager 替换、监督重启重新激活、故意损坏新插件后的回退，以及独立协调器跨目标卸载运行。升级日志明确返回 `stop-profile` / `restart-required` / `no-hmr`，实际采用监督重启 |
+| 不重启的插件代码热替换 | NOT_RUN | 协调器的热更新分支通过模拟测试；当前 Harness profile 的真实替换要求重启，不能据升级成功声称无需重启的热替换已获验证。人格与技能下一轮热生效已由原生集成证明 |
+| 实际 0.2.0 包安装与监督启动器 | PASS | `.codex/install-smoke-1792635632966/result.json`；完整根包安装到独立空 BOT_HOME，归档与实际安装身份一致，重启前后认证管理 API 健康，Harness PID 确实变化，持久化重启任务 succeeded。正常停止 exit 0，启动器状态和数据库运行占用均释放；零 bot、零平台连接 |
+| 统计及自进化面板 | PASS | 浏览器加载和人工目视检查，按 bot 筛选、模型/未知用量、失败/取消、趋势、群名单范围和自进化记录可见；截图 `.codex/evidence/evolution-0.2.0/statistics.png`。全部使用合成数据，测试预览进程已停止 |
+| 真实模型提供商、QQ、微信 | NOT_RUN | 本次未发送真实提供商请求或平台验证消息，未扫码；本地 fixture 不替代真实平台验收 |
+| 生产实例升级 | NOT_RUN | 提供安装包及升级说明，本次没有替换实际使用的实例 |
+
+安装 smoke 的早期尝试因测试端未保留 Harness 303 登录响应的 cookie 而未完成健康判断；修正测试后完整重跑通过。生命周期测试的 `activationMode` 最初仅检查激活失败后的重启记录，会漏掉 Plugin Manager 直接要求重启的情况；现按全部持久化 restarting 事件判断，并依据同一原始任务日志修正结果。没有把这两项测试问题记为产品或热更新成功证据。
+
+本次验证汇总与最终制品 SHA256 保存于 `.codex/evidence/evolution-0.2.0/verification.json`，最终安装包在 `.codex/releases/`。源码中包含复现入口 `npm run test:native`、`npm run test:lifecycle-native`、`npm run test:install-smoke`。安装 smoke 需要本地媒体 Python 环境，可用 `BOT_TEST_PYTHON` 指定；不应指向现有运行实例的 BOT_HOME。原始 Host 日志包含短期本机授权信息，只在本地保留。
+
+## 早期版本
+
+2026-10-22 人格文件拆分补充：0.1.7 将可编辑设置与正文分别保存至 personas/<id>/config.json、persona.md，SQLite 保留生效与历史版本及运行状态。类型检查、构建、发布扫描通过；TypeScript 全量 44 项、Python 11 项本地测试通过。覆盖旧库原版本导出、草稿不覆盖、文件校验与重复应用、版本冲突、校验期间文件变化、数据库提交失败回滚、进程中断恢复、活动保存进程保护和目录越界拒绝。真实 Harness 集成 28 次本地模型请求、2 次自动压缩通过：在多步骤轮次中应用人设文件，当前轮配置保持不变、下一轮使用文件人设且保留历史；从文件撤销 skill 后立即拒绝专用与兼容工具入口。本项未向真实模型提供商或 QQ／微信发送验证消息。
+
 基线：Node 24.18.0、DeepSeek Harness 0.2.1-rc.2、Python 3.12.10、Windows PowerShell 7。执行日期 2026-10-21 UTC。
 
 | 类别 | 状态 | 实际证据 |

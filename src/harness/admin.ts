@@ -11,23 +11,28 @@ import { SessionId } from '@deepseek-ai/dsh-session';
 import {resolveImageSkill,imageSkillEnabled} from '../core/image-skill.js';
 import {defaultWorkspaceRoot,workingDirectory} from '../core/workspaces.js';
 import {openDirectory} from './open-directory.js';
+import type {BotFeatures} from '../core/features.js';
 
 export class Admin {
   readonly attempts=new Map<string,{botId:string;ticket:string;expires:number}>();
-  constructor(readonly ctx:Context,readonly runtime:BotRuntime,readonly token:string,readonly revealDirectory:(directory:string)=>Promise<void>=openDirectory){}
+  constructor(readonly ctx:Context,readonly runtime:BotRuntime,readonly token:string,readonly revealDirectory:(directory:string)=>Promise<void>=openDirectory,readonly features?:BotFeatures){}
   async invoke(action:string,input:any):Promise<unknown>{
     const {store}=this.runtime;
     switch(action){
+      case 'stats.query':if(!this.features)throw Error('STATS_UNAVAILABLE');return this.features.stats.query(input);
+      case 'evolution.list':return this.features?.history()??[];
+      case 'skills.list':{if(!this.features)throw Error('SKILLS_UNAVAILABLE');return this.features.skills.list(store.config(z.string().parse(input.id)));}
       case 'state':return{configs:store.configs(),bots:await Promise.all(store.bots().map(async b=>({...b,status:this.runtime.states.get(b.id)??'stopped',activeSessions:this.runtime.activeSessions(b.id),credentialConfigured:!!await this.runtime.credentials.read(b.id)}))),sessions:store.list<any>('binding').map(binding=>{const snapshot=store.get<any>('turn-snapshot',binding.sessionId);return {...binding,turn:snapshot?{configId:snapshot.config.id,revision:snapshot.config.revision,startedAt:snapshot.startedAt}:null};}),jobs:store.list('job'),failures:store.list('failure'),deliveries:store.deliveries().slice(-200).map(({reply,...delivery})=>delivery),versions:store.list('config-version')};
       case 'models':return Promise.all(this.ctx.llm.listProviders().map(async p=>({id:p.id,models:(await this.ctx.llm.listModels(p.id)).map(m=>({id:m.id,name:m.name}))})));
-      case 'directories':return{workspaceRoot:defaultWorkspaceRoot(),configDirectory:store.home,sessions:store.list<any>('binding').map(binding=>({sessionId:binding.sessionId,botId:binding.scope.botId,directory:workingDirectory(store.bot(binding.scope.botId),binding.key)}))};
-      case 'config.directory.open':{const value=z.object({botId:z.string().optional(),configId:z.string().optional()}).strict().parse(input);if(value.botId)store.bot(value.botId);if(value.configId)store.config(value.configId);await this.revealDirectory(store.home);return{opened:true,directory:store.home};}
+      case 'directories':return{workspaceRoot:defaultWorkspaceRoot(),configDirectory:store.personas.root,storageDirectory:store.home,personas:store.configs().map(c=>store.personaStatus(c.id)),sessions:store.list<any>('binding').map(binding=>({sessionId:binding.sessionId,botId:binding.scope.botId,directory:workingDirectory(store.bot(binding.scope.botId),binding.key)}))};
+      case 'config.directory.open':{const value=z.object({botId:z.string().optional(),configId:z.string().optional()}).strict().parse(input);const configId=value.configId??(value.botId?store.bot(value.botId).configId:undefined);if(value.botId)store.bot(value.botId);if(configId)store.config(configId);const directory=store.personas.directory(configId);await this.revealDirectory(directory);return{opened:true,directory};}
       case 'skill.image.status':return Object.fromEntries(store.configs().map(config=>{try{const endpoint=resolveImageSkill(config);return [config.id,{enabled:imageSkillEnabled(config),model:endpoint.model,keyEnv:endpoint.keyEnv,keyConfigured:!!process.env[endpoint.keyEnv],overridden:!!(config.media.image?.baseUrl||config.media.image?.model||config.media.image?.keyEnv)}];}catch(error){return [config.id,{enabled:false,error:error instanceof Error?error.message:'IMAGE_SKILL_CONFIGURATION_INVALID'}];}}));
       case 'skill.media.status':return Object.fromEntries(await Promise.all(store.configs().map(async config=>[config.id,Object.fromEntries(await Promise.all((['asr','video'] as const).map(async role=>[role,await this.runtime.media.analysisStatus(config,role)])))])));
       case 'capability.list':return store.list('capability-status');
       case 'capability.record':{const value=z.object({configId:z.string(),revision:z.number().int(),role:z.enum(['image','asr','video']),status:z.enum(['PASS','FAIL','BLOCKED','NOT_RUN']),evidence:z.string().min(1).max(2000)}).parse(input);const config=store.config(value.configId);if(config.revision!==value.revision)throw new ConflictError('配置已变化，请针对当前版本重新验收');const record={...value,updatedAt:Date.now(),source:'operator'};store.put('capability-status',`${value.configId}:${value.revision}:${value.role}`,record);return record;}
       case 'config.save':return this.runtime.saveConfig(input.config,input.expectedRevision);
-      case 'config.copy':{const original=store.config(z.string().parse(input.id));return this.runtime.saveConfig({...original,id:z.string().parse(input.newId),name:z.string().parse(input.name),revision:1});}
+      case 'config.files.apply':return this.runtime.applyPersonaFiles(z.object({id:z.string()}).strict().parse(input).id);
+      case 'config.copy':{const original=store.config(z.string().parse(input.id));const newId=z.string().parse(input.newId);this.features?.skills.copy(original,newId);return this.runtime.saveConfig({...original,id:newId,name:z.string().parse(input.name),revision:1});}
       case 'bot.save':{const bot=this.runtime.saveBot(input);if(!bot.enabled||bot.archived)await this.runtime.stop(bot.id);return bot;}
       case 'bot.start':await this.runtime.start(z.string().parse(input.id));return{ok:true};
       case 'bot.stop':await this.runtime.stop(z.string().parse(input.id));return{ok:true};
@@ -55,7 +60,7 @@ export class Admin {
       }
       case 'memory.list':return store.memories(z.string().parse(input.scope));
       case 'session.history':{
-        const id=z.string().parse(input.id);if(!store.list<any>('binding').some(b=>b.sessionId===id))throw new Error('会话不属于机器人集成');
+        const id=z.string().parse(input.id);if(!store.get('session',id)&&!store.list<any>('binding').some(b=>b.sessionId===id))throw new Error('会话不属于机器人集成');
         const log=await this.ctx.sessionQuery.readSession(SessionId(id));return log.events.filter(e=>['user/message','assistant/message','tool/result','turn/start','turn/end','request/header'].includes(e.type)).slice(-200).map(e=>e.type==='assistant/message'?{...e,data:{...e.data,message:{...e.data.message,content:e.data.message.content.filter(b=>b.type!=='reasoning')}}}:e);
       }
       case 'memory.forget':store.forget(z.string().parse(input.scope),z.string().parse(input.key));return{ok:true};
@@ -63,7 +68,7 @@ export class Admin {
         const value=z.object({scope:z.string(),key:z.string().max(100),value:z.string().min(1).max(500),version:z.number().int()}).parse(input);
         store.correctMemory(value.scope,value.key,value.value,value.version);return{ok:true};
       }
-      case 'session.cancel':{const id=z.string().parse(input.id);const binding=store.list<any>('binding').find(b=>b.sessionId===id);if(!binding)throw new Error('会话不存在');await this.runtime.receive({id:randomUUID(),scope:binding.scope,text:'/stop',attachments:[],reply:{},timestamp:Date.now()});return{ok:true};}
+      case 'session.cancel':{const id=z.string().parse(input.id);const binding=store.list<any>('binding').find(b=>b.sessionId===id);if(!binding)throw new Error('会话不存在');await this.runtime.stopSession(binding.scope);return{ok:true};}
       default:throw new Error('UNKNOWN_ADMIN_ACTION');
     }
   }

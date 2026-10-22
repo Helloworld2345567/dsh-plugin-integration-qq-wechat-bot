@@ -120,7 +120,7 @@ test('one blocked bot cannot block another bot delivery',async t=>{
 test('invalid models and media URLs never replace a valid configuration',async t=>{
   const f=await runtimeFixture(t,async()=>{throw Error('unused');});const c=f.store.config('default');await assert.rejects(f.runtime.saveConfig({...c,model:{provider:'p',model:'invalid'}},1),/UNKNOWN_MODEL/);assert.equal(f.store.config('default').revision,1);
   for(const baseUrl of ['file:///tmp/a','http://127.0.0.1','https://user:secret@example.com','https://example.com?token=secret'])assert.equal(configSchema.safeParse({...c,media:{image:{baseUrl,model:'x',keyEnv:'KEY'}}}).success,false);
-  assert.equal(configSchema.safeParse({...c,skills:['private-global-skill']}).success,false);
+  assert.equal(configSchema.safeParse({...c,skills:['private-global-skill']}).success,true);assert.equal(configSchema.safeParse({...c,skills:['../escape']}).success,false);
 });
 test('attachment DNS policy blocks local, reserved and mapped addresses',()=>{
   for(const address of ['127.0.0.1','10.1.2.3','169.254.169.254','172.31.1.2','192.168.1.2','100.64.0.1','198.18.0.1','224.0.0.1','::1','::ffff:8.8.8.8','fc00::1','fe80::1','2001:db8::1','garbage'])assert.equal(publicAddress(address),false,address);
@@ -134,7 +134,7 @@ test('reset cancels active work, preserves other users and prevents late outputs
   const entered=gate();let f:any;f=await runtimeFixture(t,async(binding,messages,signal)=>{if(binding.scope.senderId==='alice'){entered.resolve();await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));}return{turnId:'t',outputs:[{type:'text',text:binding.scope.senderId}],snapshot:freezeTurn(f.store.config('default'),f.store.bot('one'),binding.scope,messages.map(m=>m.id))};});
   await f.runtime.receive(message('a','work'));const processing=f.runtime.process(scopeKey(scope()));await entered.promise;const before=f.store.binding(scope()).sessionId;
   await f.runtime.receive(message('b','bob work',scope('one','bob')));await f.runtime.process(scopeKey(scope('one','bob')));
-  await f.runtime.receive(message('reset','/reset'));await processing;assert.notEqual(f.store.binding(scope()).sessionId,before);assert.equal(f.store.messages(scopeKey(scope()),['cancelled']).length,2);assert.deepEqual(f.store.deliveries().map((d:any)=>d.output.text),['bob']);
+  await f.runtime.receive(message('reset','/reset'));await processing;assert.notEqual(f.store.binding(scope()).sessionId,before);assert.equal(f.store.messages(scopeKey(scope()),['cancelled']).length,1);assert.equal(f.store.deliveries()[0].output.text,'bob');assert.match(f.store.deliveries()[1].output.text,/已开启新会话/);
 });
 test('new output appended during an active send is drained without needing another inbound event',async t=>{
   const entered=gate(),wait=gate();let count=0;const f=await runtimeFixture(t,async()=>{throw Error('unused');},async()=>{if(count++===0){entered.resolve();await wait.promise;}return 'receipt';});const binding=f.store.binding(scope());

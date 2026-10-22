@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import WebSocket from 'ws';
 import { backoff, download, jsonRequest, RemoteError } from '../core/network.js';
 import type { ChannelAdapter, LoginState, Credential, BotInstance, InboundMessage, MediaInput, Delivery, Asset } from '../core/types.js';
+import type {GroupObservation} from '../core/stats.js';
 
 const API='https://api.sgroup.qq.com';
 export function decryptBinding(encoded:string,key:string):string { const raw=Buffer.from(encoded,'base64');if(raw.length<=28)throw new Error('INVALID_BINDING_CREDENTIAL');const decipher=createDecipheriv('aes-256-gcm',Buffer.from(key,'base64'),raw.subarray(0,12));decipher.setAuthTag(raw.subarray(-16));return Buffer.concat([decipher.update(raw.subarray(12,-16)),decipher.final()]).toString('utf8'); }
@@ -12,10 +13,16 @@ export function qqInbound(bot:BotInstance,event:any):InboundMessage|undefined {
   const attachments:MediaInput[]=(data.attachments??[]).map((a:any)=>{const mime=String(a.content_type??'application/octet-stream');return {name:String(a.filename??'attachment.bin'),mime,kind:mime.startsWith('image/')?'image':mime.startsWith('video/')?'video':mime.startsWith('audio/')?'audio':'file',url:String(a.url).startsWith('//')?`https:${a.url}`:a.url};});
   return {id:String(data.id),scope:{botId:bot.id,platform:'qq',accountId:bot.accountId,kind:group?'group':'private',channelId:group?String(data.group_openid):sender,senderId:sender},text:String(data.content??'').replace(/<@!?\d+>/g,'').trim(),attachments,quoted:data.message_reference?{id:String(data.message_reference.message_id)}:undefined,reply:{target:group?String(data.group_openid):sender,kind:group?'group':'private',msgId:String(data.id)},timestamp:Date.now()};
 }
+export function qqGroupObservation(bot:BotInstance,event:any):GroupObservation|undefined{
+  if(!['GROUP_AT_MESSAGE_CREATE','GROUP_ADD_ROBOT','GROUP_DEL_ROBOT'].includes(event?.t)||!event.d)return;
+  const data=event.d;const groupId=data.group_openid??data.group_id??data.group?.id;if(typeof groupId!=='string'||!groupId)return;
+  const rawTime=data.timestamp;const parsed=typeof rawTime==='number'?(rawTime<1e12?rawTime*1000:rawTime):typeof rawTime==='string'?Date.parse(rawTime):NaN;
+  return{botId:bot.id,groupId,name:typeof data.group_name==='string'?data.group_name:typeof data.group?.name==='string'?data.group.name:undefined,event:event.t==='GROUP_ADD_ROBOT'?'joined':event.t==='GROUP_DEL_ROBOT'?'left':'observed',at:Number.isFinite(parsed)&&parsed>0?parsed:Date.now(),eventId:typeof data.id==='string'?data.id:typeof event.id==='string'?event.id:undefined};
+}
 export class QQAdapter implements ChannelAdapter {
   private readonly logins=new Map<string,{key:string;expires:number}>();
   private readonly tokens=new Map<string,{value:string;expires:number}>();
-  constructor(readonly request:typeof jsonRequest=jsonRequest){}
+  constructor(readonly request:typeof jsonRequest=jsonRequest,readonly groupObserver?:(event:GroupObservation)=>void,readonly socketFactory:(url:string)=>WebSocket=url=>new WebSocket(url)){}
   async beginLogin(signal?:AbortSignal):Promise<LoginState>{
     for(const [ticket,pending] of this.logins)if(pending.expires<Date.now())this.logins.delete(ticket);
     const key=randomBytes(32).toString('base64');const result:any=await this.request('https://q.qq.com/lite/create_bind_task',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key}),signal});
@@ -39,14 +46,16 @@ export class QQAdapter implements ChannelAdapter {
     while(!signal.aborted){try{
       status('connecting');const token=await this.token(credential,signal);const gateway:any=await this.request(`${API}/gateway/bot`,{headers:{Authorization:`QQBot ${token}`},signal});if(!gateway.url)throw new Error('QQ_GATEWAY_MISSING');
       await new Promise<void>((resolve,reject)=>{
-        const socket=new WebSocket(gateway.url);let heartbeat:ReturnType<typeof setInterval>|undefined;let completed=false;
+        const socket=this.socketFactory(gateway.url);let heartbeat:ReturnType<typeof setInterval>|undefined;let completed=false;let awaitingHeartbeat=false;let ready=false;
         const abort=()=>{socket.terminate();finish();};signal.addEventListener('abort',abort,{once:true});
-        const finish=(error?:Error)=>{if(completed)return;completed=true;if(heartbeat)clearInterval(heartbeat);signal.removeEventListener('abort',abort);error?reject(error):resolve();};
+        const finish=(error?:Error)=>{if(completed)return;completed=true;if(heartbeat)clearInterval(heartbeat);signal.removeEventListener('abort',abort);status(signal.aborted?'stopped':'reconnecting');error?reject(error):resolve();};
         socket.on('message',raw=>{try{const event=JSON.parse(String(raw));if(typeof event.s==='number')sequence=event.s;
-          if(event.op===10){heartbeat=setInterval(()=>{if(socket.readyState===WebSocket.OPEN)socket.send(JSON.stringify({op:1,d:sequence??null}));},event.d.heartbeat_interval);socket.send(JSON.stringify(sessionId?{op:6,d:{token:`QQBot ${token}`,session_id:sessionId,seq:sequence}}:{op:2,d:{token:`QQBot ${token}`,intents:(1<<25),shard:[0,1],properties:{os:process.platform,browser:'Harness',device:'Harness'}}}));}
-          if(event.t==='READY'){sessionId=event.d.session_id;attempt=0;status('connected');}
-          if(event.t==='RESUMED'){attempt=0;status('connected');}
+          if(event.op===10){const interval=Number(event.d?.heartbeat_interval);if(!Number.isFinite(interval)||interval<=0)throw new Error('QQ_HEARTBEAT_INVALID');if(heartbeat)clearInterval(heartbeat);heartbeat=setInterval(()=>{if(awaitingHeartbeat){socket.terminate();finish(new Error('QQ_HEARTBEAT_TIMEOUT'));return;}if(socket.readyState===WebSocket.OPEN){awaitingHeartbeat=true;socket.send(JSON.stringify({op:1,d:sequence??null}));}},interval);socket.send(JSON.stringify(sessionId?{op:6,d:{token:`QQBot ${token}`,session_id:sessionId,seq:sequence}}:{op:2,d:{token:`QQBot ${token}`,intents:(1<<25),shard:[0,1],properties:{os:process.platform,browser:'Harness',device:'Harness'}}}));}
+          if(event.op===11){awaitingHeartbeat=false;if(ready)status('connected');}
+          if(event.t==='READY'){sessionId=event.d.session_id;attempt=0;ready=true;status('connected');}
+          if(event.t==='RESUMED'){attempt=0;ready=true;status('connected');}
           if(event.op===7)socket.close();if(event.op===9){sessionId='';sequence=undefined;socket.close();}
+          const observation=qqGroupObservation(bot,event);if(observation)this.groupObserver?.(observation);
           const message=qqInbound(bot,event);if(message)void receive(message).catch(()=>status('inbound_error'));
         }catch{status('invalid_event');}});
         socket.on('error',()=>{socket.close();finish(new Error('QQ_WEBSOCKET_ERROR'));});socket.on('close',()=>finish());

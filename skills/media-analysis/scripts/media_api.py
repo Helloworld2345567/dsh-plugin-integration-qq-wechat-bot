@@ -14,6 +14,8 @@ import time
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'python' / 'vendor'))
+sys.path.insert(0, str(ROOT / 'python'))
+from model_usage import journal
 
 
 class AnalysisError(Exception):
@@ -39,6 +41,7 @@ def request(job, route, *, body=None, files=None, data=None):
     try:
         with requests.Session() as session:
             session.trust_env = False
+            call = journal(job)
             with session.post(endpoint['baseUrl'].rstrip('/') + route, headers=headers, json=body,
                               files=files, data=data, timeout=remaining(job),
                               allow_redirects=False, stream=True) as response:
@@ -50,7 +53,9 @@ def request(job, route, *, body=None, files=None, data=None):
                     raw.extend(chunk)
                     if len(raw) > 1024 * 1024:
                         raise AnalysisError('PROVIDER_OUTPUT_TOO_LARGE')
-                return json.loads(raw)
+                result = json.loads(raw)
+                journal(job, call, result)
+                return result
     except requests.Timeout:
         raise AnalysisError('MODEL_TIMEOUT_MAY_BE_BILLED') from None
     except requests.RequestException:
@@ -132,7 +137,8 @@ async def analyze_video(job):
     from video_understanding_core.backend import BackendConfig, ChatCompletionsGemini
     endpoint = job['endpoint']
     limits = Limits(job_timeout=min(150, remaining(job, 150)))
-    backend = ChatCompletionsGemini(BackendConfig(endpoint['baseUrl'], os.environ[endpoint['keyEnv']], endpoint['model'], headers=endpoint.get('headers', {})), limits)
+    backend = ChatCompletionsGemini(BackendConfig(endpoint['baseUrl'], os.environ[endpoint['keyEnv']], endpoint['model'], headers=endpoint.get('headers', {})), limits,
+                                    usage_observer=lambda call=None, response=None: journal(job, call, response))
     service = VideoService(Path(job['output']) / 'video', backend, limits=limits)
     caller = CallerContext(job['scope'], job['scope'], job['scope'])
     try:

@@ -10,6 +10,7 @@ export async function registerMode(ctx:Context):Promise<()=>Promise<void>>{
     {id:'tool-fs-search',name:'@deepseek-ai/dsh-tool-fs-search',config:{sampleOverCapGlobResults:false}},
     {id:'compaction',name:'cordis:group',group:true,isolate:{compaction:true,toolResultPruner:true},config:[
       {id:'compaction-basic',name:'@deepseek-ai/dsh-compaction-basic',config:{headroomTokens:2048,maxTokens:1024}},
+      {id:'command-compact',name:'@deepseek-ai/dsh-command-compact'},
       {id:'tool-result-pruner',name:'@deepseek-ai/dsh-compaction-tool-result-pruner',config:{thresholdChars:8192,headChars:4096,tailChars:1024}},
     ]},
     {id:'persistent-shell',name:'cordis:group',group:true,isolate:{terminals:true},config:[

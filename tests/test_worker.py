@@ -134,6 +134,27 @@ class WorkerTests(unittest.TestCase):
             with self.assertRaisesRegex(media_api.AnalysisError,'MODEL_TIMEOUT_MAY_BE_BILLED'):media_api.request(self.job('transcribe'),'/chat/completions')
             self.assertEqual(session.post.call_count,1)
 
+    def test_usage_journal_survives_failure_and_captures_actual_model_without_content(self):
+        import requests
+        from model_usage import journal
+        job = self.job('transcribe'); job['usagePath'] = str(self.root/'usage.json')
+        session=Mock();session.__enter__=Mock(return_value=session);session.__exit__=Mock(return_value=False)
+        session.post.side_effect=requests.Timeout('fixture')
+        with patch.dict(os.environ,{'TEST_PROVIDER_KEY':'fixture-secret'},clear=True),patch('requests.Session',return_value=session):
+            with self.assertRaises(media_api.AnalysisError): media_api.request(job,'/chat/completions')
+        records=json.loads(Path(job['usagePath']).read_text()); self.assertEqual(len(records),1)
+        self.assertTrue(records[0]['attempted']);self.assertNotIn('usage',records[0]);self.assertNotIn('fixture-secret',json.dumps(records))
+        journal(job, records[0], {'model':'actual-model','usage':{'prompt_tokens':10,'completion_tokens':5,'completion_tokens_details':{'reasoning_tokens':3,'text':'secret'},'content':'secret'},'text':'private'})
+        records=json.loads(Path(job['usagePath']).read_text());self.assertEqual(len(records),1);self.assertEqual(records[0]['model'],'actual-model')
+        self.assertEqual(records[0]['usage']['completion_tokens_details'],{'reasoning_tokens':3});self.assertNotIn('private',json.dumps(records));self.assertNotIn('secret',json.dumps(records))
+
+    def test_local_processing_and_validation_failures_do_not_claim_model_calls(self):
+        file=self.root/'test.txt';file.write_text('fixture')
+        job=self.job('document_read',file);job['usagePath']=str(self.root/'usage.json')
+        worker.execute(job);self.assertFalse(Path(job['usagePath']).exists())
+        with self.assertRaises(worker.JobError):worker.execute(self.job('image_edit'))
+        self.assertFalse((self.root/'model-usage.json').exists())
+
     @unittest.skipUnless(shutil.which('ffmpeg'), 'ffmpeg not installed')
     def test_video_payload_contains_actual_mp4_and_checks_reported_media(self):
         from video_understanding_core.backend import BackendConfig,ChatCompletionsGemini,validate_result

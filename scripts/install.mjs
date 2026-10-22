@@ -1,9 +1,10 @@
-import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, access,stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { productHome,run,workspaceRoot } from './runtime.mjs';
 import YAML from 'yaml';
+import {archivePackage,recordInstallation,bundleName} from './installation.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 await mkdir(productHome,{recursive:true});
 try{await writeFile(path.join(productHome,'workspace.json'),JSON.stringify({root:workspaceRoot},null,2)+'\n',{flag:'wx'});}catch(error){if(error.code!=='EEXIST')throw error;}
@@ -37,10 +38,14 @@ try{await access(patch);}catch{await writeFile(patch,`# Product-owned initial co
   disabled: true
 `);}
 const source=path.resolve(process.argv[2]||root);await access(source);
-await run(['plugin','--profile','bots','add',source]);
+const archive=await archivePackage(source,productHome);
+const lifecycleArchive=await archivePackage(path.join(root,'packages','bot-lifecycle'),productHome);
+await run(['plugin','--profile','bots','add',lifecycleArchive.path]);
+await run(['plugin','--profile','bots','add',archive.path]);
 // Native discovery does not always add a local tarball's bundle to the ordered profile.
 const installedProfile=JSON.parse(await readFile(manifest,'utf8'));
 installedProfile.dsh??={};installedProfile.dsh.profile??={};
-installedProfile.dsh.profile.bundles=[...new Set([...(installedProfile.dsh.profile.bundles??[]),'dsh-plugin-integration-qq-wechat-bot'])];
+installedProfile.dsh.profile.bundles=[...new Set([...(installedProfile.dsh.profile.bundles??[]),'dsh-bot-lifecycle',bundleName])];
 await writeFile(manifest,JSON.stringify(installedProfile,null,2)+'\n');
+await recordInstallation({home:productHome,sourceRoot:path.resolve(process.env.BOT_SOURCE_ROOT||((await stat(source)).isDirectory()?source:root)),installedFrom:source,archive,installedRoot:path.join(profile,'node_modules',bundleName)});
 console.log(`Installed. Runtime home: ${productHome}. Start with node scripts/start.mjs`);
