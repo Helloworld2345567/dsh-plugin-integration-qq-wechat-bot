@@ -9,7 +9,12 @@ export class AdminClient {
   private readonly sequences=new Map<string,number>();
   private readonly revisions=new Map<string,string>();
   private readonly cache=new Map<string,unknown>();
-  constructor(readonly options:AdminClientOptions){this.transport=options.transport??{fetch};}
+  constructor(readonly options:AdminClientOptions){
+    // Keep the native browser fetch receiver intact. Calling an extracted
+    // Window.fetch as a method of the transport object throws Illegal
+    // invocation in browsers.
+    this.transport=options.transport??{fetch:(input,init)=>fetch(input,init)};
+  }
   private key(name:string,input:unknown):string{return JSON.stringify([name,input]);}
   query<T>(name:string,input:Record<string,unknown>={},signal?:AbortSignal):Promise<T|undefined>{
     const key=this.key(name,input);const existing=this.inFlight.get(key);if(existing)return existing.promise as Promise<T|undefined>;
