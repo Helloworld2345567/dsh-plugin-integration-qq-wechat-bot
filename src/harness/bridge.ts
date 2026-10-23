@@ -42,7 +42,7 @@ export class NativeHarness implements HarnessPort {
   private readonly scoped=new WeakMap<Agent,LiveSession>();
   private readonly closedTerminals=new WeakMap<Agent,Set<string>>();
   readonly skillFiles:DynamicSkills;
-  private current(live:LiveSession):BotConfig {return this.store.effectiveConfig(this.store.get<SessionBinding>('binding',live.binding.key)??live.binding);}
+  private current(live:LiveSession):BotConfig {return this.store.effectiveConfig(this.store.findBinding(live.binding.key)??live.binding);}
   private turn(fallback:LiveSession,agent?:object):LiveSession{return agent?this.scoped.get(agent as Agent)??fallback:fallback;}
   private requireMainAgent(live:LiveSession,agent?:Agent):void {if(!agent||this.live.get(live.binding.sessionId)?.handle.agent!==agent)throw new Error('MAIN_AGENT_REQUIRED: 会话管理变更必须由当前主任务执行');}
   private async syncPermissions(ctx:Context,agent:Agent,live:LiveSession):Promise<void>{
@@ -80,15 +80,15 @@ export class NativeHarness implements HarnessPort {
     this.skillFiles=extensions.skills??new DynamicSkills(store);
     const compactions=new Map<string,string>();
     ctx.on('session/event',(session,event)=>{
-      if(!store.get('stats-session',session.id))return;
+      if(!store.statsSessionExists(session.id))return;
       if(event.type==='compaction/start')compactions.set(session.id,String((event.data as any).compactionId));
-      const ownedStart=store.get<number>('stats-owned-start',session.id)??0;
+      const ownedStart=store.statsOwnedStart(session.id);
       if(Number(event.seq)>=ownedStart)extensions.stats?.recordNative(session.id,event);
       if(event.type==='compaction/end')compactions.delete(session.id);
     });
     ctx.on('llm/stream',async function*(options,next){
       const sessionId=options.sessionId;const stats=extensions.stats;
-      if(options.purpose!=='compaction'||!sessionId||!stats||!store.get('stats-session',sessionId)){yield* next();return;}
+      if(options.purpose!=='compaction'||!sessionId||!stats||!store.statsSessionExists(sessionId)){yield* next();return;}
       const id=compactions.get(sessionId)??randomUUID();const at=Date.now();let usage:unknown;
       // Record before dispatch so process death leaves an unknown call, not a zero.
       stats.recordAuxiliary(sessionId,{id,at,provider:options.provider,model:options.model,kind:'compaction'});
@@ -101,7 +101,7 @@ export class NativeHarness implements HarnessPort {
       const parent=ctx.agents.list().find(owner=>this.scoped.has(owner)&&ctx.agents.isOwnedBy(agent.id,owner));if(!parent)return undefined;
       const original=this.scoped.get(parent)!;const child={...original,snapshot:original.snapshot,sources:[...original.sources],shellDirectory:undefined,selection:{current:this.selection(original.snapshot.config as BotConfig),assembled:undefined}};
       this.scoped.set(agent,child);
-      store.put('stats-owned-start',agent.id,Number(agent.session.firstLiveSeq));
+      store.saveStatsOwnedStart(agent.id,Number(agent.session.firstLiveSeq));
       extensions.stats?.observeSession(agent.id,child.binding.scope.botId,child.binding.sessionId,'subagent');
       await agent.ctx.inject(['tools','skills','systemPrompt','permissionPresets','llm'],async childCtx=>{
         if(!scopeParentOf(agent))await ctx.agentPresets.mount(childCtx,'bot-unified-chat');
@@ -176,8 +176,8 @@ export class NativeHarness implements HarnessPort {
         if(event.type==='turn/start'){
           try{
           live.policyError=undefined;const currentBot=this.store.bot(binding.scope.botId);live.snapshot=freezeTurn(this.current(live),currentBot,binding.scope,live.sources);live.skills=this.skillFiles.snapshot(live.snapshot.config as BotConfig);live.selection.current=this.selection(live.snapshot.config as BotConfig);live.assets=[];live.images={inFlight:false,completed:false};
-          this.store.put('turn-snapshot',binding.sessionId,live.snapshot);updateVisibility();live.refreshTools?.();live.invalidator?.();
-          }catch(error){live.policyError=error instanceof Error?error:new Error('POLICY_FAILED');this.store.put('failure',`policy:${binding.sessionId}`,{code:live.policyError.message});}
+          this.store.saveTurnSnapshot(binding.sessionId,live.snapshot);updateVisibility();live.refreshTools?.();live.invalidator?.();
+          }catch(error){live.policyError=error instanceof Error?error:new Error('POLICY_FAILED');this.store.saveFailure(`policy:${binding.sessionId}`,{code:live.policyError.message});}
         }
       });
       // Permission setters append events, so they run after turn/start publication has completed.
@@ -213,7 +213,10 @@ export class NativeHarness implements HarnessPort {
   }
   private async mediaTool(ownerLive:LiveSession,agent:Agent|undefined,operation:MediaOperation,inputs:string[],args:Record<string,unknown>,signal:AbortSignal):Promise<string>{
     const live=this.turn(ownerLive,agent);const scope=live.binding.key;const bot=this.store.bot(live.binding.scope.botId);const current=this.current(live);
+    if(!allowedNow('bot_media',live.snapshot,current,bot,live.binding.scope))throw new Error('MEDIA_TOOL_DISABLED');
+    if(operation==='social_read'&&!allowedNow('bot_read_social',live.snapshot,current,bot,live.binding.scope))throw new Error('SOCIAL_READ_DISABLED');
     if(operation==='image_understand'){
+      if(!allowedNow('bot_media',live.snapshot,current,bot,live.binding.scope))throw new Error('MEDIA_TOOL_DISABLED');
       const ids=inputs.length?inputs:this.assets.recent(scope,'image').slice(0,1).map(a=>a.id);if(!ids.length)throw new Error('IMAGE_INPUT_REQUIRED');
       return JSON.stringify({coverage:'NATIVE_CHAT_IMAGE_PIXELS',text:'图片像素已附带在本工具结果中，请用当前模型直接读取。',modelImages:await this.imageBlocks(scope,ids),assetIds:[]});
     }
@@ -268,6 +271,8 @@ export class NativeHarness implements HarnessPort {
   }
   async run(binding:SessionBinding,messages:InboundMessage[],signal:AbortSignal):Promise<HarnessResult>{
     const live=await this.session(binding);const cwd=await prepareWorkingDirectory(this.store.bot(binding.scope.botId),binding.key,this.store.home);
+    const sourceIds=messages.map(message=>message.id);const metricIds=sourceIds.map(sourceId=>`inbox:${binding.key}:${sourceId}`);
+    const markFirst=()=>{const at=Date.now();for(const id of metricIds){const metric=this.store.findTurnMetric(id);if(metric&&!metric.modelFirstFeedbackAt)this.store.updateTurnMetric(id,{modelFirstFeedbackAt:at});}};
     await this.ctx.workingDirectory.set(live.handle.agent,cwd,signal);live.cwd=cwd;
     live.sources=messages.map(m=>m.id);const content:ContentBlock[]=[];
     const previousFailure=recentFailureContext(this.store,binding,messages);if(previousFailure)content.push({type:'text',text:previousFailure});
@@ -286,6 +291,7 @@ export class NativeHarness implements HarnessPort {
       signal.throwIfAborted();live.handle.agent.followup({id:MessageId(randomUUID()),role:'user',source:{kind:'user'},content});await live.handle.agent.whenIdle();signal.throwIfAborted();
       await this.ctx.sessions.flush(live.handle.agent.session);
       const events=live.handle.agent.session.snapshotEvents().slice(start);const end=events.filter(e=>e.type==='turn/end').at(-1);
+      const firstFeedback=events.find(event=>event.type==='assistant/message'||event.type==='assistant/attempt');if(firstFeedback)markFirst();
       if(!end||end.type!=='turn/end'||end.data.reason.kind!=='completed')throw new Error('HARNESS_TURN_NOT_COMPLETED');
       const last=events.filter(e=>e.type==='assistant/message'&&e.data.turn===end.data.turn&&!e.data.interrupted).at(-1);
       const text=last?.type==='assistant/message'?last.data.message.content.filter(b=>b.type==='text').map(b=>b.text).join(''):'';

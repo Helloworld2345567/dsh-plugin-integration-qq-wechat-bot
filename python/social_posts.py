@@ -11,13 +11,14 @@ import aiohttp
 
 
 HOSTS = {"tieba.baidu.com", "www.xiaohongshu.com", "xiaohongshu.com", "xhslink.com", "www.xhslink.com"}
+ALLOWED_PORTS = {None, 443}
 MAX_HTML = 3 * 1024 * 1024
 
 
 def normalize_post_url(url: str) -> str:
     parsed = urlsplit(url.strip())
     if (parsed.scheme not in {"http", "https"} or parsed.hostname not in HOSTS
-            or parsed.username or parsed.password or parsed.port not in {None, 80, 443}):
+            or parsed.username or parsed.password or parsed.port not in ALLOWED_PORTS):
         raise ValueError("UNSUPPORTED_POST_URL")
     path, query = parsed.path, parsed.query
     if parsed.hostname == "tieba.baidu.com":

@@ -14,7 +14,8 @@ def validate_url(url):
     try:
         part = urlsplit(url)
         if (part.scheme != "https" or not part.hostname or part.username or part.password
-                or part.port not in (None, 443) or "\\" in url or any(ord(c) < 33 for c in url)):
+                or part.port not in (None, 443) or "\\" in url or any(ord(c) < 33 for c in url)
+                or part.fragment):
             raise ValueError()
     except (ValueError, TypeError):
         raise VideoError("UNSAFE_URL") from None
@@ -46,6 +47,8 @@ class PublicResolver(AbstractResolver):
 
 async def download(url, target: Path, budget: int, timeout: float, headers=None):
     """Count bytes actually received, including redirects; never trust length headers."""
+    # The resolver is intentionally scoped to the fixed media provider URL
+    # contract; callers cannot opt into arbitrary HTTP or nonstandard ports.
     connector = aiohttp.TCPConnector(resolver=PublicResolver(), use_dns_cache=False)
     # IP literals bypass aiohttp's resolver, so explicitly validate every URL too.
     safe_headers = {k: v for k, v in (headers or {}).items()

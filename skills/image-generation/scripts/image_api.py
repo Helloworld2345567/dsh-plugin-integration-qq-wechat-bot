@@ -11,10 +11,12 @@ import base64
 import getpass
 import hashlib
 import io
+import ipaddress
 import json
 import mimetypes
 import os
 import re
+import socket
 import sys
 import time
 from pathlib import Path
@@ -57,6 +59,23 @@ def redact(value: object, secret: str) -> str:
     return str(value).replace(secret, "[REDACTED]") if secret else str(value)
 
 
+def public_image_url(value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.port not in (None, 443) or parsed.fragment:
+        raise ValueError("returned image URL must be a public HTTPS URL on port 443")
+    try:
+        addresses = socket.getaddrinfo(parsed.hostname, 443, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise ValueError("returned image URL host cannot be resolved") from exc
+    if not addresses:
+        raise ValueError("returned image URL host cannot be resolved")
+    for family, _, _, _, sockaddr in addresses:
+        address = ipaddress.ip_address(sockaddr[0])
+        if not address.is_global or address.is_multicast or address.is_private or address.is_loopback or address.is_link_local or (address.version == 6 and address.ipv4_mapped):
+            raise ValueError("returned image URL resolves to a non-public address")
+    return value
+
+
 def detect_content_type(data: bytes) -> str:
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
         return "image/png"
@@ -97,10 +116,10 @@ def decode_item(item: object, session: requests.Session) -> tuple[bytes, str]:
         image_url = item.get("url")
         if not isinstance(image_url, str) or not image_url:
             raise ValueError("image item has neither b64_json nor url")
-        parsed = urlparse(image_url)
-        if parsed.scheme != "https" or not parsed.netloc:
-            raise ValueError("returned image URL must be HTTPS")
+        public_image_url(image_url)
         response = session.get(image_url, timeout=60, allow_redirects=False, stream=True)
+        if response.status_code in (301, 302, 303, 307, 308):
+            raise ValueError("returned image URL redirect is not allowed")
         if response.status_code != 200:
             raise ValueError(f"image download returned HTTP {response.status_code}")
         chunks: list[bytes] = []

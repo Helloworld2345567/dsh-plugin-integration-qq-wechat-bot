@@ -36,15 +36,15 @@ test('iLink preserves uint64 receipt and recognizes explicit accepted ack withou
 });
 
 test('QQ group membership distinguishes observed messages, joins and removals',()=>{
-  assert.equal(qqGroupObservation(qq,{t:'GROUP_ADD_ROBOT',d:{group_openid:'room',group_name:'Room',timestamp:'2026-10-22T08:00:00+08:00'}})?.event,'joined');
-  assert.equal(qqGroupObservation(qq,{t:'GROUP_DEL_ROBOT',d:{group_openid:'room'}})?.event,'left');
-  assert.equal(qqGroupObservation(qq,{t:'GROUP_AT_MESSAGE_CREATE',d:{group_openid:'room'}})?.event,'observed');
+  assert.equal(qqGroupObservation(qq,{t:'GROUP_ADD_ROBOT',d:{group_openid:'room',group_name:'Room',timestamp:'2026-10-22T08:00:00+08:00'}})?.type,'group.joined');
+  assert.equal(qqGroupObservation(qq,{t:'GROUP_DEL_ROBOT',d:{group_openid:'room'}})?.type,'group.left');
+  assert.equal(qqGroupObservation(qq,{t:'GROUP_AT_MESSAGE_CREATE',d:{group_openid:'room'}})?.type,'group.observed');
   assert.equal(qqGroupObservation(qq,{t:'GROUP_ADD_ROBOT',d:{user_openid:'user'}}),undefined);
 });
 test('iLink remains connecting until a successful poll and stops after cancellation',async()=>{
   const states:string[]=[];let resolve!:(response:Response)=>void;const controller=new AbortController();
   const request=(async()=>new Promise<Response>(r=>{resolve=r;})) as typeof fetch;
-  const adapter=new WeixinAdapter({get:()=>'',put:()=>{controller.abort();}} as any,undefined,request);
+  const adapter=new WeixinAdapter({read:()=>'',write:()=>{controller.abort();}},undefined,request);
   const running=adapter.connect(wx,{accountId:'wx'},async()=>{},controller.signal,state=>states.push(state));
   assert.deepEqual(states,['connecting']);resolve(new Response('{"ret":0,"get_updates_buf":"cursor"}'));await running;
   assert.deepEqual(states,['connecting','connected','stopped']);

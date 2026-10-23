@@ -6,8 +6,9 @@ import { packageRoot } from './paths.js';
 import {resolveImageSkill} from './image-skill.js';
 import {analysisEnabled,type AnalysisProvider,type AnalysisRole} from './analysis.js';
 import type { Store } from './store.js';
-import type { Asset, BotConfig, MediaInput, SessionBinding, SessionRecord } from './types.js';
-import {normalizeProviderUsage,type MediaUsageCall} from './stats.js';
+import type { Asset, BotConfig, MediaInput } from './types.js';
+import {normalizeProviderUsage,type MediaUsageCall} from './usage.js';
+import {validateMediaParameters,INPUT_LIMITS} from './limits.js';
 
 export const MEDIA_OPERATIONS=['image_generate','image_edit','image_understand','transcribe','video_analyze','document_read','convert_gif','convert_mp4','social_read'] as const;
 export type MediaOperation=typeof MEDIA_OPERATIONS[number];
@@ -15,20 +16,20 @@ export interface MediaFile {path:string;name:string;mime:string;kind:Asset['kind
 export interface MediaResult { text?:string; coverage?:string; assets?:MediaFile[]; contextAssets?:MediaFile[]; observations?:unknown; incomplete?:boolean }
 export class Assets {
   constructor(readonly store:Store,readonly root=path.join(store.home,'assets')){}
-  private currentSession(scope:string):string|undefined {const binding=this.store.get<SessionBinding>('binding',scope);return binding?.key===scope&&typeof binding.sessionId==='string'&&this.store.get<SessionRecord>('session',binding.sessionId)?.scopeKey===scope?binding.sessionId:undefined;}
+  private currentSession(scope:string):string|undefined {const binding=this.store.findBinding(scope);return binding?.key===scope&&typeof binding.sessionId==='string'&&this.store.findSession(binding.sessionId)?.scopeKey===scope?binding.sessionId:undefined;}
   async save(scope:string,input:MediaInput,bytes:Buffer,jobId?:string):Promise<Asset>{
     // Capture ownership before any I/O: a concurrent /new must not reassign an older upload.
     const sessionId=this.currentSession(scope);
     if(bytes.length>50*1024*1024) throw new Error('MEDIA_TOO_LARGE');
-    const existing=this.store.list<Asset>('asset');if(existing.filter(a=>a.scopeKey===scope).reduce((sum,a)=>sum+a.size,0)+bytes.length>512*1024*1024||existing.reduce((sum,a)=>sum+a.size,0)+bytes.length>2*1024*1024*1024)throw new Error('MEDIA_STORAGE_LIMIT');
+    const usage=this.store.assetUsage(scope);if(usage.scope+bytes.length>512*1024*1024||usage.total+bytes.length>2*1024*1024*1024)throw new Error('MEDIA_STORAGE_LIMIT');
     const id=randomUUID(); const name=path.basename(input.name.replaceAll('\\','/')).replace(/[^\p{L}\p{N}._ -]/gu,'_').slice(0,180)||'attachment.bin';
     const folder=path.join(this.root,scope,id); await mkdir(folder,{recursive:true}); const file=path.join(folder,name);await writeFile(file,bytes,{flag:'wx'});
     const asset:Asset={id,scopeKey:scope,name,mime:input.mime,path:file,size:bytes.length,kind:input.kind,createdAt:Date.now(),jobId,sessionId};
-    this.store.put('asset',id,asset);return asset;
+    this.store.saveAsset(asset);return asset;
   }
   async read(scope:string,id:string):Promise<Buffer>{ const asset=this.store.asset(scope,id);const resolved=await realpath(asset.path);const root=await realpath(this.root);if(!resolved.startsWith(root+path.sep))throw new Error('ASSET_OUTSIDE_STORAGE');return readFile(resolved); }
   async resolve(scope:string,id:string):Promise<Asset>{const asset=this.store.asset(scope,id);const resolved=await realpath(asset.path);const root=await realpath(this.root);if(!resolved.startsWith(root+path.sep))throw new Error('ASSET_OUTSIDE_STORAGE');return {...asset,path:resolved};}
-  recent(scope:string,kind?:string):Asset[]{const sessionId=this.currentSession(scope);if(!sessionId)return[];return this.store.list<Asset>('asset').filter(a=>a.scopeKey===scope&&a.sessionId===sessionId&&(!kind||a.kind===kind)&&a.createdAt>Date.now()-600000).sort((a,b)=>b.createdAt-a.createdAt).slice(0,24);}
+  recent(scope:string,kind?:string):Asset[]{const sessionId=this.currentSession(scope);return sessionId?this.store.recentAssets(scope,sessionId,kind,24):[];}
 }
 export class MediaService {
   readonly active=new Map<string,{scope:string;controller:AbortController}>();
@@ -38,15 +39,17 @@ export class MediaService {
   async run(scope:string,operation:MediaOperation,config:BotConfig,inputs:string[],parameters:Record<string,unknown>,signal:AbortSignal):Promise<{text?:string;coverage?:string;assetIds:string[];contextAssetIds?:string[];incomplete?:boolean}>{
     if(!MEDIA_OPERATIONS.includes(operation))throw new Error('UNKNOWN_MEDIA_OPERATION');
     if(operation==='image_understand')throw new Error('IMAGE_READ_USE_NATIVE_CHAT_MODEL');
+    validateMediaParameters(operation,inputs,parameters);
     if(this.active.size>=2 || [...this.active.values()].some(a=>a.scope===scope))throw new Error('MEDIA_CONCURRENCY_LIMIT');
     const id=randomUUID();const controller=new AbortController(); const combined=AbortSignal.any([signal,controller.signal,AbortSignal.timeout(180000)]);
     const directory=path.join(this.store.home,'jobs',id),startedAt=Date.now();let provider:string|undefined;let requestedModel:string|undefined;
-    const persist=(value:Record<string,unknown>)=>this.store.put('job',id,{...this.store.get<Record<string,unknown>>('job',id),...value});
-    const captureUsage=async()=>{try{const raw=JSON.parse(await readFile(path.join(directory,'model-usage.json'),'utf8'));if(!Array.isArray(raw))return;const modelCalls:MediaUsageCall[]=raw.filter(c=>c?.attempted===true&&typeof c.id==='string'&&Number.isSafeInteger(c.at)).map(c=>({id:c.id,attempted:true,at:c.at,provider,model:typeof c.model==='string'?c.model:requestedModel,usage:normalizeProviderUsage(c.usage)}));persist({modelCalls});}catch{/* No dispatched model call is claimed without a journal entry. */}};
+    const persist=(value:Record<string,unknown>)=>this.store.patchJob(id,value);
+    const operationConfig={image_generate:20,image_edit:20,image_understand:20,transcribe:50,video_analyze:10,document_read:50,convert_gif:50,convert_mp4:50,social_read:20} satisfies Record<MediaOperation,number>;
+    const captureUsage=async()=>{try{const raw=JSON.parse(await readFile(path.join(directory,'model-usage.json'),'utf8'));if(!Array.isArray(raw))return;const modelCalls:MediaUsageCall[]=raw.filter(c=>c?.attempted===true&&typeof c.id==='string'&&Number.isSafeInteger(c.at)).map(c=>({id:c.id,attempted:true,at:c.at,provider,model:typeof c.model==='string'?c.model:requestedModel,usage:normalizeProviderUsage(c.usage)}));persist({modelCalls});const binding=this.store.findBinding(scope);if(binding)this.store.stats.upsertMediaCalls(id,binding.scope.botId,modelCalls);}catch{/* No dispatched model call is claimed without a journal entry. */}};
     this.active.set(id,{scope,controller});persist({id,scope,operation,state:'running',startedAt});
     try{
     combined.throwIfAborted();
-    if(inputs.length>8)throw new Error('MEDIA_INPUT_LIMIT');
+    if(inputs.length>INPUT_LIMITS.attachmentCount)throw new Error('MEDIA_INPUT_LIMIT');
     const source=await Promise.all(inputs.map(id=>this.assets.resolve(scope,id)));
     await mkdir(directory,{recursive:true});
     const role=operation==='transcribe'?'asr':operation==='video_analyze'?'video':undefined;
@@ -56,7 +59,7 @@ export class MediaService {
     provider=connection?.provider??(endpoint?new URL(endpoint.baseUrl).hostname:undefined);requestedModel=endpoint?.model;
     persist({provider,requestedModel});
     const day=new Date().toISOString().slice(0,10);const quotaKey=`${day}:${scope}:${operation}`;
-    this.store.transaction(()=>{const used=this.store.get<number>('media-quota',quotaKey)??0;const limit=operation==='video_analyze'?10:operation.startsWith('image_')?20:50;if(used>=limit)throw new Error('MEDIA_DAILY_LIMIT');this.store.put('media-quota',quotaKey,used+1);});
+    this.store.consumeMediaQuota(quotaKey,operationConfig[operation]);
     const env:NodeJS.ProcessEnv={PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,SYSTEMROOT:process.env.SYSTEMROOT,TEMP:process.env.TEMP,TMP:process.env.TMP,USERPROFILE:process.env.USERPROFILE,PYTHONIOENCODING:'utf-8',PYTHONUTF8:'1'};
     if(endpoint){const value=connection?.apiKey??process.env[endpoint.keyEnv];if(!value)throw new Error(`MISSING_PROVIDER_KEY: ${endpoint.keyEnv}`);env[endpoint.keyEnv]=value;}
     if(operation==='transcribe'&&source[0]?.mime==='audio/silk'){

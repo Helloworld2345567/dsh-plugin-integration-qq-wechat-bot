@@ -1,0 +1,13 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,rm} from 'node:fs/promises';
+import path from 'node:path';
+import {Store} from '../src/core/store.js';
+import {DurableDeliveryWorker} from '../src/core/delivery-worker.js';
+import {createChannelRegistry} from '../src/core/channel-registry.js';
+import type {ChannelAdapter} from '../src/core/types.js';
+
+const adapter=(send:ChannelAdapter['send']):ChannelAdapter=>({beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async()=>Buffer.from(''),send});
+async function fixture(t:any,send:ChannelAdapter['send']){const home=await mkdtemp(path.resolve('.codex/delivery-worker-'));const store=new Store(home);const channel=createChannelRegistry([{id:'qq',displayName:'QQ',adapter:adapter(send),capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]);store.saveBot({id:'bot',name:'Bot',channel:'qq',accountId:'account',enabled:true});t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});return{store,channel};}
+test('worker preserves per-bot lane and drains rows appended during flush',async t=>{let count=0;const f=await fixture(t,async()=>{count++;return`r${count}`});const binding=f.store.binding({botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'user',senderId:'user'});f.store.enqueue(binding,'one','turn',[{type:'text',text:'one'}],{target:'user'});const worker=new DurableDeliveryWorker(f.store,f.channel,{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}});await worker.flush();f.store.enqueue(binding,'two','turn2',[{type:'text',text:'two'}],{target:'user'});await worker.flush();assert.equal(count,2);assert.equal(worker.activity().activeLanes,0);});
+test('worker cancellation aborts in-flight adapter send without replaying unknown',async t=>{let aborted=false;const f=await fixture(t,async(_bot,_credential,_delivery,_asset,signal)=>{await new Promise<void>(resolve=>{signal.addEventListener('abort',()=>{aborted=true;resolve();},{once:true});});throw Error('cancelled');});const binding=f.store.binding({botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'user',senderId:'user'});f.store.enqueue(binding,'one','turn',[{type:'text',text:'one'}],{target:'user'});const worker=new DurableDeliveryWorker(f.store,f.channel,{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}});const flushing=worker.flush();await new Promise(resolve=>setImmediate(resolve));worker.cancelScope(binding.key);await flushing;assert.equal(aborted,true);assert.equal(f.store.deliveries()[0].state,'unknown');});

@@ -11,8 +11,9 @@ import { BotRuntime, type Credentials } from './core/runtime.js';
 import type { Credential } from './core/types.js';
 import { NativeHarness,type HarnessExtensions } from './harness/bridge.js';
 import { Admin } from './harness/admin.js';
-import { QQAdapter } from './channels/qq.js';
-import { WeixinAdapter } from './channels/weixin.js';
+import { QQAdapter,qqChannel } from './channels/qq.js';
+import { WeixinAdapter,weixinChannel } from './channels/weixin.js';
+import {createChannelRegistry,legacyChannelAdapters} from './core/channel-registry.js';
 import {HarnessMediaProvider} from './harness/media-provider.js';
 import {BotFeatures} from './core/features.js';
 import {BotManagement} from './core/management.js';
@@ -25,14 +26,15 @@ export interface Config { dataDir?:string; python?:string; debounceMs?:number }
 declare module '@deepseek-ai/cordis' {interface Context {botIntegration:BotRuntime}}
 export async function apply(ctx:Context,config:Config={}):Promise<void>{
   const home=config.dataDir??process.env.BOT_DATA_HOME??path.join(process.env.DSH_HOME??path.join(os.homedir(),'.dsh-bots'),'storages','bot-integration');
-  const store=new Store(home);const assets=new Assets(store);const media=new MediaService(store,assets,config.python,new HarnessMediaProvider(ctx));
+  const store=new Store(home,undefined,{secureDefaults:true});const assets=new Assets(store);const media=new MediaService(store,assets,config.python,new HarnessMediaProvider(ctx));
   const credentials:Credentials={
     read:async id=>{const value=await ctx.credentials.readRecord(credentialKey('bot-integration',id));return value?.kind==='grant'?value.payload as unknown as Credential:undefined;},
     write:async(id,value)=>{await ctx.credentials.modifyRecord(credentialKey('bot-integration',id),async()=>({kind:'grant',payload:value as unknown as Record<string,any>}));},
     remove:async id=>{await ctx.credentials.deleteRecord(credentialKey('bot-integration',id));},
   };
   const extensions:HarnessExtensions={};const harness=new NativeHarness(ctx,store,assets,media,extensions);let disposeMode;try{disposeMode=await harness.registerMode();}catch(error){store.close();throw error;}
-  const runtime=new BotRuntime(store,assets,media,harness,{qq:new QQAdapter(undefined,event=>extensions.stats?.observeGroup(event)),weixin:new WeixinAdapter(store)},credentials,config.debounceMs);
+  const channels=createChannelRegistry([qqChannel(new QQAdapter(undefined,{emit:event=>extensions.stats?.observeGroup({botId:event.botId,groupId:event.groupId,name:event.name,event:event.type==='group.joined'?'joined':event.type==='group.left'?'left':'observed',at:event.at,eventId:event.eventId})})),weixinChannel(new WeixinAdapter(store.cursorStore()))]);
+  const runtime=new BotRuntime(store,assets,media,harness,legacyChannelAdapters(channels),credentials,config.debounceMs,undefined,channels);
   const features=new BotFeatures(runtime);extensions.stats=features.stats;extensions.model=(binding,snapshot,args,signal)=>features.model(binding,snapshot,args,signal);extensions.evolve=(binding,snapshot,args,signal)=>features.execute(binding,snapshot,args,signal);
   extensions.management=new BotManagement(runtime,features);
   const token=randomBytes(32).toString('base64url');const admin=new Admin(ctx,runtime,token,undefined,features);

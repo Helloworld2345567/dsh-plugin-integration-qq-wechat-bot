@@ -6,6 +6,7 @@ import {scopeKey} from './store.js';
 import {trusted} from './policy.js';
 import {commandHelp} from './commands.js';
 import {packagedSkills} from './skills.js';
+import {CommandBus,managementCommand} from './command-bus.js';
 
 export const botSessionArgumentsSchema=z.object({
   action:z.enum(['help','status','list','new','stop','compact','resume']),
@@ -31,9 +32,16 @@ export type BotSkillsArguments=z.infer<typeof botSkillsArgumentsSchema>;
 /** Identity comes from the native Agent closure; channel mutations run outside the calling turn. */
 export class BotManagement {
   constructor(readonly runtime:BotRuntime,readonly features:BotFeatures){}
+  private async busSession(binding:SessionBinding,snapshot:TurnSnapshot,input:BotSessionArguments,signal:AbortSignal){
+    if(!['status','new','stop','compact','resume'].includes(input.action))return;
+    const args=input.action==='resume'?input.sessionId??'':'';const command=managementCommand({name:input.action,args});if(!command)throw Error('UNKNOWN_MANAGEMENT_COMMAND');const result=await this.runtime.commandBus.execute({source:'tool',binding,snapshot,signal},command);
+    if(result.kind==='queued')return result.value;
+    if(result.kind!=='reply')return result;
+    const data=result.data as Record<string,unknown>|undefined;return{action:input.action,text:result.text,...data};
+  }
 
   private current(binding:SessionBinding,snapshot:TurnSnapshot,signal:AbortSignal,privileged=false):SessionBinding {
-    signal.throwIfAborted();const current=this.runtime.store.get<SessionBinding>('binding',binding.key);
+    signal.throwIfAborted();const current=this.runtime.store.findBinding(binding.key);
     if(!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation||scopeKey(binding.scope)!==binding.key||scopeKey(current.scope)!==binding.key||snapshot.botId!==current.scope.botId)throw Error('MANAGEMENT_SESSION_CHANGED');
     const bot=this.runtime.store.bot(current.scope.botId);this.runtime.effectiveConfig(current);
     if(!bot.enabled||bot.archived)throw Error('BOT_UNAVAILABLE');
@@ -42,7 +50,7 @@ export class BotManagement {
   }
 
   async session(binding:SessionBinding,snapshot:TurnSnapshot,input:unknown,signal:AbortSignal){
-    const current=this.current(binding,snapshot,signal);const args=botSessionArgumentsSchema.parse(input);const config=this.runtime.effectiveConfig(current);
+    const current=this.current(binding,snapshot,signal);const args=botSessionArgumentsSchema.parse(input);const busResult=await this.busSession(current,snapshot,args,signal);if(busResult)return busResult;const config=this.runtime.effectiveConfig(current);
     switch(args.action){
       case 'help':return{action:args.action,text:commandHelp(snapshot.trusted&&trusted(this.runtime.store.bot(current.scope.botId),current.scope),snapshot.config.allowHostTools&&config.allowHostTools)};
       case 'status':return{action:args.action,sessionId:current.sessionId,persona:{id:config.id,name:config.name},model:config.model,modelOverride:!!current.modelOverride,currentTurnPersonaId:snapshot.config.id,currentTurnModel:snapshot.config.model,state:this.runtime.sessionStatus(current.scope)};
@@ -58,8 +66,7 @@ export class BotManagement {
   async persona(binding:SessionBinding,snapshot:TurnSnapshot,input:unknown,signal:AbortSignal){
     const current=this.current(binding,snapshot,signal,true);const args=botPersonaArgumentsSchema.parse(input);const config=this.runtime.effectiveConfig(current);
     if(args.action==='list')return{action:args.action,sessionId:current.sessionId,currentPersonaId:config.id,currentTurnPersonaId:snapshot.config.id,personas:this.runtime.store.configs().filter(item=>!item.archived).map(item=>({id:item.id,name:item.name,revision:item.revision,current:item.id===config.id}))};
-    this.runtime.store.config(args.personaId!);
-    return this.runtime.queueSessionAction(current,snapshot,{action:'persona',personaId:args.personaId!},signal);
+    this.runtime.store.config(args.personaId!);const command=managementCommand({name:'persona',args:args.personaId!})!;const result=await this.runtime.commandBus.execute({source:'tool',binding:current,snapshot,signal,authorize:()=>this.current(binding,snapshot,signal,true)},command);return result.kind==='queued'?result.value:result;
   }
 
   async skills(binding:SessionBinding,snapshot:TurnSnapshot,input:unknown,signal:AbortSignal){
@@ -75,6 +82,6 @@ export class BotManagement {
       return{action:args.action,personaId:config.id,revision:config.revision,skills};
     }
     const name=args.name!;if(!Object.hasOwn(packagedSkills,name)&&!Object.hasOwn(config.skillVersions,name)&&!(args.action==='disable'&&config.skills.includes(name)))throw Error('SKILL_NOT_PUBLISHED');
-    return this.runtime.queueSessionAction(current,snapshot,{action:'skill',name,enabled:args.action==='enable'},signal);
+    const command=managementCommand({name:'skill',args:`${args.action} ${name}`})!;const result=await this.runtime.commandBus.execute({source:'tool',binding:current,snapshot,signal,authorize:()=>this.current(binding,snapshot,signal,true)},command);return result.kind==='queued'?result.value:result;
   }
 }

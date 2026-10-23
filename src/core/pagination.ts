@@ -1,0 +1,5 @@
+import {createHash} from 'node:crypto';
+export interface KeysetCursor {v:1;collection:string;filter:string;revision:number;time:number;id:string}
+export function filterHash(value:unknown):string{return createHash('sha256').update(JSON.stringify(value)).digest('hex');}
+export function encodeCursor(cursor:KeysetCursor):string{return Buffer.from(JSON.stringify(cursor)).toString('base64url');}
+export function decodeCursor(value:string|undefined,collection:string,filter:string,revision:number):KeysetCursor|undefined {if(!value)return;try{const cursor=JSON.parse(Buffer.from(value,'base64url').toString('utf8')) as KeysetCursor;if(cursor.v!==1||cursor.collection!==collection||cursor.filter!==filter)throw Error('PAGE_CURSOR_MISMATCH');if(cursor.revision!==revision)throw Error('PAGE_STALE');if(!Number.isSafeInteger(cursor.time)||cursor.time<0||typeof cursor.id!=='string'||!cursor.id)throw Error('PAGE_CURSOR_INVALID');return cursor;}catch(error){if(error instanceof Error&&['PAGE_CURSOR_MISMATCH','PAGE_STALE','PAGE_CURSOR_INVALID'].includes(error.message))throw error;throw Error('PAGE_CURSOR_INVALID');}}

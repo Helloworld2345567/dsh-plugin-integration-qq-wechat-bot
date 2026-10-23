@@ -18,7 +18,7 @@ function fixture(t:any){
     if(command.name==='build'){write(path.join(cwd,'dist/index.js'),'new code');write(path.join(cwd,'dist/client.js'),'client');}
     if(command.name==='pack'){write(path.join(path.dirname(cwd),'new.tgz'),'new archive');return JSON.stringify([{filename:'new.tgz'}]);}return'PASS';
   };
-  const service=new EvolutionService({home,put:()=>{}},source,{available:()=>true,run:runner});
+  const service=new EvolutionService({home,saveEvolutionTask:()=>{}},source,{available:()=>true,run:runner});
   t.after(()=>rmSync(root,{recursive:true,force:true}));return{root,source,home,write,service,commands,runner};
 }
 
@@ -51,13 +51,13 @@ test('validation failure and cancellation retain evidence without queueing',asyn
   assert.equal(f.service.inspect(task.id).phase,'failed');assert.throws(()=>f.service.queueApply(task.id),/Validate/);
 });
 test('missing coordinator and metadata refuse self-modification; validation environment excludes provider secrets',t=>{
-  const f=fixture(t);const service=new EvolutionService({home:f.home,put:()=>{}},f.source,{available:()=>false});
+  const f=fixture(t);const service=new EvolutionService({home:f.home,saveEvolutionTask:()=>{}},f.source,{available:()=>false});
   assert.throws(()=>service.create('scope','sakura','feature'),/coordinator/);
   const env=cleanValidationEnv(path.join(f.root,'isolated'));assert.equal(env.DSH_HOME,env.BOT_HOME);assert.equal(env.OPENAI_API_KEY,undefined);assert.equal(env.BOT_LAUNCH_TOKEN,undefined);
 });
 test('orphaned validation is recovered as failed with retained evidence and can be retried',async t=>{
   const f=fixture(t);const task=f.service.create('scope','sakura','resume');task.phase='validating';task.validation=[{name:'typecheck',status:'PASS',log:'retained.log'}];f.service.journal.write(task);
-  const resumed=new EvolutionService({home:f.home,put:()=>{}},f.source,{available:()=>true,run:f.runner});assert.equal(resumed.inspect(task.id).phase,'failed');assert.equal(resumed.inspect(task.id).validation?.[0].log,'retained.log');
+  const resumed=new EvolutionService({home:f.home,saveEvolutionTask:()=>{}},f.source,{available:()=>true,run:f.runner});assert.equal(resumed.inspect(task.id).phase,'failed');assert.equal(resumed.inspect(task.id).validation?.[0].log,'retained.log');
   assert.equal((await resumed.validate(task.id)).phase,'validated');
 });
 test('installer records the same complete source digest and shipped-file identity as runtime',async t=>{

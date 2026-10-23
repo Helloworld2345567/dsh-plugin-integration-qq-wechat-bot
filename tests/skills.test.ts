@@ -9,6 +9,7 @@ import {DynamicSkills} from '../src/core/skills.js';
 import {configSchema} from '../src/core/types.js';
 import {parseStatsArguments,renderStats} from '../src/core/features.js';
 import {StatsService} from '../src/core/stats.js';
+import {SqliteStatsData} from '../src/core/sqlite-stats-data.js';
 
 async function fixture(t:any){const root=await mkdtemp(path.resolve('.codex/skills-test-'));const store=new Store(root);t.after(async()=>{store.close();await rm(root,{recursive:true,force:true});});return{root,store,skills:new DynamicSkills(store)};}
 const files=(value:string)=>[{path:'SKILL.md',content:`---\nname: weather-helper\ndescription: 查询用户指定城市天气\n---\n${value}`},{path:'scripts/weather.py',content:`print(${JSON.stringify(value)})`}];
@@ -40,7 +41,7 @@ test('skill validation, disabled reload behavior and copying keep published vers
 test('stats arguments remain bounded and unknown fields remain visible in chat formatting',async t=>{
   const {store}=await fixture(t);assert.deepEqual(parseStatsArguments('7d bot=one model=Example-MODEL groups'),{range:'7d',botId:'one',model:'Example-MODEL',groups:true});
   assert.throws(()=>parseStatsArguments('arbitrary=path'));
-  const text=renderStats(new StatsService(store).query({range:'all'}));assert.match(text,/用量未知/);assert.match(text,/未报告/);
+  const text=renderStats(new StatsService(new SqliteStatsData(store),undefined,()=>store.bots()).query({range:'all'}));assert.match(text,/用量未知/);assert.match(text,/未报告/);
 });
 
 test('combined draft fingerprint keeps file limits per skill',async t=>{

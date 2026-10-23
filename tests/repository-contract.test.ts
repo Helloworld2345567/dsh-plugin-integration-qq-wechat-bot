@@ -1,0 +1,11 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,rm} from 'node:fs/promises';
+import path from 'node:path';
+import {Store} from '../src/core/store.js';
+import {botSchema} from '../src/core/types.js';
+
+async function fixture(t:any){const home=await mkdtemp(path.resolve('.codex/repository-contract-'));const store=new Store(home);t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account'}));return store;}
+
+test('session keyset pages are stable, filter-bound and stale after mutation',async t=>{const store=await fixture(t);const scope=(senderId:string)=>({botId:'bot',platform:'qq',accountId:'account',kind:'private' as const,channelId:senderId,senderId});for(const sender of ['a','b','c'])store.binding(scope(sender));const first=store.pageSessions({},2);assert.equal(first.items.length,2);assert.ok(first.nextCursor);const second=store.pageSessions({},2,first.nextCursor!);assert.equal(second.items.length,1);assert.equal(new Set([...first.items,...second.items].map(row=>row.id)).size,3);assert.throws(()=>store.pageSessions({scopeKey:first.items[0].scopeKey},2,first.nextCursor!),/PAGE_CURSOR_MISMATCH/);store.reset(scope('a'));assert.throws(()=>store.pageSessions({},2,first.nextCursor!),/PAGE_STALE/);});
+test('delivery repository pages and sendable query preserve blocker semantics',async t=>{const store=await fixture(t),binding=store.binding({botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'user',senderId:'user'});store.enqueue(binding,'source','turn',[{type:'text',text:'one'},{type:'text',text:'two'},{type:'text',text:'three'}],{});const repository=store.deliveryRepository(),first=repository.pageDeliveries({filter:{scopeKey:binding.key},limit:2});assert.equal(first.items.length,2);const second=repository.pageDeliveries({filter:{scopeKey:binding.key},limit:2,cursor:first.nextCursor!});assert.equal(second.items.length,1);const all=store.deliveries();store.deliveryState(all.find(row=>row.index===0)!,'unknown');assert.deepEqual(repository.nextSendable('bot',100),[]);assert.equal(repository.hasEarlierBlocker(all.find(row=>row.index===1)!),true);assert.throws(()=>repository.pageDeliveries({filter:{botId:'bot'},limit:2,cursor:first.nextCursor!}),/PAGE_CURSOR_MISMATCH/);});

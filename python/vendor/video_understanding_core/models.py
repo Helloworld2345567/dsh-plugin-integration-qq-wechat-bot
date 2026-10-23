@@ -34,7 +34,7 @@ class AnalysisRequest:
     def validate(self):
         if not isinstance(self.source_ref, str) or not 1 <= len(self.source_ref) <= 2048:
             raise VideoError("UNSUPPORTED_SOURCE")
-        if not isinstance(self.question, str) or not self.question.strip() or len(self.question) > 4000:
+        if not isinstance(self.question, str) or not self.question.strip() or len(self.question) > 4000 or len(self.question.encode('utf-8')) > 8192:
             raise VideoError("INVALID_QUESTION")
         if (self.start_seconds is None) != (self.end_seconds is None):
             raise VideoError("INVALID_RANGE")

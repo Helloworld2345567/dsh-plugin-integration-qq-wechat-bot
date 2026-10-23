@@ -16,3 +16,11 @@
 # Default bot workspaces and local runtime material stay outside Git.
 /.runtime/
 /.venv/
+**/.venv/
+**/venv/
+**/pythonLibsite-packages/
+**/site-packages/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.coverage

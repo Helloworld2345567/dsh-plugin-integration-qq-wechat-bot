@@ -2,31 +2,49 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { botSchema, configSchema, type BotConfig, type BotInstance, type CallerScope, type InboundMessage, type SessionBinding, type SessionRecord, type Delivery, type Output, type Asset } from './types.js';
+import { botSchema, configSchema, idSchema, type BotConfig, type BotInstance, type CallerScope, type InboundMessage, type SessionBinding, type SessionRecord, type Delivery, type Output, type Asset, type TurnMetric, type TurnSnapshot } from './types.js';
+import {validateInboundMessage} from './limits.js';
+import type {CursorStore,JsonValue} from './channel-ports.js';
+import {SqliteStatsProjection} from './stats-projection.js';
+import {decodeCursor,encodeCursor,filterHash} from './pagination.js';
+import type {Page} from './repositories.js';
 import {PersonaFiles,defaultPersonasRoot,sameConfig} from './personas.js';
 
 export function scopeKey(scope: CallerScope): string { return createHash('sha256').update(JSON.stringify([scope.platform, scope.botId, scope.accountId, scope.kind, scope.channelId, scope.senderId])).digest('hex'); }
 export class ConflictError extends Error { constructor(message='配置已被其他操作修改，请刷新后重试') { super(message); } }
+export interface SessionActionRecordLike {id:string;scopeKey:string;scope:CallerScope;sessionId:string;state:string;createdAt:number;updatedAt:number;[key:string]:any}
 export class Store {
   readonly db: DatabaseSync;
   readonly personas:PersonaFiles;
-  constructor(readonly home: string,personasRoot=defaultPersonasRoot(home)) {
+  readonly stats:SqliteStatsProjection;
+  constructor(readonly home: string,personasRoot=defaultPersonasRoot(home),readonly options:{secureDefaults?:boolean}={}) {
+    const secureDefaults=options.secureDefaults===true;
     mkdirSync(home, { recursive:true }); this.db = new DatabaseSync(path.join(home, 'bots.sqlite'));
     this.personas=new PersonaFiles(personasRoot);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
       CREATE TABLE IF NOT EXISTS records(kind TEXT NOT NULL,id TEXT NOT NULL,json TEXT NOT NULL,PRIMARY KEY(kind,id));
       CREATE TABLE IF NOT EXISTS inbox(scope TEXT NOT NULL,id TEXT NOT NULL,json TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',PRIMARY KEY(scope,id));
-      CREATE TABLE IF NOT EXISTS deliveries(id TEXT PRIMARY KEY,scope TEXT NOT NULL,json TEXT NOT NULL,state TEXT NOT NULL,UNIQUE(scope,id));
+      CREATE TABLE IF NOT EXISTS deliveries(id TEXT PRIMARY KEY,scope TEXT NOT NULL,json TEXT NOT NULL,state TEXT NOT NULL,created_at INTEGER NOT NULL DEFAULT 0,bot_id TEXT NOT NULL DEFAULT '',turn_id TEXT NOT NULL DEFAULT '',output_index INTEGER NOT NULL DEFAULT 0,UNIQUE(scope,id));
       CREATE TABLE IF NOT EXISTS memory(scope TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,source TEXT NOT NULL,quote TEXT NOT NULL,version INTEGER NOT NULL,deleted INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL,PRIMARY KEY(scope,key));
       CREATE TABLE IF NOT EXISTS forgotten(scope TEXT NOT NULL,source TEXT NOT NULL,key TEXT NOT NULL,PRIMARY KEY(scope,source,key));
-      CREATE TABLE IF NOT EXISTS memory_sources(scope TEXT NOT NULL,key TEXT NOT NULL,source TEXT NOT NULL,PRIMARY KEY(scope,key,source));`);
+      CREATE TABLE IF NOT EXISTS memory_sources(scope TEXT NOT NULL,key TEXT NOT NULL,source TEXT NOT NULL,PRIMARY KEY(scope,key,source));
+      CREATE TABLE IF NOT EXISTS asset_index(id TEXT PRIMARY KEY,scope TEXT NOT NULL,session TEXT,kind TEXT NOT NULL,created_at INTEGER NOT NULL,size INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS collection_revisions(name TEXT PRIMARY KEY,revision INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS inbox_scope_state ON inbox(scope,state);
+      CREATE INDEX IF NOT EXISTS records_kind_id ON records(kind,id);`);
+    const deliveryColumns=new Set((this.db.prepare('PRAGMA table_info(deliveries)').all() as {name:string}[]).map(row=>row.name));for(const [name,sql] of [['created_at','INTEGER NOT NULL DEFAULT 0'],['bot_id',"TEXT NOT NULL DEFAULT ''"],['turn_id',"TEXT NOT NULL DEFAULT ''"],['output_index','INTEGER NOT NULL DEFAULT 0']] as const)if(!deliveryColumns.has(name))this.db.exec(`ALTER TABLE deliveries ADD COLUMN ${name} ${sql}`);
+    for(const row of this.db.prepare("SELECT id,json FROM deliveries WHERE created_at=0 OR bot_id='' OR turn_id=''").all() as {id:string;json:string}[]){try{const delivery=JSON.parse(row.json) as Delivery;this.db.prepare('UPDATE deliveries SET created_at=?,bot_id=?,turn_id=?,output_index=? WHERE id=?').run(delivery.createdAt??0,delivery.botId??'',delivery.turnId??'',delivery.index??0,row.id);}catch{/* Invalid legacy rows remain at the deterministic tail. */}}
+    this.db.exec('CREATE INDEX IF NOT EXISTS deliveries_state_scope ON deliveries(state,scope);CREATE INDEX IF NOT EXISTS deliveries_scope_state_id ON deliveries(scope,state,id);CREATE INDEX IF NOT EXISTS deliveries_bot_state_created ON deliveries(bot_id,state,created_at DESC,id DESC);CREATE INDEX IF NOT EXISTS deliveries_scope_created ON deliveries(scope,created_at DESC,id DESC);CREATE INDEX IF NOT EXISTS deliveries_turn_index ON deliveries(scope,turn_id,output_index,state);CREATE INDEX IF NOT EXISTS asset_scope_session_kind_created ON asset_index(scope,session,kind,created_at DESC,id DESC);');
+    for(const row of this.db.prepare("SELECT id,json FROM records WHERE kind='asset'").all() as {id:string;json:string}[]){try{const asset=JSON.parse(row.json) as Asset;this.indexAsset(asset);}catch{/* Invalid legacy metadata remains inaccessible. */}}
+    this.stats=new SqliteStatsProjection(this.db);
     for(const id of this.personas.ids()){
       // Preserve externally changed files and their journal; the panel exposes the recovery error.
       try{this.personas.recover(id,this.get<BotConfig>('config',id));}catch{}
     }
     if (!this.get('config','default')) {
-      this.put('config', 'default', configSchema.parse({ id:'default', name:'默认', personaPrompt:'你是自然、真诚、具体的中文聊天伙伴。回应用户实际意图，默认简洁，任务结果按需要展开。不编造记忆、工具执行或媒体内容。保留工具、skills和运行环境信息。' }));
-      this.put('config', 'sakura', configSchema.parse({ id:'sakura', name:'小樱', personaPrompt:'你是成年猫娘小樱：银白长发、翠绿色眼睛、白色猫耳和尾巴、黑白女仆装。自然简短地交流，日常文字尽量不超过100字，任务结果可以展开。按用户意图决定是否调用图片工具，每轮最多一张生成图。参考图编辑必须使用真实原图。不输出配图描述，不编造工具或媒体观察。' }));
+      const hostTools=secureDefaults?false:undefined;
+      this.put('config', 'default', configSchema.parse({ id:'default', name:'默认', personaPrompt:'你是自然、真诚、具体的中文聊天伙伴。回应用户实际意图，默认简洁，任务结果按需要展开。不编造记忆、工具执行或媒体内容。保留工具、skills和运行环境信息。',...(hostTools===undefined?{}:{allowHostTools:hostTools}) }));
+      this.put('config', 'sakura', configSchema.parse({ id:'sakura', name:'小樱', personaPrompt:'你是成年猫娘小樱：银白长发、翠绿色眼睛、白色猫耳和尾巴、黑白女仆装。自然简短地交流，日常文字尽量不超过100字，任务结果可以展开。按用户意图决定是否调用图片工具，每轮最多一张生成图。参考图编辑必须使用真实原图。不输出配图描述，不编造工具或媒体观察。',...(hostTools===undefined?{}:{allowHostTools:hostTools}) }));
     }
     for(const raw of this.list<BotConfig>('config')){
       if(raw.schemaVersion!==2){
@@ -49,13 +67,77 @@ export class Store {
     this.backfillSessions();
   }
   close(): void { this.db.close(); }
-  recover():void {this.db.exec("UPDATE inbox SET state='interrupted' WHERE state='processing'; UPDATE deliveries SET state='unknown' WHERE state='sending'");}
+  recover():void {const sending=this.deliveries(['sending']);this.db.exec("UPDATE inbox SET state='interrupted' WHERE state='processing'; UPDATE deliveries SET state='unknown' WHERE state='sending'");for(const delivery of sending)this.stats.observeDelivery({...delivery,state:'unknown'});}
+  updateTurnMetric(id:string,patch:Partial<Omit<TurnMetric,'id'>>):void {
+    const previous=this.get<TurnMetric>('turn-metric',id);const next={...previous,...patch,id} as TurnMetric;
+    if(!next.scopeKey||!next.sourceId||!Number.isSafeInteger(next.receivedAt))throw new Error('TURN_METRIC_INVALID');
+    if(previous&& (previous.scopeKey!==next.scopeKey||previous.sourceId!==next.sourceId||previous.receivedAt!==next.receivedAt)) throw new Error('TURN_METRIC_OWNERSHIP_MISMATCH');
+    this.put('turn-metric',id,next);
+  }
+  markTurnStage(scope:string,ids:string[],field:Extract<keyof TurnMetric,`${string}At`>,at=Date.now()):void {
+    for(const sourceId of ids){const id=`inbox:${scope}:${sourceId}`;if(this.get<TurnMetric>( 'turn-metric',id))this.updateTurnMetric(id,{[field]:at});}
+  }
+  metricPercentiles(field:Extract<keyof TurnMetric,`${string}At`>,from=0,to=Date.now()):{count:number;p50:number|null;p95:number|null;max:number|null}{
+    const values=this.turnMetrics().map(metric=>{const start=metric.receivedAt;const end=metric[field];return typeof end==='number'&&start>=from&&end<=to?end-start:undefined}).filter((value):value is number=>value!==undefined).sort((a,b)=>a-b);
+    const percentile=(rank:number)=>values.length?values[Math.min(values.length-1,Math.ceil(values.length*rank)-1)]:null;return{count:values.length,p50:percentile(.5),p95:percentile(.95),max:values.at(-1)??null};
+  }
+  turnMetrics():TurnMetric[]{return this.list<TurnMetric>('turn-metric');}
+  updateTurnMetrics(scope:string,sourceIds:string[],patch:Partial<Omit<TurnMetric,'id'>>):void {
+    for(const sourceId of sourceIds){const id=`inbox:${scope}:${sourceId}`;if(this.get<TurnMetric>('turn-metric',id))this.updateTurnMetric(id,patch);}
+  }
+  updateTurnMetricsByTurn(scope:string,turnId:string,patch:Partial<Omit<TurnMetric,'id'>>):void {
+    for(const metric of this.turnMetrics())if(metric.scopeKey===scope&&metric.turnId===turnId)this.updateTurnMetric(metric.id,patch);
+  }
+  retain(now=Date.now(),windows={inbox:30,delivery:30,metric:30,failure:30}):{inbox:number;delivery:number;metric:number;failure:number}{
+    const cutoff=(days:number)=>now-days*86_400_000;const result={inbox:0,delivery:0,metric:0,failure:0};
+    const inboxRows=this.db.prepare('SELECT scope,id,json FROM inbox').all() as {scope:string;id:string;json:string}[];
+    for(const row of inboxRows){const value=JSON.parse(row.json) as InboundMessage;if(value.timestamp<cutoff(windows.inbox)&&['complete','failed','cancelled','interrupted'].includes(String((this.db.prepare('SELECT state FROM inbox WHERE scope=? AND id=?').get(row.scope,row.id) as {state:string}).state))){result.inbox+=Number(this.db.prepare('DELETE FROM inbox WHERE scope=? AND id=?').run(row.scope,row.id).changes);}}
+    const deliveries=this.deliveries();for(const delivery of deliveries){const at=delivery.updatedAt??delivery.createdAt??0;if(at<cutoff(windows.delivery)&&['sent','failed','cancelled','unknown'].includes(delivery.state))result.delivery+=Number(this.db.prepare('DELETE FROM deliveries WHERE id=?').run(delivery.id).changes);}
+    for(const metric of this.turnMetrics()){const at=metric.sentAt??metric.modelCompletedAt??metric.receivedAt;if(at<cutoff(windows.metric)&&['complete','failed','cancelled'].includes(metric.state??''))result.metric+=Number(this.db.prepare("DELETE FROM records WHERE kind='turn-metric' AND id=?").run(metric.id).changes);}
+    for(const row of this.db.prepare("SELECT id,json FROM records WHERE kind='failure'").all() as {id:string;json:string}[]){const failure=JSON.parse(row.json) as {at:number;state:string};if(failure.at<cutoff(windows.failure)&&['failed','cancelled'].includes(failure.state))result.failure+=Number(this.db.prepare("DELETE FROM records WHERE kind='failure' AND id=?").run(row.id).changes);}
+    return result;
+  }
   claimRuntime(owner:string):void {this.transaction(()=>{const previous=this.get<{owner:string;pid:number}>('runtime','owner');if(previous){let alive=true;try{process.kill(previous.pid,0);}catch(error){alive=(error as NodeJS.ErrnoException).code!=='ESRCH';}if(alive)throw new Error('此数据目录已有活动 Harness 消费实例');}this.put('runtime','owner',{owner,pid:process.pid});});}
   releaseRuntime(owner:string):void {this.transaction(()=>{if(this.get<{owner:string}>('runtime','owner')?.owner===owner)this.db.prepare("DELETE FROM records WHERE kind='runtime' AND id='owner'").run();});}
   transaction<T>(fn:()=>T):T { this.db.exec('BEGIN IMMEDIATE'); try { const value=fn(); this.db.exec('COMMIT'); return value; } catch(e) { this.db.exec('ROLLBACK'); throw e; } }
   get<T>(kind:string,id:string):T|undefined { const row=this.db.prepare('SELECT json FROM records WHERE kind=? AND id=?').get(kind,id) as {json:string}|undefined; return row ? JSON.parse(row.json) as T : undefined; }
   list<T>(kind:string):T[] { return (this.db.prepare('SELECT json FROM records WHERE kind=? ORDER BY id').all(kind) as {json:string}[]).map(r=>JSON.parse(r.json) as T); }
   put(kind:string,id:string,value:unknown):void { this.db.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET json=excluded.json').run(kind,id,JSON.stringify(value)); }
+  findBinding(key:string):SessionBinding|undefined{return this.get('binding',key);}
+  findSession(id:string):SessionRecord|undefined{return this.get('session',id);}
+  findTurnSnapshot(id:string):TurnSnapshot|undefined{return this.get('turn-snapshot',id);}
+  saveTurnSnapshot(id:string,value:TurnSnapshot):void{this.put('turn-snapshot',id,value);}
+  failures():readonly Record<string,any>[] {return this.list('failure');}
+  saveFailure(id:string,value:unknown):void{this.put('failure',id,value);}
+  sessionActions<T extends SessionActionRecordLike=SessionActionRecordLike>():T[]{return this.list('session-action');}
+  findSessionAction<T extends SessionActionRecordLike=SessionActionRecordLike>(id:string):T|undefined{return this.get('session-action',id);}
+  saveSessionAction(id:string,value:SessionActionRecordLike):void{this.put('session-action',id,value);}
+  jobs():readonly Record<string,any>[] {return this.list('job');}
+  findJob(id:string):Record<string,any>|undefined{return this.get('job',id);}
+  saveJob(id:string,value:unknown):void{this.put('job',id,value);}
+  patchJob(id:string,patch:Record<string,unknown>):Record<string,unknown>{const next={...this.findJob(id),...patch};this.saveJob(id,next);return next;}
+  consumeMediaQuota(key:string,limit:number):void{this.transaction(()=>{const used=this.get<number>('media-quota',key)??0;if(used>=limit)throw Error('MEDIA_DAILY_LIMIT');this.put('media-quota',key,used+1);});}
+  saveAsset(asset:Asset):void{this.transaction(()=>{this.put('asset',asset.id,asset);this.indexAsset(asset);});}
+  capabilityStatuses():readonly unknown[]{return this.list('capability-status');}
+  saveCapabilityStatus(id:string,value:unknown):void{this.put('capability-status',id,value);}
+  evolutionTasks<T>():T[]{return this.list('evolution');}
+  saveEvolutionTask(id:string,value:unknown):void{this.put('evolution',id,value);}
+  contentChanges<T>():T[]{return this.list('evolution-content');}
+  findContentChange<T>(id:string):T|undefined{return this.get('evolution-content',id);}
+  saveContentChange(id:string,value:unknown):void{this.put('evolution-content',id,value);}
+  sessionsAll():SessionRecord[]{return this.list('session');}
+  bindings():SessionBinding[]{return this.list('binding');}
+  configVersions():readonly BotConfig[]{return this.list('config-version');}
+  personaDirectory(id?:string):string{return this.personas.directory(id);}
+  personaRoot():string{return this.personas.root;}
+  readPersonaDraft(id:string){return this.personas.read(id);}
+  storageHome():string{return this.home;}
+  findTurnMetric(id:string):TurnMetric|undefined{return this.get('turn-metric',id);}
+  statsSessionExists(id:string):boolean{return!!this.get('stats-session',id);}
+  statsOwnedStart(id:string):number{return this.get<number>('stats-owned-start',id)??0;}
+  saveStatsOwnedStart(id:string,value:number):void{this.put('stats-owned-start',id,value);}
+  private revision(name:string):number{const row=this.db.prepare('SELECT revision FROM collection_revisions WHERE name=?').get(name) as {revision:number}|undefined;return row?.revision??0;}
+  private bump(name:string):void{this.db.prepare('INSERT INTO collection_revisions VALUES(?,1) ON CONFLICT(name) DO UPDATE SET revision=revision+1').run(name);}
   configs():BotConfig[] { return this.list<BotConfig>('config').map(c=>configSchema.parse(c)); }
   config(id:string):BotConfig { const c=this.get<BotConfig>('config',id); if (!c || c.archived) throw new Error('配置不存在或已归档'); return configSchema.parse(c); }
   personaStatus(id:string):{id:string;directory:string;state:'synced'|'draft'|'error';error?:string} {
@@ -96,22 +178,37 @@ export class Store {
       this.put('bot',value.id,value); return value;
     });
   }
-  accept(message:InboundMessage):boolean { const scope=scopeKey(message.scope); return this.db.prepare('INSERT OR IGNORE INTO inbox(scope,id,json) VALUES(?,?,?)').run(scope,message.id,JSON.stringify(message)).changes===1; }
+  accept(message:InboundMessage):boolean {
+    const validation=validateInboundMessage(message);if(validation)throw new Error(validation);
+    const scope=scopeKey(message.scope);const accepted=this.db.prepare('INSERT OR IGNORE INTO inbox(scope,id,json) VALUES(?,?,?)').run(scope,message.id,JSON.stringify(message)).changes===1;
+    if(accepted){this.updateTurnMetric(`inbox:${scope}:${message.id}`,{scopeKey:scope,sourceId:message.id,receivedAt:message.timestamp,state:'received'});this.stats.observeReceived(message);}
+    return accepted;
+  }
   messages(scope:string,states=['pending']):InboundMessage[] { return (this.db.prepare(`SELECT json FROM inbox WHERE scope=? AND state IN (${states.map(()=>'?').join(',')}) ORDER BY rowid`).all(scope,...states) as {json:string}[]).map(r=>JSON.parse(r.json)); }
   source(scope:string,id:string):InboundMessage|undefined { const r=this.db.prepare('SELECT json FROM inbox WHERE scope=? AND id=?').get(scope,id) as {json:string}|undefined; return r ? JSON.parse(r.json) : undefined; }
   updateMessage(scope:string,message:InboundMessage):void {this.db.prepare('UPDATE inbox SET json=? WHERE scope=? AND id=?').run(JSON.stringify(message),scope,message.id);}
-  mark(scope:string,ids:string[],state:string):void { for(const id of ids) this.db.prepare('UPDATE inbox SET state=? WHERE scope=? AND id=?').run(state,scope,id); }
+  mark(scope:string,ids:string[],state:string):void {
+    for(const id of ids){
+      this.db.prepare('UPDATE inbox SET state=? WHERE scope=? AND id=?').run(state,scope,id);
+      const metricId=`inbox:${scope}:${id}`;const metric=this.get<TurnMetric>('turn-metric',metricId);if(!metric)continue;
+      const metricState=['received','processing','complete','failed','cancelled'].includes(state)?state as TurnMetric['state']:undefined;
+      this.updateTurnMetric(metricId,{...(metricState?{state:metricState}:{}),queuedAt:metric.queuedAt??(state!=='received'?Date.now():undefined)});
+    }
+  }
+  allMessages(states?:string[]):InboundMessage[]{const where=states?.length?` WHERE state IN (${states.map(()=>'?').join(',')})`:'';return(this.db.prepare(`SELECT json FROM inbox${where} ORDER BY rowid`).all(...(states??[])) as {json:string}[]).map(row=>JSON.parse(row.json) as InboundMessage);}
+  recordCount(kind:string):number{return Number((this.db.prepare('SELECT COUNT(*) count FROM records WHERE kind=?').get(kind) as {count:number|bigint}).count);}
+  cursorStore():CursorStore {return{read:(channelId,botId)=>this.get<JsonValue>('channel-cursor',`${channelId}:${botId}`)??this.get<JsonValue>('cursor',botId),write:(channelId,botId,value)=>this.transaction(()=>{this.put('channel-cursor',`${channelId}:${botId}`,value);this.put('cursor',botId,value);})};}
   scopesWithPending(states=['pending']):string[] { return (this.db.prepare(`SELECT DISTINCT scope FROM inbox WHERE state IN (${states.map(()=>'?').join(',')})`).all(...states) as {scope:string}[]).map(r=>r.scope); }
   binding(scope:CallerScope):SessionBinding { const key=scopeKey(scope); let b=this.get<SessionBinding>('binding',key); if(!b) { b={key,scope,sessionId:randomUUID(),generation:0,persisted:false,recentSince:Date.now()}; this.updateSession(b); } else this.recordSession(b); return b; }
   private recordSession(binding:SessionBinding):void {
     const previous=this.get<SessionRecord>('session',binding.sessionId);if(previous&&previous.scopeKey!==binding.key)throw new Error('SESSION_OWNERSHIP_MISMATCH');
     const now=Date.now();this.put('session',binding.sessionId,{id:binding.sessionId,scopeKey:binding.key,scope:binding.scope,generation:binding.generation,persisted:binding.persisted,createdAt:previous?.createdAt??now,updatedAt:now,personaId:binding.personaId,modelOverride:binding.modelOverride,recentSince:binding.recentSince} satisfies SessionRecord);
   }
-  updateSession(binding:SessionBinding):SessionBinding {if(binding.key!==scopeKey(binding.scope))throw new Error('SESSION_OWNERSHIP_MISMATCH');this.recordSession(binding);this.put('binding',binding.key,binding);return binding;}
+  updateSession(binding:SessionBinding):SessionBinding {if(binding.key!==scopeKey(binding.scope))throw new Error('SESSION_OWNERSHIP_MISMATCH');this.recordSession(binding);this.put('binding',binding.key,binding);this.bump('sessions');return binding;}
   markSessionPersisted(binding:SessionBinding):void {const current=this.get<SessionBinding>('binding',binding.key);if(current?.sessionId===binding.sessionId)this.updateSession({...current,persisted:true});else{const record=this.session(binding.scope,binding.sessionId);this.put('session',record.id,{...record,persisted:true,updatedAt:Date.now()});}}
   private backfillSessions():void {
     const bindings=this.list<SessionBinding>('binding').filter(binding=>{
-      const scope=binding?.scope;if(!scope||!['qq','weixin'].includes(scope.platform)||!['private','group'].includes(scope.kind))return false;
+      const scope=binding?.scope;if(!scope||!idSchema.safeParse(scope.platform).success||!['private','group'].includes(scope.kind))return false;
       if(![scope.botId,scope.accountId,scope.channelId,scope.senderId,binding.sessionId].every(value=>typeof value==='string'&&value.length>0))return false;
       return binding.key===scopeKey(scope);
     });
@@ -123,21 +220,34 @@ export class Store {
     }
   }
   session(scope:CallerScope,id:string):SessionRecord {const record=this.get<SessionRecord>('session',id);if(!record||record.scopeKey!==scopeKey(scope))throw new Error('会话不存在或不属于当前渠道身份');return record;}
-  sessions(scope:CallerScope):SessionRecord[]{this.binding(scope);return this.list<SessionRecord>('session').filter(item=>item.scopeKey===scopeKey(scope)).sort((a,b)=>b.updatedAt-a.updatedAt);}
+  sessions(scope:CallerScope):SessionRecord[]{this.binding(scope);return this.list<SessionRecord>('session').filter(item=>item.scopeKey===scopeKey(scope)).sort((a,b)=>b.updatedAt-a.updatedAt||b.id.localeCompare(a.id));}
+  pageSessions(filter:{scopeKey?:string},limit:number,cursor?:string):Page<SessionRecord>{const revision=this.revision('sessions'),fingerprint=filterHash(filter),keyset=decodeCursor(cursor,'sessions',fingerprint,revision),params:Array<string|number>=[];let where='';if(filter.scopeKey){where=' WHERE json_extract(json,\'$.scopeKey\')=?';params.push(filter.scopeKey);}if(keyset){where+=where?' AND ':' WHERE ';where+='(CAST(json_extract(json,\'$.updatedAt\') AS INTEGER)<? OR (CAST(json_extract(json,\'$.updatedAt\') AS INTEGER)=? AND id<?))';params.push(keyset.time,keyset.time,keyset.id);}const rows=this.db.prepare(`SELECT id,json FROM records${where}${where?' AND':' WHERE'} kind='session' ORDER BY CAST(json_extract(json,'$.updatedAt') AS INTEGER) DESC,id DESC LIMIT ?`).all(...params,limit+1) as {id:string;json:string}[],more=rows.length>limit,items=rows.slice(0,limit).map(row=>JSON.parse(row.json) as SessionRecord),last=items.at(-1);return{items,nextCursor:more&&last?encodeCursor({v:1,collection:'sessions',filter:fingerprint,revision,time:last.updatedAt,id:last.id}):null,revision:`sessions:${revision}`};}
   effectiveConfig(binding:SessionBinding):BotConfig {const config=this.config(binding.personaId??this.bot(binding.scope.botId).configId);return binding.modelOverride?{...config,model:{...binding.modelOverride}}:config;}
   recentSince(key:string):number{return this.get<SessionBinding>('binding',key)?.recentSince??0;}
   sessionRecentSince(key:string):number{return this.recentSince(key);}
   reset(scope:CallerScope):SessionBinding {const old=this.binding(scope);const next={...old,sessionId:randomUUID(),generation:old.generation+1,persisted:false,recentSince:Date.now()};return this.updateSession(next);}
   activateSession(scope:CallerScope,id:string):SessionBinding {const old=this.binding(scope);const record=this.session(scope,id);return this.updateSession({key:old.key,scope,sessionId:id,generation:old.generation+1,persisted:record.persisted,personaId:record.personaId,modelOverride:record.modelOverride,recentSince:record.recentSince});}
-  enqueue(binding:SessionBinding,sourceId:string,turnId:string,outputs:Output[],reply:Record<string,string>):void {
+  enqueue(binding:SessionBinding,sourceId:string,turnId:string,outputs:Output[],reply:Record<string,string>,replyEnvelope?:Delivery['replyEnvelope']):void {
+    this.updateTurnMetrics(binding.key,[sourceId],{sessionId:binding.sessionId,turnId});
     outputs.forEach((output,index)=>{
       const id=createHash('sha256').update(JSON.stringify([binding.key,binding.sessionId,sourceId,turnId,index])).digest('hex');
-      const now=Date.now();const d:Delivery={id,scopeKey:binding.key,botId:binding.scope.botId,sessionId:binding.sessionId,sourceId,turnId,index,output,reply,state:'pending',createdAt:now,updatedAt:now};
-      this.db.prepare('INSERT OR IGNORE INTO deliveries VALUES(?,?,?,?)').run(id,binding.key,JSON.stringify(d),'pending');
+      const now=Date.now();const d:Delivery={id,scopeKey:binding.key,botId:binding.scope.botId,sessionId:binding.sessionId,sourceId,turnId,index,output,reply,...replyEnvelope?{replyEnvelope}:{},state:'pending',createdAt:now,updatedAt:now};
+      const inserted=this.db.prepare('INSERT OR IGNORE INTO deliveries(id,scope,json,state,created_at,bot_id,turn_id,output_index) VALUES(?,?,?,?,?,?,?,?)').run(id,binding.key,JSON.stringify(d),'pending',now,d.botId,d.turnId,d.index).changes===1;if(inserted){this.stats.observeDelivery(d);this.bump('deliveries');}
     });
   }
   deliveries(states?:string[]):Delivery[] { const where=states?.length ? ` WHERE state IN (${states.map(()=>'?').join(',')})` : ''; return (this.db.prepare(`SELECT json,state FROM deliveries${where} ORDER BY rowid`).all(...(states??[])) as {json:string;state:Delivery['state']}[]).map(r=>({...JSON.parse(r.json),state:r.state})); }
-  deliveryState(delivery:Delivery,state:Delivery['state'],receipt?:string,error?:string):void {const now=Date.now();this.db.prepare('UPDATE deliveries SET json=?,state=? WHERE id=?').run(JSON.stringify({...delivery,state,receipt,error,updatedAt:now,...(state==='sent'?{sentAt:now}:{})}),state,delivery.id); }
+  deliveryRepository(){
+    const decode=(rows:{json:string;state:Delivery['state']}[])=>rows.map(row=>({...JSON.parse(row.json),state:row.state} as Delivery));
+    return{
+      count:(states:readonly string[])=>Number((this.db.prepare(`SELECT COUNT(*) count FROM deliveries WHERE state IN (${states.map(()=>'?').join(',')})`).get(...states) as {count:number|bigint}).count),
+      pendingBotIds:()=>(this.db.prepare("SELECT DISTINCT bot_id id FROM deliveries WHERE state='pending' AND bot_id<>''").all() as {id:string}[]).map(row=>row.id),
+      nextSendable:(botId:string,limit:number)=>decode(this.db.prepare(`SELECT json,state FROM deliveries pending WHERE bot_id=? AND state='pending' AND NOT EXISTS(SELECT 1 FROM deliveries blocker WHERE blocker.scope=pending.scope AND blocker.turn_id=pending.turn_id AND blocker.output_index<pending.output_index AND blocker.state IN ('unknown','failed')) ORDER BY created_at,id LIMIT ?`).all(botId,limit) as {json:string;state:Delivery['state']}[]),
+      find:(id:string,state?:Delivery['state'])=>{const row=this.db.prepare(`SELECT json,state FROM deliveries WHERE id=?${state?' AND state=?':''}`).get(id,...(state?[state]:[])) as {json:string;state:Delivery['state']}|undefined;return row?decode([row])[0]:undefined;},
+      hasEarlierBlocker:(delivery:Delivery)=>!!this.db.prepare("SELECT 1 FROM deliveries WHERE scope=? AND turn_id=? AND output_index<? AND state IN ('unknown','failed') LIMIT 1").get(delivery.scopeKey,delivery.turnId,delivery.index),
+      pageDeliveries:(request:any)=>{const revision=this.revision('deliveries'),fingerprint=filterHash(request.filter),cursor=decodeCursor(request.cursor,'deliveries',fingerprint,revision),conditions:string[]=[],params:Array<string|number>=[];if(request.filter.scopeKey){conditions.push('scope=?');params.push(request.filter.scopeKey);}if(request.filter.botId){conditions.push('bot_id=?');params.push(request.filter.botId);}if(request.filter.states?.length){conditions.push(`state IN (${request.filter.states.map(()=>'?').join(',')})`);params.push(...request.filter.states);}if(cursor){conditions.push('(created_at<? OR (created_at=? AND id<?))');params.push(cursor.time,cursor.time,cursor.id);}const rows=decode(this.db.prepare(`SELECT json,state FROM deliveries${conditions.length?' WHERE '+conditions.join(' AND '):''} ORDER BY created_at DESC,id DESC LIMIT ?`).all(...params,request.limit+1) as {json:string;state:Delivery['state']}[]),more=rows.length>request.limit,items=rows.slice(0,request.limit),last=items.at(-1);return{items,nextCursor:more&&last?encodeCursor({v:1,collection:'deliveries',filter:fingerprint,revision,time:last.createdAt??0,id:last.id}):null,revision:`deliveries:${revision}`};},
+    };
+  }
+  deliveryState(delivery:Delivery,state:Delivery['state'],receipt?:string,error?:string):void {const now=Date.now();const next={...delivery,state,receipt,error,updatedAt:now,...(state==='sent'?{sentAt:now}:{})};this.db.prepare('UPDATE deliveries SET json=?,state=? WHERE id=?').run(JSON.stringify(next),state,delivery.id);this.stats.observeDelivery(next);this.bump('deliveries'); }
   remember(scope:string,key:string,value:string,source:string,quote:string):void {
     if(!key.trim() || key.length>100 || value.length>500) throw new Error('记忆长度无效');
     const input=this.source(scope,source);
@@ -150,5 +260,8 @@ export class Store {
   private blockMemorySources(scope:string,key:string):void {const rows=this.db.prepare('SELECT source FROM memory_sources WHERE scope=? AND key=? UNION SELECT source FROM memory WHERE scope=? AND key=?').all(scope,key,scope,key) as {source:string}[];for(const row of rows)this.db.prepare('INSERT OR IGNORE INTO forgotten VALUES(?,?,?)').run(scope,row.source,'*');}
   correctMemory(scope:string,key:string,value:string,version:number):void {this.transaction(()=>{const result=this.db.prepare('UPDATE memory SET value=?,version=version+1,updated=? WHERE scope=? AND key=? AND version=? AND deleted=0').run(value,Date.now(),scope,key,version);if(result.changes!==1)throw new ConflictError();this.blockMemorySources(scope,key);});}
   forget(scope:string,key:string):void { this.transaction(()=>{this.blockMemorySources(scope,key);this.db.prepare('UPDATE memory SET deleted=1,updated=? WHERE scope=? AND key=?').run(Date.now(),scope,key);}); }
+  indexAsset(asset:Asset):void{this.db.prepare('INSERT INTO asset_index VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET scope=excluded.scope,session=excluded.session,kind=excluded.kind,created_at=excluded.created_at,size=excluded.size').run(asset.id,asset.scopeKey,asset.sessionId??null,asset.kind,asset.createdAt,asset.size);}
+  assetUsage(scope:string):{scope:number;total:number}{const owned=this.db.prepare('SELECT COALESCE(SUM(size),0) value FROM asset_index WHERE scope=?').get(scope) as {value:number|bigint},total=this.db.prepare('SELECT COALESCE(SUM(size),0) value FROM asset_index').get() as {value:number|bigint};return{scope:Number(owned.value),total:Number(total.value)};}
+  recentAssets(scope:string,sessionId:string,kind?:string,limit=24):Asset[]{const rows=this.db.prepare(`SELECT a.id,r.json FROM asset_index a JOIN records r ON r.kind='asset' AND r.id=a.id WHERE a.scope=? AND a.session=?${kind?' AND a.kind=?':''} AND a.created_at>? ORDER BY a.created_at DESC,a.id DESC LIMIT ?`).all(scope,sessionId,...(kind?[kind]:[]),Date.now()-600000,limit) as {id:string;json:string}[];const result:Asset[]=[];for(const row of rows){const asset=JSON.parse(row.json) as Asset;if(asset.scopeKey!==scope||asset.sessionId!==sessionId||kind&&asset.kind!==kind){this.indexAsset(asset);continue;}result.push(asset);}return result;}
   asset(scope:string,id:string):Asset { const asset=this.get<Asset>('asset',id); if(!asset || asset.scopeKey!==scope) throw new Error('附件不存在或不属于当前会话'); return asset; }
 }
