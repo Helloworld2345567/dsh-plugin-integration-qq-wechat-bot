@@ -14,6 +14,8 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent / "vendor"))
+PROTOCOL = "dsh.media-worker"
+PROTOCOL_VERSION = 1
 
 
 class JobError(Exception):
@@ -24,6 +26,29 @@ def checked_number(value, minimum, maximum):
     if type(value) not in (int, float) or not math.isfinite(value) or not minimum <= value <= maximum:
         raise JobError("INVALID_MEDIA_RANGE")
     return value
+
+
+def _validate_json_shape(value, *, depth=0):
+    """Bound the shape before a handler can hand parameters to a provider."""
+    if depth > 6:
+        raise JobError("MEDIA_WORKER_PARAMETERS_INVALID")
+    if isinstance(value, str):
+        if len(value) > 100_000:
+            raise JobError("MEDIA_WORKER_PARAMETERS_INVALID")
+    elif isinstance(value, list):
+        if len(value) > 64:
+            raise JobError("MEDIA_WORKER_PARAMETERS_INVALID")
+        for item in value:
+            _validate_json_shape(item, depth=depth + 1)
+    elif isinstance(value, dict):
+        if len(value) > 64:
+            raise JobError("MEDIA_WORKER_PARAMETERS_INVALID")
+        for key, item in value.items():
+            if not isinstance(key, str) or not 1 <= len(key) <= 128:
+                raise JobError("MEDIA_WORKER_PARAMETERS_INVALID")
+            _validate_json_shape(item, depth=depth + 1)
+    elif value is not None and not isinstance(value, (bool, int, float)):
+        raise JobError("MEDIA_WORKER_PARAMETERS_INVALID")
 
 
 def image(job):
@@ -145,20 +170,130 @@ def convert(job):
     return {"assets": [{"path": str(output), "name": output.name, "mime": "image/gif" if gif else "video/mp4", "kind": "image" if gif else "video"}]}
 
 
-def execute(job):
-    if not isinstance(job, dict) or job.get("deadline", 0) < time.time() * 1000:
-        raise JobError("JOB_EXPIRED")
+class OperationRegistry:
+    """Versioned worker dispatch. Adding an operation is one registration, not a switch edit."""
+    def __init__(self):
+        self._handlers = {}
+
+    def register(self, name, handler):
+        if not isinstance(name, str) or not name or name in self._handlers:
+            raise JobError("MEDIA_OPERATION_REGISTRATION_INVALID")
+        self._handlers[name] = handler
+
+    def execute(self, job):
+        handler = self._handlers.get(job.get("handler"))
+        if handler is None:
+            raise JobError("UNKNOWN_MEDIA_OPERATION")
+        return handler(job)
+
+
+def _validate_result(result):
+    if not isinstance(result, dict):
+        raise JobError("MEDIA_WORKER_RESULT_INVALID")
+    for key in ("text", "coverage"):
+        if key in result and result[key] is not None and not isinstance(result[key], str):
+            raise JobError("MEDIA_WORKER_RESULT_INVALID")
+    if "incomplete" in result and not isinstance(result["incomplete"], bool):
+        raise JobError("MEDIA_WORKER_RESULT_INVALID")
+    for key in ("assets", "contextAssets"):
+        files = result.get(key, [])
+        if not isinstance(files, list) or len(files) > 16:
+            raise JobError("MEDIA_WORKER_RESULT_INVALID")
+        for file in files:
+            if not isinstance(file, dict) or any(not isinstance(file.get(field), str) or not file[field] for field in ("path", "name", "mime", "kind")):
+                raise JobError("MEDIA_WORKER_RESULT_INVALID")
+    return result
+
+
+def _validate_usage_journal(job):
+    journal = Path(job["usagePath"])
+    if not journal.exists():
+        return
+    try:
+        value = json.loads(journal.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise JobError("MEDIA_USAGE_JOURNAL_INVALID") from None
+    if not isinstance(value, list) or len(value) > 256:
+        raise JobError("MEDIA_USAGE_JOURNAL_INVALID")
+    for item in value:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not 1 <= len(item["id"]) <= 128 or item.get("attempted") is not True or not isinstance(item.get("at"), int):
+            raise JobError("MEDIA_USAGE_JOURNAL_INVALID")
+        if "model" in item and item["model"] is not None and (not isinstance(item["model"], str) or len(item["model"]) > 256):
+            raise JobError("MEDIA_USAGE_JOURNAL_INVALID")
+        if "usage" in item and item["usage"] is not None and not isinstance(item["usage"], dict):
+            raise JobError("MEDIA_USAGE_JOURNAL_INVALID")
+
+
+def _social(job):
+    from social_posts import read_post
+    return {"text": json.dumps(asyncio.run(read_post(str(job["parameters"].get("url", "")))), ensure_ascii=False), "coverage": "PAGE_TEXT_ONLY"}
+
+
+def _validate_protocol(job):
+    if not isinstance(job, dict):
+        raise JobError("MEDIA_WORKER_PROTOCOL_UNSUPPORTED")
+    # Keep the pre-Phase-5 direct Python API usable for existing integrations;
+    # jobs crossing the process boundary are emitted with an explicit version.
+    if "protocol" not in job and "protocolVersion" not in job:
+        job["protocol"] = PROTOCOL
+        job["protocolVersion"] = PROTOCOL_VERSION
+        job.setdefault("timeoutMs", 180000)
+        job.setdefault("quotaUnits", 1)
+        job.setdefault("usagePath", str(Path(job.get("output", ".")) / "model-usage.json"))
+        job.setdefault("handler", job.get("operation"))
+    if "handler" not in job:
+        job["handler"] = job.get("operation")
+    if job.get("protocol") != PROTOCOL or job.get("protocolVersion") != PROTOCOL_VERSION:
+        raise JobError("MEDIA_WORKER_PROTOCOL_UNSUPPORTED")
+    if not isinstance(job.get("id"), str) or not 1 <= len(job["id"]) <= 128 or not isinstance(job.get("scope"), str) or not 1 <= len(job["scope"]) <= 256 or not isinstance(job.get("operation"), str) or not 2 <= len(job["operation"]) <= 81 or not isinstance(job.get("handler"), str) or not 2 <= len(job["handler"]) <= 81:
+        raise JobError("MEDIA_WORKER_JOB_INVALID")
+    if not isinstance(job.get("parameters"), dict):
+        raise JobError("MEDIA_WORKER_PARAMETERS_INVALID")
+    try:
+        if len(json.dumps(job["parameters"], ensure_ascii=False).encode("utf-8")) > 256 * 1024:
+            raise JobError("MEDIA_WORKER_PARAMETERS_TOO_LARGE")
+        _validate_json_shape(job["parameters"])
+    except (TypeError, ValueError):
+        raise JobError("MEDIA_WORKER_PARAMETERS_INVALID") from None
+    if not isinstance(job.get("output"), str) or not job["output"] or len(job["output"]) > 4096 or not isinstance(job.get("usagePath"), str) or not job["usagePath"] or len(job["usagePath"]) > 4096:
+        raise JobError("MEDIA_WORKER_PATH_INVALID")
     if not isinstance(job.get("inputs"), list) or len(job["inputs"]) > 8:
         raise JobError("INVALID_INPUTS")
-    operation = job.get("operation")
-    if operation in ("image_generate", "image_edit"): return image(job)
-    if operation in ("transcribe", "video_analyze"): return analyze_media(job)
-    if operation == "document_read": return document(job)
-    if operation in ("convert_gif", "convert_mp4"): return convert(job)
-    if operation == "social_read":
-        from social_posts import read_post
-        return {"text": json.dumps(asyncio.run(read_post(str(job["parameters"].get("url", "")))), ensure_ascii=False), "coverage": "PAGE_TEXT_ONLY"}
-    raise JobError("UNKNOWN_MEDIA_OPERATION")
+    for item in job["inputs"]:
+        if not isinstance(item, dict) or not all(isinstance(item.get(key), str) and item[key] for key in ("path", "name", "mime", "kind")) or any(len(item[key]) > limit for key, limit in (("path", 4096), ("name", 512), ("mime", 256), ("kind", 32))):
+            raise JobError("MEDIA_WORKER_INPUT_INVALID")
+    endpoint = job.get("endpoint")
+    if endpoint is not None and (not isinstance(endpoint, dict) or not isinstance(endpoint.get("model"), str) or not endpoint["model"] or len(endpoint["model"]) > 256 or not isinstance(endpoint.get("baseUrl"), str) or not endpoint["baseUrl"] or len(endpoint["baseUrl"]) > 2048 or not isinstance(endpoint.get("keyEnv"), str) or not endpoint["keyEnv"] or not endpoint["keyEnv"][0].isalpha() or not endpoint["keyEnv"].replace("_", "").isalnum() or not endpoint["keyEnv"].isupper()):
+        raise JobError("MEDIA_WORKER_ENDPOINT_INVALID")
+    if not isinstance(job.get("deadline"), (int, float)) or not math.isfinite(job["deadline"]) or job["deadline"] < time.time() * 1000:
+        raise JobError("JOB_EXPIRED")
+    if not isinstance(job.get("timeoutMs"), int) or job["timeoutMs"] < 1000 or job["timeoutMs"] > 15 * 60 * 1000:
+        raise JobError("MEDIA_WORKER_TIMEOUT_INVALID")
+    if not isinstance(job.get("quotaUnits"), int) or job["quotaUnits"] < 1 or job["quotaUnits"] > 10000:
+        raise JobError("MEDIA_WORKER_QUOTA_INVALID")
+
+
+OPERATIONS = OperationRegistry()
+OPERATIONS.register("image", image)
+OPERATIONS.register("analyze_media", analyze_media)
+OPERATIONS.register("document", document)
+# Legacy direct callers may omit the descriptor handler; aliases preserve that
+# pre-process API while process jobs use the registry-owned handler above.
+OPERATIONS.register("image_generate", image)
+OPERATIONS.register("image_edit", image)
+OPERATIONS.register("transcribe", analyze_media)
+OPERATIONS.register("video_analyze", analyze_media)
+OPERATIONS.register("document_read", document)
+OPERATIONS.register("convert_gif", convert)
+OPERATIONS.register("convert_mp4", convert)
+OPERATIONS.register("social_read", _social)
+
+
+def execute(job):
+    _validate_protocol(job)
+    result = _validate_result(OPERATIONS.execute(job))
+    _validate_usage_journal(job)
+    return result
 
 
 if __name__ == "__main__":
@@ -166,8 +301,8 @@ if __name__ == "__main__":
         job = json.loads(sys.stdin.buffer.read(1024 * 1024))
         with contextlib.redirect_stdout(io.StringIO()):
             result = execute(job)
-        print(json.dumps(result, ensure_ascii=False))
+        print(json.dumps({"protocol": PROTOCOL, "protocolVersion": PROTOCOL_VERSION, "result": result}, ensure_ascii=False))
     except Exception as error:
         code = str(error) if isinstance(error, JobError) else getattr(error, "code", type(error).__name__)
-        print(json.dumps({"error": {"code": code}}))
+        print(json.dumps({"protocol": PROTOCOL, "protocolVersion": PROTOCOL_VERSION, "error": {"code": code}}))
         sys.exit(1)

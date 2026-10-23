@@ -10,7 +10,7 @@ export function apply(ctx:Context):void{
   const journal=new LifecycleJournal(fixture.home);const result=path.join(folder,'result.json');let running=false;let instance:unknown;
   const timer=setInterval(()=>{if(running)return;running=true;
     try{
-      const current=(globalThis as any)[Symbol.for('sakura.lifecycle.coordinator')];if(!instance)instance=current;
+      const current=(process as any).__DSH_LIFECYCLE_COORDINATOR__??(globalThis as any)[Symbol.for('sakura.lifecycle.coordinator')];if(!instance)instance=current;
       const task=journal.read('native-upgrade');
       if(task.phase==='failed'||task.phase==='rolled-back')throw Error(`Native upgrade failed: ${JSON.stringify(task)}`);
       if(task.phase!=='succeeded')return;

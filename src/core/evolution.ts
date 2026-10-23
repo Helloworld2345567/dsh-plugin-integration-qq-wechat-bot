@@ -3,9 +3,10 @@ import {existsSync,mkdirSync,copyFileSync,realpathSync,writeFileSync,lstatSync} 
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import type {Store} from './store.js';
-import {LifecycleJournal,defaultProductHome,lifecycleAvailable,readInstallation,packageIdentity,sha256,verifyArtifact,type EvolutionTask,type Artifact} from '../lifecycle/protocol.js';
-import {sourceFiles,sourceDigest} from '../lifecycle/integrity.js';
-export {sourceFiles,sourceDigest} from '../lifecycle/integrity.js';
+import {LifecycleJournal,defaultProductHome,readInstallation,packageIdentity,sha256,verifyArtifact,type EvolutionTask,type Artifact} from './evolution-contract.js';
+import type {EvolutionJournalPort,LifecyclePort} from './runtime-ports.js';
+import {sourceFiles,sourceDigest} from './source-integrity.js';
+export {sourceFiles,sourceDigest} from './source-integrity.js';
 
 const protectedFile=(file:string)=>/^(?:scripts\/|src\/lifecycle\/|packages\/bot-lifecycle\/|tests\/(?:native-plugin|lifecycle-native-plugin|evolution\.test|lifecycle\.test)\.ts$|package(?:-lock)?\.json$|tsconfig\.json$|requirements\.txt$|cordis\.patch\.yml$)/.test(file);
 export function cleanValidationEnv(home:string):NodeJS.ProcessEnv{
@@ -13,7 +14,7 @@ export function cleanValidationEnv(home:string):NodeJS.ProcessEnv{
   return{...env,HOME:home,USERPROFILE:home,APPDATA:path.join(home,'appdata'),LOCALAPPDATA:path.join(home,'localappdata'),BOT_HOME:home,DSH_HOME:home,DSH_AGENTS_HOME:path.join(home,'agents'),BOT_DATA_HOME:path.join(home,'storages','bot-integration'),BOT_WORKSPACE_ROOT:path.join(home,'workspaces'),CI:'1',npm_config_userconfig:path.join(home,'empty.npmrc'),npm_config_audit:'false',npm_config_fund:'false'};
 }
 export interface ValidationCommand {name:string;file:string;args:string[]}
-export interface EvolutionOptions {productHome?:string;run?:(command:ValidationCommand,cwd:string,env:NodeJS.ProcessEnv,signal?:AbortSignal)=>Promise<string>;available?:()=>boolean}
+export interface EvolutionOptions {productHome?:string;run?:(command:ValidationCommand,cwd:string,env:NodeJS.ProcessEnv,signal?:AbortSignal)=>Promise<string>;available?:()=>boolean;lifecycle?:LifecyclePort}
 function npmCli():string{
   const candidates=[process.env.npm_execpath,path.join(path.dirname(process.execPath),'node_modules/npm/bin/npm-cli.js'),path.resolve(path.dirname(process.execPath),'../lib/node_modules/npm/bin/npm-cli.js')];
   const found=candidates.find(p=>p&&path.basename(p)==='npm-cli.js'&&existsSync(p));if(!found)throw Error('npm CLI not found beside Node; launch via npm or install npm for this Node runtime');return found;
@@ -32,16 +33,23 @@ async function run(command:ValidationCommand,cwd:string,env:NodeJS.ProcessEnv,si
   });
 }
 export class EvolutionService {
-  readonly journal:LifecycleJournal;readonly productHome:string;
+  readonly journal:EvolutionJournalPort;readonly productHome:string;
   private validating=new Set<string>();
   constructor(readonly store:Pick<Store,'home'|'saveEvolutionTask'>,readonly installedPackageRoot:string,readonly options:EvolutionOptions={}){
-    this.productHome=options.productHome??defaultProductHome(store.home);this.journal=new LifecycleJournal(this.productHome);
+    this.productHome=options.productHome??defaultProductHome(store.home);this.journal=options.lifecycle?.journal?.(this.productHome)??new LifecycleJournal(this.productHome);
     for(const task of this.journal.list())if(task.phase==='validating'){
       let alive=false;if(task.validationPid)try{process.kill(task.validationPid,0);alive=true;}catch{}
       if(!alive){task.error='Validation interrupted before a complete verdict; rerun validation';this.journal.phase(task,'failed',task.error);}
     }
   }
-  private available():void{if(!(this.options.available??lifecycleAvailable)())throw Error('Independent lifecycle coordinator is unavailable; reinstall with scripts/install.mjs and start with scripts/start.mjs');}
+  private available():void{
+    const available=this.options.lifecycle?.available??this.options.available??(()=>false);
+    if(!available())throw Error('Independent lifecycle coordinator is unavailable or protocol-incompatible; reinstall with scripts/install.mjs and start with scripts/start.mjs');
+    if(this.options.lifecycle){
+      const handshake=this.options.lifecycle.handshake();
+      if(!handshake||handshake.protocol!=='dsh.lifecycle'||handshake.version!==1||!handshake.capabilities.includes('runtime.quiesce')||!handshake.capabilities.includes('runtime.health')||!handshake.capabilities.includes('runtime.resume'))throw Error('LIFECYCLE_HANDSHAKE_UNAVAILABLE');
+    }
+  }
   history():EvolutionTask[]{return this.journal.list();}
   inspect(id:string):EvolutionTask{const task=this.journal.read(id);if(task.candidateRoot&&task.baseline){const current=sourceFiles(task.candidateRoot);task.changes=[...new Set([...Object.keys(task.baseline),...Object.keys(current)])].filter(file=>task.baseline![file]!==current[file]).map(file=>({file,change:!task.baseline![file]?'added':!current[file]?'deleted':'modified'}));}return task;}
   private save(task:EvolutionTask):EvolutionTask{this.store.saveEvolutionTask(task.id,task);return this.journal.write(task);}

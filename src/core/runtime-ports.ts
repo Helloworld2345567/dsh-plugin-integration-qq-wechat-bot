@@ -1,5 +1,23 @@
 import type {BotConfig,Credential,InboundMessage,Output,SessionBinding,TurnSnapshot} from './types.js';
+import type {EvolutionTask} from './evolution-contract.js';
 export interface HarnessResult {turnId:string;outputs:Output[];snapshot:TurnSnapshot}
+export interface LifecycleHandshake {protocol:'dsh.lifecycle';version:number;instance:string;capabilities:readonly string[]}
+/** Core depends on this port; the lifecycle bundle supplies the implementation. */
+export interface EvolutionJournalPort {
+  list(): EvolutionTask[];
+  read(id:string): EvolutionTask;
+  write(task:EvolutionTask): EvolutionTask;
+  phase(task:EvolutionTask, phase:EvolutionTask['phase'], message:string): EvolutionTask;
+}
+export interface SessionHistoryPort {
+  readSession(id:string): Promise<{events: ReadonlyArray<{seq:number;time:number;type:string;data:unknown}>}>;
+}
+export interface LifecyclePort {
+  available():boolean;
+  handshake():LifecycleHandshake|undefined;
+  /** Persistence is owned by the independent lifecycle bundle when present. */
+  journal?(home:string): EvolutionJournalPort;
+}
 export interface HarnessPort {
   run(binding:SessionBinding,messages:InboundMessage[],signal:AbortSignal):Promise<HarnessResult>;
   cancel(sessionId:string):void;

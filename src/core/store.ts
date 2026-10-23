@@ -13,14 +13,22 @@ import {PersonaFiles,defaultPersonasRoot,sameConfig} from './personas.js';
 export function scopeKey(scope: CallerScope): string { return createHash('sha256').update(JSON.stringify([scope.platform, scope.botId, scope.accountId, scope.kind, scope.channelId, scope.senderId])).digest('hex'); }
 export class ConflictError extends Error { constructor(message='配置已被其他操作修改，请刷新后重试') { super(message); } }
 export interface SessionActionRecordLike {id:string;scopeKey:string;scope:CallerScope;sessionId:string;state:string;createdAt:number;updatedAt:number;[key:string]:any}
+export type StoreLifecycleStage='opened'|'initialized'|'migrated'|'recovered'|'started'|'closed';
 export class Store {
   readonly db: DatabaseSync;
   readonly personas:PersonaFiles;
-  readonly stats:SqliteStatsProjection;
-  constructor(readonly home: string,personasRoot=defaultPersonasRoot(home),readonly options:{secureDefaults?:boolean}={}) {
+  stats!:SqliteStatsProjection;
+  private stage:StoreLifecycleStage='opened';
+  /** Composition-root entry point. Opening allocates the database; later stages perform schema and recovery work. */
+  static open(home:string,personasRoot=defaultPersonasRoot(home),options:{secureDefaults?:boolean}={}):Store { return new Store(home,personasRoot,{...options,defer:true}); }
+  constructor(readonly home: string,personasRoot=defaultPersonasRoot(home),readonly options:{secureDefaults?:boolean;defer?:boolean}={}) {
     const secureDefaults=options.secureDefaults===true;
     mkdirSync(home, { recursive:true }); this.db = new DatabaseSync(path.join(home, 'bots.sqlite'));
     this.personas=new PersonaFiles(personasRoot);
+    if(options.defer)return;
+    this.initializeStorage(secureDefaults);
+  }
+  private initializeStorage(secureDefaults:boolean):void {
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
       CREATE TABLE IF NOT EXISTS records(kind TEXT NOT NULL,id TEXT NOT NULL,json TEXT NOT NULL,PRIMARY KEY(kind,id));
       CREATE TABLE IF NOT EXISTS inbox(scope TEXT NOT NULL,id TEXT NOT NULL,json TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',PRIMARY KEY(scope,id));
@@ -64,10 +72,14 @@ export class Store {
         else if(!this.get('persona-files',config.id)&&sameConfig(this.personas.read(config.id).config,config))this.put('persona-files',config.id,{digest:this.personas.currentDigest(config.id)});
       }catch{/* An invalid draft must not stop bots using the last applied configuration. */}
     }
-    this.backfillSessions();
+    this.backfillSessions();this.stage='initialized';
   }
-  close(): void { this.db.close(); }
-  recover():void {const sending=this.deliveries(['sending']);this.db.exec("UPDATE inbox SET state='interrupted' WHERE state='processing'; UPDATE deliveries SET state='unknown' WHERE state='sending'");for(const delivery of sending)this.stats.observeDelivery({...delivery,state:'unknown'});}
+  lifecycleStage():StoreLifecycleStage{return this.stage;}
+  initialize():this {if(this.stage==='closed')throw new Error('STORE_CLOSED');if(this.stage==='opened')this.initializeStorage(this.options.secureDefaults===true);return this;}
+  migrate():this {this.initialize();if(this.stage!=='closed')this.stage='migrated';return this;}
+  recover():void {if(this.stage==='closed')throw new Error('STORE_CLOSED');const sending=this.deliveries(['sending']);this.db.exec("UPDATE inbox SET state='interrupted' WHERE state='processing'; UPDATE deliveries SET state='unknown' WHERE state='sending'");for(const delivery of sending)this.stats.observeDelivery({...delivery,state:'unknown'});this.stage='recovered';}
+  start():this {if(this.stage==='closed')throw new Error('STORE_CLOSED');this.stage='started';return this;}
+  close(): void {if(this.stage==='closed')return;this.stage='closed';this.db.close();}
   updateTurnMetric(id:string,patch:Partial<Omit<TurnMetric,'id'>>):void {
     const previous=this.get<TurnMetric>('turn-metric',id);const next={...previous,...patch,id} as TurnMetric;
     if(!next.scopeKey||!next.sourceId||!Number.isSafeInteger(next.receivedAt))throw new Error('TURN_METRIC_INVALID');

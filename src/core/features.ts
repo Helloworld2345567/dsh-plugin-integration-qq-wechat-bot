@@ -1,7 +1,5 @@
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
-import type {Context} from '@deepseek-ai/cordis';
-import {SessionId} from '@deepseek-ai/dsh-session';
 import type {BotRuntime} from './runtime.js';
 import {configSchema,type BotConfig,type SessionBinding,type SessionRecord,type TurnSnapshot} from './types.js';
 import {allowedNow} from './policy.js';
@@ -12,6 +10,7 @@ import {SqliteStatsData} from './sqlite-stats-data.js';
 import {packageRoot} from './paths.js';
 import {scopeKey} from './store.js';
 import {managementCommand} from './command-bus.js';
+import type {LifecyclePort,SessionHistoryPort} from './runtime-ports.js';
 
 export const botModelArgumentsSchema=z.object({action:z.enum(['list','set','reset']),provider:z.string().min(1).max(150).optional(),model:z.string().min(1).max(200).optional()}).strict().superRefine((value,ctx)=>{
   if(value.action==='set'&&(!value.provider||!value.model))ctx.addIssue({code:'custom',message:'set 需要 list 返回的准确 provider 和 model'});
@@ -40,8 +39,8 @@ export function renderStats(value:StatsResult):string {
 /** One service boundary used by the model tools, slash commands and local admin UI. */
 export class BotFeatures {
   readonly skills:DynamicSkills;readonly stats:StatsService;readonly evolution:EvolutionService;
-  constructor(readonly runtime:BotRuntime){
-    this.skills=new DynamicSkills(runtime.store);this.stats=new StatsService(new SqliteStatsData(runtime.store),()=>runtime.states,()=>runtime.store.bots(),Date.now,runtime.channels);this.evolution=new EvolutionService(runtime.store,packageRoot());
+  constructor(readonly runtime:BotRuntime,lifecycle?:LifecyclePort){
+    this.skills=new DynamicSkills(runtime.store);this.stats=new StatsService(new SqliteStatsData(runtime.store),()=>runtime.states,()=>runtime.store.bots(),Date.now,runtime.channels);this.evolution=new EvolutionService(runtime.store,packageRoot(),{lifecycle});
     for(const record of runtime.store.contentChanges<ContentChange>())if(record.phase==='preparing'){
       const current=(()=>{try{return runtime.store.config(record.configId);}catch{return undefined;}})();
       record.phase=current&&record.after&&JSON.stringify(current)===JSON.stringify(record.after)?'succeeded':'failed';record.error=record.phase==='failed'?'发布被中断，请核对当前版本和草稿':undefined;runtime.store.saveContentChange(record.id,record);
@@ -131,10 +130,10 @@ export class BotFeatures {
       default:throw Error('UNKNOWN_EVOLUTION_ACTION');
     }
   }
-  async backfill(ctx:Context):Promise<void>{
+  async backfill(history:SessionHistoryPort):Promise<void>{
     for(const record of this.runtime.store.sessionsAll()){
       if(!record.persisted)continue;this.stats.observeSession(record.id,record.scope.botId,record.id,'agent');
-      try{const log=await ctx.sessionQuery.readSession(SessionId(record.id));for(const event of log.events)this.stats.recordNative(record.id,event);}catch{/* Missing history is not zero usage and is never assigned to a guessed owner. */}
+      try{const log=await history.readSession(record.id);for(const event of log.events)this.stats.recordNative(record.id,event);}catch{/* Missing history is not zero usage and is never assigned to a guessed owner. */}
     }
   }
 }
