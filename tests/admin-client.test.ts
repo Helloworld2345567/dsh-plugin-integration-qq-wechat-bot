@@ -22,3 +22,16 @@ test('late responses cannot overwrite a newer sequence and cancel aborts the req
   const calls:Array<{signal:AbortSignal;resolve:(value:Response)=>void}>=[];const client=new AdminClient({endpoint:'/admin',token:'token',transport:{fetch:async(_input,init)=>new Promise<Response>(resolve=>calls.push({signal:init!.signal!,resolve}))}});
   const first=client.query('overview.summary',{x:1});client.invalidate('overview.summary',{x:1});assert.equal(calls[0].signal.aborted,true);const second=client.query('overview.summary',{x:1});calls[0].resolve(response({revision:'sha256:'+'1'.repeat(64),data:{value:'old'}}));calls[1].resolve(response({revision:'sha256:'+'2'.repeat(64),data:{value:'new'}}));assert.equal(await first,undefined);assert.deepEqual(await second,{value:'new'});
 });
+
+for(const name of ['overview.sessions','overview.deliveries'])test(`AdminClient preserves ${name} pages on repeated visits`,async()=>{
+  const {adminQueryRequestSchema}=await import('../src/harness/admin-contract.js');
+  const page={items:[{id:'one'}],nextCursor:null,hasMore:false,revision:`${name}:1`,contractVersion:1};
+  const requests:any[]=[];
+  const client=new AdminClient({endpoint:'/admin',token:'token',transport:{fetch:async(_url,init)=>{
+    const request=adminQueryRequestSchema.parse(JSON.parse(String(init?.body)));requests.push(request);
+    return response({result:page});
+  }}});
+  assert.deepEqual(await client.query(name,{limit:50}),page);
+  assert.deepEqual(await client.query(name,{limit:50}),page);
+  assert.equal(requests[1].input.changedSince,undefined);
+});

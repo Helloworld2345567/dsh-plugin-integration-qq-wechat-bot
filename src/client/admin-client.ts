@@ -25,7 +25,9 @@ export class AdminClient {
       const response=await this.transport.fetch(this.options.endpoint,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${this.options.token}`},body:JSON.stringify(body),signal:combined});
       const responseBody=await response.json() as {result?:VersionedResponse<T>;error?:unknown}|VersionedResponse<T>;if(!response.ok)throw new Error(typeof (responseBody as any).error==='string'?(responseBody as any).error:'ADMIN_QUERY_FAILED');const payload=('result'in responseBody&&responseBody.result?responseBody.result:responseBody) as VersionedResponse<T>;
       if(this.sequences.get(key)!==sequence)return undefined;
-      if(typeof payload.revision==='string')this.revisions.set(key,payload.revision);
+      // Collection pages use cursor revisions, not conditional-response hashes.
+      if('items' in payload)return payload as T;
+      if(typeof payload.revision==='string'&&/^sha256:[a-f0-9]{64}$/.test(payload.revision))this.revisions.set(key,payload.revision);
       if(payload.unchanged)return this.cache.get(key) as T|undefined;
       if(payload.data!==undefined)this.cache.set(key,payload.data);return payload.data;
     })();
