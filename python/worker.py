@@ -83,15 +83,36 @@ def image(job):
     return {"assets": [{"path": files[0], "name": "image.jpg", "mime": "image/jpeg", "kind": "image"}]}
 
 
-def analyze_media(job):
+def skill(job):
     import importlib.util
-    spec = importlib.util.spec_from_file_location('bot_media_analysis', ROOT / 'skills/media-analysis/scripts/media_api.py')
+    entry = SKILL_OPERATIONS.get(job['operation'])
+    if entry is None:
+        raise JobError('UNKNOWN_MEDIA_OPERATION')
+    script, _ = entry
+    spec = importlib.util.spec_from_file_location('bot_skill_worker', script)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     try:
         return module.execute(job)
-    except module.AnalysisError as error:
-        raise JobError(str(error)) from None
+    except Exception as error:
+        raise JobError(getattr(error, 'code', type(error).__name__)) from None
+
+
+def load_skill_operations(root):
+    result = {}
+    for manifest_path in sorted(root.glob('*/operations.json')):
+        manifest = json.loads(manifest_path.read_text(encoding='utf8'))
+        script = (manifest_path.parent / manifest['worker']).resolve()
+        if manifest['skill'] != manifest_path.parent.name or not script.is_relative_to(manifest_path.parent.resolve()) or not script.is_file():
+            raise JobError('SKILL_OPERATION_MANIFEST_INVALID')
+        for operation in manifest['operations']:
+            if operation['id'] in result:
+                raise JobError('SKILL_OPERATION_MANIFEST_INVALID')
+            result[operation['id']] = (script, operation)
+    return result
+
+
+SKILL_OPERATIONS = load_skill_operations(ROOT / 'skills')
 
 
 def document(job):
@@ -274,17 +295,15 @@ def _validate_protocol(job):
 
 
 OPERATIONS = OperationRegistry()
-OPERATIONS.register("image_download", analyze_media)
-OPERATIONS.register("video_download", analyze_media)
+OPERATIONS.register("skill", skill)
+for operation in SKILL_OPERATIONS:
+    OPERATIONS.register(operation, skill)
 OPERATIONS.register("image", image)
-OPERATIONS.register("analyze_media", analyze_media)
 OPERATIONS.register("document", document)
 # Legacy direct callers may omit the descriptor handler; aliases preserve that
 # pre-process API while process jobs use the registry-owned handler above.
 OPERATIONS.register("image_generate", image)
 OPERATIONS.register("image_edit", image)
-OPERATIONS.register("transcribe", analyze_media)
-OPERATIONS.register("video_analyze", analyze_media)
 OPERATIONS.register("document_read", document)
 OPERATIONS.register("convert_gif", convert)
 OPERATIONS.register("convert_mp4", convert)

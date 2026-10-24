@@ -20,7 +20,9 @@ from model_usage import journal
 
 
 class AnalysisError(Exception):
-    pass
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
 
 
 def remaining(job, maximum=120):

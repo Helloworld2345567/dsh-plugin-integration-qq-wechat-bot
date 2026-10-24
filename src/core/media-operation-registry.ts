@@ -1,5 +1,11 @@
+import {skillOperationManifests, type SkillOperation} from './skill-operations.js';
 export interface MediaOperationDescriptor {
   id: string;
+  skill?: string;
+  tool?: string;
+  source?: SkillOperation;
+  role?: 'asr' | 'video';
+  deliver?: boolean;
   /** Optional timeout; zero means run until completion or cancellation. */
   timeoutMs: number;
   /** Units charged to the per-scope daily quota. */
@@ -31,13 +37,10 @@ export class MediaOperationRegistry {
 }
 
 export const DEFAULT_MEDIA_OPERATIONS: readonly MediaOperationDescriptor[] = Object.freeze([
-  {id: 'image_download', handler: 'analyze_media', timeoutMs: 0, quotaUnits: 1, inputKinds: []},
+  ...skillOperationManifests.flatMap(manifest => manifest.operations.map(operation => ({...operation, source: operation, skill: manifest.skill, tool: manifest.tool.name, handler: 'skill', timeoutMs: 0}))),
   {id: 'image_generate', handler: 'image', timeoutMs: 0, quotaUnits: 20, inputKinds: []},
   {id: 'image_edit', handler: 'image', timeoutMs: 0, quotaUnits: 20, inputKinds: ['image']},
   {id: 'image_understand', handler: 'native', timeoutMs: 0, quotaUnits: 1, inputKinds: ['image']},
-  {id: 'transcribe', handler: 'analyze_media', timeoutMs: 0, quotaUnits: 50, inputKinds: ['audio']},
-  {id: 'video_download', handler: 'analyze_media', timeoutMs: 0, quotaUnits: 1, inputKinds: []},
-  {id: 'video_analyze', handler: 'analyze_media', timeoutMs: 0, quotaUnits: 10, inputKinds: ['video']},
   {id: 'document_read', handler: 'document', timeoutMs: 0, quotaUnits: 50, inputKinds: ['file']},
   {id: 'convert_gif', handler: 'convert_gif', timeoutMs: 0, quotaUnits: 50, inputKinds: ['video']},
   {id: 'convert_mp4', handler: 'convert_mp4', timeoutMs: 0, quotaUnits: 50, inputKinds: ['video']},

@@ -22,6 +22,7 @@
     "python/**/*.py",
     "skills/**/*.md",
     "skills/**/*.py",
+    "skills/**/operations.json",
     "scripts/install.mjs",
     "scripts/start.mjs",
     "scripts/stop.mjs",

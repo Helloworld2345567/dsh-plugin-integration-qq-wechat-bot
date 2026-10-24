@@ -54,7 +54,7 @@ export class MediaService {
     const source=await Promise.all(inputs.map(id=>this.assets.resolve(scope,id)));
     if(descriptor.inputKinds?.length&&source.some(item=>!descriptor.inputKinds!.includes(item.kind)))throw new Error('MEDIA_INPUT_KIND_INVALID');
     await mkdir(directory,{recursive:true});
-    const role=operation==='transcribe'?'asr':operation==='video_analyze'?'video':undefined;
+    const role=descriptor.role;
     if(role&&!this.analysisProvider)throw new Error('MEDIA_PROVIDER_SETTINGS_UNAVAILABLE');
     const connection=role?await this.analysisProvider!.resolve(config,role):undefined;
     const endpoint=connection?.endpoint??((operation==='image_generate'||operation==='image_edit')?resolveImageSkill(config):undefined);
@@ -64,7 +64,7 @@ export class MediaService {
     this.store.consumeMediaQuota(quotaKey,descriptor.quotaUnits);
     const credentials:Record<string,string>={};
     if(endpoint){const value=connection?.apiKey??process.env[endpoint.keyEnv];if(!value)throw new Error(`MISSING_PROVIDER_KEY: ${endpoint.keyEnv}`);credentials[endpoint.keyEnv]=value;}
-    if(operation==='transcribe'&&source[0]?.mime==='audio/silk'){
+    if(descriptor.inputKinds?.includes('audio')&&source[0]?.mime==='audio/silk'){
       const {decode}=await import('silk-wasm');const decoded=await decode(await this.assets.read(scope,source[0].id),24000);
       const pcm=Buffer.from(decoded.data);if(pcm.length>30*1024*1024)throw new Error('AUDIO_TOO_LONG');
       const header=Buffer.alloc(44);header.write('RIFF',0);header.writeUInt32LE(36+pcm.length,4);header.write('WAVEfmt ',8);header.writeUInt32LE(16,16);header.writeUInt16LE(1,20);header.writeUInt16LE(1,22);header.writeUInt32LE(24000,24);header.writeUInt32LE(48000,28);header.writeUInt16LE(2,32);header.writeUInt16LE(16,34);header.write('data',36);header.writeUInt32LE(pcm.length,40);

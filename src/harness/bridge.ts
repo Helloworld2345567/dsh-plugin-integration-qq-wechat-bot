@@ -1,3 +1,5 @@
+import {skillOperationManifests, resolveSkillOperation} from '../core/skill-operations.js';
+import {mediaOperationRegistry} from '../core/media-operation-registry.js';
 import type { Context } from '@deepseek-ai/cordis';
 import { installModelSelection, type Agent, type AgentHandle, type ModelSelectionRef } from '@deepseek-ai/dsh-agent';
 import { MessageId, ToolCallId, ReasoningEffortId, type ContentBlock } from '@deepseek-ai/dsh-llm';
@@ -239,13 +241,13 @@ export class NativeHarness implements HarnessPort {
     }
     const image=operation==='image_generate'||operation==='image_edit';
     const config=mediaConfigNow(live.snapshot,current);
-    const role=operation==='transcribe'?'asr':operation==='video_analyze'?'video':undefined;
-    if((operation==='image_download'||operation==='video_download')&&!allowedNow('media_analysis',live.snapshot,current,bot,live.binding.scope))throw new Error('MEDIA_ANALYSIS_DISABLED');
-    if(role){
-      if(!allowedNow('media_analysis',live.snapshot,current,bot,live.binding.scope)||!analysisEnabled(config,role))throw new Error('MEDIA_ANALYSIS_DISABLED');
-      if(!inputs.length&&!args.url)inputs=this.assets.recent(scope,role==='asr'?'audio':'video').slice(0,1).map(a=>a.id);
-      if(!inputs.length&&role==='asr')throw new Error('AUDIO_INPUT_REQUIRED');
-    }
+    const descriptor=mediaOperationRegistry.get(operation);
+    const role=descriptor.role;
+    if(descriptor.tool&&!allowedNow(descriptor.tool,live.snapshot,current,bot,live.binding.scope))throw new Error('MEDIA_ANALYSIS_DISABLED');
+    if(role&&!analysisEnabled(config,role))throw new Error('MEDIA_ANALYSIS_DISABLED');
+    if(descriptor.source?.recentInput&&!inputs.length&&!args.url)inputs=this.assets.recent(scope,descriptor.source.recentInput).slice(0,1).map(a=>a.id);
+    if(descriptor.source?.requiredInputError&&!inputs.length)throw new Error(descriptor.source.requiredInputError);
+    const deliver=image||descriptor.deliver===true;
     const imageState=live.images;
     if(image){
       if(!allowedNow('image_generation',live.snapshot,current,bot,live.binding.scope))throw new Error('IMAGE_SKILL_DISABLED');
@@ -257,9 +259,9 @@ export class NativeHarness implements HarnessPort {
     try{
     const result=await this.mediaAdapter.run(scope,operation,config,inputs,{...args,prompt:args.prompt?`${args.prompt}\n${live.snapshot.config.imageStyle}`:undefined},signal) as Awaited<ReturnType<MediaService['run']>>;
     if(image)imageState.completed=true;
-    if(image||operation==='image_download'||operation==='video_download'){for(const assetId of result.assetIds)if(!live.assets.some(a=>a.assetId===assetId))live.assets.push({type:'asset',assetId});}
+    if(deliver){for(const assetId of result.assetIds)if(!live.assets.some(a=>a.assetId===assetId))live.assets.push({type:'asset',assetId});}
     const modelImages=await this.imageBlocks(scope,result.contextAssetIds??[]);
-    return JSON.stringify({...result,registeredForDelivery:image||operation==='image_download'||operation==='video_download',modelImages});
+    return JSON.stringify({...result,registeredForDelivery:deliver,modelImages});
     }finally{if(image)imageState.inFlight=false;}
   }
   private tools(ctx:Context,ownerLive:LiveSession):void{
@@ -281,7 +283,7 @@ export class NativeHarness implements HarnessPort {
     const managerRegistrar=new ToolRegistrar<any>(tool=>register(tool));
     ownerLive.refreshTools=()=>{managerRegistrar.clear('management');const bot=this.store.bot(ownerLive.binding.scope.botId);for(const tool of managers){try{if(allowedNow(tool.name,ownerLive.snapshot,this.current(ownerLive),bot,ownerLive.binding.scope))managerRegistrar.add('management',tool);}catch{}}};
     ownerLive.refreshTools();
-    register(defineTool({name:'media_analysis',description:'执行media-analysis脚本；kind=image从url下载原图并自动作为图片附件交付，kind=audio识别语音，kind=video分析视频（action=download则仅下载并回传原视频），复用原生模型提供商的URL和凭据，无需单独配置密钥。视频支持抖音/B站作品链接或分享短链：提取分享文字中的https链接填url，不要用网页抓取代替视频分析。输入本会话附件ID；url与inputs二选一，均留空选同类型最近附件。返回实际分析结果与覆盖范围。',parameters:{kind:{type:'string',enum:['audio','video','image'],required:true},action:{type:'string',enum:['analyze','download']},inputs:{type:'array',items:{type:'string'}},question:{type:'string'},url:{type:'string'}},output:{schema:{type:'string'},render:renderMedia},execute:async(args,exec)=>this.mediaTool(ownerLive,exec.agent,args.kind==='audio'?'transcribe':args.kind==='image'?'image_download':args.action==='download'?'video_download':'video_analyze',args.inputs??[],args,exec.signal)}));
+    for(const manifest of skillOperationManifests) register(defineTool({...manifest.tool,output:{schema:{type:'string'},render:renderMedia},execute:async(args:any,exec:any)=>this.mediaTool(ownerLive,exec.agent,resolveSkillOperation(manifest,args),args.inputs??[],args,exec.signal)}));
     register(defineTool({name:'image_generation',description:'执行image-generation技能，生成或编辑一张图片。默认继承已配置的环境变量，无需单独配置密钥；编辑inputs填写本会话参考图ID。成功自动登记图片回传。',parameters:{prompt:{type:'string',required:true},operation:{type:'string',enum:['generate','edit']},inputs:{type:'array',items:{type:'string'}}},output:{schema:{type:'string'},render:renderMedia},execute:async(args,exec)=>this.mediaTool(ownerLive,exec.agent,args.operation==='edit'||(!args.operation&&args.inputs?.length)?'image_edit':'image_generate',args.inputs??[],args,exec.signal)}));
     register(defineTool({name:'bot_media',description:'读取图片像素、提取文档/扫描页供当前聊天模型理解，或处理语音、视频和固定转码。下载链接原图用image_download并填url（支持图片直链或公开网页，自动登记图片附件，保留原始字节）。图片生成请用image_generation。',parameters:{operation:{type:'string',enum:[...MEDIA_OPERATIONS],required:true},inputs:{type:'array',items:{type:'string'}},prompt:{type:'string'},question:{type:'string'},text:{type:'string'},url:{type:'string'},startSeconds:{type:'number'},durationSeconds:{type:'number'}},output:{schema:{type:'string'},render:renderMedia},execute:async(args,exec)=>this.mediaTool(ownerLive,exec.agent,args.operation as MediaOperation,args.inputs??[],args,exec.signal)}));
     register(defineTool({name:'bot_send_file',description:'将产物ID登记为本轮最终回复附件；可信私聊也可登记工作目录下真实产生的文件。返回登记状态，平台投递在本轮结束后进行。',parameters:{assetId:{type:'string'},path:{type:'string'},mime:{type:'string'}},output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},execute:async(args,exec)=>{const live=this.turn(ownerLive,exec.agent);

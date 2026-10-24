@@ -38,6 +38,34 @@ class WorkerTests(unittest.TestCase):
                     inputs=[dict(path=str(source), name=source.name, kind='file', mime='application/octet-stream')] if source else [],
                     parameters=params, output=str(self.root), endpoint=dict(baseUrl='https://example.invalid/v1', model='fixture', keyEnv='TEST_PROVIDER_KEY'))
 
+    def test_skill_manifest_dispatch_without_worker_switch(self):
+        skills = self.root / 'skills'
+        folder = skills / 'fixture'
+        (folder / 'scripts').mkdir(parents=True)
+        (folder / 'scripts/worker.py').write_text("def execute(job):\n    return {'text': job['parameters']['value'], 'coverage': 'FIXTURE'}\n", encoding='utf8')
+        manifest = {'skill': 'fixture', 'worker': 'scripts/worker.py', 'operations': [{'id': 'fixture_extract'}]}
+        (folder / 'operations.json').write_text(json.dumps(manifest), encoding='utf8')
+        declarations = worker.load_skill_operations(skills)
+        job = self.job('fixture_extract', value='skill-owned-result')
+        job['handler'] = 'skill'
+        with patch.object(worker, 'SKILL_OPERATIONS', declarations):
+            self.assertEqual(worker.execute(job)['text'], 'skill-owned-result')
+            with self.assertRaisesRegex(worker.JobError, 'UNKNOWN_MEDIA_OPERATION'):
+                worker.execute({**job, 'operation': 'undeclared'})
+        manifest['worker'] = '../../outside.py'
+        (folder / 'operations.json').write_text(json.dumps(manifest), encoding='utf8')
+        with self.assertRaisesRegex(worker.JobError, 'MANIFEST_INVALID'):
+            worker.load_skill_operations(skills)
+
+    def test_shipped_skill_operations_dispatch_declared_entry(self):
+        self.assertEqual(set(worker.SKILL_OPERATIONS), {'transcribe', 'video_analyze', 'image_download', 'video_download'})
+        job = self.job('image_download')
+        job['handler'] = 'skill'
+        # Real entry import and error translation, without a provider/network call.
+        job['inputs'] = [{ 'path': 'unused', 'name': 'unused', 'kind': 'image', 'mime': 'image/png'}] * 2
+        with self.assertRaisesRegex(worker.JobError, 'ONE_MEDIA_INPUT_REQUIRED'):
+            worker.execute(job)
+
     def test_unlimited_media_job_and_platform_source_routing(self):
         job = self.job('transcribe')
         job.update(timeoutMs=0, deadline=0)

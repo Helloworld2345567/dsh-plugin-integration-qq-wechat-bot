@@ -1,3 +1,4 @@
+import {skillOperationManifests, validateSkillSource} from './skill-operations.js';
 import {Buffer} from 'node:buffer';
 import type {InboundMessage, MediaInput} from './types.js';
 
@@ -136,11 +137,7 @@ export function validateMediaParameters(operation: string, inputs: string[], par
     const value = parameters[key];
     if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 36000)) throw new Error('INVALID_MEDIA_RANGE');
   }
-  if ((operation === 'video_analyze' || operation === 'video_download') && url !== undefined) {
-    if (inputs.length) throw new Error('ONE_VIDEO_SOURCE_REQUIRED');
-    if (!['www.bilibili.com','bilibili.com','b23.tv','www.douyin.com','douyin.com','v.douyin.com','www.iesdouyin.com'].includes(new URL(url).hostname)) throw new Error('UNSUPPORTED_VIDEO_PLATFORM');
-  }
-  if (operation === 'video_download' && (url === undefined || inputs.length)) throw new Error('VIDEO_URL_REQUIRED');
-  if (operation === 'image_download' && (url === undefined || inputs.length)) throw new Error('IMAGE_URL_REQUIRED');
+  const declaration = skillOperationManifests.flatMap(manifest => manifest.operations).find(item => item.id === operation);
+  if (declaration) validateSkillSource(declaration, inputs, parameters);
   if (operation === 'social_read' && url === undefined) throw new Error('SOCIAL_URL_REQUIRED');
 }

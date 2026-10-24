@@ -1,0 +1,131 @@
+{
+  "skill": "media-analysis",
+  "worker": "scripts/media_api.py",
+  "tool": {
+    "name": "media_analysis",
+    "description": "执行media-analysis脚本；kind=image从url下载原图并自动作为图片附件交付，kind=audio识别语音，kind=video分析视频（action=download则仅下载并回传原视频），复用原生模型提供商的URL和凭据，无需单独配置密钥。视频支持抖音/B站作品链接或分享短链：提取分享文字中的https链接填url，不要用网页抓取代替视频分析。输入本会话附件ID；url与inputs二选一，均留空选同类型最近附件。返回实际分析结果与覆盖范围。",
+    "parameters": {
+      "kind": {
+        "type": "string",
+        "enum": [
+          "audio",
+          "video",
+          "image"
+        ],
+        "required": true
+      },
+      "action": {
+        "type": "string",
+        "enum": [
+          "analyze",
+          "download"
+        ]
+      },
+      "inputs": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "question": {
+        "type": "string"
+      },
+      "url": {
+        "type": "string"
+      }
+    }
+  },
+  "defaults": {
+    "action": "analyze"
+  },
+  "routes": [
+    {
+      "match": {
+        "kind": "audio",
+        "action": "analyze"
+      },
+      "operation": "transcribe"
+    },
+    {
+      "match": {
+        "kind": "image"
+      },
+      "operation": "image_download"
+    },
+    {
+      "match": {
+        "kind": "video",
+        "action": "download"
+      },
+      "operation": "video_download"
+    },
+    {
+      "match": {
+        "kind": "video",
+        "action": "analyze"
+      },
+      "operation": "video_analyze"
+    }
+  ],
+  "operations": [
+    {
+      "id": "image_download",
+      "quotaUnits": 1,
+      "inputKinds": [],
+      "deliver": true,
+      "urlRequiredError": "IMAGE_URL_REQUIRED"
+    },
+    {
+      "id": "transcribe",
+      "quotaUnits": 50,
+      "inputKinds": [
+        "audio"
+      ],
+      "role": "asr",
+      "recentInput": "audio",
+      "requiredInputError": "AUDIO_INPUT_REQUIRED"
+    },
+    {
+      "id": "video_download",
+      "quotaUnits": 1,
+      "inputKinds": [],
+      "deliver": true,
+      "urlRequiredError": "VIDEO_URL_REQUIRED",
+      "exclusiveSourceError": "ONE_VIDEO_SOURCE_REQUIRED",
+      "urlHosts": [
+        "www.bilibili.com",
+        "bilibili.com",
+        "b23.tv",
+        "www.douyin.com",
+        "douyin.com",
+        "v.douyin.com",
+        "www.iesdouyin.com"
+      ],
+      "urlHostError": "UNSUPPORTED_VIDEO_PLATFORM"
+    },
+    {
+      "id": "video_analyze",
+      "quotaUnits": 10,
+      "inputKinds": [
+        "video"
+      ],
+      "role": "video",
+      "recentInput": "video",
+      "exclusiveSourceError": "ONE_VIDEO_SOURCE_REQUIRED",
+      "urlHosts": [
+        "www.bilibili.com",
+        "bilibili.com",
+        "b23.tv",
+        "www.douyin.com",
+        "douyin.com",
+        "v.douyin.com",
+        "www.iesdouyin.com"
+      ],
+      "urlHostError": "UNSUPPORTED_VIDEO_PLATFORM"
+    }
+  ],
+  "enabledRoles": [
+    "asr",
+    "video"
+  ]
+}

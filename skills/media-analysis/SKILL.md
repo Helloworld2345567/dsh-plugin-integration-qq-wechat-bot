@@ -19,6 +19,8 @@ description: 分析语音、抖音/B站视频链接或视频附件；免登录�
 
 宿主运行 [media_api.py](scripts/media_api.py)。[platform_links.py](scripts/platform_links.py) 通过公开免登录解析服务获取抖音/B站媒体地址，再下载真实媒体字节；不读取浏览器配置，不需要用户登录、Cookie 或解析密钥。该服务会接收用户要求处理的公开分享链接，来源见 [解析说明](references/platform-links.md)。
 
+工具参数、操作路由、模型角色和附件交付由技能内的 [operations.json](operations.json) 声明。新增操作在该声明和脚本中实现；宿主根据声明注册和执行，无需再添加媒体分析操作名分支。
+
 分析复用本轮选定模型提供商的 URL、凭据和视频/语音模型配置，凭据仅在子进程环境中传入。视频发送完整 MP4 画面与音轨；只有取得真实模型结果后才能说已分析。语音默认使用兼容接口的 `input_audio`，也支持已配置的转写接口。
 
 下载原图由 [image_download.py](scripts/image_download.py) 执行。图集采用解析服务返回的图片列表；普通网页优先明确的原图链接和最大 srcset。原始下载字节不重新编码，下载的图片和视频自动登记为平台回复附件。文字回复不要输出图片 Markdown、`asset://` 地址或附件 ID。
