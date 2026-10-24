@@ -18,6 +18,7 @@ import {RuntimeCommandDispatcher,type CommandDispatcher} from './command-dispatc
 import {RuntimeSessionActionExecutor,type SessionActionExecutor} from './session-action-executor.js';
 import {RuntimeLifecycleFacade,type RuntimeLifecycle} from './runtime-lifecycle.js';
 import type {ProcessingFailure} from './failure-context.js';
+import {AutomationScheduler,type AutomationKind} from './automation.js';
 
 export type {HarnessResult,HarnessPort,Credentials} from './runtime-ports.js';
 import type {HarnessPort,Credentials} from './runtime-ports.js';
@@ -25,6 +26,7 @@ export interface CommandServices {
   skills?:{list(binding:SessionBinding):Promise<string>;toggle(binding:SessionBinding,name:string,enabled:boolean,authorize?:()=>void):Promise<string>;reload(binding:SessionBinding):Promise<string>};
   evolution?:{request(binding:SessionBinding,goal:string):Promise<string>;status(binding:SessionBinding,id?:string):Promise<string>;history(binding:SessionBinding):Promise<string>;rollback(binding:SessionBinding,id:string):Promise<string>;restart(binding:SessionBinding):Promise<string>};
   stats?:(binding:SessionBinding,args:string)=>Promise<string>;
+  automation?:{proactive(binding:SessionBinding,action:'on'|'off'|'status'|'now'|'set',args:string):Promise<string>;schedule(binding:SessionBinding,action:'list'|'create'|'pause'|'resume'|'run'|'delete',args:string):Promise<string>};
 }
 export class BotRuntime {
   readonly states=new Map<string,string>();
@@ -42,6 +44,7 @@ export class BotRuntime {
   private readonly scheduledSessionActions=new Set<string>();
   commandServices:CommandServices={};
   readonly commandBus:CommandBus;
+  readonly automation:AutomationScheduler;
   readonly channels:ChannelRegistry;
   private readonly strictChannels:boolean;
   private quiescing=false;
@@ -60,7 +63,7 @@ export class BotRuntime {
   sessionStatus(scope:CallerScope):'waiting_upgrade'|'compacting'|'running'|'idle'{const key=scopeKey(scope);return this.quiescing?'waiting_upgrade':this.maintenance.has(key)?'compacting':this.processing.has(key)||this.store.sessionActions<SessionActionRecord>().some(r=>r.scopeKey===key&&r.state==='running')?'running':'idle';}
   health():{ready:true;quiescing:boolean;activeTasks:number;pendingDeliveries:number;pendingSessionActions:number;connections:Record<string,string>;latency:{inboxToModel:{count:number;p50:number|null;p95:number|null;max:number|null};inboxToSent:{count:number;p50:number|null;p95:number|null;max:number|null}}}{return{ready:true,quiescing:this.quiescing,activeTasks:this.processing.size+this.maintenance.size+this.controls.size,pendingDeliveries:this.store.deliveries(['pending','sending']).length,pendingSessionActions:this.store.sessionActions<SessionActionRecord>().filter(r=>r.state==='queued').length,connections:Object.fromEntries(this.states),latency:{inboxToModel:this.store.metricPercentiles('modelStartedAt'),inboxToSent:this.store.metricPercentiles('sentAt')}};}
   constructor(readonly store:Store,readonly assets:Assets,readonly media:MediaService,readonly harness:HarnessPort,readonly adapters:Readonly<Record<string,ChannelAdapter>>,readonly credentials:Credentials,readonly debounceMs=2000,readonly turnTimeoutMs=180000,channels?:ChannelRegistry){
-    this.strictChannels=!!channels;this.channels=channels??registryFromLegacy(adapters);this.connectionSupervisor=new DurableConnectionSupervisor(store,this.channels,credentials,this.states,message=>this.receive(message));this.deliveryWorker=new DurableDeliveryWorker(store,this.channels,credentials);this.turnCoordinator=new RuntimeTurnCoordinator(this as any);this.commandDispatcher=new RuntimeCommandDispatcher(this as any);this.sessionActionExecutor=new RuntimeSessionActionExecutor(this as any);this.lifecycle=new RuntimeLifecycleFacade(this);this.commandBus=new CommandBus(this);
+    this.strictChannels=!!channels;this.channels=channels??registryFromLegacy(adapters);this.connectionSupervisor=new DurableConnectionSupervisor(store,this.channels,credentials,this.states,message=>this.receive(message));this.deliveryWorker=new DurableDeliveryWorker(store,this.channels,credentials);this.turnCoordinator=new RuntimeTurnCoordinator(this as any);this.commandDispatcher=new RuntimeCommandDispatcher(this as any);this.sessionActionExecutor=new RuntimeSessionActionExecutor(this as any);this.lifecycle=new RuntimeLifecycleFacade(this);this.commandBus=new CommandBus(this);this.automation=new AutomationScheduler(store,{runPrompt:(binding,prompt,kind,signal)=>this.runAutomationPrompt(binding,prompt,kind,signal),flush:()=>this.flushDeliveries()});this.commandServices.automation={proactive:(binding,action,args)=>this.automationCommand(binding,action,args),schedule:(binding,action,args)=>this.scheduleCommand(binding,action,args)};
   }
   async initialize():Promise<void>{
     this.store.claimRuntime(this.owner);this.claimed=true;this.store.recover();
@@ -69,6 +72,7 @@ export class BotRuntime {
     for(const bot of this.store.bots())if(bot.enabled&&!bot.archived)void this.start(bot.id).catch(()=>this.states.set(bot.id,'error'));
     this.store.retain();
     if(!this.quiescing){this.resumeCommands();this.resumeSessionActions();for(const key of this.store.scopesWithPending())this.schedule(key);void this.flushDeliveries();}
+    this.automation.start();
   }
   async saveConfig(input:unknown,expectedRevision?:number):Promise<BotConfig>{
     const {configSchema}=await import('./types.js');const parsed=configSchema.parse(input);if(!parsed.archived)await this.harness.validateModel(parsed);
@@ -320,6 +324,21 @@ export class BotRuntime {
     this.processing.set(key,{controller,sessionId:binding.sessionId,sourceIds:messages.map(m=>m.id),done});await done;
   }
   async flushDeliveries():Promise<void>{await this.deliveryWorker.flush();}
+  private async runAutomationPrompt(binding:SessionBinding,prompt:string,_kind:AutomationKind,signal:AbortSignal):Promise<{turnId:string;outputs:Output[]}>{
+    const sourceId=`automation:${randomUUID()}`;const latest=this.store.allMessages().filter(message=>scopeKey(message.scope)===binding.key).at(-1);if(!latest)throw Error('AUTOMATION_CONTEXT_MISSING');
+    const synthetic:InboundMessage={id:sourceId,scope:binding.scope,text:prompt,attachments:[],reply:latest.reply,replyEnvelope:latest.replyEnvelope,timestamp:Date.now()};const result=await this.harness.run(binding,[synthetic],signal);return{turnId:result.turnId,outputs:result.outputs};
+  }
+  private async automationCommand(binding:SessionBinding,action:'on'|'off'|'status'|'now'|'set',args:string):Promise<string>{
+    const current=this.automation.listProactive().find(item=>item.scopeKey===binding.key);if(action==='status')return current?`主动会话：${current.enabled?'开启':'关闭'}\n每日上限：${current.dailyLimit}\n静默：${current.quietFrom}-${current.quietTo}\n时区：${current.timezone}`:'主动会话未配置。使用 /proactive on 开启。';
+    if(action==='on'||action==='off'){const next=this.automation.setProactive(binding.scope,action==='on');return`主动会话已${next.enabled?'开启':'关闭'}。`;}if(action==='now'){const run=await this.automation.runProactive(binding.scope,true);return`主动会话运行结果：${run.state}${run.error?`（${run.error}）`:''}`;}
+    if(action==='set'){const patch:Record<string,unknown>={};for(const part of args.split(/\s+/).filter(Boolean)){const [key,value]=part.split('=',2);if(key&&value!==undefined)patch[key]=/^\d+$/.test(value)?Number(value):value;}this.automation.configureProactive(binding.scope,patch);return'主动会话配置已更新。';}return'用法：/proactive on|off|status|now|set key=value';
+  }
+  private async scheduleCommand(binding:SessionBinding,action:'list'|'create'|'pause'|'resume'|'run'|'delete',args:string):Promise<string>{
+    if(action==='list'){const rows=this.automation.listJobs().filter(item=>item.scopeKey===binding.key);return rows.length?rows.map(item=>`${item.id} ${item.enabled?'开启':'暂停'} ${item.prompt.slice(0,80)}`).join('\n'):'当前没有定时任务。';}
+    if(action==='create'){const match=/^(\d+)(?:\s+([\s\S]+))?$/.exec(args);if(!match)throw Error('用法：/schedule create <延迟毫秒> <任务提示词>');const job=this.automation.createJob(binding.scope,match[2]??'执行定时任务并报告结果',{runAt:Date.now()+Number(match[1])});return`定时任务已创建：${job.id}`;}
+    const id=args.trim();if(!id)throw Error('需要任务 ID');const job=this.automation.listJobs().find(item=>item.id===id&&item.scopeKey===binding.key);if(!job)throw Error('定时任务不存在');if(action==='pause'||action==='resume'){this.automation.setJob(id,action==='resume');return`定时任务已${action==='resume'?'恢复':'暂停'}。`;}if(action==='delete'){this.automation.deleteJob(id);return'定时任务已删除。';}if(action==='run'){const run=await this.automation.runJob(job);return`定时任务运行结果：${run.state}`;}return'用法：/schedule list|create|pause|resume|run|delete';
+  }
   private async flushBot(botId:string):Promise<void>{return this.deliveryWorker.flush({botId});}
-  async close():Promise<void>{this.closed=true;for(const timer of this.timers.values())clearTimeout(timer);await this.deliveryWorker.close();for(const [key,task] of [...this.processing.entries(),...this.maintenance.entries()]){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}await this.connectionSupervisor.disconnectAll();await Promise.all([...this.processing.values(),...this.maintenance.values()].map(p=>p.done.catch(()=>{})));await this.commandDispatcher.drain();await this.deliveryWorker.drain();for(const signal of this.sessionActionSignals.values())signal.dispose();this.sessionActionSignals.clear();await this.harness.dispose();if(this.claimed){this.store.releaseRuntime(this.owner);this.claimed=false;}}
+  async close():Promise<void>{this.closed=true;this.automation.close();for(const timer of this.timers.values())clearTimeout(timer);await this.deliveryWorker.close();for(const [key,task] of [...this.processing.entries(),...this.maintenance.entries()]){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}await this.connectionSupervisor.disconnectAll();await Promise.all([...this.processing.values(),...this.maintenance.values()].map(p=>p.done.catch(()=>{})));await this.commandDispatcher.drain();await this.deliveryWorker.drain();for(const signal of this.sessionActionSignals.values())signal.dispose();this.sessionActionSignals.clear();await this.harness.dispose();if(this.claimed){this.store.releaseRuntime(this.owner);this.claimed=false;}}
 }
+

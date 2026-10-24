@@ -15,6 +15,7 @@ export const adminQueryRequestSchema=z.discriminatedUnion('name',[
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('bots.list'),input:emptyInput}).strict(),
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('overview.sessions'),input:pageInput}).strict(),
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('overview.deliveries'),input:z.object({...pageFields,scopeKey:z.string().min(1).max(128).optional()}).strict().default({limit:50})}).strict(),
+  z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('automation.list'),input:emptyInput}).strict(),
 ]);
 export type AdminQueryRequest=z.infer<typeof adminQueryRequestSchema>;
 export interface PageDto<T>{items:T[];nextCursor:string|null;hasMore:boolean;revision:string;contractVersion:typeof ADMIN_CONTRACT_VERSION}
@@ -40,6 +41,8 @@ export const adminCommandRequestSchema=z.discriminatedUnion('name',[
   commandRequest('bot.credentials',botCredentialsInput),commandRequest('login.begin',loginBeginInput),commandRequest('login.poll',loginPollInput),
   commandRequest('config.directory.open',z.object({botId:z.string().min(1).max(80).optional(),configId:z.string().min(1).max(80).optional()}).strict()),
   commandRequest('capability.record',capabilityInput),commandRequest('memory.forget',memoryForgetInput),commandRequest('memory.correct',memoryCorrectInput),commandRequest('session.cancel',sessionCancelInput),
+  commandRequest('automation.proactive',z.object({scopeKey:z.string().min(1).max(128),action:z.enum(['on','off','status','now','set']),args:z.string().max(1000).default('')}).strict()),
+  commandRequest('automation.schedule',z.object({scopeKey:z.string().min(1).max(128),action:z.enum(['list','create','pause','resume','run','delete']),args:z.string().max(1000).default('')}).strict()),
 ]);
 export type AdminCommandRequest=z.infer<typeof adminCommandRequestSchema>;
 

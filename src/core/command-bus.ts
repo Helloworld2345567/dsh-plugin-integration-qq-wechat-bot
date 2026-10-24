@@ -13,7 +13,9 @@ export type ManagementCommand=
   | {kind:'reload'}
   | {kind:'restart'}
   | {kind:'evolve';args:string}
-  | {kind:'stats';args:string};
+  | {kind:'stats';args:string}
+  | {kind:'proactive';action:'on'|'off'|'status'|'now'|'set';args:string}
+  | {kind:'schedule';action:'list'|'create'|'pause'|'resume'|'run'|'delete';args:string};
 
 export interface CommandContext {source:CommandSource;binding:SessionBinding;snapshot?:TurnSnapshot;signal:AbortSignal;authorize?:()=>void}
 export type QueuedCommandResult={status:'queued';actionId:string;action:string};
@@ -27,6 +29,7 @@ export interface CommandServices {
   skills?:{list(binding:SessionBinding):Promise<string>;toggle(binding:SessionBinding,name:string,enabled:boolean,authorize?:()=>void):Promise<string>;reload(binding:SessionBinding):Promise<string>};
   evolution?:{request(binding:SessionBinding,goal:string):Promise<string>;status(binding:SessionBinding,id?:string):Promise<string>;history(binding:SessionBinding):Promise<string>;rollback(binding:SessionBinding,id:string):Promise<string>;restart(binding:SessionBinding):Promise<string>};
   stats?:(binding:SessionBinding,args:string)=>Promise<string>;
+  automation?:{proactive(binding:SessionBinding,action:'on'|'off'|'status'|'now'|'set',args:string):Promise<string>;schedule(binding:SessionBinding,action:'list'|'create'|'pause'|'resume'|'run'|'delete',args:string):Promise<string>};
 }
 export interface CommandHost {
   binding(scope:CallerScope):SessionBinding;
@@ -65,6 +68,8 @@ export function managementCommand(parsed:ParsedCommand):ManagementCommand|undefi
   if(parsed.name==='restart')return{kind:'restart'};
   if(parsed.name==='evolve')return{kind:'evolve',args};
   if(parsed.name==='stats')return{kind:'stats',args};
+  if(parsed.name==='proactive'){const action=(args.split(/\s+/,1)[0]||'status').toLowerCase();if(!['on','off','status','now','set'].includes(action))return undefined;return{kind:'proactive',action:action as any,args:args.slice(action.length).trim()};}
+  if(parsed.name==='schedule'){const action=(args.split(/\s+/,1)[0]||'list').toLowerCase();if(!['list','create','pause','resume','run','delete'].includes(action))return undefined;return{kind:'schedule',action:action as any,args:args.slice(action.length).trim()};}
   return undefined;
 }
 
@@ -103,6 +108,8 @@ export class CommandBus {
       case 'reload':this.authorize(context,true);if(this.host.commandServices.skills)return{kind:'reply',text:await this.host.commandServices.skills.reload(binding)};await this.host.applyPersonaFiles(config.id);return{kind:'reply',text:'人格文件已应用，下一轮生效。'};
       case 'restart':this.authorize(context,true);if(!this.host.commandServices.evolution)throw new Error('升级协调器未启用');return{kind:'reply',text:await this.host.commandServices.evolution.restart(binding)};
       case 'stats':this.authorize(context);if(!this.host.commandServices.stats)throw new Error('统计服务未启用');return{kind:'reply',text:await this.host.commandServices.stats(binding,command.args)};
+      case 'proactive':this.authorize(context);if(!this.host.commandServices.automation)throw Error('主动会话服务未启用');return{kind:'reply',text:await this.host.commandServices.automation.proactive(binding,command.action,command.args)};
+      case 'schedule':this.authorize(context);if(!this.host.commandServices.automation)throw Error('定时任务服务未启用');return{kind:'reply',text:await this.host.commandServices.automation.schedule(binding,command.action,command.args)};
       case 'evolve':this.authorize(context,true);if(!this.host.commandServices.evolution)throw new Error('自修改服务未启用');if(!command.args)throw new Error('用法：/evolve <要求>，或 status [ID]、history、rollback <ID>');{const [action,...rest]=command.args.split(/\s+/);const id=rest.join(' ');if(action.toLowerCase()==='status')return{kind:'reply',text:await this.host.commandServices.evolution.status(binding,id||undefined)};if(action.toLowerCase()==='history')return{kind:'reply',text:await this.host.commandServices.evolution.history(binding)};if(action.toLowerCase()==='rollback'){if(!id)throw new Error('用法：/evolve rollback <任务ID>');return{kind:'reply',text:await this.host.commandServices.evolution.rollback(binding,id)};}return{kind:'rewrite',text:await this.host.commandServices.evolution.request(binding,command.args)};}
     }
     return{kind:'none'};
