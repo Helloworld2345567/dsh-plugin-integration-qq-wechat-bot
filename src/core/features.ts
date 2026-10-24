@@ -45,7 +45,7 @@ export class BotFeatures {
       const current=(()=>{try{return runtime.store.config(record.configId);}catch{return undefined;}})();
       record.phase=current&&record.after&&JSON.stringify(current)===JSON.stringify(record.after)?'succeeded':'failed';record.error=record.phase==='failed'?'发布被中断，请核对当前版本和草稿':undefined;runtime.store.saveContentChange(record.id,record);
     }
-    runtime.commandServices={
+    runtime.commandServices={...runtime.commandServices,
       skills:{list:async b=>this.skills.list(runtime.effectiveConfig(b)).map(s=>`${s.name}：${s.description}`).join('\n')||'当前未启用技能。',toggle:async(b,name,enabled,authorize?:()=>void)=>{
         const current=this.config(b);
         const check=()=>{
