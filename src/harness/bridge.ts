@@ -318,7 +318,13 @@ export class NativeHarness implements HarnessPort {
       await this.ctx.sessions.flush(live.handle.agent.session);
       const events=live.handle.agent.session.snapshotEvents().slice(start);const end=events.filter(e=>e.type==='turn/end').at(-1);
       const firstFeedback=events.find(event=>event.type==='assistant/message'||event.type==='assistant/attempt');if(firstFeedback)markFirst();
-      if(!end||end.type!=='turn/end'||end.data.reason.kind!=='completed')throw new Error('HARNESS_TURN_NOT_COMPLETED');
+      if(!end||end.type!=='turn/end')throw new Error('HARNESS_TURN_NOT_COMPLETED');
+      if(end.data.reason.kind!=='completed'){
+        const reason=end.data.reason as {kind:string;error?:{code?:unknown;message?:unknown}};
+        const code=typeof reason.error?.code==='string'?reason.error.code:undefined;
+        const message=typeof reason.error?.message==='string'?reason.error.message:undefined;
+        throw new Error(code&&message?`${code}: ${message}`:code??message??'HARNESS_TURN_NOT_COMPLETED');
+      }
       const last=events.filter(e=>e.type==='assistant/message'&&e.data.turn===end.data.turn&&!e.data.interrupted).at(-1);
       const rawText=last?.type==='assistant/message'?last.data.message.content.filter(b=>b.type==='text').map(b=>b.text).join(''):'';
       const text=stripImageReferences(rawText,live.assets.filter(a=>this.store.asset(binding.key,a.assetId!).kind==='image').map(a=>a.assetId!));

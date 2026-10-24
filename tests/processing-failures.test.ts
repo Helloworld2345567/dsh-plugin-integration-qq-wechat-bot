@@ -31,6 +31,20 @@ test('attachment download failure sends an explicit durable failure instead of s
   await runtime.receive(message);await runtime.process(scopeKey(scope));assert.equal(sent.length,1,'duplicate platform event cannot duplicate failure feedback');
 });
 
+test('model provider failures preserve an actionable error code in the user-facing failure',async t=>{
+  const root=await mkdtemp(path.resolve('.codex/process-failure-'));const store=new Store(root);const sent:string[]=[];
+  store.saveBot(botSchema.parse({id:'one',name:'One',channel:'qq',accountId:'one',enabled:true}));
+  const scope:CallerScope={botId:'one',platform:'qq',accountId:'one',kind:'private',channelId:'alice',senderId:'alice'};
+  const message:InboundMessage={id:'model-failure',scope,text:'为什么没有回复',attachments:[],reply:{target:'alice'},timestamp:Date.now()};
+  const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async()=>Buffer.from(''),send:async(_bot,_credential,delivery)=>{sent.push(delivery.output.text!);return'receipt';}};
+  const harness:HarnessPort={run:async()=>{throw Error('INVALID_REQUEST: upstream model rejected the request');},cancel:()=>{},dispose:async()=>{},validateModel:async()=>{}};
+  const assets=new Assets(store);const runtime=new BotRuntime(store,assets,new MediaService(store,assets),harness,{qq:adapter,weixin:adapter},{read:async()=>({accountId:'one'}),write:async()=>{},remove:async()=>{}},0);
+  t.after(async()=>{await runtime.close();store.close();await rm(root,{recursive:true,force:true});});
+  await runtime.receive(message);await runtime.process(scopeKey(scope));
+  assert.equal(sent.length,1);assert.match(sent[0],/模型请求失败/);assert.match(sent[0],/INVALID_REQUEST/);assert.match(sent[0],/重置模型/);
+  assert.equal(store.list<any>('failure')[0].code,'INVALID_REQUEST: upstream model rejected the request');
+});
+
 test('another bot credential failure cannot relabel a completed request or its accepted delivery',async t=>{
   const root=await mkdtemp(path.resolve('.codex/process-failure-'));const store=new Store(root);const assets=new Assets(store);
   for(const id of ['good','bad'])store.saveBot(botSchema.parse({id,name:id,channel:'qq',accountId:id,enabled:true}));

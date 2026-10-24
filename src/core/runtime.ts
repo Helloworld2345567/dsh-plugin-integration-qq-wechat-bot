@@ -20,6 +20,11 @@ import {RuntimeLifecycleFacade,type RuntimeLifecycle} from './runtime-lifecycle.
 import type {ProcessingFailure} from './failure-context.js';
 import {AutomationScheduler,type AutomationKind} from './automation.js';
 
+function modelFailureCode(error:unknown):string {
+  const message=error instanceof Error?error.message:typeof error==='string'?error:'MODEL_REQUEST_FAILED';
+  return message.match(/\b[A-Z][A-Z0-9_]{2,}\b/)?.[0]??'MODEL_REQUEST_FAILED';
+}
+
 export type {HarnessResult,HarnessPort,Credentials} from './runtime-ports.js';
 import type {HarnessPort,Credentials} from './runtime-ports.js';
 export interface CommandServices {
@@ -313,7 +318,7 @@ export class BotRuntime {
         this.store.mark(key,messages.map(m=>m.id),state);this.store.saveFailure(`${binding.sessionId}:${at}`,{sessionId:binding.sessionId,scope:key,code:timedOut?'TURN_DEADLINE_EXCEEDED':error instanceof Error?error.message:'PROCESS_FAILED',state,stage,sourceIds:messages.map(m=>m.id),at} satisfies ProcessingFailure);
         if(state==='failed'&&stage!=='delivery'&&this.store.binding(binding.scope).sessionId===binding.sessionId){
           const image=messages.some(m=>[...m.attachments,...(m.quoted?.attachments??[])].some(a=>a.kind==='image'));
-          const text=timedOut?'这次请求超过处理时限，未确认结果。请稍后重试；详细错误已记录在管理面板。':stage==='attachments'?(image?'图片下载或读取失败，这条请求尚未送入模型，也没有生成新图。请稍后重发图片和要求。':'附件下载或读取失败，这条请求尚未送入模型。请稍后重发附件和要求。'):'这次请求的模型处理未完成，未确认本次结果。请稍后重试；详细错误已记录在管理面板。';
+          const text=timedOut?'这次请求超过处理时限，未确认结果。请稍后重试；详细错误已记录在管理面板。':stage==='attachments'?(image?'图片下载或读取失败，这条请求尚未送入模型，也没有生成新图。请稍后重发图片和要求。':'附件下载或读取失败，这条请求尚未送入模型。请稍后重发附件和要求。'):`模型请求失败（${modelFailureCode(error)}），未确认本次结果。请检查当前模型或发送“重置模型”后重试；详细错误已记录在管理面板。`;
           this.store.enqueue(binding,pending.at(-1)!.id,`failure:${pending.at(-1)!.id}`,[{type:'text',text}],pending.at(-1)!.reply,this.replyEnvelope(pending.at(-1)!));
         }
       }
