@@ -300,7 +300,7 @@ def main() -> int:
     try:
         if args.operation == "generate":
             if usage_job: usage_call = journal(usage_job)
-            response = request_with_retry(session, "POST", endpoint, headers={**headers, "Content-Type": "application/json"}, timeout=args.timeout, json=body)
+            response = request_with_retry(session, "POST", endpoint, headers={**headers, "Content-Type": "application/json"}, timeout=args.timeout or None, json=body)
         else:
             data = {key: str(value) for key, value in body.items()}
             opened = [(path.open("rb"), path) for path in args.image]
@@ -310,7 +310,7 @@ def main() -> int:
                 opened.append((mask_handle, args.mask))
                 multipart.append(("mask", (args.mask.name, mask_handle, "image/png")))
             if usage_job: usage_call = journal(usage_job)
-            response = request_with_retry(session, "POST", endpoint, headers=headers, timeout=args.timeout, data=data, files=multipart)
+            response = request_with_retry(session, "POST", endpoint, headers=headers, timeout=args.timeout or None, data=data, files=multipart)
         record["http_status"] = response.status_code
         try:
             accounting = response.json()

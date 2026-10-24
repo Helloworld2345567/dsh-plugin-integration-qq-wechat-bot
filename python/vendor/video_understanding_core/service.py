@@ -61,7 +61,7 @@ class VideoService:
             self.resolver.pinned.add(request.source_ref)
         self.active[caller.user] = job_id
         self.references[job_id] = request.source_ref
-        deadline = time.monotonic() + self.limits.job_timeout
+        deadline = time.monotonic() + self.limits.job_timeout if self.limits.job_timeout is not None else None
         self.tasks[job_id] = asyncio.create_task(self._run(job_id, request, caller, source, deadline))
         if self.cleaner is None:
             self.cleaner = asyncio.create_task(self._cleanup_loop())

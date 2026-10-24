@@ -32,7 +32,7 @@ test('inbound hard caps reject oversized text, attachments and untrusted identit
 });
 
 test('media parameter policy rejects remote video URLs, nonstandard ports and oversized prompts',()=>{
-  assert.throws(()=>validateMediaParameters('video_analyze',[],{url:'https://video.example/clip'}),/REMOTE_VIDEO_URL_NOT_ALLOWED/);
+  assert.throws(()=>validateMediaParameters('video_analyze',[],{url:'https://video.example/clip'}),/UNSUPPORTED_VIDEO_PLATFORM/);
   assert.throws(()=>validateMediaParameters('social_read',[],{url:'https://example.com:444/post'}),/UNSAFE_MEDIA_URL/);
   assert.throws(()=>validateMediaParameters('image_generate',[],{prompt:'x'.repeat(8*1024+1)}),/MEDIA_PROMPT_TOO_LARGE/);
   assert.doesNotThrow(()=>validateMediaParameters('social_read',[],{url:'https://example.com/post'}));

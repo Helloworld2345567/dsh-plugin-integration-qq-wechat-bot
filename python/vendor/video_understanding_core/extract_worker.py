@@ -166,7 +166,7 @@ def main():
         for terms, candidate in [(("cookie", "login", "sign in"), "SOURCE_LOGIN_REQUIRED"),
                                   (("geo", "region"), "SOURCE_REGION_RESTRICTED"),
                                   (("404", "removed", "not found"), "SOURCE_UNAVAILABLE"),
-                                  (("403", "429", "blocked", "captcha"), "SOURCE_ACCESS_RESTRICTED")]:
+                                  (("403", "412", "429", "blocked", "captcha"), "SOURCE_ACCESS_RESTRICTED")]:
             if any(term in text for term in terms):
                 code = candidate
                 break

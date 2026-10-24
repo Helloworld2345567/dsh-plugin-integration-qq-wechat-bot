@@ -19,9 +19,9 @@ export class ProcessWorker implements WorkerPort {
       const child=spawn(this.python,['-u',this.workerFile],{env:safeEnv,windowsHide:true,stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32'});
       let output='';let errors='';let kill:ReturnType<typeof setTimeout>|undefined;let timedOut=false;
       const abort=()=>{if(process.platform==='win32'&&child.pid)spawn('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});else if(child.pid){try{process.kill(-child.pid,'SIGTERM');}catch{child.kill();}}kill=setTimeout(()=>child.kill('SIGKILL'),1500);};
-      const timer=setTimeout(()=>{timedOut=true;abort();},job.timeoutMs);timer.unref();signal.addEventListener('abort',abort,{once:true});
+      const timer=job.timeoutMs>0?setTimeout(()=>{timedOut=true;abort();},job.timeoutMs):undefined;timer?.unref();signal.addEventListener('abort',abort,{once:true});
       child.stdout.on('data',chunk=>{output+=String(chunk);if(output.length>2*1024*1024)abort();});child.stderr.on('data',chunk=>{if(errors.length<2000)errors+=String(chunk);});
-      const clean=()=>{clearTimeout(timer);if(kill)clearTimeout(kill);signal.removeEventListener('abort',abort);};
+      const clean=()=>{if(timer)clearTimeout(timer);if(kill)clearTimeout(kill);signal.removeEventListener('abort',abort);};
       child.once('error',error=>{clean();reject(error);});child.once('close',code=>{clean();if(signal.aborted||timedOut)return reject(new Error('MEDIA_CANCELLED_OR_TIMEOUT'));try{let response=JSON.parse(output.trim());if(code||response.error)throw new Error(response.error?.code||'MEDIA_WORKER_FAILED');if(response.protocol!==undefined||response.protocolVersion!==undefined){if(response.protocol!==MEDIA_WORKER_PROTOCOL||response.protocolVersion!==MEDIA_WORKER_PROTOCOL_VERSION)throw new Error('MEDIA_WORKER_PROTOCOL_UNSUPPORTED');response=response.result;}validateMediaWorkerResult(response);resolve(response);}catch(error){reject(error instanceof Error?error:new Error(`MEDIA_WORKER_FAILED${errors?`: ${errors}`:''}`));}});
       child.stdin.end(JSON.stringify(job));if(signal.aborted)abort();
     });

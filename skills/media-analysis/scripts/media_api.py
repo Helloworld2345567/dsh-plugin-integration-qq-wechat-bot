@@ -15,6 +15,7 @@ import time
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'python' / 'vendor'))
 sys.path.insert(0, str(ROOT / 'python'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from model_usage import journal
 
 
@@ -23,6 +24,8 @@ class AnalysisError(Exception):
 
 
 def remaining(job, maximum=120):
+    if job.get('timeoutMs') == 0:
+        return None
     seconds = (job.get('deadline', 0) - time.time() * 1000) / 1000
     if not math.isfinite(seconds) or seconds <= 0:
         raise AnalysisError('JOB_EXPIRED')
@@ -136,16 +139,20 @@ async def analyze_video(job):
     from video_understanding_core import VideoService, CallerContext, AnalysisRequest, Limits
     from video_understanding_core.backend import BackendConfig, ChatCompletionsGemini
     endpoint = job['endpoint']
-    limits = Limits(job_timeout=min(150, remaining(job, 150)))
+    limits = Limits(job_timeout=remaining(job, 150), model_timeout=remaining(job),
+                    resolve_timeout=remaining(job), download_timeout=remaining(job), process_timeout=remaining(job))
     backend = ChatCompletionsGemini(BackendConfig(endpoint['baseUrl'], os.environ[endpoint['keyEnv']], endpoint['model'], headers=endpoint.get('headers', {})), limits,
                                     usage_observer=lambda call=None, response=None: journal(job, call, response))
-    service = VideoService(Path(job['output']) / 'video', backend, limits=limits)
+    from platform_links import PublicLinkResolver
+    root = Path(job['output']) / 'video'
+    service = VideoService(root, backend, limits=limits,
+                           resolver=PublicLinkResolver(root / 'attachments', limits))
     caller = CallerContext(job['scope'], job['scope'], job['scope'])
     try:
         if len(job['inputs']) > 1:
             raise AnalysisError('ONE_VIDEO_REQUIRED')
         source = (service.resolver.register_file(Path(job['inputs'][0]['path']), caller) if job['inputs'] else
-                  service.resolver.register_remote(str(job['parameters'].get('url', '')), caller))
+                  str(job['parameters'].get('url', '')))
         request_value = AnalysisRequest(source, str(job['parameters'].get('question') or '分析视频画面与音轨，并说明覆盖范围和不确定性。'), message_id=job['id'])
         result = await service.submit(request_value, caller)
         result = await service.wait(result['job_id'], caller, timeout=remaining(job, 155))
@@ -160,6 +167,12 @@ def execute(job):
     remaining(job)
     if not isinstance(job.get('inputs'), list) or len(job['inputs']) > 1:
         raise AnalysisError('ONE_MEDIA_INPUT_REQUIRED')
+    if job.get('operation') == 'image_download':
+        from image_download import execute as download_images
+        return asyncio.run(download_images(job))
+    if job.get('operation') == 'video_download':
+        from platform_links import download_video
+        return asyncio.run(download_video(job))
     if job.get('operation') == 'transcribe':
         return analyze_audio(job)
     if job.get('operation') == 'video_analyze':

@@ -18,7 +18,7 @@ export const name='bot-native-fixture';
 export const Config=z.object({baseURL:z.string().default('https://fixture.invalid/v1').volatile(),apiKeyEnv:z.string().default('BOT_TEST_ANALYSIS_KEY').volatile(),api:z.string().default('openai-completions').volatile()});
 export async function apply(ctx:Context){
   const runtime=ctx.botIntegration;const store=runtime.store;const bridge=runtime.harness as NativeHarness;
-  const requests:GenerateOptions[]=[];let phase=0;let compactions=0;let mediaCall:{name:string;args:Record<string,unknown>}|undefined;let beforeTool:(()=>Promise<void>)|undefined;let beforeFinal:((options:GenerateOptions)=>void)|undefined;
+  const requests:GenerateOptions[]=[];let phase=0;let compactions=0;let finalText="FINAL_ONLY";let mediaCall:{name:string;args:Record<string,unknown>}|undefined;let beforeTool:(()=>Promise<void>)|undefined;let beforeFinal:((options:GenerateOptions)=>void)|undefined;
   class Fixture extends LlmAdapter{
     providerInfo(provider:string){return{id:provider,name:'Local deterministic fixture'};}
     async listModels(provider:string){return ['first','second'].map(id=>({provider,id,name:id,inputModalities:['text','image'] as const}));}
@@ -38,7 +38,7 @@ export async function apply(ctx:Context){
         yield{type:'finish',reason:{kind:'tool-calls'}};return;
       }
       const checkFinal=beforeFinal;beforeFinal=undefined;checkFinal?.(options);
-      yield*text('FINAL_ONLY');
+      yield*text(finalText);finalText='FINAL_ONLY';
     }
   }
   function*text(value:string):Generator<StreamChunk>{yield{type:'block-start',index:0,blockType:'reasoning'};yield{type:'block-end',index:0,block:{type:'reasoning',text:'PRIVATE_REASONING'}};yield{type:'block-start',index:1,blockType:'text'};yield{type:'block-end',index:1,block:{type:'text',text:value}};yield{type:'usage',usage:{inputTokens:20,outputTokens:8,cacheReadTokens:3,cacheWriteTokens:2,reasoningTokens:2,totalTokens:33}};yield{type:'finish',reason:{kind:'stop'}};}
@@ -47,11 +47,11 @@ export async function apply(ctx:Context){
   // Start after composition; errors are durable evidence for the parent test runner.
   const resultPath=process.env.NATIVE_TEST_RESULT!;
   const test=async()=>{
-    const initial=store.config('default');await runtime.saveConfig({...initial,model:{provider:'bot-fixture',model:'first'},personaPrompt:'PERSONA_A'},initial.revision);
-    const sakura=store.config('sakura');await runtime.saveConfig({...sakura,model:{provider:'bot-fixture',model:'second'},personaPrompt:'PERSONA_B'},sakura.revision);
+    const initial=store.config('default');await runtime.saveConfig({...initial,model:{provider:'bot-fixture',model:'first'},allowHostTools:true,personaPrompt:'PERSONA_A'},initial.revision);
+    const sakura=store.config('sakura');await runtime.saveConfig({...sakura,model:{provider:'bot-fixture',model:'second'},allowHostTools:true,personaPrompt:'PERSONA_B'},sakura.revision);
     store.saveBot(botSchema.parse({id:'fixture',name:'Fixture',channel:'qq',accountId:'fixture',enabled:true}));
     const scope={botId:'fixture',accountId:'fixture',platform:'qq' as const,kind:'private' as const,channelId:'alice',senderId:'alice'};
-    const binding=store.binding(scope);const msg=(id:string,text:string):InboundMessage=>({id,text,scope,attachments:[],reply:{},timestamp:Date.now()});
+    const binding=store.binding(scope);const msg=(id:string,text:string):InboundMessage=>({id,text,scope,attachments:[],reply:{target:scope.channelId,kind:scope.kind,msgId:id},timestamp:Date.now()});
     const toolJson=(result:any)=>{assert.equal(result.isError,false,JSON.stringify(result));return JSON.parse(result.content.filter((block:any)=>block.type==='text').map((block:any)=>block.text).join(''));};
     const noHostPaths=(value:unknown)=>{const json=JSON.stringify(value);assert.doesNotMatch(json,/"(?:path|resourceBase|candidateRoot|directory|workingDirectory)"/);assert.ok(!json.includes(JSON.stringify(store.home).slice(1,-1)),'catalog must not expose the host data directory');};
     store.accept(msg('first','我喜欢绿茶'));
@@ -120,6 +120,22 @@ export async function apply(ctx:Context){
     assert.ok(requests.at(-1)!.messages.some(m=>m.role==='tool'&&m.content.some(b=>b.type==='image')),'scanned page pixels must reach the current chat model');
     const mediaRun=runtime.media.run.bind(runtime.media);let imageCalls=0;let imageEntered!:()=>void;let finishImage!:()=>void;
     const imageReady=new Promise<void>(resolve=>{imageEntered=resolve;});const imageFinish=new Promise<void>(resolve=>{finishImage=resolve;});
+    try{
+      runtime.media.run=async(scope,operation,_config,inputs,parameters)=>{assert.equal(scope,binding.key);assert.equal(operation,'image_download');assert.deepEqual(inputs,[]);assert.equal(parameters.url,'https://example.com/original.png');return{assetIds:[asset.id]};};
+      mediaCall={name:'media_analysis',args:{kind:'image',url:'https://example.com/original.png'}};
+      finalText=`已下载。\n\n![图片](asset://${asset.id})`;
+      const downloaded=await bridge.run(binding,[msg('download-original','下载链接中的原图')],AbortSignal.timeout(30000));
+      assert.deepEqual(downloaded.outputs,[{type:'text',text:'已下载。'},{type:'asset',assetId:asset.id}]);
+      runtime.media.run=async(_scope,operation,_config,inputs,parameters)=>{assert.equal(operation,'video_analyze');assert.deepEqual(inputs,[]);assert.equal(parameters.url,'https://v.douyin.com/34Ae2yNHPXs/');return{text:'VIDEO_LINK_ROUTED',assetIds:[]};};
+      mediaCall={name:'media_analysis',args:{kind:'video',url:'https://v.douyin.com/34Ae2yNHPXs/'}};
+      await bridge.run(binding,[msg('analyze-video-link','分析视频链接')],AbortSignal.timeout(30000));
+      assert.ok(JSON.stringify(requests.at(-1)!.messages).includes('VIDEO_LINK_ROUTED'));
+      runtime.media.run=async(_scope,operation,_config,inputs,parameters)=>{assert.equal(operation,'video_download');assert.deepEqual(inputs,[]);assert.equal(parameters.url,'https://b23.tv/test');return{assetIds:[]};};
+      mediaCall={name:'media_analysis',args:{kind:'video',action:'download',url:'https://b23.tv/test'}};
+      await bridge.run(binding,[msg('download-video-link','只下载视频')],AbortSignal.timeout(30000));
+      await writeFile(path.join(path.dirname(resultPath),'media-links-result.json'),JSON.stringify({status:'PASS',checks:['image download dispatch and automatic delivery registration','image markdown removed from channel text','video URL analysis dispatch','video-only download dispatch']}));
+
+    }finally{runtime.media.run=mediaRun;}
     runtime.media.run=async(scope,operation,config,inputs)=>{assert.equal(config.media.image,undefined);assert.equal(operation,'image_edit');assert.deepEqual(inputs,[asset.id]);imageCalls++;if(imageCalls<=2)throw Error('IMAGE_PROVIDER_FAILED');imageEntered();await imageFinish;return{assetIds:[asset.id]};};
     try{
       mediaCall={name:'image_generation',args:{operation:'edit',prompt:'Use the real reference on the moon',inputs:[asset.id]}};
@@ -228,7 +244,7 @@ export async function apply(ctx:Context){
     const controlScope={...scope,channelId:'native-controls',senderId:'native-controls'};const controlKey=scopeKey(controlScope);
     const controlMsg=(id:string,text:string):InboundMessage=>({...msg(id,text),scope:controlScope});
     const previousRead=runtime.credentials.read,previousSend=runtime.adapters.qq.send;const sentControlDeliveries:string[]=[];
-    runtime.credentials.read=async botId=>botId==='fixture'?{accountId:'fixture'}:undefined;
+    runtime.credentials.read=async botId=>botId==='fixture'?{accountId:'fixture',appSecret:'fixture-secret'}:undefined;
     runtime.adapters.qq.send=async(bot,_credential,delivery)=>{assert.equal(bot.id,'fixture');assert.equal(delivery.scopeKey,controlKey);sentControlDeliveries.push(delivery.id);return`fixture-accepted-${delivery.id}`;};
     try{
       const oldMarker='NATIVE_MANAGEMENT_OLD_CONTEXT';await runtime.receive(controlMsg('management-warmup',`保存本轮测试标记 ${oldMarker}，后面会通过工具操作会话。`));await runtime.process(controlKey);

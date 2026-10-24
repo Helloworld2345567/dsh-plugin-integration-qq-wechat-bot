@@ -62,7 +62,7 @@ export class BotRuntime {
   models(){return this.harness.models?this.harness.models():Promise.resolve([]);}
   sessionStatus(scope:CallerScope):'waiting_upgrade'|'compacting'|'running'|'idle'{const key=scopeKey(scope);return this.quiescing?'waiting_upgrade':this.maintenance.has(key)?'compacting':this.processing.has(key)||this.store.sessionActions<SessionActionRecord>().some(r=>r.scopeKey===key&&r.state==='running')?'running':'idle';}
   health():{ready:true;quiescing:boolean;activeTasks:number;pendingDeliveries:number;pendingSessionActions:number;connections:Record<string,string>;latency:{inboxToModel:{count:number;p50:number|null;p95:number|null;max:number|null};inboxToSent:{count:number;p50:number|null;p95:number|null;max:number|null}}}{return{ready:true,quiescing:this.quiescing,activeTasks:this.processing.size+this.maintenance.size+this.controls.size,pendingDeliveries:this.store.deliveries(['pending','sending']).length,pendingSessionActions:this.store.sessionActions<SessionActionRecord>().filter(r=>r.state==='queued').length,connections:Object.fromEntries(this.states),latency:{inboxToModel:this.store.metricPercentiles('modelStartedAt'),inboxToSent:this.store.metricPercentiles('sentAt')}};}
-  constructor(readonly store:Store,readonly assets:Assets,readonly media:MediaService,readonly harness:HarnessPort,readonly adapters:Readonly<Record<string,ChannelAdapter>>,readonly credentials:Credentials,readonly debounceMs=2000,readonly turnTimeoutMs=180000,channels?:ChannelRegistry){
+  constructor(readonly store:Store,readonly assets:Assets,readonly media:MediaService,readonly harness:HarnessPort,readonly adapters:Readonly<Record<string,ChannelAdapter>>,readonly credentials:Credentials,readonly debounceMs=2000,readonly turnTimeoutMs=0,channels?:ChannelRegistry){
     this.strictChannels=!!channels;this.channels=channels??registryFromLegacy(adapters);this.connectionSupervisor=new DurableConnectionSupervisor(store,this.channels,credentials,this.states,message=>this.receive(message));this.deliveryWorker=new DurableDeliveryWorker(store,this.channels,credentials);this.turnCoordinator=new RuntimeTurnCoordinator(this as any);this.commandDispatcher=new RuntimeCommandDispatcher(this as any);this.sessionActionExecutor=new RuntimeSessionActionExecutor(this as any);this.lifecycle=new RuntimeLifecycleFacade(this);this.commandBus=new CommandBus(this);this.automation=new AutomationScheduler(store,{runPrompt:(binding,prompt,kind,signal)=>this.runAutomationPrompt(binding,prompt,kind,signal),flush:()=>this.flushDeliveries()});this.commandServices.automation={proactive:(binding,action,args)=>this.automationCommand(binding,action,args),schedule:(binding,action,args)=>this.scheduleCommand(binding,action,args)};
   }
   async initialize():Promise<void>{
@@ -246,7 +246,7 @@ export class BotRuntime {
   private async executeCommand(message:InboundMessage,parsed:ParsedCommand):Promise<string|undefined>{
     const binding=this.store.binding(message.scope);const command=managementCommand(parsed);const config=this.effectiveConfig(binding);
     if(!command){const privileged=trusted(this.store.bot(binding.scope.botId),binding.scope);return `未知命令 /${parsed.name}。\n${commandHelp(privileged,config.allowHostTools)}`;}
-    const result=await this.commandBus.execute({source:message.text.trimStart().startsWith('/')?'slash':'natural',binding,signal:AbortSignal.timeout(this.turnTimeoutMs)},command);
+    const result=await this.commandBus.execute({source:message.text.trimStart().startsWith('/')?'slash':'natural',binding,signal:(this.turnTimeoutMs>0?AbortSignal.timeout(this.turnTimeoutMs):new AbortController().signal)},command);
     if(result.kind==='reply')return result.text;
     if(result.kind==='deferred'){
       // Do not await the model here: iLink's receive loop must remain available for /stop.
@@ -287,7 +287,7 @@ export class BotRuntime {
       await this.flushDeliveries();return;
     }
     const controller=new AbortController();
-    const deadline=AbortSignal.timeout(this.turnTimeoutMs);const signal=AbortSignal.any([controller.signal,deadline]);
+    const deadline=(this.turnTimeoutMs>0?AbortSignal.timeout(this.turnTimeoutMs):new AbortController().signal);const signal=AbortSignal.any([controller.signal,deadline]);
     this.store.mark(key,messages.map(m=>m.id),'processing');this.store.markTurnStage(key,messages.map(m=>m.id),'attachmentsStartedAt');
     const done=Promise.resolve().then(async()=>{
       try{

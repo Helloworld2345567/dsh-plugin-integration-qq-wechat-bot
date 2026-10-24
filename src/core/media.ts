@@ -43,7 +43,7 @@ export class MediaService {
     if(operation==='image_understand')throw new Error('IMAGE_READ_USE_NATIVE_CHAT_MODEL');
     validateMediaParameters(operation,inputs,parameters);
     if(this.active.size>=2 || [...this.active.values()].some(a=>a.scope===scope))throw new Error('MEDIA_CONCURRENCY_LIMIT');
-    const id=randomUUID();const controller=new AbortController(); const combined=AbortSignal.any([signal,controller.signal,AbortSignal.timeout(descriptor.timeoutMs)]);
+    const id=randomUUID();const controller=new AbortController(); const combined=AbortSignal.any([signal,controller.signal,...(descriptor.timeoutMs>0?[AbortSignal.timeout(descriptor.timeoutMs)]:[])]);
     const directory=path.join(this.store.home,'jobs',id),startedAt=Date.now();let provider:string|undefined;let requestedModel:string|undefined;
     const persist=(value:Record<string,unknown>)=>this.store.patchJob(id,value);
     const captureUsage=async()=>{try{const raw=JSON.parse(await readFile(path.join(directory,'model-usage.json'),'utf8'));if(!Array.isArray(raw))return;const modelCalls:MediaUsageCall[]=raw.filter(c=>c?.attempted===true&&typeof c.id==='string'&&Number.isSafeInteger(c.at)).map(c=>({id:c.id,attempted:true,at:c.at,provider,model:typeof c.model==='string'?c.model:requestedModel,usage:normalizeProviderUsage(c.usage)}));persist({modelCalls});const binding=this.store.findBinding(scope);if(binding)this.store.stats.upsertMediaCalls(id,binding.scope.botId,modelCalls);}catch{/* No dispatched model call is claimed without a journal entry. */}};
@@ -57,7 +57,7 @@ export class MediaService {
     const role=operation==='transcribe'?'asr':operation==='video_analyze'?'video':undefined;
     if(role&&!this.analysisProvider)throw new Error('MEDIA_PROVIDER_SETTINGS_UNAVAILABLE');
     const connection=role?await this.analysisProvider!.resolve(config,role):undefined;
-    const endpoint=connection?.endpoint??(operation.startsWith('image_')?resolveImageSkill(config):undefined);
+    const endpoint=connection?.endpoint??((operation==='image_generate'||operation==='image_edit')?resolveImageSkill(config):undefined);
     provider=connection?.provider??(endpoint?new URL(endpoint.baseUrl).hostname:undefined);requestedModel=endpoint?.model;
     persist({provider,requestedModel});
     const day=new Date().toISOString().slice(0,10);const quotaKey=`${day}:${scope}:${operation}`;
@@ -70,7 +70,7 @@ export class MediaService {
       const header=Buffer.alloc(44);header.write('RIFF',0);header.writeUInt32LE(36+pcm.length,4);header.write('WAVEfmt ',8);header.writeUInt32LE(16,16);header.writeUInt16LE(1,20);header.writeUInt16LE(1,22);header.writeUInt32LE(24000,24);header.writeUInt32LE(48000,28);header.writeUInt16LE(2,32);header.writeUInt16LE(16,34);header.write('data',36);header.writeUInt32LE(pcm.length,40);
       const wav=path.join(directory,'decoded.wav');await writeFile(wav,Buffer.concat([header,pcm]));source[0]={...source[0],path:wav,name:'decoded.wav',mime:'audio/wav'};
     }
-      const job:MediaWorkerJob={protocol:MEDIA_WORKER_PROTOCOL,protocolVersion:MEDIA_WORKER_PROTOCOL_VERSION,id,scope,operation,handler:descriptor.handler,inputs:source.map(a=>({path:a.path,name:a.name,mime:a.mime,kind:a.kind})),parameters,endpoint,output:directory,usagePath:path.join(directory,'model-usage.json'),deadline:Date.now()+descriptor.timeoutMs,timeoutMs:descriptor.timeoutMs,quotaUnits:descriptor.quotaUnits};
+      const job:MediaWorkerJob={protocol:MEDIA_WORKER_PROTOCOL,protocolVersion:MEDIA_WORKER_PROTOCOL_VERSION,id,scope,operation,handler:descriptor.handler,inputs:source.map(a=>({path:a.path,name:a.name,mime:a.mime,kind:a.kind})),parameters,endpoint,output:directory,usagePath:path.join(directory,'model-usage.json'),deadline:descriptor.timeoutMs>0?Date.now()+descriptor.timeoutMs:0,timeoutMs:descriptor.timeoutMs,quotaUnits:descriptor.quotaUnits};
       validateMediaWorkerJob(job);
       combined.throwIfAborted();
       // Registered fixture/native handlers stay in the same operation registry;
@@ -78,7 +78,7 @@ export class MediaService {
       const result=descriptor.execute
         ? await this.operations.dispatch<MediaResult>(operation,job,combined)
         : await this.worker.run(job,combined,credentials);
-      const save=async(files:MediaFile[])=>{const ids:string[]=[];for(const file of files){const resolved=await realpath(file.path);const root=await realpath(directory);if(!resolved.startsWith(root+path.sep))throw new Error('WORKER_OUTPUT_OUTSIDE_JOB');if((await stat(resolved)).size>20*1024*1024)throw new Error('OUTPUT_TOO_LARGE');const asset=await this.assets.save(scope,{name:file.name,mime:file.mime,kind:file.kind},await readFile(resolved),id);ids.push(asset.id);}return ids;};
+      const save=async(files:MediaFile[])=>{const ids:string[]=[];for(const file of files){const resolved=await realpath(file.path);const root=await realpath(directory);if(!resolved.startsWith(root+path.sep))throw new Error('WORKER_OUTPUT_OUTSIDE_JOB');if((await stat(resolved)).size>(file.kind==='video'?50:20)*1024*1024)throw new Error('OUTPUT_TOO_LARGE');const asset=await this.assets.save(scope,{name:file.name,mime:file.mime,kind:file.kind},await readFile(resolved),id);ids.push(asset.id);}return ids;};
       const assetIds=await save(result.assets??[]);const contextAssetIds=await save(result.contextAssets??[]);
       persist({state:'complete',assetIds,contextAssetIds,finishedAt:Date.now()});
       return {text:result.text,coverage:result.coverage,incomplete:result.incomplete,assetIds,contextAssetIds};

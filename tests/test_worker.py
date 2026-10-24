@@ -38,6 +38,69 @@ class WorkerTests(unittest.TestCase):
                     inputs=[dict(path=str(source), name=source.name, kind='file', mime='application/octet-stream')] if source else [],
                     parameters=params, output=str(self.root), endpoint=dict(baseUrl='https://example.invalid/v1', model='fixture', keyEnv='TEST_PROVIDER_KEY'))
 
+    def test_unlimited_media_job_and_platform_source_routing(self):
+        job = self.job('transcribe')
+        job.update(timeoutMs=0, deadline=0)
+        worker._validate_protocol(job)
+        self.assertIsNone(media_api.remaining(job))
+        from video_understanding_core.models import Limits
+        self.assertIsNone(Limits(job_timeout=None, model_timeout=None).job_timeout)
+        from video_understanding_core.sources import platform_source
+        self.assertEqual(platform_source('https://v.douyin.com/34Ae2yNHPXs/')['kind'], 'douyin')
+        self.assertEqual(platform_source('https://www.bilibili.com/video/BV1xx411c7mD?p=2')['page'], 2)
+
+    def test_signed_download_preserves_escaped_url(self):
+        import asyncio
+        from video_understanding_core import network
+        url = 'https://example.com/image%2Fname.webp?x-signature=abc%2Fdef%3D'
+        class Response:
+            status = 200
+            headers = {}
+            def __init__(self): self.content = self
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): pass
+            async def iter_chunked(self, size): yield b'image-bytes'
+        class Client:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): pass
+            def get(client, requested, **kwargs):
+                self.assertEqual(str(requested), url)
+                self.assertFalse(kwargs['allow_redirects'])
+                return Response()
+        target = self.root / 'download.bin'
+        with patch.object(network.aiohttp, 'TCPConnector', return_value=object()), patch.object(network.aiohttp, 'ClientSession', return_value=Client()):
+            self.assertEqual(asyncio.run(network.download(url, target, 100, None)), 11)
+        self.assertEqual(target.read_bytes(), b'image-bytes')
+
+    def test_public_link_parser_keeps_identity_and_gallery_originals(self):
+        from platform_links import describe_link, normalize_result
+        from video_understanding_core.models import VideoError
+        source = describe_link('https://www.douyin.com/note/7662259898261030499')
+        payload = {'succ': True, 'data': {'platform': '抖音', 'video_id': source['work_id'], 'image_list': ['https://example.com/original.webp', {'url': 'https://example.com/second.webp'}]}}
+        self.assertEqual(len(normalize_result(payload, source)['images']), 2)
+        payload['data']['video_id'] = 'different'
+        with self.assertRaisesRegex(VideoError, 'SOURCE_IDENTITY_MISMATCH'):
+            normalize_result(payload, source)
+        with self.assertRaisesRegex(VideoError, 'PUBLIC_LINK_PARSE_FAILED'):
+            normalize_result({'succ': False}, source)
+        with self.assertRaises(VideoError):
+            describe_link('https://example.com/not-a-platform')
+
+    def test_original_image_selection_and_bytes(self):
+        sys.path.insert(0, str(ROOT / 'skills/media-analysis/scripts'))
+        from image_download import page_images, image_file
+        html = '<img src="thumb.jpg" data-original="full.png"><img srcset="small.jpg 200w, large.jpg 1200w"><a href="original.webp"><img src="preview.jpg"></a>'
+        self.assertEqual(page_images(html, 'https://example.com/post/'), ['https://example.com/post/full.png', 'https://example.com/post/large.jpg', 'https://example.com/post/original.webp'])
+        from PIL import Image
+        file = self.root / 'download.bin'
+        Image.new('RGB', (31, 27), 'green').save(file, format='PNG')
+        original = file.read_bytes()
+        result = image_file(file, 1)
+        self.assertEqual(result['mime'], 'image/png')
+        self.assertEqual(Path(result['path']).read_bytes(), original)
+        file.write_text('<html>not an image</html>')
+        self.assertIsNone(image_file(file, 2))
+
     def test_documents_use_actual_contents_and_preserve_unicode(self):
         from docx import Document
         from openpyxl import Workbook

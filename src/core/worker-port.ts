@@ -57,7 +57,7 @@ export function validateMediaWorkerJob(job: MediaWorkerJob): void {
   if (job.endpoint !== undefined) {
     if (!isRecord(job.endpoint) || !boundedString(job.endpoint.model, 256) || !boundedString(job.endpoint.baseUrl, 2048) || !/^[A-Z][A-Z0-9_]{0,127}$/.test(String(job.endpoint.keyEnv ?? ''))) throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');
   }
-  if (!Number.isSafeInteger(job.deadline) || job.deadline <= Date.now()) throw new Error('MEDIA_WORKER_JOB_EXPIRED');
-  if (!Number.isSafeInteger(job.timeoutMs) || job.timeoutMs < 1000 || job.timeoutMs > MAX_TIMEOUT) throw new Error('MEDIA_WORKER_TIMEOUT_INVALID');
+  if (!Number.isSafeInteger(job.deadline) || (job.deadline !== 0 || job.timeoutMs !== 0) && job.deadline <= Date.now()) throw new Error('MEDIA_WORKER_JOB_EXPIRED');
+  if (!Number.isSafeInteger(job.timeoutMs) || (job.timeoutMs !== 0 && job.timeoutMs < 1000) || job.timeoutMs > MAX_TIMEOUT) throw new Error('MEDIA_WORKER_TIMEOUT_INVALID');
   if (!Number.isSafeInteger(job.quotaUnits) || job.quotaUnits < 1 || job.quotaUnits > 10000) throw new Error('MEDIA_WORKER_QUOTA_INVALID');
 }

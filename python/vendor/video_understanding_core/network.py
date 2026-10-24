@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import aiohttp
+from yarl import URL
 from aiohttp.abc import AbstractResolver
 
 from .models import VideoError
@@ -45,7 +46,7 @@ class PublicResolver(AbstractResolver):
         pass
 
 
-async def download(url, target: Path, budget: int, timeout: float, headers=None):
+async def download(url, target: Path, budget: int, timeout: float | None, headers=None, *, metadata=False):
     """Count bytes actually received, including redirects; never trust length headers."""
     # The resolver is intentionally scoped to the fixed media provider URL
     # contract; callers cannot opt into arbitrary HTTP or nonstandard ports.
@@ -67,7 +68,9 @@ async def download(url, target: Path, budget: int, timeout: float, headers=None)
                 else:
                     if not ip.is_global or ip.is_multicast or (ip.version == 6 and ip.ipv4_mapped):
                         raise VideoError("UNSAFE_ADDRESS")
-                async with client.get(url, headers=safe_headers, allow_redirects=False) as response:
+                # CDN signatures cover the original escaped path/query. Requoting
+                # (%2F, %3D, etc.) can invalidate otherwise working image links.
+                async with client.get(URL(url, encoded=True), headers=safe_headers, allow_redirects=False) as response:
                     if response.status in (301, 302, 303, 307, 308):
                         from urllib.parse import urljoin
                         url = urljoin(url, response.headers.get("Location", ""))
@@ -80,7 +83,7 @@ async def download(url, target: Path, budget: int, timeout: float, headers=None)
                             if count > budget:
                                 raise VideoError("MEDIA_TOO_LARGE")
                             output.write(chunk)
-                    return count
+                    return {"size": count, "url": url, "content_type": response.headers.get("Content-Type", "")} if metadata else count
             raise VideoError("TOO_MANY_REDIRECTS")
     except BaseException:
         target.unlink(missing_ok=True)

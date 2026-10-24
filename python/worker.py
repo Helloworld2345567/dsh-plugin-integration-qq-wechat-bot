@@ -62,7 +62,7 @@ def image(job):
                "--prompt", str(params.get("prompt", "")), "--model", endpoint["model"],
                "--base-url", endpoint["baseUrl"], "--api-key-env", endpoint["keyEnv"],
                "--output-dir", job["output"], "--output-format", "jpeg", "--n", "1",
-               "--timeout", "120", "--record", str(record)]
+               "--timeout", str(job.get("timeoutMs", 0) / 1000), "--record", str(record)]
     if job.get('usagePath'):
         command.extend(['--usage-record', job['usagePath']])
     if operation == "edit":
@@ -70,7 +70,7 @@ def image(job):
             if source["kind"] != "image":
                 raise JobError("REFERENCE_MUST_BE_IMAGE")
             command.extend(["--image", source["path"]])
-    result = subprocess.run(command, capture_output=True, timeout=145, check=False)
+    result = subprocess.run(command, capture_output=True, timeout=(job.get("timeoutMs", 0) / 1000 or None), check=False)
     if result.returncode:
         raise JobError("IMAGE_PROVIDER_FAILED")
     value = json.loads(record.read_text(encoding="utf-8"))
@@ -164,7 +164,7 @@ def convert(job):
     output = Path(job["output"]) / ("result.gif" if gif else "result.mp4")
     command = ["ffmpeg", "-v", "error", "-nostdin", "-ss", str(start), "-i", job["inputs"][0]["path"], "-t", str(duration)]
     command += ["-vf", "fps=12,scale=480:-2:flags=lanczos", "-loop", "0"] if gif else ["-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart"]
-    result = subprocess.run([*command, str(output)], capture_output=True, timeout=90)
+    result = subprocess.run([*command, str(output)], capture_output=True, timeout=(job.get("timeoutMs", 0) / 1000 or None))
     if result.returncode or not output.exists():
         raise JobError("FFMPEG_FAILED")
     return {"assets": [{"path": str(output), "name": output.name, "mime": "image/gif" if gif else "video/mp4", "kind": "image" if gif else "video"}]}
@@ -265,15 +265,17 @@ def _validate_protocol(job):
     endpoint = job.get("endpoint")
     if endpoint is not None and (not isinstance(endpoint, dict) or not isinstance(endpoint.get("model"), str) or not endpoint["model"] or len(endpoint["model"]) > 256 or not isinstance(endpoint.get("baseUrl"), str) or not endpoint["baseUrl"] or len(endpoint["baseUrl"]) > 2048 or not isinstance(endpoint.get("keyEnv"), str) or not endpoint["keyEnv"] or not endpoint["keyEnv"][0].isalpha() or not endpoint["keyEnv"].replace("_", "").isalnum() or not endpoint["keyEnv"].isupper()):
         raise JobError("MEDIA_WORKER_ENDPOINT_INVALID")
-    if not isinstance(job.get("deadline"), (int, float)) or not math.isfinite(job["deadline"]) or job["deadline"] < time.time() * 1000:
+    if not isinstance(job.get("deadline"), (int, float)) or not math.isfinite(job["deadline"]) or (job.get("timeoutMs") != 0 and job["deadline"] < time.time() * 1000):
         raise JobError("JOB_EXPIRED")
-    if not isinstance(job.get("timeoutMs"), int) or job["timeoutMs"] < 1000 or job["timeoutMs"] > 15 * 60 * 1000:
+    if not isinstance(job.get("timeoutMs"), int) or (job["timeoutMs"] != 0 and job["timeoutMs"] < 1000) or job["timeoutMs"] > 15 * 60 * 1000:
         raise JobError("MEDIA_WORKER_TIMEOUT_INVALID")
     if not isinstance(job.get("quotaUnits"), int) or job["quotaUnits"] < 1 or job["quotaUnits"] > 10000:
         raise JobError("MEDIA_WORKER_QUOTA_INVALID")
 
 
 OPERATIONS = OperationRegistry()
+OPERATIONS.register("image_download", analyze_media)
+OPERATIONS.register("video_download", analyze_media)
 OPERATIONS.register("image", image)
 OPERATIONS.register("analyze_media", analyze_media)
 OPERATIONS.register("document", document)

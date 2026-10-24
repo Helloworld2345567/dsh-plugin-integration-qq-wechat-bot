@@ -1,6 +1,6 @@
 export interface MediaOperationDescriptor {
   id: string;
-  /** Hard timeout for one worker invocation. */
+  /** Optional timeout; zero means run until completion or cancellation. */
   timeoutMs: number;
   /** Units charged to the per-scope daily quota. */
   quotaUnits: number;
@@ -15,7 +15,7 @@ export class MediaOperationRegistry {
   constructor(descriptors: readonly MediaOperationDescriptor[] = []) { for (const descriptor of descriptors) this.register(descriptor); }
   register(descriptor: MediaOperationDescriptor): () => void {
     if (!/^[a-z][a-z0-9_]{1,80}$/.test(descriptor.id)) throw new Error('MEDIA_OPERATION_ID_INVALID');
-    if (!Number.isSafeInteger(descriptor.timeoutMs) || descriptor.timeoutMs < 1000 || descriptor.timeoutMs > 15 * 60 * 1000) throw new Error('MEDIA_OPERATION_TIMEOUT_INVALID');
+    if (!Number.isSafeInteger(descriptor.timeoutMs) || (descriptor.timeoutMs !== 0 && descriptor.timeoutMs < 1000) || descriptor.timeoutMs > 15 * 60 * 1000) throw new Error('MEDIA_OPERATION_TIMEOUT_INVALID');
     if (!Number.isSafeInteger(descriptor.quotaUnits) || descriptor.quotaUnits < 1) throw new Error('MEDIA_OPERATION_QUOTA_INVALID');
     if (this.entries.has(descriptor.id)) throw new Error(`MEDIA_OPERATION_ALREADY_REGISTERED: ${descriptor.id}`);
     this.entries.set(descriptor.id, Object.freeze({...descriptor, inputKinds: descriptor.inputKinds ? Object.freeze([...descriptor.inputKinds]) : undefined}));
@@ -31,15 +31,17 @@ export class MediaOperationRegistry {
 }
 
 export const DEFAULT_MEDIA_OPERATIONS: readonly MediaOperationDescriptor[] = Object.freeze([
-  {id: 'image_generate', handler: 'image', timeoutMs: 180000, quotaUnits: 20, inputKinds: []},
-  {id: 'image_edit', handler: 'image', timeoutMs: 180000, quotaUnits: 20, inputKinds: ['image']},
-  {id: 'image_understand', handler: 'native', timeoutMs: 1000, quotaUnits: 1, inputKinds: ['image']},
-  {id: 'transcribe', handler: 'analyze_media', timeoutMs: 180000, quotaUnits: 50, inputKinds: ['audio']},
-  {id: 'video_analyze', handler: 'analyze_media', timeoutMs: 180000, quotaUnits: 10, inputKinds: ['video']},
-  {id: 'document_read', handler: 'document', timeoutMs: 180000, quotaUnits: 50, inputKinds: ['file']},
-  {id: 'convert_gif', handler: 'convert_gif', timeoutMs: 90000, quotaUnits: 50, inputKinds: ['video']},
-  {id: 'convert_mp4', handler: 'convert_mp4', timeoutMs: 90000, quotaUnits: 50, inputKinds: ['video']},
-  {id: 'social_read', handler: 'social_read', timeoutMs: 180000, quotaUnits: 20, inputKinds: []},
+  {id: 'image_download', handler: 'analyze_media', timeoutMs: 0, quotaUnits: 1, inputKinds: []},
+  {id: 'image_generate', handler: 'image', timeoutMs: 0, quotaUnits: 20, inputKinds: []},
+  {id: 'image_edit', handler: 'image', timeoutMs: 0, quotaUnits: 20, inputKinds: ['image']},
+  {id: 'image_understand', handler: 'native', timeoutMs: 0, quotaUnits: 1, inputKinds: ['image']},
+  {id: 'transcribe', handler: 'analyze_media', timeoutMs: 0, quotaUnits: 50, inputKinds: ['audio']},
+  {id: 'video_download', handler: 'analyze_media', timeoutMs: 0, quotaUnits: 1, inputKinds: []},
+  {id: 'video_analyze', handler: 'analyze_media', timeoutMs: 0, quotaUnits: 10, inputKinds: ['video']},
+  {id: 'document_read', handler: 'document', timeoutMs: 0, quotaUnits: 50, inputKinds: ['file']},
+  {id: 'convert_gif', handler: 'convert_gif', timeoutMs: 0, quotaUnits: 50, inputKinds: ['video']},
+  {id: 'convert_mp4', handler: 'convert_mp4', timeoutMs: 0, quotaUnits: 50, inputKinds: ['video']},
+  {id: 'social_read', handler: 'social_read', timeoutMs: 0, quotaUnits: 20, inputKinds: []},
 ]);
 
 export const mediaOperationRegistry = new MediaOperationRegistry(DEFAULT_MEDIA_OPERATIONS);

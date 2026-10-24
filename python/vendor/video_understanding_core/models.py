@@ -62,12 +62,12 @@ class Limits:
     download_timeout: float = 90
     process_timeout: float = 90
     model_timeout: float = 120
-    job_timeout: float = 360
+    job_timeout: float | None = None
     media_ttl: float = 3600
     result_ttl: float = 86400
 
     def __post_init__(self):
-        if any(not math.isfinite(v) or v <= 0 for v in asdict(self).values()):
+        if any((v is None and not k.endswith("_timeout")) or (v is not None and (not math.isfinite(v) or v <= 0)) for k, v in asdict(self).items()):
             raise ValueError("limits must be positive and finite")
         if self.max_inline_bytes > self.max_download_bytes:
             raise ValueError("inline limit exceeds download limit")
