@@ -10,6 +10,7 @@ import type {BotConfig} from './types.js';
 export const packagedSkills:Readonly<Record<string,string>>={
   'image-generation':'生成或参考图编辑，继承 skill 环境配置，成功自动回传',
   'media-analysis':'通过受管脚本识别音频、分析视频，复用原生模型提供商',
+  'voice-generation':'按用户要求生成 AI 语音和轻量旋律化表达',
 };
 const nameSchema=z.string().min(1).max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 const reserved=/^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i;

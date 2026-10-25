@@ -19,6 +19,8 @@ export interface SkillOperation {
 export interface SkillOperationManifest {
   skill: string;
   enabledRoles?: AnalysisRole[];
+  /** Permission checked by the runtime before dispatching this skill. */
+  permissionTool?: string;
   worker: string;
   tool: {name: string; description: string; parameters: Record<string, any>};
   routes: {match: Record<string, string>; operation: string}[];
@@ -39,12 +41,14 @@ export function loadSkillOperations(root = path.join(packageRoot(), 'skills')): 
     if (manifest.skill !== entry.name || !/^[a-z][a-z0-9_-]*$/.test(manifest.skill)
       || !/^scripts\/[a-zA-Z0-9_-]+\.py$/.test(manifest.worker)
       || !/^[a-z][a-z0-9_]+$/.test(manifest.tool?.name) || tools.has(manifest.tool.name)
+      || manifest.permissionTool !== undefined && !/^[a-z][a-z0-9_]+$/.test(manifest.permissionTool)
+      || manifest.enabledRoles !== undefined && (!Array.isArray(manifest.enabledRoles) || manifest.enabledRoles.some(role => !['asr', 'video', 'tts'].includes(role)))
       || !existsSync(path.join(root, entry.name, manifest.worker)) || !manifest.operations?.length) throw new Error('SKILL_OPERATION_MANIFEST_INVALID');
     tools.add(manifest.tool.name);
     for (const operation of manifest.operations) {
       if (!/^[a-z][a-z0-9_]{1,80}$/.test(operation.id) || ids.has(operation.id)
         || !Number.isSafeInteger(operation.quotaUnits) || operation.quotaUnits < 1
-        || !Array.isArray(operation.inputKinds) || operation.role && !['asr', 'video'].includes(operation.role)) throw new Error('SKILL_OPERATION_MANIFEST_INVALID');
+        || !Array.isArray(operation.inputKinds) || operation.role && !['asr', 'video', 'tts'].includes(operation.role)) throw new Error('SKILL_OPERATION_MANIFEST_INVALID');
       ids.add(operation.id);
     }
     if (!manifest.routes?.length || manifest.routes.some(route => !manifest.operations.some(op => op.id === route.operation))) throw new Error('SKILL_OPERATION_ROUTE_INVALID');

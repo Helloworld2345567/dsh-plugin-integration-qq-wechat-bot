@@ -46,6 +46,7 @@ test('panel retains summary options, drafts and local errors across its sections
     const nameLabel=tree.find(n=>n.type==='label'&&n.children[0]==='名称');nameLabel.children[1].props.onChange({target:{value:'未保存的人格'}});
     tree=render();tree.find(n=>n.type==='button'&&n.children.includes('媒体')).props.onClick();await new Promise(resolve=>setImmediate(resolve));
     tree=render();assert.ok(tree.some(n=>n.props?.role==='switch'&&n.props['aria-label']==='图片'&&!n.props['aria-checked']));
+    assert.ok(tree.some(n=>n.props?.role==='switch'&&n.props['aria-label']==='语音输出'&&!n.props['aria-checked']));
     assert.ok(!tree.some(n=>n.type==='input'&&n.props.type==='checkbox'));
     tree.find(n=>n.props?.role==='switch'&&n.props['aria-label']==='图片').props.onClick();await new Promise(resolve=>setImmediate(resolve));
     tree=render();assert.equal(states[7].name,'未保存的人格');assert.equal(states[7].media.image.enabled,true);assert.equal(states[8],true);

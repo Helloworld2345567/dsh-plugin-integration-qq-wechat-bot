@@ -19,6 +19,15 @@ test('analysis inherits native provider URL and live credentials; model override
   f.setSecret('rotated-key');const second=await f.resolver.resolve(configSchema.parse({...config(),media:{video:{model:'av-model'}}}),'video');assert.equal(second.apiKey,'rotated-key');assert.equal(second.endpoint.model,'av-model');assert.ok(!JSON.stringify(second.endpoint).includes('rotated-key'));
   f.setSecret('');await assert.rejects(f.resolver.resolve(config(),'asr'),/MEDIA_PROVIDER_KEY_NOT_CONFIGURED/);
 });
+test('tts resolves the same native provider with the speech protocol and voice override',async()=>{
+  const f=fixture();
+  const voice=configSchema.parse({...config(),skills:['voice-generation'],tools:['bot_voice'],media:{voice:{enabled:true,protocol:'speech',format:'wav',voice:'alloy'}}});
+  const result=await f.resolver.resolve(voice,'tts');
+  assert.equal(result.endpoint.protocol,'speech');
+  assert.equal(result.endpoint.model,'chat-model');
+  assert.equal(result.apiKey,'stored-key');
+  assert.ok(!JSON.stringify(result.endpoint).includes('stored-key'));
+});
 test('invalid analysis model, incompatible provider and disabled skill fail before provider I/O',async()=>{
   const f=fixture();await assert.rejects(f.resolver.resolve(configSchema.parse({...config(),media:{asr:{model:'unknown'}}}),'asr'),/UNKNOWN_MEDIA_MODEL/);assert.equal(f.reads.length,0);
   f.setApi('anthropic-messages');await assert.rejects(f.resolver.resolve(config(),'video'),/MEDIA_REQUIRES_OPENAI_COMPATIBLE_PROVIDER/);

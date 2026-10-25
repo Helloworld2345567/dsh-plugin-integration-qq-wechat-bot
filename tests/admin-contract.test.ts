@@ -27,6 +27,8 @@ test('overview summary is bounded, redacted and supports unchanged revision resp
   const {admin}=await fixture(t);const first:any=await admin.query({version:1,kind:'query',name:'overview.summary',input:{}});
   assert.equal(first.contractVersion,1);assert.match(first.revision,/^sha256:/);assert.ok(first.data);
   assert.equal(first.data.configs[0].allowHostTools,false);assert.equal(first.data.bots[0].credentialConfigured,true);
+  assert.equal(first.data.configs[0].voice.enabled,false);
+  const voiceStatus:any=await admin.invoke('skill.voice.status',{});assert.equal(voiceStatus.default.enabled,false);assert.equal(voiceStatus.default.format,'mp3');assert.doesNotMatch(JSON.stringify(voiceStatus),/token|appSecret|apiKey/i);
   const serialized=JSON.stringify(first.data);assert.doesNotMatch(serialized,/personaPrompt|reply|storageDirectory|workspaceRoot|appSecret|token/);
   assert.equal((await admin.query({version:1,kind:'query',name:'overview.summary',input:{changedSince:first.revision}}) as any).unchanged,true);
 });

@@ -6,7 +6,7 @@ import { Store, ConflictError, scopeKey } from '../src/core/store.js';
 import { Assets, MediaService } from '../src/core/media.js';
 import { BotRuntime, type HarnessPort } from '../src/core/runtime.js';
 import { configSchema, botSchema, type CallerScope, type InboundMessage, type ChannelAdapter, type TurnSnapshot } from '../src/core/types.js';
-import { freezeTurn, allowedNow, mediaConfigNow } from '../src/core/policy.js';
+import { freezeTurn, allowedNow, permitted, mediaConfigNow } from '../src/core/policy.js';
 import {resolveImageSkill} from '../src/core/image-skill.js';
 import { publicAddress } from '../src/core/network.js';
 
@@ -60,6 +60,15 @@ test('snapshot additions wait, revocations immediately deny even indirect host c
   assert.equal(allowedNow('pwsh',freezeTurn(config,owner,scope('one','alice','group'),[]),config,owner,scope('one','alice','group')),false);
   assert.equal(allowedNow('bot_media',snap,{...config,tools:[]},owner,scope()),false);
 });
+test('voice permission requires the packaged skill, explicit tool and opt-in setting',()=>{
+  const owner=botSchema.parse({id:'one',name:'One',channel:'qq',enabled:true});
+  const scopeValue=scope();
+  const base=configSchema.parse({id:'voice',name:'Voice',personaPrompt:'A',skills:['voice-generation'],tools:['bot_voice'],media:{voice:{enabled:true,protocol:'speech',format:'mp3'}}});
+  assert.equal(permitted('bot_voice',base,owner,scopeValue),true);
+  assert.equal(permitted('bot_voice',configSchema.parse({...base,media:{voice:{enabled:false}}}),owner,scopeValue),false);
+  assert.equal(permitted('bot_voice',configSchema.parse({...base,tools:[]}),owner,scopeValue),false);
+  assert.equal(permitted('bot_voice',configSchema.parse({...base,skills:[]}),owner,scopeValue),false);
+});
 test('explicit web access works for ordinary channel users without granting host tools and revocation is immediate',()=>{
   const config=configSchema.parse({id:'sakura',name:'Sakura',personaPrompt:'A',tools:['bot_media','web_search','web_fetch']});
   const owner=botSchema.parse({id:'one',name:'One',channel:'qq',enabled:true});const snap=freezeTurn(config,owner,scope(),[]);
@@ -78,7 +87,7 @@ test('legacy configuration publishes a migration revision once without changing 
   const store=await fixture(t);const session=store.binding(scope());const original=store.config('default');
   const raw:any={...original,skills:['image-generation'],voiceReply:true,media:{tts:{baseUrl:'https://example.invalid'},asr:{baseUrl:'https://old.invalid',keyEnv:'OLD',model:'fixture'}}};delete raw.schemaVersion;
   store.put('config','default',raw);store.put('config-version','default:1',raw);
-  const upgraded=new Store(store.home);try{const config=upgraded.config('default');assert.equal(config.revision,2);assert.deepEqual(config.skills,['image-generation','media-analysis']);assert.equal('voiceReply'in config,false);assert.equal('tts'in config.media,false);assert.equal('baseUrl'in config.media.asr!,false);assert.deepEqual(upgraded.get('config-version','default:1'),raw);assert.equal(upgraded.binding(scope()).sessionId,session.sessionId);}finally{upgraded.close();}
+  const upgraded=new Store(store.home);try{const config=upgraded.config('default');assert.equal(config.revision,2);assert.equal(config.schemaVersion,3);assert.deepEqual(config.skills,['image-generation','media-analysis','voice-generation']);assert.equal(config.tools.includes('bot_voice'),true);assert.equal(config.media.voice?.enabled,false);assert.deepEqual(config.media.voice?.protocol,'speech');assert.equal('voiceReply'in config,false);assert.equal('tts'in config.media,false);assert.equal('baseUrl'in config.media.asr!,false);assert.deepEqual(upgraded.get('config-version','default:1'),raw);assert.equal(upgraded.binding(scope()).sessionId,session.sessionId);}finally{upgraded.close();}
   const repeated=new Store(store.home);try{assert.equal(repeated.config('default').revision,2);}finally{repeated.close();}
 });
 test('image skill inherits operator variables without media setup, overrides stay optional and secrets stay outside settings',()=>{
@@ -105,6 +114,33 @@ test('deferred video is silent, materialized only after instruction, handles sta
   const clip=message('v','');clip.attachments=[{kind:'video',mime:'video/mp4',name:'video.mp4',bytes:Buffer.from('fixture').toString('base64')}];await f.runtime.receive(clip);await f.runtime.process(scopeKey(scope()));assert.equal(calls,0);assert.equal(f.store.list('asset').length,0);
   await f.runtime.receive(message('go','请分析刚才的视频'));await f.runtime.process(scopeKey(scope()));assert.equal(calls,1);
   const saved=f.store.source(scopeKey(scope()),'v')!;assert.ok(saved.attachments[0].handle);assert.throws(()=>f.store.asset(scopeKey(scope('two')),saved.attachments[0].handle!));
+});
+test('audio without a platform transcript is transcribed once per attachment and passed to the harness',async t=>{
+  let calls=0;let seen:any[]=[];const f=await runtimeFixture(t,async(_binding,messages)=>{seen=messages;return{turnId:'audio',outputs:[],snapshot:freezeTurn(f.store.config('default'),f.store.bot('one'),scope(),messages.map(m=>m.id))};});
+  const scopeId=scopeKey(scope());const saved=await f.assets.save(scopeId,{kind:'audio',mime:'audio/wav',name:'voice.wav'},Buffer.from('fixture'));
+  (f.media as any).run=async()=>{calls++;return{text:JSON.stringify({transcript:'你好，这是转写内容。'}),assetIds:[]};};
+  const attachment:any={kind:'audio',mime:'audio/wav',name:'voice.wav',handle:saved.id};
+  await f.runtime.receive(message('audio','',scope()));
+  // Attach the same asset twice in one batch.  The per-turn transcript cache
+  // must ensure that it is dispatched to ASR only once.
+  const source=f.store.source(scopeId,'audio')!;source.attachments=[attachment,attachment];f.store.updateMessage(scopeId,source);
+  await f.runtime.process(scopeId);
+  assert.equal(calls,1);assert.equal(seen[0].attachments[0].transcript,'你好，这是转写内容。');assert.equal(seen[0].attachments[1].transcript,'你好，这是转写内容。');
+});
+test('an existing platform transcript bypasses automatic ASR',async t=>{
+  let calls=0;let seen:any[]=[];const f=await runtimeFixture(t,async(_binding,messages)=>{seen=messages;return{turnId:'audio-platform',outputs:[],snapshot:freezeTurn(f.store.config('default'),f.store.bot('one'),scope(),messages.map(m=>m.id))};});
+  (f.media as any).run=async()=>{calls++;return{text:JSON.stringify({transcript:'should not be used'}),assetIds:[]};};
+  const incoming=message('audio-platform','',scope());incoming.attachments=[{kind:'audio',mime:'audio/wav',name:'voice.wav',bytes:Buffer.from('fixture').toString('base64'),transcript:'平台已经转写'}];
+  await f.runtime.receive(incoming);await f.runtime.process(scopeKey(scope()));
+  assert.equal(calls,0);assert.equal(seen[0].attachments[0].transcript,'平台已经转写');
+});
+test('automatic ASR failure fails closed before the model and sends an explicit error',async t=>{
+  let modelCalls=0;const f=await runtimeFixture(t,async()=>{modelCalls++;throw Error('model should not run');});
+  (f.media as any).run=async()=>{throw Error('ASR_PROVIDER_DOWN');};
+  const incoming=message('audio-failure','');incoming.attachments=[{kind:'audio',mime:'audio/wav',name:'voice.wav',bytes:Buffer.from('fixture').toString('base64')}];
+  await f.runtime.receive(incoming);await f.runtime.process(scopeKey(scope()));
+  assert.equal(modelCalls,0);assert.equal(f.store.failures().at(-1)?.code,'ASR_PROVIDER_DOWN');
+  assert.match(String(f.store.deliveries(['sent']).at(-1)?.output.text),/语音识别失败/);
 });
 test('unknown receipt freezes remaining outputs; sending crash becomes unknown and is never replayed',async t=>{
   let attempts=0;const f=await runtimeFixture(t,async()=>{throw Error('unused');},async()=>{attempts++;throw Error('network lost after send');});

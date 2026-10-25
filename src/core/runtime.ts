@@ -3,6 +3,7 @@ import { Assets, MediaService } from './media.js';
 import type { BotConfig, BotInstance, ChannelAdapter, Credential, InboundMessage, SessionBinding, Output, TurnSnapshot, CallerScope } from './types.js';
 import {randomUUID} from 'node:crypto';
 import {permissionsRevoked,trusted} from './policy.js';
+import {analysisEnabled} from './analysis.js';
 import {botSchema,modelSchema,skillNameSchema} from './types.js';
 import {validateWorkingDirectory} from './workspaces.js';
 import {parseCommand,unescapeChat,commandHelp,type ParsedCommand} from './commands.js';
@@ -295,15 +296,30 @@ export class BotRuntime {
     const deadline=(this.turnTimeoutMs>0?AbortSignal.timeout(this.turnTimeoutMs):new AbortController().signal);const signal=AbortSignal.any([controller.signal,deadline]);
     this.store.mark(key,messages.map(m=>m.id),'processing');this.store.markTurnStage(key,messages.map(m=>m.id),'attachmentsStartedAt');
     const done=Promise.resolve().then(async()=>{
+      let autoAsrFailure=false;
       try{
       let stage:ProcessingFailure['stage']='attachments';
       try{
+        const config=this.effectiveConfig(binding);
+        const transcripts=new Map<string,string>();
+        const ensureTranscript=async(input:InboundMessage['attachments'][number],assetId:string):Promise<void>=>{
+          if(input.kind!=='audio'||input.transcript)return;
+          const previous=transcripts.get(assetId);
+          if(previous){input.transcript=previous;return;}
+          autoAsrFailure=true;
+          if(!analysisEnabled(config,'asr'))throw new Error('MEDIA_ANALYSIS_DISABLED');
+          const result=await this.media.run(key,'transcribe',config,[assetId],{question:'请忠实转写这段语音。'},signal);
+          let value:any;try{value=result.text?JSON.parse(result.text):undefined;}catch{value=undefined;}
+          const transcript=typeof value?.transcript==='string'?value.transcript.trim():'';
+          if(!transcript)throw new Error('EMPTY_TRANSCRIPT');
+          transcripts.set(assetId,transcript);input.transcript=transcript;autoAsrFailure=false;
+        };
         for(const message of messages){
           if(message.quoted?.id){const quoted=this.store.source(key,message.quoted.id);if(quoted)message.quoted={id:quoted.id,text:quoted.text,attachments:quoted.attachments};}
           for(const input of [...message.attachments,...(message.quoted?.attachments??[])]){
-            if(input.handle){this.store.asset(key,input.handle);continue;}
+            if(input.handle){this.store.asset(key,input.handle);await ensureTranscript(input,input.handle);continue;}
             const bytes=input.bytes?Buffer.from(input.bytes,'base64'):await this.channels.require(bot.channel).adapter.materialize(input,signal);
-            const asset=await this.assets.save(key,input,bytes);input.handle=asset.id;delete input.bytes;
+            const asset=await this.assets.save(key,input,bytes);input.handle=asset.id;delete input.bytes;await ensureTranscript(input,asset.id);
           }
           this.store.updateMessage(key,message);
         }
@@ -318,7 +334,7 @@ export class BotRuntime {
         this.store.mark(key,messages.map(m=>m.id),state);this.store.saveFailure(`${binding.sessionId}:${at}`,{sessionId:binding.sessionId,scope:key,code:timedOut?'TURN_DEADLINE_EXCEEDED':error instanceof Error?error.message:'PROCESS_FAILED',state,stage,sourceIds:messages.map(m=>m.id),at} satisfies ProcessingFailure);
         if(state==='failed'&&stage!=='delivery'&&this.store.binding(binding.scope).sessionId===binding.sessionId){
           const image=messages.some(m=>[...m.attachments,...(m.quoted?.attachments??[])].some(a=>a.kind==='image'));
-          const text=timedOut?'这次请求超过处理时限，未确认结果。请稍后重试；详细错误已记录在管理面板。':stage==='attachments'?(image?'图片下载或读取失败，这条请求尚未送入模型，也没有生成新图。请稍后重发图片和要求。':'附件下载或读取失败，这条请求尚未送入模型。请稍后重发附件和要求。'):`模型请求失败（${modelFailureCode(error)}），未确认本次结果。请检查当前模型或发送“重置模型”后重试；详细错误已记录在管理面板。`;
+          const text=timedOut?'这次请求超过处理时限，未确认结果。请稍后重试；详细错误已记录在管理面板。':autoAsrFailure?'语音识别失败，未把这条语音交给模型。请检查语音服务配置后重试；详细错误已记录在管理面板。':stage==='attachments'?(image?'图片下载或读取失败，这条请求尚未送入模型，也没有生成新图。请稍后重发图片和要求。':'附件下载或读取失败，这条请求尚未送入模型。请稍后重发附件和要求。'):`模型请求失败（${modelFailureCode(error)}），未确认本次结果。请检查当前模型或发送“重置模型”后重试；详细错误已记录在管理面板。`;
           this.store.enqueue(binding,pending.at(-1)!.id,`failure:${pending.at(-1)!.id}`,[{type:'text',text}],pending.at(-1)!.reply,this.replyEnvelope(pending.at(-1)!));
         }
       }

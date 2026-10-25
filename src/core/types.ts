@@ -10,14 +10,24 @@ export const endpointSchema = z.object({
 });
 export const imageSkillOverrideSchema=endpointSchema.pick({baseUrl:true,model:true,keyEnv:true}).partial().extend({enabled:z.boolean().default(true)});
 export const analysisSkillSchema=z.object({enabled:z.boolean().default(true),provider:z.string().min(1).max(150).optional(),model:z.string().min(1).max(200).optional(),protocol:z.enum(['chat_completions','transcriptions']).default('chat_completions')});
+/** Persona-level speech output settings.  Voice is deliberately disabled by default
+ * so an upgrade never starts consuming a provider quota without an operator action. */
+export const voiceSkillSchema=z.object({
+  enabled:z.boolean().default(false),
+  provider:z.string().min(1).max(150).optional(),
+  model:z.string().min(1).max(200).optional(),
+  protocol:z.literal('speech').default('speech'),
+  voice:z.string().trim().min(1).max(100).optional(),
+  format:z.enum(['mp3','wav']).default('mp3'),
+});
 export const configSchema = z.object({
-  schemaVersion:z.literal(2).default(2),
+  schemaVersion:z.literal(3).default(3),
   id: idSchema, name: z.string().trim().min(1).max(100), revision: z.number().int().positive().default(1),
   personaPrompt: z.string().min(1).max(32000), model: modelSchema.nullable().default(null),
   // Legacy vision/TTS services and duplicated analysis connection fields are discarded.
-  media: z.object({image:imageSkillOverrideSchema.optional(),asr:analysisSkillSchema.optional(),video:analysisSkillSchema.optional()}).default({}),
-  tools: z.array(z.string().max(100)).max(100).default(['bot_media', 'bot_send_file', 'bot_remember', 'bot_forget_memory', 'bot_read_social']),
-  skills: z.array(skillNameSchema).max(100).refine(value=>new Set(value).size===value.length,'技能名称不得重复').default(['image-generation','media-analysis']),
+  media: z.object({image:imageSkillOverrideSchema.optional(),asr:analysisSkillSchema.optional(),video:analysisSkillSchema.optional(),voice:voiceSkillSchema.optional()}).default({}),
+  tools: z.array(z.string().max(100)).max(100).default(['bot_media', 'bot_voice', 'bot_send_file', 'bot_remember', 'bot_forget_memory', 'bot_read_social']),
+  skills: z.array(skillNameSchema).max(100).refine(value=>new Set(value).size===value.length,'技能名称不得重复').default(['image-generation','media-analysis','voice-generation']),
   skillVersions:z.record(skillNameSchema,z.string().regex(/^[a-f0-9]{64}$/)).default({}),
   // Keep parsing historical caller objects compatible; Store applies false to new omitted fields.
   allowHostTools: z.boolean().default(true), hostTools: z.array(z.string().max(100)).max(100).default([]),

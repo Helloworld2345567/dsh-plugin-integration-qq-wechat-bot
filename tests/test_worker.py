@@ -58,7 +58,7 @@ class WorkerTests(unittest.TestCase):
             worker.load_skill_operations(skills)
 
     def test_shipped_skill_operations_dispatch_declared_entry(self):
-        self.assertEqual(set(worker.SKILL_OPERATIONS), {'transcribe', 'video_analyze', 'image_download', 'video_download'})
+        self.assertEqual(set(worker.SKILL_OPERATIONS), {'transcribe', 'video_analyze', 'image_download', 'video_download', 'voice_speak', 'voice_chant'})
         job = self.job('image_download')
         job['handler'] = 'skill'
         # Real entry import and error translation, without a provider/network call.

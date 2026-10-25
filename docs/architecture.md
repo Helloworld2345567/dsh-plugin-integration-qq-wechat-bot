@@ -55,7 +55,9 @@ bot 可以共享人格，但身份、会话、附件、记忆和投递始终按�
 
 `media-analysis/operations.json` 是该技能的工具参数、参数到操作的映射、模型角色、配额、来源约束和自动附件交付的唯一声明。框架启动时读取随安装包发布的 `skills/*/operations.json`，注册工具与媒体操作；Python worker 从同一声明找到技能内的 `execute(job)` 入口。任务只传操作 ID，不接受调用方提供脚本路径。
 
-新增媒体分析操作时，修改该技能的声明、Python 实现与说明即可。`routes` 按顺序匹配参数，`defaults` 补充省略的选择参数；`role` 选择现有 `asr` 或 `video` 模型连接，未声明则不注入模型凭据；`deliver` 将结果附件登记到本轮回复。来源约束由宿主在派发前检查。现有 `media_analysis(kind, action, ...)` 和 `bot_media(operation, ...)` 共用同一操作声明。
+新增媒体操作时，修改对应技能的声明、Python 实现与说明即可。`routes` 按顺序匹配参数，`defaults` 补充省略的选择参数；`role` 选择 `asr`、`video` 或 `tts` 模型连接，未声明则不注入模型凭据；`deliver` 将结果附件登记到本轮回复；技能可通过 `permissionTool` 声明所需的配置权限。来源约束由宿主在派发前检查。现有 `media_analysis(kind, action, ...)`、`bot_media(operation, ...)` 和 `bot_voice(mode, ...)` 共用同一操作声明。
+
+入站音频优先使用渠道提供的转写；没有转写时，BotRuntime 在送入模型前自动调用 ASR，并把真实转写写回当前消息。自动转写失败会停止本轮模型调用，避免根据未识别音频猜测内容。语音输出由 `voice-generation` skill 生成 `audio` Asset，再沿现有投递队列发送；QQ 使用音频文件消息，微信首期使用可播放的普通音频文件，不宣称原生语音气泡。
 
 脚本提供 `execute(job)`，返回统一的文本、附件和覆盖范围结果；可报告异常的 `code` 字段，其他异常只暴露类型名。框架不依赖技能内的异常类名。
 

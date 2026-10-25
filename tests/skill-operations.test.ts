@@ -21,6 +21,20 @@ test('shipped skill declarations route tools and preserve provider and delivery 
   assert.throws(()=>resolveSkillOperation(manifest,{kind:'audio',action:'download'}),/ARGUMENTS_INVALID/);
 });
 
+test('voice generation routes speak and chant to tts operations', () => {
+  const manifest = skillOperationManifests.find(item => item.skill === 'voice-generation')!;
+  assert.ok(manifest);
+  assert.equal(manifest.permissionTool, 'bot_voice');
+  assert.equal(resolveSkillOperation(manifest, {}), 'voice_speak');
+  assert.equal(resolveSkillOperation(manifest, {mode:'chant'}), 'voice_chant');
+  for (const id of ['voice_speak', 'voice_chant']) {
+    const operation = mediaOperationRegistry.get(id);
+    assert.equal(operation.role, 'tts');
+    assert.equal(operation.deliver, true);
+    assert.equal(operation.permissionTool, 'bot_voice');
+  }
+});
+
 test('a new packaged skill declares its own operation without host routing edits', async () => {
   const root=await mkdtemp(path.resolve('.codex/skill-contract-'));
   try {

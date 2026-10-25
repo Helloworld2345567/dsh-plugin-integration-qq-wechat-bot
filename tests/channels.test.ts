@@ -1,4 +1,4 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {randomBytes,createCipheriv} from 'node:crypto';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {randomBytes,createCipheriv} from 'node:crypto';import {mkdtemp,writeFile,rm} from 'node:fs/promises';import {join} from 'node:path';
 import {decryptBinding,qqInbound,qqGroupObservation,QQAdapter} from '../src/channels/qq.js';import {decodeMediaKey,weixinInbound,WeixinAdapter} from '../src/channels/weixin.js';import {botSchema} from '../src/core/types.js';
 import {EventEmitter} from 'node:events';
 const qq=botSchema.parse({id:'qq',name:'QQ',channel:'qq',accountId:'app'});const wx=botSchema.parse({id:'wx',name:'WX',channel:'weixin',accountId:'bot'});
@@ -33,6 +33,20 @@ test('iLink preserves uint64 receipt and recognizes explicit accepted ack withou
  const b=new WeixinAdapter({} as any,undefined,fake('{"ret":0}'));assert.equal(await b.send(wx,{accountId:'bot'},delivery,undefined,AbortSignal.timeout(1000)),'ilink-accepted:unique');
  const c=new WeixinAdapter({} as any,undefined,fake('{}'));await assert.rejects(c.send(wx,{accountId:'bot'},delivery,undefined,AbortSignal.timeout(1000)),/RECEIPT_MISSING/);
  for(const body of ['{"ret":-14,"errcode":0}','{"ret":0,"errcode":-14}']){const expired=new WeixinAdapter({} as any,undefined,fake(body));await assert.rejects(expired.send(wx,{accountId:'bot'},delivery,undefined,AbortSignal.timeout(1000)),/ILINK_AUTH_EXPIRED/);}
+});
+
+test('QQ sends audio assets through the file upload path',async()=>{
+ const dir=await mkdtemp(join(process.cwd(),'.codex','channel-audio-'));const path=join(dir,'voice.mp3');await writeFile(path,Buffer.from('ID3fixture'));
+ const calls:any[]=[];const request:any=async(url:string,init:any)=>{calls.push({url,init});if(url.endsWith('getAppAccessToken'))return{access_token:'token',expires_in:7200};if(url.endsWith('/files'))return{file_info:'uploaded-audio'};if(url.endsWith('/messages'))return{id:'qq-receipt'};throw new Error(`unexpected ${url}`);};
+ const delivery:any={id:'delivery-audio',output:{text:''},reply:{target:'alice',kind:'private',msgId:'inbound'},index:0};const asset:any={id:'asset',scopeKey:'scope',name:'voice.mp3',mime:'audio/mpeg',path,size:9,kind:'audio',createdAt:Date.now()};
+ try{const receipt=await new QQAdapter(request).send(qq,{accountId:'app',appSecret:'secret'},delivery,asset,AbortSignal.timeout(1000));assert.equal(receipt,'qq-receipt');const upload=calls.find(call=>call.url.endsWith('/files'));assert.equal(JSON.parse(upload.init.body).file_type,3);const message=calls.find(call=>call.url.endsWith('/messages'));assert.equal(JSON.parse(message.init.body).media.file_info,'uploaded-audio');}finally{await rm(dir,{recursive:true,force:true});}
+});
+
+test('WeChat sends audio assets as playable file items with media_type 3',async()=>{
+ const dir=await mkdtemp(join(process.cwd(),'.codex','channel-audio-'));const path=join(dir,'voice.mp3');await writeFile(path,Buffer.from('ID3fixture'));
+ const calls:any[]=[];const fetcher:any=async(url:string,init:any)=>{if(url.includes('/upload')){calls.push({url,body:undefined});return new Response('',{status:200,headers:{'x-encrypted-param':'uploaded-audio'}});}const body=init?.body?JSON.parse(String(init.body)):undefined;calls.push({url,body});if(url.includes('getuploadurl'))return new Response(JSON.stringify({upload_full_url:'https://novac2c.cdn.weixin.qq.com/upload?fixture=1'}),{status:200});if(url.includes('/sendmessage'))return new Response(JSON.stringify({ret:0,message_id:'wx-receipt'}),{status:200});throw new Error(`unexpected ${url}`);};
+ const delivery:any={id:'delivery-audio',output:{text:''},reply:{target:'alice',contextToken:'ctx'},index:0};const asset:any={id:'asset',scopeKey:'scope',name:'voice.mp3',mime:'audio/mpeg',path,size:10,kind:'audio',createdAt:Date.now()};
+ try{const receipt=await new WeixinAdapter({read:()=>undefined,write:()=>{}},undefined,fetcher).send(wx,{accountId:'bot',token:'token'},delivery,asset,AbortSignal.timeout(1000));assert.equal(receipt,'wx-receipt');const upload=calls.find(call=>call.url.includes('getuploadurl'));assert.equal(upload.body.media_type,3);const message=calls.find(call=>call.url.includes('/sendmessage'));const item=message.body.msg.item_list[0];assert.equal(item.type,4);assert.equal(item.file_item.file_name,'voice.mp3');assert.equal(item.file_item.len,String(asset.size));}finally{await rm(dir,{recursive:true,force:true});}
 });
 
 test('QQ group membership distinguishes observed messages, joins and removals',()=>{

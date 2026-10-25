@@ -8,8 +8,10 @@ import {analysisEnabled,type AnalysisProvider,type AnalysisRole} from '../core/a
 export class HarnessMediaProvider implements AnalysisProvider{
   constructor(readonly ctx:Context){}
   async resolve(config:BotConfig,role:AnalysisRole){
-    if(!analysisEnabled(config,role))throw new Error('MEDIA_ANALYSIS_DISABLED');
-    const options=config.media[role];const provider=options?.provider??config.model?.provider;
+    if(!analysisEnabled(config,role))throw new Error(role==='tts'?'VOICE_OUTPUT_DISABLED':'MEDIA_ANALYSIS_DISABLED');
+    const media=config.media as Record<string,any>;
+    const options=role==='tts'?media.voice:media[role];
+    const provider=options?.provider??config.model?.provider;
     const model=options?.model??config.model?.model;
     if(!provider||!model)throw new Error('请选择聊天模型或媒体分析模型');
     const directory=this.ctx.llm.listConfigurableProviders().find(p=>p.provider===provider);
@@ -30,6 +32,7 @@ export class HarnessMediaProvider implements AnalysisProvider{
     }
     if(!apiKey?.trim())throw new Error('MEDIA_PROVIDER_KEY_NOT_CONFIGURED');
     const headers:Record<string,string>={};for(const [key,entry] of Object.entries(value.headers??{})){if(['openai-organization','openai-project'].includes(key.toLowerCase())&&typeof entry==='string')headers[key]=entry;}
-    return{provider,endpoint:{baseUrl:endpoint.data.baseUrl,model,keyEnv:'BOT_ANALYSIS_API_KEY',protocol:role==='asr'?(options?.protocol??'chat_completions'):'chat_completions',headers},apiKey};
+    const protocol=role==='tts'?'speech':role==='asr'?(options?.protocol??'chat_completions'):'chat_completions';
+    return{provider,endpoint:{baseUrl:endpoint.data.baseUrl,model,keyEnv:'BOT_ANALYSIS_API_KEY',protocol,headers},apiKey};
   }
 }

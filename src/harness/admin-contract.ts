@@ -28,7 +28,7 @@ const configSaveInput=z.object({config:configSchema,expectedRevision:z.number().
 const configFilesInput=z.object({id:z.string().min(1).max(80)}).strict();
 const configCopyInput=z.object({id:z.string().min(1).max(80),newId:z.string().min(1).max(80),name:z.string().trim().min(1).max(100)}).strict();
 const botCredentialsInput=z.object({id:z.string().min(1).max(80),credential:z.object({accountId:z.string().min(1).max(200),appSecret:z.string().min(1).max(500)}).strict()}).strict();
-const capabilityInput=z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive(),role:z.enum(['image','asr','video']),status:z.enum(['PASS','FAIL','BLOCKED','NOT_RUN']),evidence:z.string().trim().min(1).max(2000)}).strict();
+const capabilityInput=z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive(),role:z.enum(['image','asr','video','voice']),status:z.enum(['PASS','FAIL','BLOCKED','NOT_RUN']),evidence:z.string().trim().min(1).max(2000)}).strict();
 const memoryForgetInput=z.object({scope:z.string().min(1).max(128),key:z.string().min(1).max(100)}).strict();
 const memoryCorrectInput=z.object({scope:z.string().min(1).max(128),key:z.string().min(1).max(100),value:z.string().min(1).max(500),version:z.number().int().positive()}).strict();
 const sessionCancelInput=z.object({id:z.string().min(1).max(200)}).strict();
@@ -47,7 +47,7 @@ export const adminCommandRequestSchema=z.discriminatedUnion('name',[
 export type AdminCommandRequest=z.infer<typeof adminCommandRequestSchema>;
 
 export interface AdminSummaryBot {id:string;name:string;channel:string;accountId:string;configId:string;enabled:boolean;archived:boolean;status:string;activeSessions:number;credentialConfigured:boolean;trustedUserCount:number;workspaceConfigured:boolean}
-export interface AdminSummaryConfig {id:string;name:string;revision:number;archived:boolean;model:{provider:string;model:string}|null;toolCount:number;skillCount:number;allowHostTools:boolean}
+export interface AdminSummaryConfig {id:string;name:string;revision:number;archived:boolean;model:{provider:string;model:string}|null;toolCount:number;skillCount:number;allowHostTools:boolean;voice:{enabled:boolean;provider?:string;model?:string;voice?:string;format:'mp3'|'wav'}|null}
 export interface AdminSummaryData {
   channels:Array<{id:string;displayName:string;capabilities:{conversations:readonly ('private'|'group')[];login:readonly ('qr'|'credentials')[];groupSupport:'unsupported'|'observed_only'}}>;
   bots:AdminSummaryBot[];

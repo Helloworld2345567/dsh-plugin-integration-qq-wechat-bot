@@ -63,7 +63,7 @@ test('ordinary and group callers can query only their own session metadata and e
 test('trusted catalogs include disabled published skills and project only public metadata',async t=>{
   const f=await fixture(t);const before=f.store.config('sakura');const staged=f.features.skills.stageFiles(before,'weather-helper',[{path:'SKILL.md',content:'---\nname: weather-helper\ndescription: Weather helper\n---\nUse the helper.'}]);
   f.store.saveConfig({...staged,skills:['media-analysis']},before.revision);f.store.put('config','hidden',{...f.store.config('sakura'),id:'hidden',name:'Hidden',archived:true});
-  const skills:any=await f.management.skills(f.binding(),f.snapshot(),{action:'list'},signal());assert.deepEqual(new Set(skills.skills.map((s:any)=>s.name)),new Set(['image-generation','media-analysis','weather-helper']));
+  const skills:any=await f.management.skills(f.binding(),f.snapshot(),{action:'list'},signal());assert.deepEqual(new Set(skills.skills.map((s:any)=>s.name)),new Set(['image-generation','media-analysis','voice-generation','weather-helper']));
   assert.equal(skills.skills.find((s:any)=>s.name==='weather-helper').enabled,false);assert.equal(skills.skills.find((s:any)=>s.name==='weather-helper').available,true);assert.equal(skills.skills.find((s:any)=>s.name==='image-generation').builtin,true);
   const persona:any=await f.management.persona(f.binding(),f.snapshot(),{action:'list'},signal());assert.ok(!persona.personas.some((p:any)=>p.id==='hidden'));assert.equal(persona.currentPersonaId,'sakura');
   for(const output of [skills,persona]){const text=JSON.stringify(output);assert.ok(!text.includes('resourceBase'));assert.ok(!text.includes('"path"'));assert.ok(!text.includes('personaPrompt'));assert.ok(!text.includes(f.store.home));}
