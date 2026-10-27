@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis';
 import { credentialKey } from '@deepseek-ai/dsh-credentials';
+import type {} from '@deepseek-ai/dsh-client-connection';
 import type {} from '@deepseek-ai/dsh-host-webserver';
 import type {} from '@deepseek-ai/dsh-llm';
 import { randomBytes } from 'node:crypto';
@@ -19,14 +20,16 @@ import {ProcessWorker} from './harness/process-worker.js';
 import {BotFeatures} from './core/features.js';
 import {BotManagement} from './core/management.js';
 import {packageRoot} from './core/paths.js';
+import {installLocalWebAuthBypass} from './core/local-web-auth.js';
 import {registerLifecycleRuntime,handleLifecycleShutdown,createLifecyclePort,packageIdentity} from './lifecycle/protocol.js';
 import {SessionId} from '@deepseek-ai/dsh-session';
 
 export const name='bot-integration';
-export const inject=['agents','agentPresets','llm','settings','tools','skills','systemPrompt','attachments','credentials','webServer','permissionPresets','sessions','sessionPersistence','sessionQuery','workingDirectory','commands'];
+export const inject=['agents','agentPresets','llm','settings','tools','skills','systemPrompt','attachments','credentials','webServer','connection','permissionPresets','sessions','sessionPersistence','sessionQuery','workingDirectory','commands'];
 export interface Config { dataDir?:string; python?:string; debounceMs?:number }
 declare module '@deepseek-ai/cordis' {interface Context {botIntegration:BotRuntime}}
 export async function apply(ctx:Context,config:Config={}):Promise<void>{
+  const restoreLocalWebAuth=installLocalWebAuthBypass(ctx.connection as unknown as Parameters<typeof installLocalWebAuthBypass>[0],ctx.webServer.host);ctx.effect(()=>restoreLocalWebAuth,'bot-integration: local Web authentication');
   const home=config.dataDir??process.env.BOT_DATA_HOME??path.join(process.env.DSH_HOME??path.join(os.homedir(),'.dsh-bots'),'storages','bot-integration');
   const store=Store.open(home,undefined,{secureDefaults:true}).initialize().migrate();const assets=new Assets(store);const media=new MediaService(store,assets,config.python,new HarnessMediaProvider(ctx),new ProcessWorker(config.python));
   const credentials:Credentials={
