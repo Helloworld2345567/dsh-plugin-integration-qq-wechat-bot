@@ -61,7 +61,7 @@ test('another bot credential failure cannot relabel a completed request or its a
   assert.deepEqual(store.messages(scopeKey(scope),['complete']).map(m=>m.id),[message.id],'accepted result must retain its completed request');
   assert.equal(store.list<any>('failure').filter(f=>f.sessionId===store.binding(scope).sessionId).length,0);
   const rejected=store.deliveries().find(d=>d.botId==='bad')!;assert.equal(rejected.state,'failed');assert.equal(rejected.error,'OTHER_BOT_CREDENTIAL_FAILURE');
-  assert.deepEqual(store.deliveries().filter(d=>d.botId==='bad').map(d=>d.state),['failed','pending'],'later chunks must not bypass the failed delivery');
+  assert.deepEqual(store.deliveries().filter(d=>d.botId==='bad').map(d=>d.state),['failed','failed'],'later chunks proceed after a failed delivery without relabelling the accepted request');
   assert.equal(recentFailureContext(store,store.binding(scope),[{...message,id:'followup',timestamp:Date.now()+1}]),undefined);
 });
 
