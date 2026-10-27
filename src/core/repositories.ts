@@ -12,7 +12,7 @@ export interface DeliveryRepository {
   pendingBotIds():readonly string[];
   nextSendable(botId:string,limit:number):readonly Delivery[];
   find(id:string,state?:Delivery['state']):Delivery|undefined;
-  /** Find deliveries for one persisted asset. By default this excludes terminal failures/cancellations. */
+  /** Find unresolved or accepted deliveries for one persisted asset by default. */
   findByAsset(scopeKey:string,assetId:string,states?:readonly Delivery['state'][]):readonly Delivery[];
   /** Return an existing delivery in a retryable state as pending, preserving its ID. */
   retry(id:string):Delivery|undefined;

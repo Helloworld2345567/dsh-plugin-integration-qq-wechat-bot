@@ -71,7 +71,15 @@ export class QQAdapter implements ChannelAdapter {
   async send(_bot:BotInstance,credential:Credential,delivery:Delivery,asset:Asset|undefined,signal:AbortSignal):Promise<string>{
     const token=await this.token(credential,signal);const headers={Authorization:`QQBot ${token}`,'Content-Type':'application/json'};const base=delivery.reply.kind==='group'?`groups/${encodeURIComponent(delivery.reply.target)}`:`users/${encodeURIComponent(delivery.reply.target)}`;
     let payload:any={content:delivery.output.text??'',msg_type:0,msg_id:delivery.reply.msgId,msg_seq:delivery.index+1};
-    if(asset){if(asset.size>20*1024*1024)throw new Error('QQ_OUTPUT_TOO_LARGE');const uploaded:any=await this.request(`${API}/v2/${base}/files`,{method:'POST',headers,body:JSON.stringify({file_type:asset.kind==='image'?1:asset.kind==='video'?2:asset.kind==='audio'?3:4,file_data:(await readFile(asset.path)).toString('base64'),srv_send_msg:false}),signal},60000);if(!uploaded.file_info)throw new Error('QQ_UPLOAD_FAILED');payload={...payload,msg_type:7,media:{file_info:uploaded.file_info}};}
+    if(asset){
+      if(asset.size>20*1024*1024)throw new Error('QQ_OUTPUT_TOO_LARGE');const attempt=delivery.attempt;let fileInfo=attempt?.assetId===asset.id?attempt.fileInfo:undefined;
+      if(!fileInfo){
+        if(attempt)attempt.phase='upload';
+        const uploaded:any=await this.request(`${API}/v2/${base}/files`,{method:'POST',headers,body:JSON.stringify({file_type:asset.kind==='image'?1:asset.kind==='video'?2:asset.kind==='audio'?3:4,file_data:(await readFile(asset.path)).toString('base64'),srv_send_msg:false}),signal},60000);if(!uploaded.file_info)throw new Error('QQ_UPLOAD_FAILED');fileInfo=String(uploaded.file_info);if(attempt)attempt.fileInfo=fileInfo;
+      }
+      if(attempt)attempt.phase='commit';payload={...payload,msg_type:7,media:{file_info:fileInfo}};
+    }
+    if(delivery.attempt)delivery.attempt.phase='commit';
     const result:any=await this.request(`${API}/v2/${base}/messages`,{method:'POST',headers,body:JSON.stringify(payload),signal});if(!result.id)throw new RemoteError('QQ_SEND_RECEIPT_MISSING');return String(result.id);
   }
 }

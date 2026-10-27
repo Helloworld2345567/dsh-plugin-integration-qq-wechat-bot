@@ -5,7 +5,7 @@ import QRCode from 'qrcode';
 import type { Context } from '@deepseek-ai/cordis';
 import type { BotRuntime } from '../core/runtime.js';
 import { ConflictError } from '../core/store.js';
-import type { BotInstance, LoginState } from '../core/types.js';
+import type { BotInstance, LoginState, Delivery } from '../core/types.js';
 import type {} from '@deepseek-ai/dsh-session-query';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import {resolveImageSkill,imageSkillEnabled} from '../core/image-skill.js';
@@ -13,6 +13,11 @@ import {defaultWorkspaceRoot,workingDirectory} from '../core/workspaces.js';
 import {openDirectory} from './open-directory.js';
 import type {BotFeatures} from '../core/features.js';
 import {adminCommandRequestSchema,adminQueryRequestSchema,type AdminSummaryData,type VersionedAdminResult,versioned,ADMIN_CONTRACT_VERSION} from './admin-contract.js';
+
+function publicDelivery(delivery:Delivery):Omit<Delivery,'reply'|'replyEnvelope'> & {attempt?:Pick<NonNullable<Delivery['attempt']>,'number'|'phase'|'assetId'|'startedAt'|'lastError'>} {
+  const {reply:_reply,replyEnvelope:_replyEnvelope,attempt,...rest}=delivery;
+  return {...rest,...attempt?{attempt:{number:attempt.number,phase:attempt.phase,assetId:attempt.assetId,startedAt:attempt.startedAt,lastError:attempt.lastError}}:{}};
+}
 
 export class Admin {
   readonly attempts=new Map<string,{botId:string;ticket:string;expires:number}>();
@@ -32,7 +37,7 @@ export class Admin {
     if(value.name==='bots.list'){const bots=await Promise.all(store.bots().map(async bot=>({...bot,status:this.runtime.states.get(bot.id)??'stopped',activeSessions:this.runtime.activeSessions(bot.id),credentialConfigured:!!await this.runtime.credentials.read(bot.id)})));return versioned(bots,value.input.changedSince);}
     if(value.name==='overview.sessions'){const page=store.pageSessions({},value.input.limit,value.input.cursor);return{...page,contractVersion:ADMIN_CONTRACT_VERSION,items:page.items.map(row=>({id:row.id,scopeKey:row.scopeKey,botId:row.scope.botId,platform:row.scope.platform,kind:row.scope.kind,channelId:row.scope.channelId,senderId:row.scope.senderId,generation:row.generation,persisted:row.persisted,createdAt:row.createdAt,updatedAt:row.updatedAt,personaId:row.personaId})),hasMore:page.nextCursor!==null};}
     if(value.name==='automation.list')return versioned({scopes:store.bindings().filter(binding=>binding.scope.kind==='private').map(binding=>({scopeKey:binding.key,botId:binding.scope.botId,configId:store.bot(binding.scope.botId).configId,channelId:binding.scope.channelId,senderId:binding.scope.senderId})),proactive:this.runtime.automation.listProactive(),scheduled:this.runtime.automation.listJobs()},value.input.changedSince);
-    const page=store.deliveryRepository().pageDeliveries({filter:{scopeKey:value.input.scopeKey},limit:value.input.limit,cursor:value.input.cursor});return{...page,contractVersion:ADMIN_CONTRACT_VERSION,items:page.items.map(({reply,replyEnvelope,...delivery})=>delivery),hasMore:page.nextCursor!==null};
+    const page=store.deliveryRepository().pageDeliveries({filter:{scopeKey:value.input.scopeKey},limit:value.input.limit,cursor:value.input.cursor});return{...page,contractVersion:ADMIN_CONTRACT_VERSION,items:page.items.map(publicDelivery),hasMore:page.nextCursor!==null};
   }
   async command(request:unknown):Promise<unknown>{const value=adminCommandRequestSchema.parse(request);return this.invoke(value.name,value.input);}
   async invoke(action:string,input:any):Promise<unknown>{
@@ -41,7 +46,7 @@ export class Admin {
       case 'stats.query':if(!this.features)throw Error('STATS_UNAVAILABLE');return this.features.stats.query(input);
       case 'evolution.list':return this.features?.history()??[];
       case 'skills.list':{if(!this.features)throw Error('SKILLS_UNAVAILABLE');return this.features.skills.list(store.config(z.string().parse(input.id)));}
-      case 'state':return{configs:store.configs(),bots:await Promise.all(store.bots().map(async b=>({...b,status:this.runtime.states.get(b.id)??'stopped',activeSessions:this.runtime.activeSessions(b.id),credentialConfigured:!!await this.runtime.credentials.read(b.id)}))),sessions:store.bindings().map(binding=>{const snapshot=store.findTurnSnapshot(binding.sessionId);return {...binding,turn:snapshot?{configId:snapshot.config.id,revision:snapshot.config.revision,startedAt:snapshot.startedAt}:null};}),jobs:store.jobs(),failures:store.failures(),deliveries:store.deliveries().slice(-200).map(({reply,...delivery})=>delivery),versions:store.configVersions()};
+      case 'state':return{configs:store.configs(),bots:await Promise.all(store.bots().map(async b=>({...b,status:this.runtime.states.get(b.id)??'stopped',activeSessions:this.runtime.activeSessions(b.id),credentialConfigured:!!await this.runtime.credentials.read(b.id)}))),sessions:store.bindings().map(binding=>{const snapshot=store.findTurnSnapshot(binding.sessionId);return {...binding,turn:snapshot?{configId:snapshot.config.id,revision:snapshot.config.revision,startedAt:snapshot.startedAt}:null};}),jobs:store.jobs(),failures:store.failures(),deliveries:store.deliveries().slice(-200).map(publicDelivery),versions:store.configVersions()};
       case 'automation.proactive':{const value=z.object({scopeKey:z.string(),action:z.enum(['on','off','status','now','set']),args:z.string().default('')}).parse(input);const binding=store.findBinding(value.scopeKey);if(!binding)throw Error('会话不存在');return this.runtime.commandServices.automation!.proactive(binding,value.action,value.args);}
       case 'automation.schedule':{const value=z.object({scopeKey:z.string(),action:z.enum(['list','create','pause','resume','run','delete']),args:z.string().default('')}).parse(input);const binding=store.findBinding(value.scopeKey);if(!binding)throw Error('会话不存在');return this.runtime.commandServices.automation!.schedule(binding,value.action,value.args);}
       case 'models':return Promise.all(this.ctx.llm.listProviders().map(async p=>({id:p.id,models:(await this.ctx.llm.listModels(p.id)).map(m=>({id:m.id,name:m.name}))})));
@@ -100,6 +105,7 @@ export class Admin {
         store.correctMemory(value.scope,value.key,value.value,value.version);return{ok:true};
       }
       case 'session.cancel':{const id=z.string().parse(input.id);const binding=store.bindings().find(b=>b.sessionId===id);if(!binding)throw new Error('会话不存在');await this.runtime.stopSession(binding.scope);return{ok:true};}
+      case 'delivery.retry':{const id=z.string().parse(input.id);const delivery=store.deliveryRepository().find(id);if(!delivery)throw new Error('投递不存在');if(!['unknown','failed'].includes(delivery.state))throw new Error('投递当前不可恢复');await this.runtime.deliveryWorker.retry(id);return{deliveryId:id,state:store.deliveryRepository().find(id)?.state??'unknown'};}
       default:throw new Error('UNKNOWN_ADMIN_ACTION');
     }
   }

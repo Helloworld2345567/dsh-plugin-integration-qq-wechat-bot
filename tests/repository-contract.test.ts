@@ -31,6 +31,8 @@ test('delivery repository finds asset deliveries and retries the original ID',as
   store.enqueue(binding,'source','turn',[{type:'asset',assetId:'asset-one'}],{});
   const repository=store.deliveryRepository(),delivery=store.deliveries()[0];
   assert.deepEqual(repository.findByAsset(binding.key,'asset-one').map(row=>row.id),[delivery.id]);
+  store.deliveryState(delivery,'failed',undefined,'rejected');
+  assert.deepEqual(repository.findByAsset(binding.key,'asset-one').map(row=>row.state),['failed']);
   store.deliveryState(delivery,'unknown',undefined,'receipt lost');
   assert.deepEqual(repository.findByAsset(binding.key,'asset-one',['unknown']).map(row=>row.state),['unknown']);
   const retried=repository.retry(delivery.id);
@@ -39,4 +41,14 @@ test('delivery repository finds asset deliveries and retries the original ID',as
   assert.equal(retried?.error,undefined);
   assert.equal(store.deliveries()[0].id,delivery.id);
   assert.equal(repository.retry(delivery.id),undefined,'a pending delivery is not duplicated by retry');
+});
+
+test('automatic asset registration reuses a durable claim while explicit resend creates a new intent',async t=>{
+  const store=await fixture(t),binding=store.binding({botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'user',senderId:'user'});
+  store.enqueue(binding,'source-1','turn-1',[{type:'asset',assetId:'asset-one'}],{});
+  const first=store.deliveries()[0];store.deliveryState(first,'sent','receipt');
+  store.enqueue(binding,'source-2','turn-2',[{type:'asset',assetId:'asset-one'}],{});
+  assert.equal(store.deliveries().length,1,'a repeated automatic registration must reuse the sent claim');
+  store.enqueue(binding,'source-3','turn-3',[{type:'asset',assetId:'asset-one',resend:true}],{});
+  const rows=store.deliveries();assert.equal(rows.length,2);assert.notEqual(rows[1].id,first.id);assert.equal(rows[1].output.resend,true);
 });

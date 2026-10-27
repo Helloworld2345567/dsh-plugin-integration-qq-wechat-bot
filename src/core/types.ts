@@ -60,8 +60,27 @@ export interface SessionBinding { key: string; scope: CallerScope; sessionId: st
 export interface SessionRecord { id:string; scopeKey:string; scope:CallerScope; generation:number; persisted:boolean; createdAt:number; updatedAt:number; personaId?:string; modelOverride?:z.infer<typeof modelSchema>; recentSince?:number }
 export interface TurnSnapshot { config: Readonly<BotConfig>; botId: string; trusted: boolean; sourceIds: string[]; startedAt: number }
 export interface Asset { id: string; scopeKey: string; name: string; mime: string; path: string; size: number; kind: MediaInput['kind']; createdAt: number; jobId?: string; sessionId?:string }
-export interface Output { type: 'text' | 'asset'; text?: string; assetId?: string }
-export interface Delivery { id: string; scopeKey: string; botId: string; sessionId: string; sourceId: string; turnId: string; index: number; output: Output; reply: Record<string,string>; replyEnvelope?:ChannelReplyEnvelope; state: 'pending'|'sending'|'sent'|'unknown'|'failed'|'cancelled'; receipt?: string; error?: string; createdAt?:number; updatedAt?:number; sentAt?:number }
+export type DeliveryAttemptPhase = 'prepare' | 'upload' | 'commit';
+export interface DeliveryAttempt {
+  number:number;
+  phase:DeliveryAttemptPhase;
+  assetId?:string;
+  fileKey?:string;
+  uploadQuery?:string;
+  aesKey?:string;
+  encryptedSize?:number;
+  fileInfo?:string;
+  startedAt?:number;
+  lastError?:string;
+}
+export interface Output {
+  type: 'text' | 'asset';
+  text?: string;
+  assetId?: string;
+  /** Explicit operator/model request to create a new intent for an already sent asset. */
+  resend?: boolean;
+}
+export interface Delivery { id: string; scopeKey: string; botId: string; sessionId: string; sourceId: string; turnId: string; index: number; output: Output; reply: Record<string,string>; replyEnvelope?:ChannelReplyEnvelope; state: 'pending'|'sending'|'sent'|'unknown'|'failed'|'cancelled'; receipt?: string; error?: string; attempt?:DeliveryAttempt; createdAt?:number; updatedAt?:number; sentAt?:number }
 export interface TurnMetric {
   id: string; scopeKey: string; sourceId: string; sessionId?: string; turnId?: string;
   receivedAt: number; queuedAt?: number; attachmentsStartedAt?: number; attachmentsCompletedAt?: number;

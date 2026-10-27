@@ -55,13 +55,16 @@ export class DurableDeliveryWorker implements DeliveryWorker {
           const currentBot=this.store.bot(delivery.botId);if(!currentBot.enabled||currentBot.archived)continue;
           if(this.store.findBinding(delivery.scopeKey)?.sessionId!==delivery.sessionId){this.store.deliveryState(delivery,'cancelled');continue;}
           const asset=delivery.output.type==='asset'?this.store.asset(delivery.scopeKey,delivery.output.assetId!):undefined;
-          const envelope=definition.normalizeReply?.(delivery.replyEnvelope??delivery.reply);const normalizedDelivery=envelope?{...delivery,replyEnvelope:envelope,reply:envelope.payload}:delivery;
-          this.store.deliveryState(delivery,'sending');const controller=new AbortController();this.outbound.set(delivery.id,{botId,scopeKey:delivery.scopeKey,controller});
+          const envelope=definition.normalizeReply?.(delivery.replyEnvelope??delivery.reply);
+          const attempt:NonNullable<Delivery['attempt']>={...delivery.attempt,number:(delivery.attempt?.number??0)+1,phase:'prepare',assetId:asset?.id,startedAt:Date.now(),lastError:undefined};
+          const sending:Delivery={...delivery,attempt, ...(envelope?{replyEnvelope:envelope,reply:envelope.payload}: {})};
+          const normalizedDelivery=sending;
+          this.store.deliveryState(sending,'sending');const controller=new AbortController();this.outbound.set(delivery.id,{botId,scopeKey:delivery.scopeKey,controller});
           try{
             const metricId=`inbox:${delivery.scopeKey}:${delivery.sourceId}`;if(this.store.findTurnMetric(metricId))this.store.updateTurnMetric(metricId,{deliveryStartedAt:Date.now()});
             const receipt=await definition.adapter.send(bot,credential,normalizedDelivery,asset,AbortSignal.any([controller.signal,AbortSignal.timeout(90000)]));
-            this.store.deliveryState(delivery,'sent',receipt);if(this.store.findTurnMetric(metricId))this.store.updateTurnMetric(metricId,{sentAt:Date.now()});this.store.updateTurnMetricsByTurn(delivery.scopeKey,delivery.turnId,{sentAt:Date.now()});
-          }catch(error){this.store.deliveryState(delivery,'unknown',undefined,error instanceof Error?error.message:'DELIVERY_UNKNOWN');}
+            this.store.deliveryState(sending,'sent',receipt);if(this.store.findTurnMetric(metricId))this.store.updateTurnMetric(metricId,{sentAt:Date.now()});this.store.updateTurnMetricsByTurn(delivery.scopeKey,delivery.turnId,{sentAt:Date.now()});
+          }catch(error){attempt.lastError=error instanceof Error?error.message:'DELIVERY_UNKNOWN';this.store.deliveryState(sending,'unknown',undefined,attempt.lastError);}
           finally{this.outbound.delete(delivery.id);}
         }catch(error){
           const pending=repository.find(delivery.id,'pending');if(!pending)continue;

@@ -295,10 +295,18 @@ export class NativeHarness implements HarnessPort {
       const previous=this.store.deliveryRepository().findByAsset(scope,id,['pending','sending','unknown','failed','sent']).at(-1);
       if(previous){
         if(args.resend===true){
-          // Keep the original delivery identity so channel-level idempotency
-          // can recognize a retry.  Never reset an in-flight attempt.
+          // An unresolved intent is recovered in place so channel-level
+          // idempotency can recognize the same request.  A confirmed `sent`
+          // intent is different: explicit resend is a deliberate new intent.
           const retry=['unknown','failed'].includes(previous.state)?this.store.deliveryRepository().retry(previous.id):undefined;
           if(retry)return JSON.stringify({queued:true,reused:true,resend:true,assetId:id,deliveryId:retry.id,state:retry.state});
+          if(previous.state==='sent'){
+            // Keep a resend marker even when automatic media registration
+            // already placed the plain asset in this turn; Store will skip
+            // the old claim and enqueue this explicit new intent.
+            live.assets.push({type:'asset',assetId:id,resend:true});
+            return JSON.stringify({queued:true,reused:false,resend:true,newIntent:true,assetId:id,previousDeliveryId:previous.id});
+          }
         }
         return JSON.stringify({queued:false,reused:true,assetId:id,deliveryId:previous.id,state:previous.state,alreadySent:previous.state==='sent',needsResend:['unknown','failed'].includes(previous.state)});
       }

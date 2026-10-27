@@ -245,7 +245,16 @@ export class Store {
   activateSession(scope:CallerScope,id:string):SessionBinding {const old=this.binding(scope);const record=this.session(scope,id);return this.updateSession({key:old.key,scope,sessionId:id,generation:old.generation+1,persisted:record.persisted,personaId:record.personaId,modelOverride:record.modelOverride,recentSince:record.recentSince});}
   enqueue(binding:SessionBinding,sourceId:string,turnId:string,outputs:Output[],reply:Record<string,string>,replyEnvelope?:Delivery['replyEnvelope']):void {
     this.updateTurnMetrics(binding.key,[sourceId],{sessionId:binding.sessionId,turnId});
+    // Asset registration is a durable claim.  A later turn may mention the
+    // same generated asset again, but it must not create a second intent after
+    // the first one was accepted, is still unresolved, or needs explicit
+    // recovery.  `resend` is the deliberate escape hatch for a new intent.
+    const claimedAssetIds=new Set((this.db.prepare("SELECT json_extract(json,'$.output.assetId') assetId FROM deliveries WHERE scope=? AND state IN ('pending','sending','unknown','failed','sent') AND json_extract(json,'$.output.type')='asset'").all(binding.key) as {assetId:string|null}[]).map(row=>row.assetId).filter((id):id is string=>!!id));
     outputs.forEach((output,index)=>{
+      if(output.type==='asset'&&output.assetId&&!output.resend){
+        if(claimedAssetIds.has(output.assetId))return;
+        claimedAssetIds.add(output.assetId);
+      }
       const id=createHash('sha256').update(JSON.stringify([binding.key,binding.sessionId,sourceId,turnId,index])).digest('hex');
       const now=Date.now();const d:Delivery={id,scopeKey:binding.key,botId:binding.scope.botId,sessionId:binding.sessionId,sourceId,turnId,index,output,reply,...replyEnvelope?{replyEnvelope}:{},state:'pending',createdAt:now,updatedAt:now};
       const inserted=this.db.prepare('INSERT OR IGNORE INTO deliveries(id,scope,json,state,created_at,bot_id,turn_id,output_index) VALUES(?,?,?,?,?,?,?,?)').run(id,binding.key,JSON.stringify(d),'pending',now,d.botId,d.turnId,d.index).changes===1;if(inserted){this.stats.observeDelivery(d);this.bump('deliveries');}
@@ -263,7 +272,7 @@ export class Store {
       nextSendable:(botId:string,limit:number)=>decode(this.db.prepare(`SELECT json,state FROM deliveries pending WHERE bot_id=? AND state='pending' AND NOT EXISTS(SELECT 1 FROM deliveries blocker WHERE blocker.scope=pending.scope AND blocker.turn_id=pending.turn_id AND blocker.output_index<pending.output_index AND blocker.state IN ('pending','sending')) ORDER BY created_at,id LIMIT ?`).all(botId,limit) as {json:string;state:Delivery['state']}[]),
       find:(id:string,state?:Delivery['state'])=>{const row=this.db.prepare(`SELECT json,state FROM deliveries WHERE id=?${state?' AND state=?':''}`).get(id,...(state?[state]:[])) as {json:string;state:Delivery['state']}|undefined;return row?decode([row])[0]:undefined;},
       findByAsset:(scopeKey:string,assetId:string,states?:readonly Delivery['state'][]):readonly Delivery[]=>{
-        const selected=states?.length?states:['pending','sending','unknown','sent'] as const;
+        const selected=states?.length?states:['pending','sending','unknown','failed','sent'] as const;
         if(!selected.length)return[];
         const placeholders=selected.map(()=>'?').join(',');
         return decode(this.db.prepare(`SELECT json,state FROM deliveries WHERE scope=? AND json_extract(json,'$.output.type')='asset' AND json_extract(json,'$.output.assetId')=? AND state IN (${placeholders}) ORDER BY created_at,id`).all(scopeKey,assetId,...selected) as {json:string;state:Delivery['state']}[]);

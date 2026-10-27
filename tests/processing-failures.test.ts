@@ -93,3 +93,14 @@ test('historical delivery failure context yields to accepted outputs but not to 
   store.deliveryState(output,'sent','result-receipt');assert.match(recentFailureContext(store,binding,[followup],now)!,/发送状态未确认/,'a partial send cannot supersede a delivery failure');
   store.deliveryState(second,'sent','second-receipt');assert.equal(recentFailureContext(store,binding,[followup],now),undefined,'successful original output supersedes stale delivery failure');
 });
+
+test('unknown delivery state is visible to the next turn without triggering an automatic resend',async t=>{
+  const root=await mkdtemp(path.resolve('.codex/process-failure-'));const store=new Store(root);
+  t.after(async()=>{store.close();await rm(root,{recursive:true,force:true});});
+  store.saveBot(botSchema.parse({id:'one',name:'One',channel:'qq',accountId:'one',enabled:true}));
+  const scope:CallerScope={botId:'one',platform:'qq',accountId:'one',kind:'private',channelId:'alice',senderId:'alice'};const binding=store.binding(scope);const now=Date.now();
+  const source:InboundMessage={id:'unknown-image',scope,text:'生成一张图片',attachments:[],reply:{},timestamp:now-100};store.accept(source);
+  store.enqueue(binding,source.id,'image-turn',[{type:'asset',assetId:'asset-one'}],{});const delivery=store.deliveries()[0];store.deliveryState(delivery,'unknown',undefined,'receipt lost');
+  const followup={...source,id:'ask-status',text:'图片发来了吗',timestamp:now};const context=recentFailureContext(store,binding,[followup],Date.now()+1);
+  assert.match(context!,/平台投递状态未知/);assert.match(context!,/asset-one/);assert.match(context!,/不要因状态未知自动重发/);
+});
