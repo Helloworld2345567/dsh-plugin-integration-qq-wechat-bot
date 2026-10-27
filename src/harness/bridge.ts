@@ -295,7 +295,18 @@ export class NativeHarness implements HarnessPort {
     register(defineTool({name:'bot_media',description:'读取图片像素、提取文档/扫描页供当前聊天模型理解，或处理语音、视频和固定转码。下载链接原图用image_download并填url（支持图片直链或公开网页，自动登记图片附件，保留原始字节）。图片生成请用image_generation。',parameters:{operation:{type:'string',enum:[...MEDIA_OPERATIONS],required:true},inputs:{type:'array',items:{type:'string'}},prompt:{type:'string'},question:{type:'string'},text:{type:'string'},url:{type:'string'},startSeconds:{type:'number'},durationSeconds:{type:'number'}},output:{schema:{type:'string'},render:renderMedia},execute:async(args,exec)=>this.mediaTool(ownerLive,exec.agent,args.operation as MediaOperation,args.inputs??[],args,exec.signal)}));
     register(defineTool({name:'bot_send_file',description:'将产物ID登记为本轮最终回复附件；可信私聊也可登记工作目录下真实产生的文件。相同作用域的历史投递默认复用并返回状态；只有用户明确要求重新发送时才传 resend=true，此时可能重复。平台投递在本轮结束后进行。',parameters:{assetId:{type:'string'},path:{type:'string'},mime:{type:'string'},resend:{type:'boolean'}},output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},execute:async(args,exec)=>{const live=this.turn(ownerLive,exec.agent);
       let id=args.assetId;
-      if(!id&&args.path){const owner=this.store.bot(live.binding.scope.botId);if(!allowedNow('read',live.snapshot,this.current(live),owner,live.binding.scope))throw new Error('文件路径只允许当前获准的可信私聊使用');const file=await realpath(path.resolve(live.cwd,args.path));const root=await realpath(live.cwd);if(!file.startsWith(root+path.sep))throw new Error('产物必须位于当前会话工作目录');const mime=args.mime??'application/octet-stream';const asset=await this.assets.save(scope,{name:path.basename(file),mime,kind:mime.startsWith('image/')?'image':mime.startsWith('video/')?'video':mime.startsWith('audio/')?'audio':'file'},await readFile(file));id=asset.id;}
+      if(!id&&args.path){
+        const owner=this.store.bot(live.binding.scope.botId);if(!allowedNow('read',live.snapshot,this.current(live),owner,live.binding.scope))throw new Error('文件路径只允许当前获准的可信私聊使用');
+        const file=await realpath(path.resolve(live.cwd,args.path));const root=await realpath(live.cwd);if(!file.startsWith(root+path.sep))throw new Error('产物必须位于当前会话工作目录');
+        const bytes=await readFile(file);
+        // A generated attachment may be copied into the workspace under a new
+        // name. Reuse its turn registration before importing another asset ID.
+        for(const output of live.assets){
+          const registered=this.store.asset(scope,output.assetId!);
+          if(registered.size===bytes.length&&bytes.equals(await this.assets.read(scope,registered.id))){id=registered.id;break;}
+        }
+        if(!id){const mime=args.mime??'application/octet-stream';const asset=await this.assets.save(scope,{name:path.basename(file),mime,kind:mime.startsWith('image/')?'image':mime.startsWith('video/')?'video':mime.startsWith('audio/')?'audio':'file'},bytes);id=asset.id;}
+      }
       if(!id)throw new Error('需要assetId');this.store.asset(scope,id);
       const previous=this.store.deliveryRepository().findByAsset(scope,id,['pending','sending','unknown','failed','sent']).at(-1);
       if(previous){

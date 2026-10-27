@@ -20,7 +20,7 @@ export const Config=z.object({baseURL:z.string().default('https://fixture.invali
 export async function apply(ctx:Context){
   const runtime=ctx.botIntegration;const store=runtime.store;const bridge=runtime.harness as NativeHarness;
   const progressRequests:GenerateOptions[]=[];let progressFails=false;
-  const requests:GenerateOptions[]=[];let phase=0;let compactions=0;let finalText="FINAL_ONLY";let mediaCall:{name:string;args:Record<string,unknown>}|undefined;let beforeTool:(()=>Promise<void>)|undefined;let beforeFinal:((options:GenerateOptions)=>void)|undefined;
+  const requests:GenerateOptions[]=[];let phase=0;let compactions=0;let finalText="FINAL_ONLY";let mediaCall:{name:string;args:Record<string,unknown>}|undefined;let beforeTool:(()=>Promise<void>)|undefined;let beforeFinal:((options:GenerateOptions)=>void|Promise<void>)|undefined;
   class Fixture extends LlmAdapter{
     providerInfo(provider:string){return{id:provider,name:'Local deterministic fixture'};}
     async listModels(provider:string){return ['first','second'].map(id=>({provider,id,name:id,inputModalities:['text','image'] as const}));}
@@ -40,7 +40,7 @@ export async function apply(ctx:Context){
         yield{type:'block-end',index:0,block:{type:'tool-call',id:ToolCallId('remember-1'),name:'bot_remember',arguments:JSON.stringify(args)}};
         yield{type:'finish',reason:{kind:'tool-calls'}};return;
       }
-      const checkFinal=beforeFinal;beforeFinal=undefined;checkFinal?.(options);
+      const checkFinal=beforeFinal;beforeFinal=undefined;await checkFinal?.(options);
       yield*text(finalText);finalText='FINAL_ONLY';
     }
   }
@@ -169,6 +169,25 @@ export async function apply(ctx:Context){
       await writeFile(path.join(path.dirname(resultPath),'media-links-result.json'),JSON.stringify({status:'PASS',checks:['image download dispatch and automatic delivery registration','image markdown removed from channel text','video URL analysis dispatch','video-only download dispatch']}));
 
     }finally{runtime.media.run=mediaRun;}
+    try{
+      runtime.saveBot({...store.bot('fixture'),trustedUsers:['alice']});
+      runtime.media.run=async()=>({assetIds:[asset.id]});
+      const copyPath=path.join(bridge.live.get(binding.sessionId)!.cwd,'renamed-generated-image.png');await writeFile(copyPath,pixels);
+      mediaCall={name:'image_generation',args:{prompt:'Generate a single image'}};
+      beforeFinal=async()=>{
+        const parent=bridge.live.get(binding.sessionId)!.handle.agent;
+        const registered=toolJson(await ctx.tools.execute({name:'bot_send_file',arguments:{path:copyPath,mime:'image/png'},callId:ToolCallId('generated-image-copy'),agent:parent,signal:AbortSignal.timeout(5000)}));
+        assert.equal(registered.assetId,asset.id,'path registration must reuse the automatically registered image, even under a different filename');
+        const repeated=toolJson(await ctx.tools.execute({name:'bot_send_file',arguments:{path:copyPath},callId:ToolCallId('generated-image-copy-default-mime'),agent:parent,signal:AbortSignal.timeout(5000)}));
+        assert.equal(repeated.assetId,asset.id,'omitting the MIME type must still reuse the image');
+      };
+      const single=await bridge.run(binding,[msg('single-image-delivery','生成一张图片并发给我')],AbortSignal.timeout(30000));
+      assert.deepEqual(single.outputs,[{type:'text',text:'FINAL_ONLY'},{type:'asset',assetId:asset.id}],'automatic registration followed by path delivery must produce exactly one image');
+      const different=Buffer.from(pixels);different[different.length-1]^=1;await writeFile(copyPath,different);
+      const distinct=toolJson(await ctx.tools.execute({name:'bot_send_file',arguments:{path:copyPath},callId:ToolCallId('distinct-file-same-size'),agent:bridge.live.get(binding.sessionId)!.handle.agent,signal:AbortSignal.timeout(5000)}));
+      assert.notEqual(distinct.assetId,asset.id,'different bytes with the same size must remain a separate attachment');
+      assert.equal(bridge.live.get(binding.sessionId)!.assets.length,2);
+    }finally{runtime.media.run=mediaRun;beforeFinal=undefined;runtime.saveBot({...store.bot('fixture'),trustedUsers:[]});}
     runtime.media.run=async(_scope,operation,config,inputs)=>{assert.equal(config.media.image,undefined);assert.equal(operation,'image_edit');assert.deepEqual(inputs,[asset.id]);imageCalls++;if(imageCalls<=2)throw Error('IMAGE_PROVIDER_FAILED');imageEntered();await imageFinish;return{assetIds:[asset.id]};};
     try{
       mediaCall={name:'image_generation',args:{operation:'edit',prompt:'Use the real reference on the moon',inputs:[asset.id]}};
