@@ -142,6 +142,13 @@ test('automatic ASR failure fails closed before the model and sends an explicit 
   assert.equal(modelCalls,0);assert.equal(f.store.failures().at(-1)?.code,'ASR_PROVIDER_DOWN');
   assert.match(String(f.store.deliveries(['sent']).at(-1)?.output.text),/语音识别失败/);
 });
+test('empty harness output fails explicitly instead of silently completing',async t=>{
+  let f:any;f=await runtimeFixture(t,async(binding,messages)=>({turnId:'empty',outputs:[],snapshot:freezeTurn(f.store.effectiveConfig(binding),f.store.bot('one'),binding.scope,messages.map((item:any)=>item.id))}));
+  await f.runtime.receive(message('empty-output','生成结果'));await f.runtime.process(scopeKey(scope()));
+  assert.deepEqual(f.store.messages(scopeKey(scope()),['failed']).map((item:any)=>item.id),['empty-output']);
+  assert.equal(f.store.failures().at(-1)?.code,'NO_DELIVERABLE_OUTPUT');
+  assert.match(String(f.store.deliveries(['sent']).at(-1)?.output.text),/没有可投递的文本或附件/);
+});
 test('unknown receipt freezes remaining outputs; sending crash becomes unknown and is never replayed',async t=>{
   let attempts=0;const f=await runtimeFixture(t,async()=>{throw Error('unused');},async()=>{attempts++;throw Error('network lost after send');});
   const binding=f.store.binding(scope());f.store.enqueue(binding,'a','turn',[{type:'text',text:'one'},{type:'text',text:'two'}],{});
