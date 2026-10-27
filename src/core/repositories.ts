@@ -6,7 +6,18 @@ export interface PageRequest<F>{filter:F;limit:number;cursor?:string}
 export interface Page<T>{items:readonly T[];nextCursor:string|null;revision:string}
 export interface ConfigRepository {requireConfig(id:string):BotConfig;listConfigs():readonly BotConfig[];saveConfig(input:unknown,expectedRevision?:number,fileDigest?:string):BotConfig;requireBot(id:string):BotInstance;listBots():readonly BotInstance[];saveBot(input:unknown):BotInstance}
 export interface SessionInboxRepository {accept(message:InboundMessage):boolean;findMessage(scopeKey:string,id:string):InboundMessage|undefined;listMessageBatch(scopeKey:string,states:readonly string[],limit:number):readonly InboundMessage[];transitionMessages(scopeKey:string,ids:readonly string[],state:string):void;bindingFor(scope:CallerScope):SessionBinding;requireOwnedSession(scope:CallerScope,id:string):SessionRecord;pageSessions(request:PageRequest<{scopeKey?:string}>):Page<SessionRecord>}
-export interface DeliveryRepository {pageDeliveries(request:PageRequest<{scopeKey?:string;botId?:string;states?:readonly string[]}>):Page<Delivery>;count(states:readonly string[]):number;pendingBotIds():readonly string[];nextSendable(botId:string,limit:number):readonly Delivery[];find(id:string,state?:Delivery['state']):Delivery|undefined;hasEarlierBlocker(delivery:Delivery):boolean}
+export interface DeliveryRepository {
+  pageDeliveries(request:PageRequest<{scopeKey?:string;botId?:string;states?:readonly string[]}>):Page<Delivery>;
+  count(states:readonly string[]):number;
+  pendingBotIds():readonly string[];
+  nextSendable(botId:string,limit:number):readonly Delivery[];
+  find(id:string,state?:Delivery['state']):Delivery|undefined;
+  /** Find unresolved or accepted deliveries for one persisted asset by default. */
+  findByAsset(scopeKey:string,assetId:string,states?:readonly Delivery['state'][]):readonly Delivery[];
+  /** Return an existing delivery in a retryable state as pending, preserving its ID. */
+  retry(id:string):Delivery|undefined;
+  hasEarlierBlocker(delivery:Delivery):boolean;
+}
 export interface AssetRepository {requireOwnedAsset(scopeKey:string,id:string):Asset;recentAssets(scopeKey:string,sessionId:string,kind?:string,limit?:number):readonly Asset[]}
 export interface StatsProjectionCall {id:string;botId:string;provider:string;model:string;kind:UsageKind;at:number;usage?:TokenUsage}
 export interface StatsDataPort {

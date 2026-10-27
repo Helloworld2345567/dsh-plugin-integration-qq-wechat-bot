@@ -142,11 +142,18 @@ test('automatic ASR failure fails closed before the model and sends an explicit 
   assert.equal(modelCalls,0);assert.equal(f.store.failures().at(-1)?.code,'ASR_PROVIDER_DOWN');
   assert.match(String(f.store.deliveries(['sent']).at(-1)?.output.text),/语音识别失败/);
 });
-test('unknown receipt freezes remaining outputs; sending crash becomes unknown and is never replayed',async t=>{
+test('empty harness output fails explicitly instead of silently completing',async t=>{
+  let f:any;f=await runtimeFixture(t,async(binding,messages)=>({turnId:'empty',outputs:[],snapshot:freezeTurn(f.store.effectiveConfig(binding),f.store.bot('one'),binding.scope,messages.map((item:any)=>item.id))}));
+  await f.runtime.receive(message('empty-output','生成结果'));await f.runtime.process(scopeKey(scope()));
+  assert.deepEqual(f.store.messages(scopeKey(scope()),['failed']).map((item:any)=>item.id),['empty-output']);
+  assert.equal(f.store.failures().at(-1)?.code,'NO_DELIVERABLE_OUTPUT');
+  assert.match(String(f.store.deliveries(['sent']).at(-1)?.output.text),/没有可投递的文本或附件/);
+});
+test('unknown receipt does not freeze later outputs; sending crash is never replayed automatically',async t=>{
   let attempts=0;const f=await runtimeFixture(t,async()=>{throw Error('unused');},async()=>{attempts++;throw Error('network lost after send');});
   const binding=f.store.binding(scope());f.store.enqueue(binding,'a','turn',[{type:'text',text:'one'},{type:'text',text:'two'}],{});
-  await f.runtime.flushDeliveries();await f.runtime.flushDeliveries();assert.equal(attempts,1);assert.deepEqual(f.store.deliveries().map(d=>d.state),['unknown','pending']);
-  const d=f.store.deliveries(['pending'])[0];f.store.deliveryState(d,'sending');const reopened=new Store(f.store.home);try{reopened.recover();assert.equal(reopened.deliveries(['unknown']).length,2);}finally{reopened.close();}
+  await f.runtime.flushDeliveries();await f.runtime.flushDeliveries();assert.equal(attempts,2);assert.deepEqual(f.store.deliveries().map(d=>d.state),['unknown','unknown']);
+  const d=f.store.deliveries(['unknown'])[0];f.store.deliveryState(d,'sending');const reopened=new Store(f.store.home);try{reopened.recover();assert.equal(reopened.deliveries(['unknown']).length,2);}finally{reopened.close();}
 });
 test('one blocked bot cannot block another bot delivery',async t=>{
   const wait=gate();const started=gate();const sent:string[]=[];const f=await runtimeFixture(t,async()=>{throw Error('unused');},async bot=>{if(bot.id==='one'){started.resolve();await wait.promise;}sent.push(bot.id);return bot.id;});bot(f.store,'two');

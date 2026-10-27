@@ -61,7 +61,7 @@ test('another bot credential failure cannot relabel a completed request or its a
   assert.deepEqual(store.messages(scopeKey(scope),['complete']).map(m=>m.id),[message.id],'accepted result must retain its completed request');
   assert.equal(store.list<any>('failure').filter(f=>f.sessionId===store.binding(scope).sessionId).length,0);
   const rejected=store.deliveries().find(d=>d.botId==='bad')!;assert.equal(rejected.state,'failed');assert.equal(rejected.error,'OTHER_BOT_CREDENTIAL_FAILURE');
-  assert.deepEqual(store.deliveries().filter(d=>d.botId==='bad').map(d=>d.state),['failed','pending'],'later chunks must not bypass the failed delivery');
+  assert.deepEqual(store.deliveries().filter(d=>d.botId==='bad').map(d=>d.state),['failed','failed'],'later chunks proceed after a failed delivery without relabelling the accepted request');
   assert.equal(recentFailureContext(store,store.binding(scope),[{...message,id:'followup',timestamp:Date.now()+1}]),undefined);
 });
 
@@ -92,4 +92,15 @@ test('historical delivery failure context yields to accepted outputs but not to 
   assert.match(recentFailureContext(store,binding,[followup],now)!,/发送状态未确认/);
   store.deliveryState(output,'sent','result-receipt');assert.match(recentFailureContext(store,binding,[followup],now)!,/发送状态未确认/,'a partial send cannot supersede a delivery failure');
   store.deliveryState(second,'sent','second-receipt');assert.equal(recentFailureContext(store,binding,[followup],now),undefined,'successful original output supersedes stale delivery failure');
+});
+
+test('unknown delivery state is visible to the next turn without triggering an automatic resend',async t=>{
+  const root=await mkdtemp(path.resolve('.codex/process-failure-'));const store=new Store(root);
+  t.after(async()=>{store.close();await rm(root,{recursive:true,force:true});});
+  store.saveBot(botSchema.parse({id:'one',name:'One',channel:'qq',accountId:'one',enabled:true}));
+  const scope:CallerScope={botId:'one',platform:'qq',accountId:'one',kind:'private',channelId:'alice',senderId:'alice'};const binding=store.binding(scope);const now=Date.now();
+  const source:InboundMessage={id:'unknown-image',scope,text:'生成一张图片',attachments:[],reply:{},timestamp:now-100};store.accept(source);
+  store.enqueue(binding,source.id,'image-turn',[{type:'asset',assetId:'asset-one'}],{});const delivery=store.deliveries()[0];store.deliveryState(delivery,'unknown',undefined,'receipt lost');
+  const followup={...source,id:'ask-status',text:'图片发来了吗',timestamp:now};const context=recentFailureContext(store,binding,[followup],Date.now()+1);
+  assert.match(context!,/平台投递状态未知/);assert.match(context!,/asset-one/);assert.match(context!,/不要因状态未知自动重发/);
 });

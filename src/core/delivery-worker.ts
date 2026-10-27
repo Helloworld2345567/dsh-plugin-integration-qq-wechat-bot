@@ -6,6 +6,8 @@ import type {ChannelRegistry} from './channel-registry.js';
 export interface DeliveryWorkerActivity {activeLanes:number;inFlight:number}
 export interface DeliveryWorker {
   flush(filter?:{botId?:string}):Promise<void>;
+  /** Requeue an existing failed/unknown delivery without changing its ID. */
+  retry(deliveryId:string):Promise<void>;
   cancelScope(scopeKey:string,reason?:string):void;
   cancelBot(botId:string,reason?:string):void;
   drain():Promise<void>;
@@ -26,6 +28,11 @@ export class DurableDeliveryWorker implements DeliveryWorker {
     if(this.closed)return;
     const ids=filter?.botId?[filter.botId]:this.store.deliveryRepository().pendingBotIds();
     await Promise.all(ids.map(botId=>this.startLane(botId)));
+  }
+  async retry(deliveryId:string):Promise<void>{
+    if(this.closed)return;
+    const delivery=this.store.retryDelivery(deliveryId);
+    if(delivery)await this.flush({botId:delivery.botId});
   }
   cancelScope(scopeKey:string,_reason='任务已取消'):void{for(const item of this.outbound.values())if(item.scopeKey===scopeKey)item.controller.abort();}
   cancelBot(botId:string,_reason='机器人已停用'):void{for(const item of this.outbound.values())if(item.botId===botId)item.controller.abort();}
@@ -48,13 +55,16 @@ export class DurableDeliveryWorker implements DeliveryWorker {
           const currentBot=this.store.bot(delivery.botId);if(!currentBot.enabled||currentBot.archived)continue;
           if(this.store.findBinding(delivery.scopeKey)?.sessionId!==delivery.sessionId){this.store.deliveryState(delivery,'cancelled');continue;}
           const asset=delivery.output.type==='asset'?this.store.asset(delivery.scopeKey,delivery.output.assetId!):undefined;
-          const envelope=definition.normalizeReply?.(delivery.replyEnvelope??delivery.reply);const normalizedDelivery=envelope?{...delivery,replyEnvelope:envelope,reply:envelope.payload}:delivery;
-          this.store.deliveryState(delivery,'sending');const controller=new AbortController();this.outbound.set(delivery.id,{botId,scopeKey:delivery.scopeKey,controller});
+          const envelope=definition.normalizeReply?.(delivery.replyEnvelope??delivery.reply);
+          const attempt:NonNullable<Delivery['attempt']>={...delivery.attempt,number:(delivery.attempt?.number??0)+1,phase:'prepare',assetId:asset?.id,startedAt:Date.now(),lastError:undefined};
+          const sending:Delivery={...delivery,attempt, ...(envelope?{replyEnvelope:envelope,reply:envelope.payload}: {})};
+          const normalizedDelivery=sending;
+          this.store.deliveryState(sending,'sending');const controller=new AbortController();this.outbound.set(delivery.id,{botId,scopeKey:delivery.scopeKey,controller});
           try{
             const metricId=`inbox:${delivery.scopeKey}:${delivery.sourceId}`;if(this.store.findTurnMetric(metricId))this.store.updateTurnMetric(metricId,{deliveryStartedAt:Date.now()});
             const receipt=await definition.adapter.send(bot,credential,normalizedDelivery,asset,AbortSignal.any([controller.signal,AbortSignal.timeout(90000)]));
-            this.store.deliveryState(delivery,'sent',receipt);if(this.store.findTurnMetric(metricId))this.store.updateTurnMetric(metricId,{sentAt:Date.now()});this.store.updateTurnMetricsByTurn(delivery.scopeKey,delivery.turnId,{sentAt:Date.now()});
-          }catch(error){this.store.deliveryState(delivery,'unknown',undefined,error instanceof Error?error.message:'DELIVERY_UNKNOWN');}
+            this.store.deliveryState(sending,'sent',receipt);if(this.store.findTurnMetric(metricId))this.store.updateTurnMetric(metricId,{sentAt:Date.now()});this.store.updateTurnMetricsByTurn(delivery.scopeKey,delivery.turnId,{sentAt:Date.now()});
+          }catch(error){attempt.lastError=error instanceof Error?error.message:'DELIVERY_UNKNOWN';this.store.deliveryState(sending,'unknown',undefined,attempt.lastError);}
           finally{this.outbound.delete(delivery.id);}
         }catch(error){
           const pending=repository.find(delivery.id,'pending');if(!pending)continue;

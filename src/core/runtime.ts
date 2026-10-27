@@ -328,13 +328,15 @@ export class BotRuntime {
         if(signal.aborted||this.store.binding(binding.scope).sessionId!==binding.sessionId){this.store.mark(key,messages.map(m=>m.id),'cancelled');return;}
         this.store.markTurnStage(key,messages.map(m=>m.id),'modelCompletedAt');
         stage='delivery';const outputs:Output[]=[];for(const output of result.outputs){if(output.type==='text'&&output.text){for(let index=0;index<output.text.length;index+=1800)outputs.push({type:'text',text:output.text.slice(index,index+1800)});}else if(output.type==='asset'){this.store.asset(key,output.assetId!);outputs.push(output);}}
+        if(!outputs.length)throw new Error('NO_DELIVERABLE_OUTPUT');
         this.store.updateTurnMetrics(key,messages.map(m=>m.id),{turnId:result.turnId,deliveryStartedAt:Date.now()});this.store.transaction(()=>{this.store.enqueue(binding,pending.at(-1)!.id,result.turnId,outputs,pending.at(-1)!.reply,this.replyEnvelope(pending.at(-1)!));this.store.mark(key,messages.map(m=>m.id),'complete');});
       }catch(error){
         const timedOut=deadline.aborted&&!controller.signal.aborted;const state=timedOut?'failed':controller.signal.aborted||signal.aborted?'cancelled':'failed';const at=Date.now();
         this.store.mark(key,messages.map(m=>m.id),state);this.store.saveFailure(`${binding.sessionId}:${at}`,{sessionId:binding.sessionId,scope:key,code:timedOut?'TURN_DEADLINE_EXCEEDED':error instanceof Error?error.message:'PROCESS_FAILED',state,stage,sourceIds:messages.map(m=>m.id),at} satisfies ProcessingFailure);
-        if(state==='failed'&&stage!=='delivery'&&this.store.binding(binding.scope).sessionId===binding.sessionId){
+        const noDeliverableOutput=error instanceof Error&&error.message==='NO_DELIVERABLE_OUTPUT';
+        if(state==='failed'&&(stage!=='delivery'||noDeliverableOutput)&&this.store.binding(binding.scope).sessionId===binding.sessionId){
           const image=messages.some(m=>[...m.attachments,...(m.quoted?.attachments??[])].some(a=>a.kind==='image'));
-          const text=timedOut?'这次请求超过处理时限，未确认结果。请稍后重试；详细错误已记录在管理面板。':autoAsrFailure?'语音识别失败，未把这条语音交给模型。请检查语音服务配置后重试；详细错误已记录在管理面板。':stage==='attachments'?(image?'图片下载或读取失败，这条请求尚未送入模型，也没有生成新图。请稍后重发图片和要求。':'附件下载或读取失败，这条请求尚未送入模型。请稍后重发附件和要求。'):`模型请求失败（${modelFailureCode(error)}），未确认本次结果。请检查当前模型或发送“重置模型”后重试；详细错误已记录在管理面板。`;
+          const text=noDeliverableOutput?'本轮已完成，但没有可投递的文本或附件，未发送结果。请重试；详细错误已记录在管理面板。':timedOut?'这次请求超过处理时限，未确认结果。请稍后重试；详细错误已记录在管理面板。':autoAsrFailure?'语音识别失败，未把这条语音交给模型。请检查语音服务配置后重试；详细错误已记录在管理面板。':stage==='attachments'?(image?'图片下载或读取失败，这条请求尚未送入模型，也没有生成新图。请稍后重发图片和要求。':'附件下载或读取失败，这条请求尚未送入模型。请稍后重发附件和要求。'):`模型请求失败（${modelFailureCode(error)}），未确认本次结果。请检查当前模型或发送“重置模型”后重试；详细错误已记录在管理面板。`;
           this.store.enqueue(binding,pending.at(-1)!.id,`failure:${pending.at(-1)!.id}`,[{type:'text',text}],pending.at(-1)!.reply,this.replyEnvelope(pending.at(-1)!));
         }
       }

@@ -47,14 +47,24 @@ export class WeixinAdapter implements ChannelAdapter{
     if(!delivery.reply.contextToken)throw new Error('ILINK_REPLY_CONTEXT_MISSING');
     let item:any={type:1,text_item:{text:delivery.output.text??''}};
     if(asset){
-      const data=await readFile(asset.path);if(data.length>20*1024*1024)throw new Error('ILINK_OUTPUT_TOO_LARGE');const key=randomBytes(16);const filekey=randomBytes(16).toString('hex');const cipher=createCipheriv('aes-128-ecb',key,null);const encrypted=Buffer.concat([cipher.update(data),cipher.final()]);const isImage=asset.kind==='image';const isVideo=asset.kind==='video';
-      const info=await this.api(credential,'ilink/bot/getuploadurl',{filekey,media_type:isImage?1:isVideo?2:3,to_user_id:delivery.reply.target,rawsize:data.length,rawfilemd5:createHash('md5').update(data).digest('hex'),filesize:encrypted.length,no_need_thumb:true,aeskey:key.toString('hex')},signal);
-      const url=cdnUrl(info.upload_full_url??`${CDN}/upload?encrypted_query_param=${encodeURIComponent(info.upload_param)}&filekey=${filekey}`);
-      const uploaded=await this.fetcher(url,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:new Uint8Array(encrypted),signal:AbortSignal.any([signal,AbortSignal.timeout(60000)]),redirect:'error'});
-      if(!uploaded.ok)throw new RemoteError('ILINK_CDN_UPLOAD_FAILED',uploaded.status);const query=uploaded.headers.get('x-encrypted-param');if(!query)throw new Error('ILINK_UPLOAD_RECEIPT_MISSING');
-      const media={encrypt_query_param:query,aes_key:Buffer.from(key.toString('hex')).toString('base64'),encrypt_type:1};
-      item=isImage?{type:2,image_item:{media,mid_size:encrypted.length}}:isVideo?{type:5,video_item:{media,video_size:encrypted.length}}:{type:4,file_item:{media,file_name:asset.name,len:String(data.length)}};
+      const data=await readFile(asset.path);if(data.length>20*1024*1024)throw new Error('ILINK_OUTPUT_TOO_LARGE');const isImage=asset.kind==='image';const isVideo=asset.kind==='video';const attempt=delivery.attempt;
+      const reusable=attempt?.assetId===asset.id&&!!attempt.uploadQuery&&!!attempt.aesKey;
+      let media:{encrypt_query_param:string;aes_key:string;encrypt_type:number};let encryptedSize=attempt?.encryptedSize??data.length;
+      if(reusable){
+        media={encrypt_query_param:attempt!.uploadQuery!,aes_key:attempt!.aesKey!,encrypt_type:1};
+      }else{
+        const key=randomBytes(16);const filekey=randomBytes(16).toString('hex');const cipher=createCipheriv('aes-128-ecb',key,null);const encrypted=Buffer.concat([cipher.update(data),cipher.final()]);encryptedSize=encrypted.length;
+        if(attempt){attempt.phase='upload';attempt.fileKey=filekey;attempt.aesKey=Buffer.from(key.toString('hex')).toString('base64');attempt.encryptedSize=encrypted.length;}
+        const info=await this.api(credential,'ilink/bot/getuploadurl',{filekey,media_type:isImage?1:isVideo?2:3,to_user_id:delivery.reply.target,rawsize:data.length,rawfilemd5:createHash('md5').update(data).digest('hex'),filesize:encrypted.length,no_need_thumb:true,aeskey:key.toString('hex')},signal);
+        const url=cdnUrl(info.upload_full_url??`${CDN}/upload?encrypted_query_param=${encodeURIComponent(info.upload_param)}&filekey=${filekey}`);
+        const uploaded=await this.fetcher(url,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:new Uint8Array(encrypted),signal:AbortSignal.any([signal,AbortSignal.timeout(60000)]),redirect:'error'});
+        if(!uploaded.ok)throw new RemoteError('ILINK_CDN_UPLOAD_FAILED',uploaded.status);const query=uploaded.headers.get('x-encrypted-param');if(!query)throw new Error('ILINK_UPLOAD_RECEIPT_MISSING');
+        if(attempt)attempt.uploadQuery=query;media={encrypt_query_param:query,aes_key:Buffer.from(key.toString('hex')).toString('base64'),encrypt_type:1};
+      }
+      if(attempt)attempt.phase='commit';
+      item=isImage?{type:2,image_item:{media,mid_size:encryptedSize}}:isVideo?{type:5,video_item:{media,video_size:encryptedSize}}:{type:4,file_item:{media,file_name:asset.name,len:String(data.length)}};
     }
+    if(delivery.attempt)delivery.attempt.phase='commit';
     const response=await this.api(credential,'ilink/bot/sendmessage',{msg:{from_user_id:'',to_user_id:delivery.reply.target,client_id:delivery.id,message_type:2,message_state:2,item_list:[item],context_token:delivery.reply.contextToken}},signal);
     if(response.message_id)return String(response.message_id);
     if(response.ret===0)return `ilink-accepted:${delivery.id}`;
