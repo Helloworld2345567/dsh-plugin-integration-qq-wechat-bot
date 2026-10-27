@@ -6,6 +6,8 @@ import type {ChannelRegistry} from './channel-registry.js';
 export interface DeliveryWorkerActivity {activeLanes:number;inFlight:number}
 export interface DeliveryWorker {
   flush(filter?:{botId?:string}):Promise<void>;
+  /** Requeue an existing failed/unknown delivery without changing its ID. */
+  retry(deliveryId:string):Promise<void>;
   cancelScope(scopeKey:string,reason?:string):void;
   cancelBot(botId:string,reason?:string):void;
   drain():Promise<void>;
@@ -26,6 +28,11 @@ export class DurableDeliveryWorker implements DeliveryWorker {
     if(this.closed)return;
     const ids=filter?.botId?[filter.botId]:this.store.deliveryRepository().pendingBotIds();
     await Promise.all(ids.map(botId=>this.startLane(botId)));
+  }
+  async retry(deliveryId:string):Promise<void>{
+    if(this.closed)return;
+    const delivery=this.store.retryDelivery(deliveryId);
+    if(delivery)await this.flush({botId:delivery.botId});
   }
   cancelScope(scopeKey:string,_reason='任务已取消'):void{for(const item of this.outbound.values())if(item.scopeKey===scopeKey)item.controller.abort();}
   cancelBot(botId:string,_reason='机器人已停用'):void{for(const item of this.outbound.values())if(item.botId===botId)item.controller.abort();}

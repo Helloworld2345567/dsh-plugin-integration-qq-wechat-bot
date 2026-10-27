@@ -257,11 +257,30 @@ export class Store {
     return{
       count:(states:readonly string[])=>Number((this.db.prepare(`SELECT COUNT(*) count FROM deliveries WHERE state IN (${states.map(()=>'?').join(',')})`).get(...states) as {count:number|bigint}).count),
       pendingBotIds:()=>(this.db.prepare("SELECT DISTINCT bot_id id FROM deliveries WHERE state='pending' AND bot_id<>''").all() as {id:string}[]).map(row=>row.id),
-      nextSendable:(botId:string,limit:number)=>decode(this.db.prepare(`SELECT json,state FROM deliveries pending WHERE bot_id=? AND state='pending' AND NOT EXISTS(SELECT 1 FROM deliveries blocker WHERE blocker.scope=pending.scope AND blocker.turn_id=pending.turn_id AND blocker.output_index<pending.output_index AND blocker.state IN ('unknown','failed')) ORDER BY created_at,id LIMIT ?`).all(botId,limit) as {json:string;state:Delivery['state']}[]),
+      // Unknown and failed rows are no longer permanent barriers. They have
+      // already left the pending queue, so later outputs may make progress
+      // while the original row is reconciled or explicitly retried.
+      nextSendable:(botId:string,limit:number)=>decode(this.db.prepare(`SELECT json,state FROM deliveries pending WHERE bot_id=? AND state='pending' AND NOT EXISTS(SELECT 1 FROM deliveries blocker WHERE blocker.scope=pending.scope AND blocker.turn_id=pending.turn_id AND blocker.output_index<pending.output_index AND blocker.state IN ('pending','sending')) ORDER BY created_at,id LIMIT ?`).all(botId,limit) as {json:string;state:Delivery['state']}[]),
       find:(id:string,state?:Delivery['state'])=>{const row=this.db.prepare(`SELECT json,state FROM deliveries WHERE id=?${state?' AND state=?':''}`).get(id,...(state?[state]:[])) as {json:string;state:Delivery['state']}|undefined;return row?decode([row])[0]:undefined;},
-      hasEarlierBlocker:(delivery:Delivery)=>!!this.db.prepare("SELECT 1 FROM deliveries WHERE scope=? AND turn_id=? AND output_index<? AND state IN ('unknown','failed') LIMIT 1").get(delivery.scopeKey,delivery.turnId,delivery.index),
+      findByAsset:(scopeKey:string,assetId:string,states?:readonly Delivery['state'][]):readonly Delivery[]=>{
+        const selected=states?.length?states:['pending','sending','unknown','sent'] as const;
+        if(!selected.length)return[];
+        const placeholders=selected.map(()=>'?').join(',');
+        return decode(this.db.prepare(`SELECT json,state FROM deliveries WHERE scope=? AND json_extract(json,'$.output.type')='asset' AND json_extract(json,'$.output.assetId')=? AND state IN (${placeholders}) ORDER BY created_at,id`).all(scopeKey,assetId,...selected) as {json:string;state:Delivery['state']}[]);
+      },
+      retry:(id:string):Delivery|undefined=>this.retryDelivery(id),
+      hasEarlierBlocker:(delivery:Delivery)=>!!this.db.prepare("SELECT 1 FROM deliveries WHERE scope=? AND turn_id=? AND output_index<? AND state IN ('pending','sending') LIMIT 1").get(delivery.scopeKey,delivery.turnId,delivery.index),
       pageDeliveries:(request:any)=>{const revision=this.revision('deliveries'),fingerprint=filterHash(request.filter),cursor=decodeCursor(request.cursor,'deliveries',fingerprint,revision),conditions:string[]=[],params:Array<string|number>=[];if(request.filter.scopeKey){conditions.push('scope=?');params.push(request.filter.scopeKey);}if(request.filter.botId){conditions.push('bot_id=?');params.push(request.filter.botId);}if(request.filter.states?.length){conditions.push(`state IN (${request.filter.states.map(()=>'?').join(',')})`);params.push(...request.filter.states);}if(cursor){conditions.push('(created_at<? OR (created_at=? AND id<?))');params.push(cursor.time,cursor.time,cursor.id);}const rows=decode(this.db.prepare(`SELECT json,state FROM deliveries${conditions.length?' WHERE '+conditions.join(' AND '):''} ORDER BY created_at DESC,id DESC LIMIT ?`).all(...params,request.limit+1) as {json:string;state:Delivery['state']}[]),more=rows.length>request.limit,items=rows.slice(0,request.limit),last=items.at(-1);return{items,nextCursor:more&&last?encodeCursor({v:1,collection:'deliveries',filter:fingerprint,revision,time:last.createdAt??0,id:last.id}):null,revision:`deliveries:${revision}`};},
     };
+  }
+  retryDelivery(id:string):Delivery|undefined {
+    const row=this.db.prepare('SELECT json,state FROM deliveries WHERE id=?').get(id) as {json:string;state:Delivery['state']}|undefined;
+    if(!row||!['unknown','failed'].includes(row.state))return;
+    const current={...JSON.parse(row.json),state:row.state} as Delivery;
+    const next:Delivery={...current,state:'pending',receipt:undefined,error:undefined,sentAt:undefined,updatedAt:Date.now()};
+    const changed=this.db.prepare("UPDATE deliveries SET json=?,state=? WHERE id=? AND state IN ('unknown','failed')").run(JSON.stringify(next),'pending',id).changes;
+    if(!changed)return this.deliveryRepository().find(id);
+    this.stats.observeDelivery(next);this.bump('deliveries');return next;
   }
   deliveryState(delivery:Delivery,state:Delivery['state'],receipt?:string,error?:string):void {const now=Date.now();const next={...delivery,state,receipt,error,updatedAt:now,...(state==='sent'?{sentAt:now}:{})};this.db.prepare('UPDATE deliveries SET json=?,state=? WHERE id=?').run(JSON.stringify(next),state,delivery.id);this.stats.observeDelivery(next);this.bump('deliveries'); }
   remember(scope:string,key:string,value:string,source:string,quote:string):void {
