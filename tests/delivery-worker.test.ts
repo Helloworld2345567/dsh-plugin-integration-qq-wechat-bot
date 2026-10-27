@@ -16,3 +16,21 @@ test('explicit retry preserves delivery identity and records a new attempt',asyn
   const binding=f.store.binding({botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'user',senderId:'user'});f.store.enqueue(binding,'one','turn',[{type:'text',text:'one'}],{target:'user'});const worker=new DurableDeliveryWorker(f.store,f.channel,{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}});
   await worker.flush();const first=f.store.deliveries()[0];assert.equal(first.state,'unknown');assert.equal(first.attempt?.number,1);assert.equal(first.attempt?.lastError,'lost-1');const retried=f.store.retryDelivery(first.id);assert.equal(retried?.id,first.id);await worker.flush();const second=f.store.deliveries()[0];assert.equal(second.state,'unknown');assert.equal(second.id,first.id);assert.equal(second.attempt?.number,2);assert.equal(calls,2);
 });
+test('pre-commit network failures retain cause code and retry at most twice',async t=>{
+  let calls=0;const f=await fixture(t,async()=>{calls++;const cause=Object.assign(new Error('connection refused'),{code:'ECONNREFUSED'});throw Object.assign(new TypeError('fetch failed'),{cause});});
+  const binding=f.store.binding({botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'user',senderId:'user'});f.store.enqueue(binding,'one','turn',[{type:'text',text:'one'}],{target:'user'});
+  const worker=new DurableDeliveryWorker(f.store,f.channel,{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}},async()=>{});await worker.flush();
+  const delivery=f.store.deliveries()[0];assert.equal(delivery.state,'unknown');assert.equal(calls,3);assert.equal(delivery.attempt?.autoRetryCount,2);assert.equal(delivery.attempt?.causeCode,'ECONNREFUSED');assert.match(delivery.attempt?.lastError??'',/cause\.code=ECONNREFUSED/);
+});
+test('commit-phase network failures remain unknown and are never auto-retried',async t=>{
+  let calls=0;const f=await fixture(t,async(_bot,_credential,delivery)=>{calls++;delivery.attempt!.phase='commit';const cause=Object.assign(new Error('connection reset'),{code:'ECONNRESET'});throw Object.assign(new TypeError('fetch failed'),{cause});});
+  const binding=f.store.binding({botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'user',senderId:'user'});f.store.enqueue(binding,'one','turn',[{type:'text',text:'one'}],{target:'user'});
+  const worker=new DurableDeliveryWorker(f.store,f.channel,{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}},async()=>{});await worker.flush();
+  const delivery=f.store.deliveries()[0];assert.equal(delivery.state,'unknown');assert.equal(calls,1);assert.equal(delivery.attempt?.autoRetryCount,undefined);assert.equal(delivery.attempt?.causeCode,'ECONNRESET');assert.match(delivery.error??'',/cause\.code=ECONNRESET/);
+});
+test('commit-phase connection refusal is confirmed undelivered and retries automatically',async t=>{
+  let calls=0;const f=await fixture(t,async(_bot,_credential,delivery)=>{calls++;delivery.attempt!.phase='commit';if(calls<3){const cause=Object.assign(new Error('connection refused'),{code:'ECONNREFUSED'});throw Object.assign(new TypeError('fetch failed'),{cause});}return'receipt';});
+  const binding=f.store.binding({botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'user',senderId:'user'});f.store.enqueue(binding,'one','turn',[{type:'text',text:'one'}],{target:'user'});
+  const worker=new DurableDeliveryWorker(f.store,f.channel,{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}},async()=>{});await worker.flush();
+  const delivery=f.store.deliveries()[0];assert.equal(delivery.state,'sent');assert.equal(calls,3);assert.equal(delivery.attempt?.autoRetryCount,2);assert.equal(delivery.attempt?.causeCode,'ECONNREFUSED');
+});

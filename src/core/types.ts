@@ -72,6 +72,9 @@ export interface DeliveryAttempt {
   fileInfo?:string;
   startedAt?:number;
   lastError?:string;
+  causeCode?:string;
+  causeMessage?:string;
+  autoRetryCount?:number;
 }
 export interface Output {
   type: 'text' | 'asset';

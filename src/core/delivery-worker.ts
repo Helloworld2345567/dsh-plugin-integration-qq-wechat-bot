@@ -2,6 +2,8 @@ import type {Store} from './store.js';
 import type {Credentials} from './runtime-ports.js';
 import type {Delivery} from './types.js';
 import type {ChannelRegistry} from './channel-registry.js';
+import {errorCauseCode,errorCauseMessage,RemoteError} from './network.js';
+import {setTimeout as delay} from 'node:timers/promises';
 
 export interface DeliveryWorkerActivity {activeLanes:number;inFlight:number}
 export interface DeliveryWorker {
@@ -15,6 +17,23 @@ export interface DeliveryWorker {
   activity():DeliveryWorkerActivity;
 }
 
+const AUTO_RETRY_LIMIT=2;
+const AUTO_RETRY_DELAYS=[1000,2000] as const;
+const SAFE_NOT_SENT_CAUSES=new Set(['EAI_AGAIN','ENETUNREACH','EHOSTUNREACH','ECONNREFUSED','ENOTFOUND','UND_ERR_CONNECT_TIMEOUT','UND_ERR_DNS']);
+const RETRYABLE_PRECOMMIT_STATUS=new Set([408,425,429,500,502,503,504]);
+type DeliveryFailure={message:string;causeCode?:string;causeMessage?:string};
+function failure(error:unknown):DeliveryFailure {
+  const message=error instanceof Error?error.message:typeof error==='string'?error:'DELIVERY_UNKNOWN';
+  const causeCode=errorCauseCode(error);const causeMessage=errorCauseMessage(error);
+  return{message:causeCode?`${message} [cause.code=${causeCode}]`:message,causeCode,causeMessage};
+}
+function mayAutoRetry(error:unknown,delivery:Delivery):boolean {
+  const causeCode=errorCauseCode(error);
+  if(causeCode&&SAFE_NOT_SENT_CAUSES.has(causeCode))return true;
+  if(delivery.attempt?.phase==='commit')return false;
+  return error instanceof RemoteError&&error.status!==undefined&&RETRYABLE_PRECOMMIT_STATUS.has(error.status);
+}
+
 /**
  * Durable outbox worker. The lane is per bot during this extraction; changing
  * that concurrency policy belongs to a separate performance slice.
@@ -23,7 +42,7 @@ export class DurableDeliveryWorker implements DeliveryWorker {
   private readonly lanes=new Map<string,Promise<void>>();
   private readonly outbound=new Map<string,{botId:string;scopeKey:string;controller:AbortController}>();
   private closed=false;
-  constructor(readonly store:Store,readonly channels:ChannelRegistry,readonly credentials:Credentials){}
+  constructor(readonly store:Store,readonly channels:ChannelRegistry,readonly credentials:Credentials,readonly wait:(milliseconds:number,signal:AbortSignal)=>Promise<void>=async(milliseconds,signal)=>{await delay(milliseconds,undefined,{signal});}){}
   async flush(filter?:{botId?:string}):Promise<void>{
     if(this.closed)return;
     const ids=filter?.botId?[filter.botId]:this.store.deliveryRepository().pendingBotIds();
@@ -56,16 +75,29 @@ export class DurableDeliveryWorker implements DeliveryWorker {
           if(this.store.findBinding(delivery.scopeKey)?.sessionId!==delivery.sessionId){this.store.deliveryState(delivery,'cancelled');continue;}
           const asset=delivery.output.type==='asset'?this.store.asset(delivery.scopeKey,delivery.output.assetId!):undefined;
           const envelope=definition.normalizeReply?.(delivery.replyEnvelope??delivery.reply);
-          const attempt:NonNullable<Delivery['attempt']>={...delivery.attempt,number:(delivery.attempt?.number??0)+1,phase:'prepare',assetId:asset?.id,startedAt:Date.now(),lastError:undefined};
-          const sending:Delivery={...delivery,attempt, ...(envelope?{replyEnvelope:envelope,reply:envelope.payload}: {})};
-          const normalizedDelivery=sending;
-          this.store.deliveryState(sending,'sending');const controller=new AbortController();this.outbound.set(delivery.id,{botId,scopeKey:delivery.scopeKey,controller});
+          let sending:Delivery={...delivery,...(envelope?{replyEnvelope:envelope,reply:envelope.payload}: {})};
+          const controller=new AbortController();this.outbound.set(delivery.id,{botId,scopeKey:delivery.scopeKey,controller});
           try{
             const metricId=`inbox:${delivery.scopeKey}:${delivery.sourceId}`;if(this.store.findTurnMetric(metricId))this.store.updateTurnMetric(metricId,{deliveryStartedAt:Date.now()});
-            const receipt=await definition.adapter.send(bot,credential,normalizedDelivery,asset,AbortSignal.any([controller.signal,AbortSignal.timeout(90000)]));
-            this.store.deliveryState(sending,'sent',receipt);if(this.store.findTurnMetric(metricId))this.store.updateTurnMetric(metricId,{sentAt:Date.now()});this.store.updateTurnMetricsByTurn(delivery.scopeKey,delivery.turnId,{sentAt:Date.now()});
-          }catch(error){attempt.lastError=error instanceof Error?error.message:'DELIVERY_UNKNOWN';this.store.deliveryState(sending,'unknown',undefined,attempt.lastError);}
-          finally{this.outbound.delete(delivery.id);}
+            while(true){
+              const attempt:NonNullable<Delivery['attempt']>={...sending.attempt,number:(sending.attempt?.number??0)+1,phase:'prepare',assetId:asset?.id,startedAt:Date.now()};
+              sending={...sending,attempt};this.store.deliveryState(sending,'sending');
+              try{
+                const receipt=await definition.adapter.send(bot,credential,sending,asset,AbortSignal.any([controller.signal,AbortSignal.timeout(90000)]));
+                this.store.deliveryState(sending,'sent',receipt);if(this.store.findTurnMetric(metricId))this.store.updateTurnMetric(metricId,{sentAt:Date.now()});this.store.updateTurnMetricsByTurn(delivery.scopeKey,delivery.turnId,{sentAt:Date.now()});break;
+              }catch(error){
+                const detail=failure(error);attempt.lastError=detail.message;attempt.causeCode=detail.causeCode;attempt.causeMessage=detail.causeMessage;
+                const retryCount=attempt.autoRetryCount??0;
+                if(retryCount<AUTO_RETRY_LIMIT&&mayAutoRetry(error,sending)){
+                  attempt.autoRetryCount=retryCount+1;this.store.deliveryState(sending,'sending',undefined,attempt.lastError);
+                  try{await this.wait(AUTO_RETRY_DELAYS[retryCount]??AUTO_RETRY_DELAYS.at(-1)!,controller.signal);}catch{this.store.deliveryState(sending,'unknown',undefined,attempt.lastError);}
+                  if(this.store.deliveryRepository().find(delivery.id,'unknown'))break;
+                  continue;
+                }
+                this.store.deliveryState(sending,'unknown',undefined,attempt.lastError);break;
+              }
+            }
+          }finally{this.outbound.delete(delivery.id);}
         }catch(error){
           const pending=repository.find(delivery.id,'pending');if(!pending)continue;
           this.store.deliveryState(pending,'failed',undefined,error instanceof Error?error.message:'DELIVERY_PREPARATION_FAILED');

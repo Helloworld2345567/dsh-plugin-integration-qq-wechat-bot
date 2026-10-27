@@ -4,7 +4,13 @@ import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
 import net from 'node:net';
 import https from 'node:https';
-import {download} from '../src/core/network.js';
+import {download,jsonRequest,RemoteError} from '../src/core/network.js';
+
+test('jsonRequest preserves the undici cause code for network failures',async t=>{
+  const fetch=mock.method(globalThis,'fetch',async()=>{const cause=Object.assign(new Error('dns lookup failed'),{code:'ENOTFOUND'});throw Object.assign(new TypeError('fetch failed'),{cause});});
+  t.after(()=>fetch.mock.restore());
+  await assert.rejects(jsonRequest('https://api.example.invalid'),error=>error instanceof RemoteError&&error.code==='REMOTE_NETWORK_FAILED'&&error.causeCode==='ENOTFOUND'&&/ENOTFOUND/.test(error.message));
+});
 
 test('download pinned lookup supports Node 24 autoSelectFamily all-address callback',async t=>{
   const fixture=net.createServer(socket=>socket.end());

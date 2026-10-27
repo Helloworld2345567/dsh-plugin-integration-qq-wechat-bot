@@ -15,10 +15,29 @@ export function assertRemoteUrl(value:string,policy:UrlPolicy=DEFAULT_REMOTE_URL
   return parsed;
 }
 
-export class RemoteError extends Error { constructor(readonly code:string,readonly status?:number) { super(status ? `${code} (HTTP ${status})` : code); } }
+export function errorCauseCode(error:unknown):string|undefined {
+  const value=error as {causeCode?:unknown;cause?:{code?:unknown}}|undefined;
+  if(typeof value?.causeCode==='string'&&value.causeCode)return value.causeCode;
+  if(typeof value?.cause?.code==='string'&&value.cause.code)return value.cause.code;
+  return undefined;
+}
+export function errorCauseMessage(error:unknown):string|undefined {
+  const value=error as {causeMessage?:unknown;cause?:{message?:unknown}}|undefined;
+  if(typeof value?.causeMessage==='string'&&value.causeMessage)return value.causeMessage;
+  if(typeof value?.cause?.message==='string'&&value.cause.message)return value.cause.message;
+  return undefined;
+}
+export class RemoteError extends Error {
+  constructor(readonly code:string,readonly status?:number,readonly causeCode?:string,readonly causeMessage?:string) {
+    super(status ? `${code} (HTTP ${status})` : causeCode ? `${code} (${causeCode})` : code);
+    this.name='RemoteError';
+  }
+}
 export async function jsonRequest<T=Record<string,any>>(url:string,init:RequestInit={},timeout=20000):Promise<T> {
   const signal=init.signal ? AbortSignal.any([init.signal,AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout);
-  const response=await fetch(url,{...init,signal,redirect:'error'});
+  let response:Response;
+  try{response=await fetch(url,{...init,signal,redirect:'error'});}
+  catch(error){throw new RemoteError('REMOTE_NETWORK_FAILED',undefined,errorCauseCode(error),errorCauseMessage(error));}
   if(!response.ok) throw new RemoteError('REMOTE_REQUEST_FAILED',response.status);
   const body=await response.text(); if(body.length>4*1024*1024) throw new RemoteError('RESPONSE_TOO_LARGE');
   return JSON.parse(body) as T;

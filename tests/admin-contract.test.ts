@@ -47,6 +47,6 @@ test('session and delivery queries are bounded and cursor-paginated without repl
 
 test('delivery query exposes recovery state without leaking channel upload secrets',async t=>{
   const {admin,store}=await fixture(t);const scope={botId:'bot',platform:'qq' as const,accountId:'account',kind:'private' as const,channelId:'channel',senderId:'sender'};const binding=store.binding(scope);store.enqueue(binding,'source','turn',[{type:'asset',assetId:'asset'}],{});
-  const delivery=store.deliveries()[0];store.deliveryState({...delivery,attempt:{number:2,phase:'commit',assetId:'asset',aesKey:'secret-key',uploadQuery:'secret-query',lastError:'receipt lost'}},'unknown',undefined,'receipt lost');
-  const result:any=await admin.query({version:1,kind:'query',name:'overview.deliveries',input:{limit:10,scopeKey:binding.key}});assert.equal(result.items[0].state,'unknown');assert.equal(result.items[0].attempt.phase,'commit');assert.equal('aesKey' in result.items[0].attempt,false);assert.equal('uploadQuery' in result.items[0].attempt,false);
+  const delivery=store.deliveries()[0];store.deliveryState({...delivery,attempt:{number:2,phase:'commit',assetId:'asset',aesKey:'secret-key',uploadQuery:'secret-query',lastError:'receipt lost',causeCode:'ECONNRESET',autoRetryCount:2}},'unknown',undefined,'receipt lost');
+  const result:any=await admin.query({version:1,kind:'query',name:'overview.deliveries',input:{limit:10,scopeKey:binding.key}});assert.equal(result.items[0].state,'unknown');assert.equal(result.items[0].attempt.phase,'commit');assert.equal(result.items[0].attempt.causeCode,'ECONNRESET');assert.equal(result.items[0].attempt.autoRetryCount,2);assert.equal('aesKey' in result.items[0].attempt,false);assert.equal('uploadQuery' in result.items[0].attempt,false);
 });

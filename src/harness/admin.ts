@@ -14,9 +14,9 @@ import {openDirectory} from './open-directory.js';
 import type {BotFeatures} from '../core/features.js';
 import {adminCommandRequestSchema,adminQueryRequestSchema,type AdminSummaryData,versioned,ADMIN_CONTRACT_VERSION} from './admin-contract.js';
 
-function publicDelivery(delivery:Delivery):Omit<Delivery,'reply'|'replyEnvelope'> & {attempt?:Pick<NonNullable<Delivery['attempt']>,'number'|'phase'|'assetId'|'startedAt'|'lastError'>} {
+function publicDelivery(delivery:Delivery):Omit<Delivery,'reply'|'replyEnvelope'> & {attempt?:Pick<NonNullable<Delivery['attempt']>,'number'|'phase'|'assetId'|'startedAt'|'lastError'|'causeCode'|'causeMessage'|'autoRetryCount'>} {
   const {reply:_reply,replyEnvelope:_replyEnvelope,attempt,...rest}=delivery;
-  return {...rest,...attempt?{attempt:{number:attempt.number,phase:attempt.phase,assetId:attempt.assetId,startedAt:attempt.startedAt,lastError:attempt.lastError}}:{}};
+  return {...rest,...attempt?{attempt:{number:attempt.number,phase:attempt.phase,assetId:attempt.assetId,startedAt:attempt.startedAt,lastError:attempt.lastError,causeCode:attempt.causeCode,causeMessage:attempt.causeMessage,autoRetryCount:attempt.autoRetryCount}}:{}};
 }
 
 export class Admin {
