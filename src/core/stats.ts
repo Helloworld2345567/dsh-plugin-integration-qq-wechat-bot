@@ -10,7 +10,7 @@ export type AuxiliaryUsage=AuxiliaryUsageCall;
 
 export interface GroupObservation {botId:string;groupId:string;name?:string;event:'observed'|'joined'|'left';at?:number;eventId?:string}
 export interface GroupRecord {botId:string;groupId:string;name?:string;state:'observed'|'joined'|'left';firstSeenAt:number;lastSeenAt:number;membershipAt?:number;complete:false}
-export const statsQuerySchema=z.object({range:z.enum(['today','7d','30d','all','custom']).default('today'),from:z.union([z.number(),z.string()]).optional(),to:z.union([z.number(),z.string()]).optional(),botId:z.string().max(80).optional(),provider:z.string().max(200).optional(),model:z.string().max(200).optional(),kind:z.enum(['agent','subagent','compaction','media']).optional(),groups:z.boolean().default(true)}).strict();
+export const statsQuerySchema=z.object({range:z.enum(['today','7d','30d','all','custom']).default('today'),from:z.union([z.number(),z.string()]).optional(),to:z.union([z.number(),z.string()]).optional(),botId:z.string().max(80).optional(),provider:z.string().max(200).optional(),model:z.string().max(200).optional(),kind:z.enum(['agent','subagent','compaction','media','progress']).optional(),groups:z.boolean().default(true)}).strict();
 export type StatsQueryInput=z.input<typeof statsQuerySchema>;
 export interface UsageTotals {calls:number;unknownUsageCalls:number;inputTokens:number;outputTokens:number;cacheReadTokens:number;cacheWriteTokens:number;reasoningTokens:number;knownTokens:number;unknownCacheReadCalls:number;unknownCacheWriteCalls:number;unknownReasoningCalls:number}
 export interface MessageTotals {received:number;sent:number;failed:number;cancelled:number;unknown:number;pending:number;unknownSentTime:number}

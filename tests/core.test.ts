@@ -184,3 +184,53 @@ test('new output appended during an active send is drained without needing anoth
   const entered=gate(),wait=gate();let count=0;const f=await runtimeFixture(t,async()=>{throw Error('unused');},async()=>{if(count++===0){entered.resolve();await wait.promise;}return 'receipt';});const binding=f.store.binding(scope());
   f.store.enqueue(binding,'one','t1',[{type:'text',text:'one'}],{});const flushing=f.runtime.flushDeliveries();await entered.promise;f.store.enqueue(binding,'two','t2',[{type:'text',text:'two'}],{});wait.resolve();await flushing;assert.equal(f.store.deliveries(['sent']).length,2);
 });
+
+
+const settleProgress=()=>new Promise<void>(resolve=>setImmediate(resolve));
+test('foreground private task sends interim messages and leaves completion metrics for the result',async t=>{
+  const entered=gate(),release=gate();let f:Awaited<ReturnType<typeof runtimeFixture>>;
+  f=await runtimeFixture(t,async(_binding,_messages,_signal,options)=>{entered.resolve();options?.onProgress?.('image');await release.promise;options?.onEnd?.();return{turnId:'real-turn',outputs:[{type:'text',text:'final'}],snapshot:options!.snapshot!};});
+  f.runtime.harness.formatProgress=async(_binding,snapshot,facts)=>{assert.equal(snapshot.config.id,'default');assert.equal(facts.stage,'image');return '图片还在处理喵。';};
+  t.mock.timers.enable({apis:['Date','setTimeout','setInterval'],now:Date.now()});
+  await f.runtime.receive(message('progress','画图'));const work=f.runtime.process(scopeKey(scope()));await entered.promise;
+  t.mock.timers.tick(59999);await settleProgress();assert.equal(f.store.deliveries().length,0);
+  t.mock.timers.tick(1);await settleProgress();assert.equal(f.store.deliveries(['sent']).length,1);
+  const metricId=`inbox:${scopeKey(scope())}:progress`;assert.equal(f.store.findTurnMetric(metricId)?.sentAt,undefined);assert.equal(f.store.findTurnMetric(metricId)?.turnId,undefined);
+  t.mock.timers.tick(60000);await settleProgress();assert.equal(f.store.deliveries(['sent']).length,2);
+  release.resolve();await work;const deliveries=f.store.deliveries(['sent']);assert.deepEqual(deliveries.map(d=>d.output.text),['图片还在处理喵。','图片还在处理喵。','final']);assert.deepEqual(deliveries.map(d=>d.replySequence),[1,2,3]);
+  assert.equal(f.store.findTurnMetric(metricId)?.turnId,'real-turn');assert.ok(f.store.findTurnMetric(metricId)?.sentAt);
+  t.mock.timers.tick(180000);await settleProgress();assert.equal(f.store.deliveries().length,3);
+});
+
+test('group foreground tasks do not request or send progress',async t=>{
+  const entered=gate(),release=gate();const f=await runtimeFixture(t,async(_b,_m,_s,options)=>{entered.resolve();await release.promise;return{turnId:'group',outputs:[{type:'text',text:'final'}],snapshot:options!.snapshot!};});
+  f.runtime.harness.formatProgress=async()=>{throw Error('group must not generate');};
+  t.mock.timers.enable({apis:['Date','setTimeout','setInterval'],now:Date.now()});const user=scope('one','alice','group');await f.runtime.receive(message('group','work',user));const work=f.runtime.process(scopeKey(user));await entered.promise;
+  t.mock.timers.tick(1200000);await settleProgress();assert.equal(f.store.deliveries().length,0);release.resolve();await work;assert.equal(f.store.deliveries().length,1);
+});
+
+test('ASR, reminders and first model turn share the snapshot frozen before attachment preparation',async t=>{
+  const entered=gate(),release=gate();const snapshots:string[]=[];let f:Awaited<ReturnType<typeof runtimeFixture>>;
+  f=await runtimeFixture(t,async(_b,_m,_s,options)=>{snapshots.push(options!.snapshot!.config.id);return{turnId:String(snapshots.length),outputs:[{type:'text',text:'final'}],snapshot:options!.snapshot!};});
+  f.media.run=async(_scope,_operation,config)=>{assert.equal(config.id,'default');entered.resolve();await release.promise;return{text:JSON.stringify({transcript:'你好'}),assetIds:[]};};
+  f.runtime.harness.formatProgress=async(_binding,snapshot,facts)=>{assert.equal(snapshot.config.id,'default');assert.equal(facts.stage,'transcription');return '语音还在转写中。';};
+  const asset=await f.assets.save(scopeKey(scope()),{kind:'audio',name:'voice.wav',mime:'audio/wav'},Buffer.from('fixture'));
+  const input=message('audio-progress','听语音');input.attachments=[{kind:'audio',name:'voice.wav',mime:'audio/wav',handle:asset.id}];
+  t.mock.timers.enable({apis:['Date','setTimeout','setInterval'],now:Date.now()});await f.runtime.receive(input);const work=f.runtime.process(scopeKey(scope()));await entered.promise;
+  await f.runtime.switchPersona(scope(),'sakura');t.mock.timers.tick(60000);await settleProgress();assert.equal(f.store.deliveries(['sent'])[0]?.purpose,'progress');
+  release.resolve();await work;await f.runtime.receive(message('next','下一轮'));await f.runtime.process(scopeKey(scope()));assert.deepEqual(snapshots,['default','sakura']);
+});
+
+for(const action of ['stop','new','disable','revoke','close'] as const)test(`${action} cancels a live progress generation and prevents late delivery`,async t=>{
+  const entered=gate(),formatting=gate(),release=gate();
+  const f=await runtimeFixture(t,async(_b,_m,signal,options)=>{entered.resolve();await new Promise<void>(resolve=>signal.addEventListener('abort',()=>resolve(),{once:true}));return{turnId:'cancelled',outputs:[{type:'text',text:'late final'}],snapshot:options!.snapshot!};});
+  let progressSignal:AbortSignal|undefined;
+  f.runtime.harness.formatProgress=async(_binding,_snapshot,_facts,signal)=>{progressSignal=signal;formatting.resolve();await release.promise;return '迟到的进度';};
+  t.mock.timers.enable({apis:['Date','setTimeout','setInterval'],now:Date.now()});await f.runtime.receive(message('cancel-progress','work'));const work=f.runtime.process(scopeKey(scope()));await entered.promise;t.mock.timers.tick(60000);await formatting.promise;
+  if(action==='stop')await f.runtime.stopSession(scope());
+  if(action==='new')await f.runtime.newSession(scope());
+  if(action==='disable')await f.runtime.stop('one');
+  if(action==='revoke'){const config=f.store.config('default');await f.runtime.saveConfig({...config,tools:[]},config.revision);}
+  if(action==='close'){const closing=f.runtime.close();assert.ok(progressSignal?.aborted);await closing;}
+  release.resolve();await work;await settleProgress();t.mock.timers.tick(120000);await settleProgress();assert.equal(f.store.deliveries().length,0);
+});

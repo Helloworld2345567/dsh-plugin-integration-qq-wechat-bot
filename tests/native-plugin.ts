@@ -12,12 +12,14 @@ import {fauxProvider,fauxAssistantMessage,InMemoryCredentialStore} from '@earend
 import type {} from '../src/index.js';
 import type {NativeHarness} from '../src/harness/bridge.js';
 import {scopeKey} from '../src/core/store.js';
+import {freezeTurn} from '../src/core/policy.js';
 import {botSchema,type InboundMessage} from '../src/core/types.js';
 export const inject=['botIntegration','llm','settings','credentials','sessionQuery','agents','agentPresets','tools','skills','systemPrompt','attachments','permissionPresets','sessions','sessionPersistence','workingDirectory'];
 export const name='bot-native-fixture';
 export const Config=z.object({baseURL:z.string().default('https://fixture.invalid/v1').volatile(),apiKeyEnv:z.string().default('BOT_TEST_ANALYSIS_KEY').volatile(),api:z.string().default('openai-completions').volatile()});
 export async function apply(ctx:Context){
   const runtime=ctx.botIntegration;const store=runtime.store;const bridge=runtime.harness as NativeHarness;
+  const progressRequests:GenerateOptions[]=[];let progressFails=false;
   const requests:GenerateOptions[]=[];let phase=0;let compactions=0;let finalText="FINAL_ONLY";let mediaCall:{name:string;args:Record<string,unknown>}|undefined;let beforeTool:(()=>Promise<void>)|undefined;let beforeFinal:((options:GenerateOptions)=>void)|undefined;
   class Fixture extends LlmAdapter{
     providerInfo(provider:string){return{id:provider,name:'Local deterministic fixture'};}
@@ -25,6 +27,7 @@ export async function apply(ctx:Context){
     async resolveModel(provider:string,id:string){return{provider,id,name:id,inputModalities:['text','image'] as const,context:{contextWindow:24000}};}
     async *stream(options:GenerateOptions):AsyncIterable<StreamChunk>{
       if(options.purpose){if(options.purpose==='compaction'){compactions++;yield*text('会话摘要：用户说我喜欢绿茶。之前的合成测试材料已压缩；保持当前人格并继续任务。');}else yield*text('fixture title');return;}
+      if(options.system?.startsWith('你正在替当前角色发送一条任务进度提醒。')){progressRequests.push(options);if(progressFails){yield{type:'block-start',index:0,blockType:'text'};yield{type:'block-end',index:0,block:{type:'text',text:'不完整的提示'}};throw Error('fixture progress failure');}yield*text('这一步还在处理喵，暂时没有最终结果。');return;}
       requests.push(options);
       if(mediaCall){const call=mediaCall;mediaCall=undefined;const update=beforeTool;beforeTool=undefined;await update?.();yield{type:'block-start',index:0,blockType:'tool-call'};yield{type:'block-end',index:0,block:{type:'tool-call',id:ToolCallId('media-'+requests.length),name:call.name,arguments:JSON.stringify(call.args)}};yield{type:'finish',reason:{kind:'tool-calls'}};return;}
       if(phase++===0){
@@ -55,7 +58,9 @@ export async function apply(ctx:Context){
     const toolJson=(result:any)=>{assert.equal(result.isError,false,JSON.stringify(result));return JSON.parse(result.content.filter((block:any)=>block.type==='text').map((block:any)=>block.text).join(''));};
     const noHostPaths=(value:unknown)=>{const json=JSON.stringify(value);assert.doesNotMatch(json,/"(?:path|resourceBase|candidateRoot|directory|workingDirectory)"/);assert.ok(!json.includes(JSON.stringify(store.home).slice(1,-1)),'catalog must not expose the host data directory');};
     store.accept(msg('first','我喜欢绿茶'));
-    const first=await bridge.run(binding,[msg('first','我喜欢绿茶')],AbortSignal.timeout(30000));
+    const stages:string[]=[];let ends=0;
+    const first=await bridge.run(binding,[msg('first','我喜欢绿茶')],AbortSignal.timeout(30000),{onProgress:stage=>stages.push(stage),onEnd:()=>ends++});
+    assert.ok(stages.includes('tool'));assert.ok(stages.includes('model'));assert.equal(ends,1);
     assert.deepEqual(first.outputs,[{type:'text',text:'FINAL_ONLY'}]);assert.equal(first.snapshot.config.id,'default');assert.equal(requests.length,2);assert.ok(requests.every(r=>r.model==='first'));
     assert.equal(store.memories(scopeKey(scope))[0]?.value,'绿茶');
     assert.ok(requests[1].messages.some(m=>m.role==='tool'));
@@ -63,6 +68,34 @@ export async function apply(ctx:Context){
     assert.equal(second.snapshot.config.id,'sakura');assert.equal(requests.at(-1)!.model,'second');assert.equal(bridge.live.get(binding.sessionId)!.handle.agent.id,binding.sessionId);
     const serialized=JSON.stringify(requests.at(-1)!.messages);assert.ok(serialized.includes('我喜欢绿茶'));assert.ok(serialized.includes('PERSONA_B_FILE'));assert.ok(!JSON.stringify(requests[1].messages).includes('PERSONA_B_FILE'));
     const agent=bridge.live.get(binding.sessionId)!.handle.agent;
+    const historySeq=agent.session.seq;
+    const progressText=await bridge.formatProgress(binding,first.snapshot,{stage:'image',elapsedSeconds:60},AbortSignal.timeout(5000));
+    assert.equal(progressText,'这一步还在处理喵，暂时没有最终结果。');assert.equal(agent.session.seq,historySeq);
+    assert.equal(progressRequests[0].model,'first');assert.match(progressRequests[0].system! ,/PERSONA_A/);assert.equal(progressRequests[0].tools,undefined);assert.equal(progressRequests[0].maxTokens,256);assert.equal(progressRequests[0].sessionId,undefined);assert.doesNotMatch(progressText,/PRIVATE_REASONING/);
+    const progressBefore=bridge.extensions.stats!.query({range:'all',kind:'progress'}).summary.calls;
+    progressFails=true;await assert.rejects(bridge.formatProgress(binding,first.snapshot,{stage:'model',elapsedSeconds:120},AbortSignal.timeout(5000)),/fixture progress failure/);progressFails=false;
+    const progressStats=bridge.extensions.stats!.query({range:'all',kind:'progress'});assert.equal(progressStats.summary.calls,progressBefore+1);assert.ok(progressStats.summary.unknownUsageCalls>=1);
+
+    // A frozen foreground snapshot survives first-time session initialization.
+    const frozenScope={...scope,channelId:'frozen-progress',senderId:'frozen-progress'};const frozenBinding=store.binding(frozenScope);
+    const frozenSnapshot=freezeTurn(store.config('default'),store.bot('fixture'),frozenScope,['frozen-progress']);
+    const frozenRun=await bridge.run(frozenBinding,[{...msg('frozen-progress','继续处理'),scope:frozenScope}],AbortSignal.timeout(30000),{snapshot:frozenSnapshot});
+    assert.equal(frozenRun.snapshot.config.id,'default');assert.equal(requests.at(-1)!.model,'first');assert.ok(JSON.stringify(requests.at(-1)!.messages).includes('PERSONA_A'));
+    await bridge.dispose(frozenBinding.sessionId);
+
+    // Observe a real tool event while its local implementation is still pending.
+    let enterTool!:()=>void,releaseTool!:()=>void;const toolEntered=new Promise<void>(r=>enterTool=r),toolRelease=new Promise<void>(r=>releaseTool=r);
+    const originalRun=runtime.media.run.bind(runtime.media);const toolStages:string[]=[];
+    runtime.media.run=async(...args)=>{if(args[1]==='social_read'){enterTool();await toolRelease;return{text:'fixture source',assetIds:[]};}return originalRun(...args);};
+    try{
+      mediaCall={name:'bot_read_social',args:{url:'https://example.com/fixture'}};
+      const toolRun=bridge.run(binding,[msg('long-progress-tool','查找资料')],AbortSignal.timeout(30000),{onProgress:stage=>toolStages.push(stage)});
+      await Promise.race([toolEntered,toolRun.then(()=>{throw Error('fixture tool was not entered');})]);assert.equal(toolStages.at(-1),'search');
+      await assert.rejects(bridge.run(binding,[msg('overlapping-background','后台请求')],AbortSignal.timeout(5000)),/SESSION_BUSY/);
+      const during=await bridge.formatProgress(binding,bridge.live.get(binding.sessionId)!.snapshot,{stage:'search',elapsedSeconds:60},AbortSignal.timeout(5000));assert.ok(during);assert.equal(toolStages.at(-1),'search');
+      releaseTool();await toolRun;assert.equal(toolStages.at(-1),'model');
+    }finally{releaseTool();runtime.media.run=originalRun;}
+
     const tools=ctx.tools.schemas(agent).map(t=>t.name);assert.ok(tools.includes('bot_media'));assert.ok(!tools.includes('pwsh'));assert.ok(!tools.includes('spawn_agent'));
     for(const name of ['bot_stats','bot_evolve','bot_model','bot_persona']){assert.ok(!tools.includes(name),`${name} schema must be hidden from ordinary channel callers`);const denied=await ctx.tools.execute({name,arguments:name==='bot_stats'?{range:'all'}:{action:name==='bot_evolve'?'status':'list'},callId:ToolCallId('ordinary-'+name),agent,signal:AbortSignal.timeout(5000)});assert.equal(denied.isError,true,`${name} must deny ordinary channel callers`);}
     for(const name of ['bot_session','bot_skills'])assert.ok(tools.includes(name),`${name} basic schema must be available to ordinary users`);
@@ -231,7 +264,7 @@ export async function apply(ctx:Context){
     const reopenedShell=await ctx.tools.execute({name:'pwsh',arguments:{command:"Write-Output 'SHELL_AFTER_PERMISSION_REENABLE'"},callId:ToolCallId('reopened-shell'),agent:active,signal:AbortSignal.timeout(15000)});assert.equal(reopenedShell.isError,false,JSON.stringify(reopenedShell));assert.ok(JSON.stringify(reopenedShell).includes('SHELL_AFTER_PERMISSION_REENABLE'));assert.equal(ctx.permissionPresets.current(active.session),'danger-full-access');
     featureChecks.push('trusted bot_model schema and catalog remain available with host tools disabled','natural-language model tool returns next_turn and keeps the current native continuation on its old model','following native turn uses requested session model without changing shared persona or an existing child model','ordinary users can query basic native session and skills tools but cannot change shared skills','trusted persona and skill catalogs work without host permission and never expose resource paths','child agents can query management tools but every session/persona/skills/model mutation is rejected before queuing');
     const failedPhoto={...msg('fixture-failed-photo','请根据我上传的参考照片生成一张新图片'),timestamp:Date.now()-1000};store.accept(failedPhoto);store.mark(newBinding.key,[failedPhoto.id],'failed');store.put('failure',`native-photo-failure:${newBinding.sessionId}`,{sessionId:newBinding.sessionId,scope:newBinding.key,state:'failed',stage:'attachments',sourceIds:[failedPhoto.id],at:Date.now()-1000,code:'ATTACHMENT_DOWNLOAD_FAILED'});
-    await bridge.run(store.binding(scope),[msg('failed-photo-followup','为什么刚才的图片还没有生成')],AbortSignal.timeout(30000));const failureContext=JSON.stringify(requests.at(-1)!.messages);assert.ok(failureContext.includes('宿主记录的先前失败请求'),'subsequent native request must receive durable host failure context');assert.ok(failureContext.includes('未生成新图片'),'failure context must not imply that an image was generated');assert.ok(failureContext.includes(failedPhoto.text),'failure context includes the actual failed user request');
+    await bridge.run(store.binding(scope),[msg('failed-photo-followup','为什么刚才的图片还没有生成')],AbortSignal.timeout(30000));const failureContext=JSON.stringify(requests.at(-1)!.messages);assert.ok(failureContext.includes('宿主记录的先前失败或投递状态'),'subsequent native request must receive durable host failure context');assert.ok(failureContext.includes('未生成新图片'),'failure context must not imply that an image was generated');assert.ok(failureContext.includes(failedPhoto.text),'failure context includes the actual failed user request');
     featureChecks.push('current user photo attachment admits native image pixels alongside its exact host asset reference','production PiAiAdapter passes exact encoded image bytes to a local provider callback without remote calls','existing session releases persistent terminals on permission downgrade and PowerShell works after permission reenable','later followup receives host-recorded attachment failure and explicitly knows no new image was generated');
     const groupScope={...scope,kind:'group' as const,channelId:'fixture-room'};const groupBinding=store.binding(groupScope);await bridge.run(groupBinding,[{...msg('group-features','群聊隔离'),scope:groupScope}],AbortSignal.timeout(30000));const groupAgent=bridge.live.get(groupBinding.sessionId)!.handle.agent;
     for(const name of ['bot_stats','bot_evolve','bot_model','bot_persona']){assert.ok(!ctx.tools.schemas(groupAgent).some(t=>t.name===name),`${name} must be hidden for groups`);const result=await ctx.tools.execute({name,arguments:name==='bot_stats'?{range:'all'}:{action:name==='bot_evolve'?'status':'list'},callId:ToolCallId('group-'+name),agent:groupAgent,signal:AbortSignal.timeout(5000)});assert.equal(result.isError,true);}
@@ -267,7 +300,7 @@ export async function apply(ctx:Context){
       await runtime.receive(controlMsg('management-fresh','新会话首轮的测试输入，仅回复确认。'));await runtime.process(controlKey);const freshRequest=requests.filter(request=>request.sessionId===freshControl.sessionId).at(-1)!;assert.ok(freshRequest);const freshHistory=JSON.stringify(freshRequest.messages);assert.ok(freshHistory.includes('[sourceId=management-fresh]'));assert.ok(!freshHistory.includes(oldMarker));assert.ok(!freshHistory.includes('[sourceId=management-compact]'));assert.ok(!freshHistory.includes('[sourceId=management-new]'));assert.ok(sentControlDeliveries.length>=5);
       featureChecks.push('ordinary native bot_session write returns queued while its own turn still runs','queued native compact finishes after the tool turn without deadlock and persists a real compaction event','queued new durably sends acknowledgment before reset and completion after reset','next runtime-received turn uses a new native session with empty prior context');
     }finally{beforeFinal=undefined;mediaCall=undefined;runtime.credentials.read=previousRead;qq.send=previousSend;}
-    await writeFile(resultPath,JSON.stringify({status:'PASS',requests:requests.length,compactions,checks:['real native turn and business tool','final text excludes reasoning','snapshot holds across tool steps','next-turn persona/model switch preserves session/history','ordinary host tools hidden and denied','trusted PowerShell execution without per-call approval','frozen child persona/model after parent switches','revoked permission denied in child agent','private skill read denied','durable session resume','working directory switches next turn without losing session or history','native PowerShell and file delivery use custom directory','children and resumed sessions preserve configured working directory','native provider settings and credentials inherited without copying secrets','published media-analysis skill readable by ordinary user','native automatic long-context compaction','image bytes loaded into native chat model without vision service','scanned PDF rendered and passed to native chat model','image skill inherits environment with no WebUI media setup','reference edit auto-registers one image for delivery','failed image attempts can retry through dedicated and compatibility tools','parallel image calls denied while a retry is running','compatibility call cannot bypass one successful image limit','image skill disable immediately denies calls','audio analysis selects same-session recent attachment and returns script result','analysis revocation denies dedicated and compatibility tools and skill reads',...webChecks,...featureChecks]}));
+    await writeFile(resultPath,JSON.stringify({status:'PASS',requests:requests.length,compactions,checks:['progress generation uses frozen persona without tools or history mutation','progress usage includes failed requests','frozen snapshot initializes a new native session','native long tool exposes a safe progress stage','real native turn and business tool','final text excludes reasoning','snapshot holds across tool steps','next-turn persona/model switch preserves session/history','ordinary host tools hidden and denied','trusted PowerShell execution without per-call approval','frozen child persona/model after parent switches','revoked permission denied in child agent','private skill read denied','durable session resume','working directory switches next turn without losing session or history','native PowerShell and file delivery use custom directory','children and resumed sessions preserve configured working directory','native provider settings and credentials inherited without copying secrets','published media-analysis skill readable by ordinary user','native automatic long-context compaction','image bytes loaded into native chat model without vision service','scanned PDF rendered and passed to native chat model','image skill inherits environment with no WebUI media setup','reference edit auto-registers one image for delivery','failed image attempts can retry through dedicated and compatibility tools','parallel image calls denied while a retry is running','compatibility call cannot bypass one successful image limit','image skill disable immediately denies calls','audio analysis selects same-session recent attachment and returns script result','analysis revocation denies dedicated and compatibility tools and skill reads',...webChecks,...featureChecks]}));
   };
   setImmediate(()=>void test().catch(async error=>{await writeFile(resultPath,JSON.stringify({status:'FAIL',error:error.stack??String(error),failures:store.list('failure'),events:[...bridge.live.values()].flatMap(l=>l.handle.agent.session.snapshotEvents()).filter(e=>e.type==='turn/end').slice(-2)}));}));
 }

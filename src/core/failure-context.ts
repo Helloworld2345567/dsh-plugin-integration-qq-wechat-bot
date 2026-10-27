@@ -9,7 +9,7 @@ export function recentFailureContext(store:Store,binding:SessionBinding,messages
   // A followup may arrive while the preceding request is still failing; use processing time.
   const currentSources=new Set(messages.map(message=>message.id));
   const failures=(store.failures() as unknown as ProcessingFailure[]).filter(f=>f.sessionId===binding.sessionId&&f.scope===binding.key&&f.state==='failed'&&f.at<=now&&f.at>now-600000&&Array.isArray(f.sourceIds)&&f.sourceIds.some(id=>!currentSources.has(id)));
-  const deliveries=store.deliveries().filter(d=>d.scopeKey===binding.key&&d.sessionId===binding.sessionId&&!d.turnId.startsWith('failure:')&&!d.turnId.startsWith('command:'));
+  const deliveries=store.deliveries().filter(d=>d.purpose!=='progress'&&d.scopeKey===binding.key&&d.sessionId===binding.sessionId&&!d.turnId.startsWith('failure:')&&!d.turnId.startsWith('command:'));
   const rows:FailureContextRow[]=failures.sort((a,b)=>b.at-a.at).slice(0,3).flatMap(f=>{
     const outputs=deliveries.filter(d=>f.sourceIds.includes(d.sourceId));
     if(f.stage==='delivery'&&outputs.length&&outputs.every(d=>d.state==='sent'))return[];

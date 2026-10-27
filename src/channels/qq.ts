@@ -70,7 +70,7 @@ export class QQAdapter implements ChannelAdapter {
   async materialize(input:MediaInput,signal:AbortSignal):Promise<Buffer>{if(!input.url)throw new Error('QQ_MEDIA_URL_MISSING');const url=new URL(input.url);if(!QQ_ATTACHMENT_HOSTS.has(url.hostname.toLowerCase()))throw new Error('QQ_MEDIA_HOST_NOT_ALLOWED');return download(url.href,signal,50*1024*1024,0,{hosts:QQ_ATTACHMENT_HOSTS,allowQuery:true,allowPorts:new Set([''])});}
   async send(_bot:BotInstance,credential:Credential,delivery:Delivery,asset:Asset|undefined,signal:AbortSignal):Promise<string>{
     const token=await this.token(credential,signal);const headers={Authorization:`QQBot ${token}`,'Content-Type':'application/json'};const base=delivery.reply.kind==='group'?`groups/${encodeURIComponent(delivery.reply.target)}`:`users/${encodeURIComponent(delivery.reply.target)}`;
-    let payload:any={content:delivery.output.text??'',msg_type:0,msg_id:delivery.reply.msgId,msg_seq:delivery.index+1};
+    let payload:any={content:delivery.output.text??'',msg_type:0,msg_id:delivery.reply.msgId,msg_seq:delivery.replySequence??delivery.index+1};
     if(asset){
       if(asset.size>20*1024*1024)throw new Error('QQ_OUTPUT_TOO_LARGE');const attempt=delivery.attempt;let fileInfo=attempt?.assetId===asset.id?attempt.fileInfo:undefined;
       if(!fileInfo){

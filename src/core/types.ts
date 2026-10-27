@@ -83,7 +83,7 @@ export interface Output {
   /** Explicit operator/model request to create a new intent for an already sent asset. */
   resend?: boolean;
 }
-export interface Delivery { id: string; scopeKey: string; botId: string; sessionId: string; sourceId: string; turnId: string; index: number; output: Output; reply: Record<string,string>; replyEnvelope?:ChannelReplyEnvelope; state: 'pending'|'sending'|'sent'|'unknown'|'failed'|'cancelled'; receipt?: string; error?: string; attempt?:DeliveryAttempt; createdAt?:number; updatedAt?:number; sentAt?:number }
+export interface Delivery { purpose?:'result'|'progress'; progress?:{runId:string;generation:number;expiresAt:number}; replySequence?:number; id: string; scopeKey: string; botId: string; sessionId: string; sourceId: string; turnId: string; index: number; output: Output; reply: Record<string,string>; replyEnvelope?:ChannelReplyEnvelope; state: 'pending'|'sending'|'sent'|'unknown'|'failed'|'cancelled'; receipt?: string; error?: string; attempt?:DeliveryAttempt; createdAt?:number; updatedAt?:number; sentAt?:number }
 export interface TurnMetric {
   id: string; scopeKey: string; sourceId: string; sessionId?: string; turnId?: string;
   receivedAt: number; queuedAt?: number; attachmentsStartedAt?: number; attachmentsCompletedAt?: number;

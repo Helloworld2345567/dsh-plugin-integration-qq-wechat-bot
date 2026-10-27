@@ -2,7 +2,8 @@ import { Store, scopeKey } from './store.js';
 import { Assets, MediaService } from './media.js';
 import type { BotConfig, BotInstance, InboundMessage, SessionBinding, Output, TurnSnapshot, CallerScope } from './types.js';
 import {randomUUID} from 'node:crypto';
-import {permissionsRevoked,trusted} from './policy.js';
+import {freezeTurn,permissionsRevoked,trusted} from './policy.js';
+import {TaskProgress,progressFallback} from './progress.js';
 import {analysisEnabled} from './analysis.js';
 import {botSchema,modelSchema,skillNameSchema} from './types.js';
 import {validateWorkingDirectory} from './workspaces.js';
@@ -274,22 +275,45 @@ export class BotRuntime {
     this.store.mark(key,messages.map(m=>m.id),'processing');this.store.markTurnStage(key,messages.map(m=>m.id),'attachmentsStartedAt');
     const done=Promise.resolve().then(async()=>{
       let autoAsrFailure=false;
+      let progress:TaskProgress|undefined;
       try{
       let stage:ProcessingFailure['stage']='attachments';
       try{
-        const config=this.effectiveConfig(binding);
+        const snapshot=freezeTurn(this.effectiveConfig(binding),bot,binding.scope,messages.map(m=>m.id));
+        this.store.saveTurnSnapshot(binding.sessionId,snapshot);
+        const config=snapshot.config as BotConfig;
+        const active=()=>{
+          const current=this.store.findBinding(key);
+          return !this.closed&&!signal.aborted&&this.processing.get(key)?.controller===controller&&current?.sessionId===binding.sessionId&&current.generation===binding.generation&&!permissionsRevoked(snapshot,this.effectiveConfig(current),this.store.bot(bot.id),binding.scope);
+        };
+        signal.throwIfAborted();
+        if(binding.scope.kind==='private'){
+          progress=new TaskProgress({signal,active,
+            format:(facts,progressSignal)=>this.harness.formatProgress?.(binding,snapshot,facts,progressSignal)??Promise.resolve(progressFallback(facts.stage)),
+            deliver:async(text,runId,sequence,expiresAt)=>{
+              if(!active())return;
+              for(const delivery of this.store.deliveries(['pending']))if(delivery.purpose==='progress'&&delivery.progress?.runId===runId)this.store.deliveryState(delivery,'cancelled');
+              const source=pending.at(-1)!;
+              this.store.enqueue(binding,source.id,`progress:${runId}:${sequence}`,[{type:'text',text}],source.reply,this.replyEnvelope(source),{runId,generation:binding.generation,expiresAt});
+              await this.deliveryWorker.flush({botId:bot.id});
+            },
+            cancel:runId=>this.deliveryWorker.cancelProgress(runId),
+          });
+          this.deliveryWorker.registerProgress(progress.runId,active);
+        }
+        signal.throwIfAborted();
         const transcripts=new Map<string,string>();
         const ensureTranscript=async(input:InboundMessage['attachments'][number],assetId:string):Promise<void>=>{
           if(input.kind!=='audio'||input.transcript)return;
           const previous=transcripts.get(assetId);
           if(previous){input.transcript=previous;return;}
-          autoAsrFailure=true;
+          autoAsrFailure=true;progress?.update('transcription');
           if(!analysisEnabled(config,'asr'))throw new Error('MEDIA_ANALYSIS_DISABLED');
           const result=await this.media.run(key,'transcribe',config,[assetId],{question:'请忠实转写这段语音。'},signal);
           let value:any;try{value=result.text?JSON.parse(result.text):undefined;}catch{value=undefined;}
           const transcript=typeof value?.transcript==='string'?value.transcript.trim():'';
           if(!transcript)throw new Error('EMPTY_TRANSCRIPT');
-          transcripts.set(assetId,transcript);input.transcript=transcript;autoAsrFailure=false;
+          transcripts.set(assetId,transcript);input.transcript=transcript;autoAsrFailure=false;progress?.update('attachments');
         };
         for(const message of messages){
           if(message.quoted?.id){const quoted=this.store.source(key,message.quoted.id);if(quoted)message.quoted={id:quoted.id,text:quoted.text,attachments:quoted.attachments};}
@@ -301,13 +325,15 @@ export class BotRuntime {
           this.store.updateMessage(key,message);
         }
         this.store.markTurnStage(key,messages.map(m=>m.id),'attachmentsCompletedAt');
-        stage='model';const modelAt=Date.now();this.store.updateTurnMetrics(key,messages.map(m=>m.id),{sessionId:binding.sessionId,modelStartedAt:modelAt});const result=await this.harness.run(binding,messages,signal);
+        stage='model';progress?.update('model');const modelAt=Date.now();this.store.updateTurnMetrics(key,messages.map(m=>m.id),{sessionId:binding.sessionId,modelStartedAt:modelAt});const result=await this.harness.run(binding,messages,signal,{snapshot,onProgress:stage=>progress?.update(stage),onEnd:()=>progress?.stop()});
+        progress?.stop();
         if(signal.aborted||this.store.binding(binding.scope).sessionId!==binding.sessionId){this.store.mark(key,messages.map(m=>m.id),'cancelled');return;}
         this.store.markTurnStage(key,messages.map(m=>m.id),'modelCompletedAt');
         stage='delivery';const outputs:Output[]=[];for(const output of result.outputs){if(output.type==='text'&&output.text){for(let index=0;index<output.text.length;index+=1800)outputs.push({type:'text',text:output.text.slice(index,index+1800)});}else if(output.type==='asset'){this.store.asset(key,output.assetId!);outputs.push(output);}}
         if(!outputs.length)throw new Error('NO_DELIVERABLE_OUTPUT');
         this.store.updateTurnMetrics(key,messages.map(m=>m.id),{turnId:result.turnId,deliveryStartedAt:Date.now()});this.store.transaction(()=>{this.store.enqueue(binding,pending.at(-1)!.id,result.turnId,outputs,pending.at(-1)!.reply,this.replyEnvelope(pending.at(-1)!));this.store.mark(key,messages.map(m=>m.id),'complete');});
       }catch(error){
+        progress?.stop();
         const timedOut=deadline.aborted&&!controller.signal.aborted;const state=timedOut?'failed':controller.signal.aborted||signal.aborted?'cancelled':'failed';const at=Date.now();
         this.store.mark(key,messages.map(m=>m.id),state);this.store.saveFailure(`${binding.sessionId}:${at}`,{sessionId:binding.sessionId,scope:key,code:timedOut?'TURN_DEADLINE_EXCEEDED':error instanceof Error?error.message:'PROCESS_FAILED',state,stage,sourceIds:messages.map(m=>m.id),at} satisfies ProcessingFailure);
         const noDeliverableOutput=error instanceof Error&&error.message==='NO_DELIVERABLE_OUTPUT';
@@ -319,7 +345,7 @@ export class BotRuntime {
       }
       // Queue workers own delivery failures; they must not relabel completed model requests.
       await this.flushDeliveries();
-      }finally{this.processing.delete(key);this.resumeSessionActions(key);if(this.store.messages(key).length)this.schedule(key);}
+      }finally{progress?.stop();this.processing.delete(key);this.resumeSessionActions(key);if(this.store.messages(key).length)this.schedule(key);}
     });
     this.processing.set(key,{controller,sessionId:binding.sessionId,sourceIds:messages.map(m=>m.id),done});await done;
   }
@@ -338,6 +364,6 @@ export class BotRuntime {
     if(action==='create'){let delayMs:number|undefined,prompt='执行定时任务并报告结果',timezone='Asia/Shanghai';try{const value=JSON.parse(args);if(value&&Number.isSafeInteger(value.delayMs))delayMs=value.delayMs;if(typeof value?.prompt==='string'&&value.prompt.trim())prompt=value.prompt.trim();if(typeof value?.timezone==='string'&&value.timezone)timezone=value.timezone;}catch{const match=/^(\d+)(?:\s+([\s\S]+))?$/.exec(args);if(match){delayMs=Number(match[1]);prompt=match[2]??prompt;}}if(delayMs===undefined||delayMs<1000)throw Error('用法：/schedule create <延迟毫秒> <任务提示词>');const job=this.automation.createJob(binding.scope,prompt,{runAt:Date.now()+delayMs,timezone});return`定时任务已创建：${job.id}`;}
     const id=args.trim();if(!id)throw Error('需要任务 ID');const job=this.automation.listJobs().find(item=>item.id===id&&item.scopeKey===binding.key);if(!job)throw Error('定时任务不存在');if(action==='pause'||action==='resume'){this.automation.setJob(id,action==='resume');return`定时任务已${action==='resume'?'恢复':'暂停'}。`;}if(action==='delete'){this.automation.deleteJob(id);return'定时任务已删除。';}if(action==='run'){const run=await this.automation.runJob(job);return`定时任务运行结果：${run.state}`;}return'用法：/schedule list|create|pause|resume|run|delete';
   }
-  async close():Promise<void>{this.closed=true;this.automation.close();for(const timer of this.timers.values())clearTimeout(timer);await this.deliveryWorker.close();for(const [key,task] of [...this.processing.entries(),...this.maintenance.entries()]){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}await this.connectionSupervisor.disconnectAll();await Promise.all([...this.processing.values(),...this.maintenance.values()].map(p=>p.done.catch(()=>{})));await this.drainControls();await this.deliveryWorker.drain();for(const signal of this.sessionActionSignals.values())signal.dispose();this.sessionActionSignals.clear();await this.harness.dispose();if(this.claimed){this.store.releaseRuntime(this.owner);this.claimed=false;}}
+  async close():Promise<void>{this.closed=true;this.automation.close();for(const timer of this.timers.values())clearTimeout(timer);for(const [key,task] of [...this.processing.entries(),...this.maintenance.entries()]){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}await this.deliveryWorker.close();await this.connectionSupervisor.disconnectAll();await Promise.all([...this.processing.values(),...this.maintenance.values()].map(p=>p.done.catch(()=>{})));await this.drainControls();await this.deliveryWorker.drain();for(const signal of this.sessionActionSignals.values())signal.dispose();this.sessionActionSignals.clear();await this.harness.dispose();if(this.claimed){this.store.releaseRuntime(this.owner);this.claimed=false;}}
 }
 

@@ -4,7 +4,7 @@ import {botStatus} from './ui.js';
 type Api=(action:string,input?:unknown,signal?:AbortSignal)=>Promise<any>;
 const number=(n:number|undefined)=>new Intl.NumberFormat('zh-CN').format(n??0);
 const time=(n:number|undefined)=>n?new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',dateStyle:'short',timeStyle:'medium'}).format(n):'未知';
-const kindNames:Record<string,string>={agent:'主会话',subagent:'子任务',compaction:'压缩',media:'媒体'};
+const kindNames:Record<string,string>={agent:'主会话',subagent:'子任务',compaction:'压缩',media:'媒体',progress:'进度提醒'};
 
 export function StatisticsPanel({React,api,bots,compact=false}:{React:any;api:Api;bots:any[];onError?:(message:string)=>void;compact?:boolean}){
   const h=React.createElement;

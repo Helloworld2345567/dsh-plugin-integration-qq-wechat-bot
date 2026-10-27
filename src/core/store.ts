@@ -83,7 +83,7 @@ export class Store {
   lifecycleStage():StoreLifecycleStage{return this.stage;}
   initialize():this {if(this.stage==='closed')throw new Error('STORE_CLOSED');if(this.stage==='opened')this.initializeStorage(this.options.secureDefaults===true);return this;}
   migrate():this {this.initialize();if(this.stage!=='closed')this.stage='migrated';return this;}
-  recover():void {if(this.stage==='closed')throw new Error('STORE_CLOSED');const sending=this.deliveries(['sending']);this.db.exec("UPDATE inbox SET state='interrupted' WHERE state='processing'; UPDATE deliveries SET state='unknown' WHERE state='sending'");for(const delivery of sending)this.stats.observeDelivery({...delivery,state:'unknown'});this.stage='recovered';}
+  recover():void {if(this.stage==='closed')throw new Error('STORE_CLOSED');const sending=this.deliveries(['sending']);this.db.exec("UPDATE inbox SET state='interrupted' WHERE state='processing'; UPDATE deliveries SET state='unknown' WHERE state='sending'");for(const delivery of sending)this.stats.observeDelivery({...delivery,state:'unknown'});for(const delivery of this.deliveries(['pending']))if(delivery.purpose==='progress')this.deliveryState(delivery,'cancelled');this.stage='recovered';}
   start():this {if(this.stage==='closed')throw new Error('STORE_CLOSED');this.stage='started';return this;}
   close(): void {if(this.stage==='closed')return;this.stage='closed';this.db.close();}
   updateTurnMetric(id:string,patch:Partial<Omit<TurnMetric,'id'>>):void {
@@ -245,8 +245,11 @@ export class Store {
   sessionRecentSince(key:string):number{return this.recentSince(key);}
   reset(scope:CallerScope):SessionBinding {const old=this.binding(scope);const next={...old,sessionId:randomUUID(),generation:old.generation+1,persisted:false,recentSince:Date.now()};return this.updateSession(next);}
   activateSession(scope:CallerScope,id:string):SessionBinding {const old=this.binding(scope);const record=this.session(scope,id);return this.updateSession({key:old.key,scope,sessionId:id,generation:old.generation+1,persisted:record.persisted,personaId:record.personaId,modelOverride:record.modelOverride,recentSince:record.recentSince});}
-  enqueue(binding:SessionBinding,sourceId:string,turnId:string,outputs:Output[],reply:Record<string,string>,replyEnvelope?:Delivery['replyEnvelope']):void {
-    this.updateTurnMetrics(binding.key,[sourceId],{sessionId:binding.sessionId,turnId});
+  enqueue(binding:SessionBinding,sourceId:string,turnId:string,outputs:Output[],reply:Record<string,string>,replyEnvelope?:Delivery['replyEnvelope'],progress?:NonNullable<Delivery['progress']>):void {
+    // SAVEPOINT also works inside the foreground completion transaction.
+    this.db.exec('SAVEPOINT enqueue_delivery');
+    try{
+    if(!progress)this.updateTurnMetrics(binding.key,[sourceId],{sessionId:binding.sessionId,turnId});
     // Asset registration is a durable claim.  A later turn may mention the
     // same generated asset again, but it must not create a second intent after
     // the first one was accepted, is still unresolved, or needs explicit
@@ -258,9 +261,22 @@ export class Store {
         claimedAssetIds.add(output.assetId);
       }
       const id=createHash('sha256').update(JSON.stringify([binding.key,binding.sessionId,sourceId,turnId,index])).digest('hex');
-      const now=Date.now();const d:Delivery={id,scopeKey:binding.key,botId:binding.scope.botId,sessionId:binding.sessionId,sourceId,turnId,index,output,reply,...replyEnvelope?{replyEnvelope}:{},state:'pending',createdAt:now,updatedAt:now};
+      if(this.deliveryRepository().find(id))return;
+      const replySequence=binding.scope.platform==='qq'?this.nextReplySequence(binding.scope.botId,replyEnvelope?.payload??reply):undefined;
+      const now=Date.now();const d:Delivery={...(progress?{purpose:'progress' as const,progress}:{}),...(replySequence===undefined?{}:{replySequence}),id,scopeKey:binding.key,botId:binding.scope.botId,sessionId:binding.sessionId,sourceId,turnId,index,output,reply,...replyEnvelope?{replyEnvelope}:{},state:'pending',createdAt:now,updatedAt:now};
       const inserted=this.db.prepare('INSERT OR IGNORE INTO deliveries(id,scope,json,state,created_at,bot_id,turn_id,output_index) VALUES(?,?,?,?,?,?,?,?)').run(id,binding.key,JSON.stringify(d),'pending',now,d.botId,d.turnId,d.index).changes===1;if(inserted){this.stats.observeDelivery(d);this.bump('deliveries');}
     });
+    this.db.exec('RELEASE enqueue_delivery');
+    }catch(error){this.db.exec('ROLLBACK TO enqueue_delivery');this.db.exec('RELEASE enqueue_delivery');throw error;}
+  }
+  private nextReplySequence(botId:string,reply:Record<string,string>):number {
+    const key=JSON.stringify([botId,reply.kind,reply.target,reply.msgId]);
+    let previous=this.get<number>('reply-sequence',key);
+    if(previous===undefined){
+      const row=this.db.prepare("SELECT MAX(COALESCE(json_extract(json,'$.replySequence'),output_index+1)) value FROM deliveries WHERE bot_id=? AND COALESCE(json_extract(json,'$.replyEnvelope.payload.kind'),json_extract(json,'$.reply.kind'))=? AND COALESCE(json_extract(json,'$.replyEnvelope.payload.target'),json_extract(json,'$.reply.target'))=? AND COALESCE(json_extract(json,'$.replyEnvelope.payload.msgId'),json_extract(json,'$.reply.msgId'))=?").get(botId,reply.kind??'',reply.target??'',reply.msgId??'') as {value:number|null};
+      previous=row.value??0;
+    }
+    const next=previous+1;this.put('reply-sequence',key,next);return next;
   }
   deliveries(states?:string[]):Delivery[] { const where=states?.length ? ` WHERE state IN (${states.map(()=>'?').join(',')})` : ''; return (this.db.prepare(`SELECT json,state FROM deliveries${where} ORDER BY rowid`).all(...(states??[])) as {json:string;state:Delivery['state']}[]).map(r=>({...JSON.parse(r.json),state:r.state})); }
   deliveryRepository(){
@@ -288,6 +304,7 @@ export class Store {
     const row=this.db.prepare('SELECT json,state FROM deliveries WHERE id=?').get(id) as {json:string;state:Delivery['state']}|undefined;
     if(!row||!['unknown','failed'].includes(row.state))return;
     const current={...JSON.parse(row.json),state:row.state} as Delivery;
+    if(current.purpose==='progress')throw new Error('PROGRESS_DELIVERY_EXPIRED');
     const next:Delivery={...current,state:'pending',receipt:undefined,error:undefined,sentAt:undefined,updatedAt:Date.now()};
     const changed=this.db.prepare("UPDATE deliveries SET json=?,state=? WHERE id=? AND state IN ('unknown','failed')").run(JSON.stringify(next),'pending',id).changes;
     if(!changed)return this.deliveryRepository().find(id);

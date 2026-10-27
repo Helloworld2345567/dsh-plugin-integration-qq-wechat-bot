@@ -23,7 +23,7 @@ interface ContentChange {id:string;kind:'persona'|'skill'|'reload';scopeKey:stri
 export function parseStatsArguments(args:string):StatsQueryInput {
   if(!args.trim())return{};
   const result:Record<string,unknown>={};
-  for(const word of args.trim().split(/\s+/)){if(['today','7d','30d','all','custom'].includes(word))result.range=word;else if(word==='groups')result.groups=true;else{const match=/^(bot|model|provider|kind|from|to)=(.+)$/.exec(word);if(!match)throw Error('/stats [today|7d|30d|all|custom] [bot=ID] [model=名称] [kind=agent|subagent|compaction|media] [from=日期 to=日期] [groups]');result[match[1]==='bot'?'botId':match[1]]=match[2];}}
+  for(const word of args.trim().split(/\s+/)){if(['today','7d','30d','all','custom'].includes(word))result.range=word;else if(word==='groups')result.groups=true;else{const match=/^(bot|model|provider|kind|from|to)=(.+)$/.exec(word);if(!match)throw Error('/stats [today|7d|30d|all|custom] [bot=ID] [model=名称] [kind=agent|subagent|compaction|media|progress] [from=日期 to=日期] [groups]');result[match[1]==='bot'?'botId':match[1]]=match[2];}}
   return statsQuerySchema.parse(result);
 }
 export function renderStats(value:StatsResult):string {

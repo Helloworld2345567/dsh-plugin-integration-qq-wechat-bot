@@ -100,3 +100,12 @@ test('legacy group messages backfill only observed membership evidence',async t=
   const stats=new StatsService(new SqliteStatsData(store),undefined,()=>store.bots(),()=>now,channels);const result=stats.query({range:'all'});
   assert.equal(result.groups[0].groupId,'old-room');assert.equal(result.groups[0].state,'observed');assert.equal(result.groups[0].complete,false);
 });
+
+
+test('progress calls are separately metered including failed and unknown usage',async t=>{
+  const {stats}=await fixture(t);stats.observeSession('progress-session','qq');
+  const call={id:'progress-one',at:now-1,provider:'p',model:'m',kind:'progress' as const};
+  stats.recordAuxiliary('progress-session',call);stats.recordAuxiliary('progress-session',{...call,usage:usage(3)});
+  stats.recordAuxiliary('progress-session',{...call,id:'failed-progress'});
+  const result=stats.query({kind:'progress'});assert.equal(result.summary.calls,2);assert.equal(result.summary.unknownUsageCalls,1);assert.equal(result.summary.inputTokens,3);assert.equal(result.models[0].kind,'progress');assert.equal(stats.query({kind:'agent'}).summary.calls,0);
+});

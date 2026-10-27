@@ -4,6 +4,7 @@ import type {Delivery} from './types.js';
 import type {ChannelRegistry} from './channel-registry.js';
 import {errorCauseCode,errorCauseMessage,RemoteError} from './network.js';
 import {setTimeout as delay} from 'node:timers/promises';
+import {abortable,PROGRESS_SEND_MS} from './progress.js';
 
 export interface DeliveryWorkerActivity {activeLanes:number;inFlight:number}
 export interface DeliveryWorker {
@@ -12,6 +13,8 @@ export interface DeliveryWorker {
   retry(deliveryId:string):Promise<void>;
   cancelScope(scopeKey:string,reason?:string):void;
   cancelBot(botId:string,reason?:string):void;
+  registerProgress(runId:string,active:()=>boolean):void;
+  cancelProgress(runId:string):void;
   drain():Promise<void>;
   close():Promise<void>;
   activity():DeliveryWorkerActivity;
@@ -28,6 +31,7 @@ function failure(error:unknown):DeliveryFailure {
   return{message:causeCode?`${message} [cause.code=${causeCode}]`:message,causeCode,causeMessage};
 }
 function mayAutoRetry(error:unknown,delivery:Delivery):boolean {
+  if(delivery.purpose==='progress')return false;
   const causeCode=errorCauseCode(error);
   if(causeCode&&SAFE_NOT_SENT_CAUSES.has(causeCode))return true;
   if(delivery.attempt?.phase==='commit')return false;
@@ -40,7 +44,8 @@ function mayAutoRetry(error:unknown,delivery:Delivery):boolean {
  */
 export class DurableDeliveryWorker implements DeliveryWorker {
   private readonly lanes=new Map<string,Promise<void>>();
-  private readonly outbound=new Map<string,{botId:string;scopeKey:string;controller:AbortController}>();
+  private readonly outbound=new Map<string,{botId:string;scopeKey:string;runId?:string;controller:AbortController}>();
+  private readonly progressRuns=new Map<string,()=>boolean>();
   private closed=false;
   constructor(readonly store:Store,readonly channels:ChannelRegistry,readonly credentials:Credentials,readonly wait:(milliseconds:number,signal:AbortSignal)=>Promise<void>=async(milliseconds,signal)=>{await delay(milliseconds,undefined,{signal});}){}
   async flush(filter?:{botId?:string}):Promise<void>{
@@ -55,6 +60,17 @@ export class DurableDeliveryWorker implements DeliveryWorker {
   }
   cancelScope(scopeKey:string,_reason='任务已取消'):void{for(const item of this.outbound.values())if(item.scopeKey===scopeKey)item.controller.abort();}
   cancelBot(botId:string,_reason='机器人已停用'):void{for(const item of this.outbound.values())if(item.botId===botId)item.controller.abort();}
+  registerProgress(runId:string,active:()=>boolean):void{this.progressRuns.set(runId,active);}
+  cancelProgress(runId:string):void{
+    this.progressRuns.delete(runId);
+    for(const item of this.outbound.values())if(item.runId===runId)item.controller.abort();
+    for(const delivery of this.store.deliveries(['pending']))if(delivery.purpose==='progress'&&delivery.progress?.runId===runId)this.store.deliveryState(delivery,'cancelled');
+  }
+  private progressActive(delivery:Delivery):boolean{
+    if(delivery.purpose!=='progress')return true;
+    const progress=delivery.progress,binding=this.store.findBinding(delivery.scopeKey);
+    return !!progress&&progress.expiresAt>Date.now()&&binding?.sessionId===delivery.sessionId&&binding.generation===progress.generation&&this.progressRuns.get(progress.runId)?.()===true;
+  }
   activity():DeliveryWorkerActivity{return{activeLanes:this.lanes.size,inFlight:this.outbound.size};}
   private startLane(botId:string):Promise<void>{const active=this.lanes.get(botId);if(active)return active;const task=this.flushBot(botId).finally(()=>{if(this.lanes.get(botId)===task)this.lanes.delete(botId);});this.lanes.set(botId,task);return task;}
   private async flushBot(botId:string):Promise<void>{
@@ -64,47 +80,53 @@ export class DurableDeliveryWorker implements DeliveryWorker {
         if(this.closed)return;
         if(repository.hasEarlierBlocker(delivery))continue;
         const current=repository.find(delivery.id,'pending');if(!current)continue;
+        if(!this.progressActive(delivery)){this.store.deliveryState(delivery,'cancelled');continue;}
+        const controller=new AbortController();
+        const progressTimer=delivery.purpose==='progress'?setTimeout(()=>controller.abort(new Error('PROGRESS_SEND_TIMEOUT')),Math.min(PROGRESS_SEND_MS,delivery.progress!.expiresAt-Date.now())):undefined;
+        this.outbound.set(delivery.id,{botId,scopeKey:delivery.scopeKey,runId:delivery.progress?.runId,controller});
         try{
           const bot=this.store.bot(delivery.botId);if(!bot.enabled||bot.archived)return;
           const binding=this.store.findBinding(delivery.scopeKey);if(!binding||binding.sessionId!==delivery.sessionId){this.store.deliveryState(delivery,'cancelled');continue;}
-          const rawCredential=await this.credentials.read(bot.id);if(!rawCredential)return;
+          const credentialRead=this.credentials.read(bot.id);
+          const rawCredential=await (delivery.purpose==='progress'?abortable(credentialRead,controller.signal):credentialRead);if(!rawCredential)return;
           const definition=this.channels.require(bot.channel);const normalized=definition.normalizeCredential?.(rawCredential);const credential=normalized?.credential as any??rawCredential;
           if((normalized?.accountId??credential.accountId)!==bot.accountId)throw Error('CHANNEL_CREDENTIAL_ACCOUNT_MISMATCH');
           if(this.closed||!repository.find(delivery.id,'pending'))continue;
           const currentBot=this.store.bot(delivery.botId);if(!currentBot.enabled||currentBot.archived)return;
           if(this.store.findBinding(delivery.scopeKey)?.sessionId!==delivery.sessionId){this.store.deliveryState(delivery,'cancelled');continue;}
+          if(!this.progressActive(delivery)||controller.signal.aborted){this.store.deliveryState(delivery,'cancelled');continue;}
           const asset=delivery.output.type==='asset'?this.store.asset(delivery.scopeKey,delivery.output.assetId!):undefined;
           const envelope=definition.normalizeReply?.(delivery.replyEnvelope??delivery.reply);
           let sending:Delivery={...delivery,...(envelope?{replyEnvelope:envelope,reply:envelope.payload}: {})};
-          const controller=new AbortController();this.outbound.set(delivery.id,{botId,scopeKey:delivery.scopeKey,controller});
-          try{
-            const metricId=`inbox:${delivery.scopeKey}:${delivery.sourceId}`;if(this.store.findTurnMetric(metricId))this.store.updateTurnMetric(metricId,{deliveryStartedAt:Date.now()});
-            while(true){
-              const attempt:NonNullable<Delivery['attempt']>={...sending.attempt,number:(sending.attempt?.number??0)+1,phase:'prepare',assetId:asset?.id,startedAt:Date.now()};
-              sending={...sending,attempt};this.store.deliveryState(sending,'sending');
-              try{
-                const receipt=await definition.adapter.send(bot,credential,sending,asset,AbortSignal.any([controller.signal,AbortSignal.timeout(90000)]));
-                this.store.deliveryState(sending,'sent',receipt);if(this.store.findTurnMetric(metricId))this.store.updateTurnMetric(metricId,{sentAt:Date.now()});this.store.updateTurnMetricsByTurn(delivery.scopeKey,delivery.turnId,{sentAt:Date.now()});break;
-              }catch(error){
-                const detail=failure(error);attempt.lastError=detail.message;attempt.causeCode=detail.causeCode;attempt.causeMessage=detail.causeMessage;
-                const retryCount=attempt.autoRetryCount??0;
-                if(retryCount<AUTO_RETRY_LIMIT&&mayAutoRetry(error,sending)){
-                  attempt.autoRetryCount=retryCount+1;this.store.deliveryState(sending,'sending',undefined,attempt.lastError);
-                  try{await this.wait(AUTO_RETRY_DELAYS[retryCount]??AUTO_RETRY_DELAYS.at(-1)!,controller.signal);}catch{this.store.deliveryState(sending,'unknown',undefined,attempt.lastError);}
-                  if(this.store.deliveryRepository().find(delivery.id,'unknown'))break;
-                  continue;
-                }
-                this.store.deliveryState(sending,'unknown',undefined,attempt.lastError);break;
+          const resultDelivery=delivery.purpose!=='progress';
+          const metricId=`inbox:${delivery.scopeKey}:${delivery.sourceId}`;if(resultDelivery&&this.store.findTurnMetric(metricId))this.store.updateTurnMetric(metricId,{deliveryStartedAt:Date.now()});
+          while(true){
+            const attempt:NonNullable<Delivery['attempt']>={...sending.attempt,number:(sending.attempt?.number??0)+1,phase:'prepare',assetId:asset?.id,startedAt:Date.now()};
+            sending={...sending,attempt};this.store.deliveryState(sending,'sending');
+            try{
+              const sendSignal=resultDelivery?AbortSignal.any([controller.signal,AbortSignal.timeout(90000)]):controller.signal;
+              const send=definition.adapter.send(bot,credential,sending,asset,sendSignal);
+              const receipt=await (resultDelivery?send:abortable(send,sendSignal));
+              this.store.deliveryState(sending,'sent',receipt);if(resultDelivery){if(this.store.findTurnMetric(metricId))this.store.updateTurnMetric(metricId,{sentAt:Date.now()});this.store.updateTurnMetricsByTurn(delivery.scopeKey,delivery.turnId,{sentAt:Date.now()});}break;
+            }catch(error){
+              const detail=failure(error);attempt.lastError=detail.message;attempt.causeCode=detail.causeCode;attempt.causeMessage=detail.causeMessage;
+              const retryCount=attempt.autoRetryCount??0;
+              if(retryCount<AUTO_RETRY_LIMIT&&mayAutoRetry(error,sending)){
+                attempt.autoRetryCount=retryCount+1;this.store.deliveryState(sending,'sending',undefined,attempt.lastError);
+                try{await this.wait(AUTO_RETRY_DELAYS[retryCount]??AUTO_RETRY_DELAYS.at(-1)!,controller.signal);}catch{this.store.deliveryState(sending,'unknown',undefined,attempt.lastError);}
+                if(this.store.deliveryRepository().find(delivery.id,'unknown'))break;
+                continue;
               }
+              this.store.deliveryState(sending,'unknown',undefined,attempt.lastError);break;
             }
-          }finally{this.outbound.delete(delivery.id);}
+          }
         }catch(error){
           const pending=repository.find(delivery.id,'pending');if(!pending)continue;
           this.store.deliveryState(pending,'failed',undefined,error instanceof Error?error.message:'DELIVERY_PREPARATION_FAILED');
-        }
+        }finally{if(progressTimer)clearTimeout(progressTimer);this.outbound.delete(delivery.id);}
       }
     }
   }
   async drain():Promise<void>{while(this.lanes.size)await Promise.all([...this.lanes.values()]);}
-  async close():Promise<void>{this.closed=true;for(const item of this.outbound.values())item.controller.abort();await this.drain();}
+  async close():Promise<void>{this.closed=true;this.progressRuns.clear();for(const item of this.outbound.values())item.controller.abort();await this.drain();}
 }

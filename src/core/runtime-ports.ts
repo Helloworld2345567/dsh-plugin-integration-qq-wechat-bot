@@ -1,5 +1,7 @@
 import type {BotConfig,Credential,InboundMessage,Output,SessionBinding,TurnSnapshot} from './types.js';
 import type {EvolutionTask} from './evolution-contract.js';
+import type {ProgressFacts,ProgressStage} from './progress.js';
+export interface HarnessRunOptions {snapshot?:TurnSnapshot;onProgress?:(stage:ProgressStage)=>void;onEnd?:()=>void}
 export interface HarnessResult {turnId:string;outputs:Output[];snapshot:TurnSnapshot}
 export interface LifecycleHandshake {protocol:'dsh.lifecycle';version:number;instance:string;capabilities:readonly string[]}
 /** Core depends on this port; the lifecycle bundle supplies the implementation. */
@@ -19,7 +21,8 @@ export interface LifecyclePort {
   journal?(home:string): EvolutionJournalPort;
 }
 export interface HarnessPort {
-  run(binding:SessionBinding,messages:InboundMessage[],signal:AbortSignal):Promise<HarnessResult>;
+  run(binding:SessionBinding,messages:InboundMessage[],signal:AbortSignal,options?:HarnessRunOptions):Promise<HarnessResult>;
+  formatProgress?(binding:SessionBinding,snapshot:TurnSnapshot,facts:ProgressFacts,signal:AbortSignal):Promise<string>;
   cancel(sessionId:string):void;
   dispose(sessionId?:string):Promise<void>;
   validateModel(config:BotConfig):Promise<void>;

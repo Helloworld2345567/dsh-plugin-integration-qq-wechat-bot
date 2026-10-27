@@ -105,3 +105,17 @@ test('uncertain delivery state is visible to the next turn without triggering a 
   const followup={...source,id:'ask-status',text:'图片发来了吗',timestamp:now};const context=recentFailureContext(store,binding,[followup],Date.now()+1);
   assert.match(context!,/平台投递状态未知/);assert.match(context!,/asset-one/);assert.match(context!,/明确未建立连接的错误自动重试/);
 });
+
+
+test('failed progress never enters model failure context or masks a failed result',async t=>{
+  const root=await mkdtemp(path.resolve('.codex/process-failure-'));const store=new Store(root);
+  t.after(async()=>{store.close();await rm(root,{recursive:true,force:true});});
+  store.saveBot(botSchema.parse({id:'one',name:'One',channel:'qq',accountId:'one',enabled:true}));
+  const scope:CallerScope={botId:'one',platform:'qq',accountId:'one',kind:'private',channelId:'alice',senderId:'alice'};const binding=store.binding(scope);const now=Date.now();
+  const source:InboundMessage={id:'task',scope,text:'处理任务',attachments:[],reply:{},timestamp:now-100};store.accept(source);
+  store.enqueue(binding,source.id,'progress:run:1',[{type:'text',text:'任务还在进行中'}],{},undefined,{runId:'run',generation:binding.generation,expiresAt:now+60000});
+  const delivery=store.deliveries()[0];store.deliveryState(delivery,'unknown',undefined,'receipt lost');const followup={...source,id:'followup',text:'结果呢'};
+  assert.equal(recentFailureContext(store,binding,[followup]),undefined);
+  store.deliveryState(delivery,'sent','receipt');store.put('failure','failed-result',{sessionId:binding.sessionId,scope:binding.key,state:'failed',stage:'delivery',sourceIds:[source.id],at:now,code:'RESULT_FAILED'});
+  assert.match(recentFailureContext(store,binding,[followup])!,/发送状态未确认/);
+});

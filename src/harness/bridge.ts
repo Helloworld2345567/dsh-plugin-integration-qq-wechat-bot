@@ -34,6 +34,8 @@ import type {BotManagement} from '../core/management.js';
 import type {BotModelArguments} from '../core/features.js';
 import {recentFailureContext} from '../core/failure-context.js';
 import type { HarnessPort, HarnessResult } from '../core/runtime.js';
+import type {HarnessRunOptions} from '../core/runtime-ports.js';
+import {abortable,progressFallback,type ProgressFacts,type ProgressStage} from '../core/progress.js';
 import type { BotConfig, InboundMessage, SessionBinding, TurnSnapshot, Output } from '../core/types.js';
 import {PromptAssembler} from './prompt-assembler.js';
 import {StatsEventAdapter} from './stats-event-adapter.js';
@@ -51,6 +53,7 @@ export class NativeHarness implements HarnessPort {
   private readonly scoped=new WeakMap<Agent,LiveSession>();
   private readonly closedTerminals=new WeakMap<Agent,Set<string>>();
   readonly skillFiles:DynamicSkills;
+  private readonly runOptions=new Map<string,HarnessRunOptions>();
   private current(live:LiveSession):BotConfig {return this.store.effectiveConfig(this.store.findBinding(live.binding.key)??live.binding);}
   private turn(fallback:LiveSession,agent?:object):LiveSession{return agent?this.scoped.get(agent as Agent)??fallback:fallback;}
   private requireMainAgent(live:LiveSession,agent?:Agent):void {if(!agent||this.live.get(live.binding.sessionId)?.handle.agent!==agent)throw new Error('MAIN_AGENT_REQUIRED: 会话管理变更必须由当前主任务执行');}
@@ -162,9 +165,9 @@ export class NativeHarness implements HarnessPort {
   private selection(config:BotConfig):ModelSelectionRef['current'] {return config.model?{provider:config.model.provider,model:config.model.model,reasoningEffort:config.model.reasoningEffort?ReasoningEffortId(config.model.reasoningEffort):undefined}:undefined;}
   private async session(binding:SessionBinding):Promise<LiveSession>{
     const known=this.live.get(binding.sessionId);if(known)return known;
-    const bot=this.store.bot(binding.scope.botId);const config=this.store.effectiveConfig(binding);if(!config.model)throw new Error('请在机器人配置中选择聊天模型');
+    const bot=this.store.bot(binding.scope.botId);const initialSnapshot=this.runOptions.get(binding.sessionId)?.snapshot;const config=initialSnapshot?.config??this.store.effectiveConfig(binding);if(!config.model)throw new Error('请在机器人配置中选择聊天模型');
     const live={} as LiveSession;
-    live.binding=binding;live.sources=[];live.assets=[];live.images={inFlight:false,completed:false};live.snapshot=freezeTurn(config,bot,binding.scope,[]);live.skills=this.skillFiles.snapshot(config);live.selection={current:this.selection(config),assembled:undefined};
+    live.binding=binding;live.sources=[];live.assets=[];live.images={inFlight:false,completed:false};live.snapshot=initialSnapshot??freezeTurn(config as BotConfig,bot,binding.scope,[]);live.skills=this.skillFiles.snapshot(config);live.selection={current:this.selection(config),assembled:undefined};
     this.statsAdapter.observe(binding.sessionId,binding.scope.botId,binding.sessionId,'agent');
     const cwd=await prepareWorkingDirectory(bot,binding.key,this.store.home);live.cwd=cwd;
     const setup=async(scopeCtx:Context,agent:Agent)=>{await scopeCtx.inject(['skills','tools','systemPrompt','permissionPresets','llm'],async agentCtx=>{
@@ -182,11 +185,22 @@ export class NativeHarness implements HarnessPort {
       const updateVisibility=()=>{
         live.restrictions?.();const currentBot=this.store.bot(binding.scope.botId);const allowed=inheritedNames.filter(name=>permitted(name,live.snapshot.config as BotConfig,currentBot,binding.scope));live.restrictions=agentCtx.tools.restrict({allow:allowed});
       };
+      const progressTools=new Map<string,ProgressStage>();
       agentCtx.on('session/event',(session,event)=>{
         if(session.id!==agent.id)return;
+        const run=this.runOptions.get(binding.sessionId);
+        if(event.type==='turn/start')progressTools.clear();
+        if(event.type==='step/start')run?.onProgress?.('model');
+        if(event.type==='tool/call'){
+          const name=event.data.name;
+          progressTools.set(event.data.callId,name==='image_generation'?'image':['media_analysis','bot_media','bot_voice','voice_generation'].includes(name)?'media':['web_search','web_fetch','bot_read_social'].includes(name)?'search':'tool');
+          run?.onProgress?.(progressTools.size===1?[...progressTools.values()][0]:'tool');
+        }
+        if(event.type==='tool/result'){progressTools.delete(event.data.message.toolCallId);run?.onProgress?.(progressTools.size===1?[...progressTools.values()][0]:progressTools.size?'tool':'model');}
+        if(event.type==='turn/end'){progressTools.clear();run?.onEnd?.();}
         if(event.type==='turn/start'){
           try{
-          live.policyError=undefined;const currentBot=this.store.bot(binding.scope.botId);live.snapshot=freezeTurn(this.current(live),currentBot,binding.scope,live.sources);live.skills=this.skillFiles.snapshot(live.snapshot.config as BotConfig);live.selection.current=this.selection(live.snapshot.config as BotConfig);live.assets=[];live.images={inFlight:false,completed:false};
+          live.policyError=undefined;const currentBot=this.store.bot(binding.scope.botId);live.snapshot=run?.snapshot??freezeTurn(this.current(live),currentBot,binding.scope,live.sources);live.skills=this.skillFiles.snapshot(live.snapshot.config as BotConfig);live.selection.current=this.selection(live.snapshot.config as BotConfig);live.assets=[];live.images={inFlight:false,completed:false};
           this.store.saveTurnSnapshot(binding.sessionId,live.snapshot);updateVisibility();live.refreshTools?.();live.invalidator?.();
           }catch(error){live.policyError=error instanceof Error?error:new Error('POLICY_FAILED');this.store.saveFailure(`policy:${binding.sessionId}`,{code:live.policyError.message});}
         }
@@ -307,7 +321,39 @@ export class NativeHarness implements HarnessPort {
     register(defineTool({name:'bot_forget_memory',description:'删除当前用户的一条长期偏好，保留防止旧来源复活的删除标记。',parameters:{key:{type:'string',required:true}},output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},execute:async(args)=>{this.store.forget(scope,args.key);return '已删除该偏好；聊天记录仍保留';}}));
     register(defineTool({name:'bot_read_social',description:'读取公开贴吧/小红书目标帖子正文；结果不代表已观看视频。',parameters:{url:{type:'string',required:true}},output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},execute:async(args,exec)=>JSON.stringify(await this.media.run(scope,'social_read',this.turn(ownerLive,exec.agent).snapshot.config as BotConfig,[],{url:args.url},exec.signal))}));
   }
-  async run(binding:SessionBinding,messages:InboundMessage[],signal:AbortSignal):Promise<HarnessResult>{
+  async formatProgress(binding:SessionBinding,snapshot:TurnSnapshot,facts:ProgressFacts,signal:AbortSignal):Promise<string>{
+    signal.throwIfAborted();
+    const model=snapshot.config.model;if(!model)throw new Error('PROGRESS_MODEL_UNAVAILABLE');
+    this.statsAdapter.observe(binding.sessionId,binding.scope.botId,binding.sessionId,'agent');
+    const call={id:randomUUID(),at:Date.now(),provider:model.provider,model:model.model,kind:'progress' as const};
+    const stats=this.extensions.stats;let usage:unknown;
+    stats?.recordAuxiliary(binding.sessionId,call);
+    const generate=async()=>{
+      let text='',complete=false;
+      for await(const chunk of this.ctx.llm.stream({provider:model.provider,model:model.model,maxTokens:256,signal,
+        system:`你正在替当前角色发送一条任务进度提醒。沿用下列人设的语言和语气，但只根据提供的状态事实说话。只输出一两句纯文本，总计不超过80字。不输出推理、日志、工具名、百分比、预计完成时间，不声称任务已完成。不添加事实以外的进展。阶段不变时自然说明仍在等待，避免机械重复上一条提示。\n当前人设：\n${snapshot.config.personaPrompt}`,
+        messages:[{role:'user',content:[{type:'text',text:JSON.stringify({status:progressFallback(facts.stage),elapsedSeconds:facts.elapsedSeconds,previousText:facts.previousText})}]}],
+      })){
+        if(chunk.type==='usage')usage=chunk.usage;
+        if(chunk.type==='block-end'&&chunk.block.type==='text')text+=chunk.block.text;
+        if(chunk.type==='finish'){
+          if(chunk.reason.kind!=='stop')throw new Error(chunk.reason.kind==='error'?chunk.reason.failure.message:'PROGRESS_GENERATION_INCOMPLETE');
+          complete=true;
+        }
+      }
+      if(!complete)throw new Error('PROGRESS_GENERATION_INCOMPLETE');
+      return text;
+    };
+    try{return await abortable(generate(),signal);}
+    finally{stats?.recordAuxiliary(binding.sessionId,{...call,usage});}
+  }
+  async run(binding:SessionBinding,messages:InboundMessage[],signal:AbortSignal,options:HarnessRunOptions={}):Promise<HarnessResult>{
+    if(this.runOptions.has(binding.sessionId))throw new Error('SESSION_BUSY');
+    this.runOptions.set(binding.sessionId,options);
+    try{return await this.runTurn(binding,messages,signal);}
+    finally{this.runOptions.delete(binding.sessionId);}
+  }
+  private async runTurn(binding:SessionBinding,messages:InboundMessage[],signal:AbortSignal):Promise<HarnessResult>{
     const live=await this.session(binding);const cwd=await prepareWorkingDirectory(this.store.bot(binding.scope.botId),binding.key,this.store.home);
     const sourceIds=messages.map(message=>message.id);const metricIds=sourceIds.map(sourceId=>`inbox:${binding.key}:${sourceId}`);
     const markFirst=()=>{const at=Date.now();for(const id of metricIds){const metric=this.store.findTurnMetric(id);if(metric&&!metric.modelFirstFeedbackAt)this.store.updateTurnMetric(id,{modelFirstFeedbackAt:at});}};

@@ -1,9 +1,9 @@
-export type UsageKind='agent'|'subagent'|'compaction'|'media';
+export type UsageKind='agent'|'subagent'|'compaction'|'media'|'progress';
 export interface TokenUsage {inputTokens:number;outputTokens:number;cacheReadTokens?:number;cacheWriteTokens?:number;reasoningTokens?:number;totalTokens?:number}
 export interface MediaUsageCall {id:string;attempted:true;at:number;provider?:string;model?:string;usage?:TokenUsage}
 export interface StatsSessionOwner {sessionId:string;botId:string;rootSessionId:string;kind:UsageKind}
 export interface NativeUsageFact {sessionId:string;seq:number;time:number;type:string;turn?:number;step?:number;provider?:string;model?:string;usage?:TokenUsage;compactionId?:string}
-export interface AuxiliaryUsageCall {id:string;at:number;provider:string;model:string;usage?:unknown;kind:'compaction'}
+export interface AuxiliaryUsageCall {id:string;at:number;provider:string;model:string;usage?:unknown;kind:'compaction'|'progress'}
 export type UsageEvent=
   | {type:'session.owner';sessionId:string;botId:string;rootSessionId:string;kind:UsageKind}
   | {type:'usage.context';sessionId:string;seq:number;at:number;provider?:string;model?:string}
