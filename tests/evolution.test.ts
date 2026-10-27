@@ -50,9 +50,13 @@ test('validation failure and cancellation retain evidence without queueing',asyn
   const task=f.service.create('scope','sakura','cancel');await assert.rejects(f.service.validate(task.id,abort.signal),/Stopped/);
   assert.equal(f.service.inspect(task.id).phase,'failed');assert.throws(()=>f.service.queueApply(task.id),/Validate/);
 });
-test('missing coordinator and metadata refuse self-modification; validation environment excludes provider secrets',t=>{
+test('missing coordinator refuses self-modification while trusted admin may repair package drift',t=>{
   const f=fixture(t);const service=new EvolutionService({home:f.home,saveEvolutionTask:()=>{}},f.source,{available:()=>false});
   assert.throws(()=>service.create('scope','sakura','feature'),/coordinator/);
+  f.write(path.join(f.source,'dist/index.js'),'manual live-package repair');
+  const trusted=new EvolutionService({home:f.home,saveEvolutionTask:()=>{}},f.source,{available:()=>true});
+  assert.throws(()=>trusted.create('scope','sakura','feature'),/Loaded package differs/);
+  const task=trusted.create('scope','sakura','feature',{trustedAdmin:true});assert.equal(task.phase,'draft');
   const env=cleanValidationEnv(path.join(f.root,'isolated'));assert.equal(env.DSH_HOME,env.BOT_HOME);assert.equal(env.OPENAI_API_KEY,undefined);assert.equal(env.BOT_LAUNCH_TOKEN,undefined);
 });
 test('orphaned validation is recovered as failed with retained evidence and can be retried',async t=>{

@@ -40,8 +40,8 @@ export class MediaOperationRegistry {
 
 export const DEFAULT_MEDIA_OPERATIONS: readonly MediaOperationDescriptor[] = Object.freeze([
   ...skillOperationManifests.flatMap(manifest => manifest.operations.map(operation => ({...operation, source: operation, skill: manifest.skill, tool: manifest.tool.name, permissionTool: manifest.permissionTool ?? manifest.tool.name, handler: 'skill', timeoutMs: 0}))),
-  {id: 'image_generate', handler: 'image', timeoutMs: 0, quotaUnits: 20, inputKinds: []},
-  {id: 'image_edit', handler: 'image', timeoutMs: 0, quotaUnits: 20, inputKinds: ['image']},
+  {id: 'image_generate', handler: 'image', timeoutMs: 0, quotaUnits: 10000, inputKinds: []},
+  {id: 'image_edit', handler: 'image', timeoutMs: 0, quotaUnits: 10000, inputKinds: ['image']},
   {id: 'image_understand', handler: 'native', timeoutMs: 0, quotaUnits: 1, inputKinds: ['image']},
   {id: 'document_read', handler: 'document', timeoutMs: 0, quotaUnits: 50, inputKinds: ['file']},
   {id: 'convert_gif', handler: 'convert_gif', timeoutMs: 0, quotaUnits: 50, inputKinds: ['video']},

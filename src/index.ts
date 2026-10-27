@@ -19,7 +19,7 @@ import {ProcessWorker} from './harness/process-worker.js';
 import {BotFeatures} from './core/features.js';
 import {BotManagement} from './core/management.js';
 import {packageRoot} from './core/paths.js';
-import {registerLifecycleRuntime,handleLifecycleShutdown,createLifecyclePort} from './lifecycle/protocol.js';
+import {registerLifecycleRuntime,handleLifecycleShutdown,createLifecyclePort,packageIdentity} from './lifecycle/protocol.js';
 import {SessionId} from '@deepseek-ai/dsh-session';
 
 export const name='bot-integration';
@@ -48,6 +48,10 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
   process.on('message',shutdown);ctx.effect(()=>()=>process.off('message',shutdown));
   if(features.evolution.history().some(task=>['queued','draining','applying','restarting','reconnecting','rolling-back'].includes(task.phase)))runtime.pauseProcessing();
   await features.backfill({readSession:id=>ctx.sessionQuery.readSession(SessionId(id))});await runtime.initialize();store.start();
-  detachLifecycle=registerLifecycleRuntime({packageRoot:packageRoot(),quiesce:()=>runtime.quiesce(),resumeProcessing:()=>runtime.resumeProcessing(),health:()=>runtime.health()});
+  const runtimePackageRoot=packageRoot();
+  detachLifecycle=registerLifecycleRuntime({packageRoot:runtimePackageRoot,quiesce:()=>runtime.quiesce(),resumeProcessing:()=>runtime.resumeProcessing(),health:()=>runtime.health()});
+  // The lifecycle bundle normally reports readiness. Emit the same authenticated
+  // signal here as a fallback for hosts that isolate bundle timers from IPC.
+  if(process.send&&process.env.BOT_LAUNCH_TOKEN)process.send({type:'bot-ready',nonce:process.env.BOT_LAUNCH_TOKEN,identity:packageIdentity(runtimePackageRoot)});
   ctx.provide('botIntegration',runtime);
 }

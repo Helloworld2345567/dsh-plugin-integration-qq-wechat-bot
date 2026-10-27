@@ -15,6 +15,7 @@ export function cleanValidationEnv(home:string):NodeJS.ProcessEnv{
 }
 export interface ValidationCommand {name:string;file:string;args:string[]}
 export interface EvolutionOptions {productHome?:string;run?:(command:ValidationCommand,cwd:string,env:NodeJS.ProcessEnv,signal?:AbortSignal)=>Promise<string>;available?:()=>boolean;lifecycle?:LifecyclePort}
+export interface EvolutionCreateOptions {trustedAdmin?:boolean}
 function npmCli():string{
   const candidates=[process.env.npm_execpath,path.join(path.dirname(process.execPath),'node_modules/npm/bin/npm-cli.js'),path.resolve(path.dirname(process.execPath),'../lib/node_modules/npm/bin/npm-cli.js')];
   const found=candidates.find(p=>p&&path.basename(p)==='npm-cli.js'&&existsSync(p));if(!found)throw Error('npm CLI not found beside Node; launch via npm or install npm for this Node runtime');return found;
@@ -53,10 +54,14 @@ export class EvolutionService {
   history():EvolutionTask[]{return this.journal.list();}
   inspect(id:string):EvolutionTask{const task=this.journal.read(id);if(task.candidateRoot&&task.baseline){const current=sourceFiles(task.candidateRoot);task.changes=[...new Set([...Object.keys(task.baseline),...Object.keys(current)])].filter(file=>task.baseline![file]!==current[file]).map(file=>({file,change:!task.baseline![file]?'added':!current[file]?'deleted':'modified'}));}return task;}
   private save(task:EvolutionTask):EvolutionTask{this.store.saveEvolutionTask(task.id,task);return this.journal.write(task);}
-  create(scopeKey:string,configId:string,goal:string):EvolutionTask{
+  create(scopeKey:string,configId:string,goal:string,createOptions:EvolutionCreateOptions={}):EvolutionTask{
     this.available();if(!goal.trim()||goal.length>20000)throw Error('Evolution goal must be 1–20000 characters');
     const installation=readInstallation(this.productHome);const sourceRoot=realpathSync(installation.sourceRoot);const projectRoot=realpathSync(installation.projectRoot??sourceRoot);
-    if(packageIdentity(this.installedPackageRoot)!==installation.current.identity)throw Error('Loaded package differs from trusted installation metadata');
+    // The only production caller is the bot_evolve host path, which rechecks
+    // the current trusted-private authorization immediately before dispatch.
+    // That administrator is allowed to repair or replace the live package, so
+    // an earlier installed-file fingerprint must not block candidate creation.
+    if(!createOptions.trustedAdmin&&packageIdentity(this.installedPackageRoot)!==installation.current.identity)throw Error('Loaded package differs from trusted installation metadata');
     if(!existsSync(path.join(sourceRoot,'src/index.ts')))throw Error('Installation source checkout is unavailable');
     const id=randomUUID();const candidateRoot=path.join(projectRoot,'.codex','evolution',id,'candidate');
     for(const relative of ['.codex','.codex/evolution']){const parent=path.join(projectRoot,relative);if(existsSync(parent)&&(lstatSync(parent).isSymbolicLink()||!lstatSync(parent).isDirectory()))throw Error('Evolution parent must be a normal project-local directory');}

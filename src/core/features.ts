@@ -112,7 +112,7 @@ export class BotFeatures {
     const action=z.string().parse(args.action);this.authorizeEvolutionAction(binding,snapshot,action);const current=this.config(binding);
     const id=()=>z.string().min(1).max(80).parse(args.taskId);
     switch(action){
-      case 'create':return this.evolution.create(binding.key,current.id,z.string().min(1).max(20000).parse(args.goal));
+      case 'create':return this.evolution.create(binding.key,current.id,z.string().min(1).max(20000).parse(args.goal),{trustedAdmin:true});
       case 'status':case 'inspect':return args.taskId?this.task(binding,id()):this.history(binding)[0]??{status:'暂无改进任务'};
       case 'history':return this.history(binding);
       case 'validate':this.task(binding,id());return this.evolution.validate(id(),signal);
