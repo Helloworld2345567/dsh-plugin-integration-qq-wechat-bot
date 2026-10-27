@@ -6,7 +6,7 @@ import {scopeKey} from './store.js';
 import {trusted} from './policy.js';
 import {commandHelp} from './commands.js';
 import {packagedSkills} from './skills.js';
-import {CommandBus,managementCommand} from './command-bus.js';
+import {managementCommand} from './command-bus.js';
 
 export const botSessionArgumentsSchema=z.object({
   action:z.enum(['help','status','list','new','stop','compact','resume']),

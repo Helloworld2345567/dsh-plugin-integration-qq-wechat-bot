@@ -5,7 +5,8 @@ import path from 'node:path';
 import { Store, ConflictError, scopeKey } from '../src/core/store.js';
 import { Assets, MediaService } from '../src/core/media.js';
 import { BotRuntime, type HarnessPort } from '../src/core/runtime.js';
-import { configSchema, botSchema, type CallerScope, type InboundMessage, type ChannelAdapter, type TurnSnapshot } from '../src/core/types.js';
+import { configSchema, botSchema, type CallerScope, type InboundMessage, type ChannelAdapter } from '../src/core/types.js';
+import {createChannelRegistry} from '../src/core/channel-registry.js';
 import { freezeTurn, allowedNow, permitted, mediaConfigNow } from '../src/core/policy.js';
 import {resolveImageSkill} from '../src/core/image-skill.js';
 import { publicAddress } from '../src/core/network.js';
@@ -19,7 +20,7 @@ async function runtimeFixture(t:any,run:HarnessPort['run'],send:ChannelAdapter['
   const store=await fixture(t);bot(store);const assets=new Assets(store);const media=new MediaService(store,assets);
   const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async()=>Buffer.from('pixels'),send};
   const harness:HarnessPort={run,cancel:()=>{},dispose:async()=>{},validateModel:async c=>{if(c.model?.model==='invalid')throw new Error('UNKNOWN_MODEL');}};
-  const runtime=new BotRuntime(store,assets,media,harness,{qq:adapter,weixin:adapter},{read:async id=>({accountId:id}),write:async()=>{},remove:async()=>{}},60000);
+  const runtime=new BotRuntime(store,assets,media,harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),{read:async id=>({accountId:id}),write:async()=>{},remove:async()=>{}},60000);
   t.after(()=>runtime.close());return{store,runtime,assets,media};
 }
 

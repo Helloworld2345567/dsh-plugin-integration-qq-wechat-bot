@@ -5,6 +5,7 @@ import path from 'node:path';
 import {Store,scopeKey} from '../src/core/store.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {BotRuntime,type HarnessPort} from '../src/core/runtime.js';
+import {createChannelRegistry} from '../src/core/channel-registry.js';
 import {botSchema,type CallerScope,type InboundMessage,type ChannelAdapter,type SessionBinding,type TurnSnapshot} from '../src/core/types.js';
 import {freezeTurn} from '../src/core/policy.js';
 import type {DeferredSessionAction,SessionActionRecord} from '../src/core/session-actions.js';
@@ -21,7 +22,7 @@ async function fixture(t:any){
   const harness:HarnessPort={run:async(binding,messages,signal)=>{const snapshot=freezeTurn(store.effectiveConfig(binding),store.bot('one'),scope,messages.map(m=>m.id));store.put('turn-snapshot',binding.sessionId,snapshot);await onRun?.(binding,snapshot,signal);store.markSessionPersisted(binding);return{turnId:`turn-${sequence}`,outputs:[],snapshot};},cancel:()=>{},dispose:async()=>{},validateModel:async()=>{},inspectSession:async()=>{},compact:async()=> '压缩完成'};
   const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async()=>Buffer.from(''),send:async(_b,_c,d)=>{assert.deepEqual(d.reply,{target:'real-user'});sent.push(d.output.text??'');return'receipt';}};
   const credentials={read:async()=>({accountId:'one'}),write:async()=>{},remove:async()=>{}};
-  const runtime=new BotRuntime(store,assets,media,harness,{qq:adapter,weixin:adapter},credentials,60000);
+  const runtime=new BotRuntime(store,assets,media,harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),credentials,60000);
   t.after(async()=>{await runtime.close();store.close();await rm(home,{recursive:true,force:true});});
   return{store,runtime,harness,sent,adapter,credentials,assets,media,onRun:(fn:typeof onRun)=>{onRun=fn;},records:()=>store.list<SessionActionRecord>('session-action'),run:async(text='please manage this session')=>{await runtime.receive(input(text));await runtime.process(scopeKey(scope));}};
 }
@@ -117,7 +118,7 @@ test('paused actions survive restart, running actions become unknown and queued 
   const queued=f.records()[0];const unknown={...queued,id:'interrupted-action',state:'running' as const,action:{action:'compact'} as DeferredSessionAction};f.store.put('session-action',unknown.id,unknown);
   f.store.mark(queued.scopeKey,queued.sourceIds,'processing');
   let runs=0;const nextHarness={...f.harness,run:async()=>{runs++;throw Error('ordinary inbox ran before action');}};
-  const next=new BotRuntime(f.store,f.assets,f.media,nextHarness,{qq:f.adapter,weixin:f.adapter},f.credentials,0);next.pauseProcessing();await next.initialize();
+  const next=new BotRuntime(f.store,f.assets,f.media,nextHarness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter:f.adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter:f.adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),f.credentials,0);next.pauseProcessing();await next.initialize();
   assert.equal(f.store.get<SessionActionRecord>('session-action',unknown.id)?.state,'interrupted');assert.equal(f.store.get<SessionActionRecord>('session-action',queued.id)?.state,'queued');
   assert.deepEqual(f.store.messages(queued.scopeKey,['interrupted']).map(m=>m.id),queued.sourceIds);
   next.resumeProcessing();await until(()=>f.store.get<SessionActionRecord>('session-action',queued.id)?.state==='succeeded');assert.equal(runs,0);assert.equal(f.store.sessions(scope).length,2);await next.close();
@@ -127,7 +128,7 @@ test('recovered compact consumes no later input and never replays its interrupte
   const f=await fixture(t);f.onRun(async(b,s,signal)=>{f.runtime.queueSessionAction(b,s,{action:'compact'},signal);f.runtime.pauseProcessing();});await f.run();await f.runtime.close();
   const record=f.records()[0];f.store.mark(record.scopeKey,record.sourceIds,'processing');const later=input('new independent message');f.store.accept(later);let runs=0,compactions=0;
   const harness:HarnessPort={...f.harness,compact:async()=>{compactions++;return'compacted';},run:async(_b,messages)=>{runs++;assert.equal(f.store.get<SessionActionRecord>('session-action',record.id)?.state,'succeeded');assert.deepEqual(messages.map(m=>m.id),[later.id]);return{turnId:'later',outputs:[],snapshot:freezeTurn(f.store.config('default'),f.store.bot('one'),scope,[later.id])};}};
-  const next=new BotRuntime(f.store,f.assets,f.media,harness,{qq:f.adapter,weixin:f.adapter},f.credentials,0);await next.initialize();try{await until(()=>runs===1);assert.equal(compactions,1);assert.deepEqual(f.store.messages(record.scopeKey,['interrupted']).map(m=>m.id),record.sourceIds);}finally{await next.close();}
+  const next=new BotRuntime(f.store,f.assets,f.media,harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter:f.adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter:f.adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),f.credentials,0);await next.initialize();try{await until(()=>runs===1);assert.equal(compactions,1);assert.deepEqual(f.store.messages(record.scopeKey,['interrupted']).map(m=>m.id),record.sourceIds);}finally{await next.close();}
 });
 
 test('natural commands recover from control inbox while quoted and escaped text remain ordinary chat',async t=>{

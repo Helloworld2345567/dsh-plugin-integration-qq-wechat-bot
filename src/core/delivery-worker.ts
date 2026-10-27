@@ -1,6 +1,6 @@
 import type {Store} from './store.js';
 import type {Credentials} from './runtime-ports.js';
-import type {Asset,Delivery,SessionBinding} from './types.js';
+import type {Delivery} from './types.js';
 import type {ChannelRegistry} from './channel-registry.js';
 
 export interface DeliveryWorkerActivity {activeLanes:number;inFlight:number}
@@ -46,13 +46,13 @@ export class DurableDeliveryWorker implements DeliveryWorker {
         if(repository.hasEarlierBlocker(delivery))continue;
         const current=repository.find(delivery.id,'pending');if(!current)continue;
         try{
-          const bot=this.store.bot(delivery.botId);if(!bot.enabled||bot.archived)continue;
+          const bot=this.store.bot(delivery.botId);if(!bot.enabled||bot.archived)return;
           const binding=this.store.findBinding(delivery.scopeKey);if(!binding||binding.sessionId!==delivery.sessionId){this.store.deliveryState(delivery,'cancelled');continue;}
           const rawCredential=await this.credentials.read(bot.id);if(!rawCredential)return;
           const definition=this.channels.require(bot.channel);const normalized=definition.normalizeCredential?.(rawCredential);const credential=normalized?.credential as any??rawCredential;
           if((normalized?.accountId??credential.accountId)!==bot.accountId)throw Error('CHANNEL_CREDENTIAL_ACCOUNT_MISMATCH');
           if(this.closed||!repository.find(delivery.id,'pending'))continue;
-          const currentBot=this.store.bot(delivery.botId);if(!currentBot.enabled||currentBot.archived)continue;
+          const currentBot=this.store.bot(delivery.botId);if(!currentBot.enabled||currentBot.archived)return;
           if(this.store.findBinding(delivery.scopeKey)?.sessionId!==delivery.sessionId){this.store.deliveryState(delivery,'cancelled');continue;}
           const asset=delivery.output.type==='asset'?this.store.asset(delivery.scopeKey,delivery.output.assetId!):undefined;
           const envelope=definition.normalizeReply?.(delivery.replyEnvelope??delivery.reply);

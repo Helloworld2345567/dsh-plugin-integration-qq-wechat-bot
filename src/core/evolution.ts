@@ -3,7 +3,7 @@ import {existsSync,mkdirSync,copyFileSync,realpathSync,writeFileSync,lstatSync} 
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import type {Store} from './store.js';
-import {LifecycleJournal,defaultProductHome,readInstallation,packageIdentity,sha256,verifyArtifact,type EvolutionTask,type Artifact} from './evolution-contract.js';
+import {LifecycleJournal,defaultProductHome,readInstallation,packageIdentity,sha256,verifyArtifact,type EvolutionTask} from './evolution-contract.js';
 import type {EvolutionJournalPort,LifecyclePort} from './runtime-ports.js';
 import {sourceFiles,sourceDigest} from './source-integrity.js';
 export {sourceFiles,sourceDigest} from './source-integrity.js';

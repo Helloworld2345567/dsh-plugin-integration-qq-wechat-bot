@@ -9,6 +9,7 @@ import {Assets,MediaService} from '../src/core/media.js';
 import {BotRuntime} from '../src/core/runtime.js';
 import {defaultWorkspaceRoot,workingDirectory,prepareWorkingDirectory} from '../src/core/workspaces.js';
 import {Admin} from '../src/harness/admin.js';
+import {fixtureChannels} from './test-channel.js';
 
 async function fixture(t:any){
   const folder=await mkdtemp(path.resolve('.codex/workspace-test-'));const previous=process.env.BOT_WORKSPACE_ROOT;
@@ -27,7 +28,7 @@ test('default workspaces are repository-local and ignored, with isolated scope d
   await writeFile(path.join(a,'keep.txt'),'updated work');await prepareWorkingDirectory(f.bot,'scope-a',f.store.home);assert.equal(await readFile(path.join(a,'keep.txt'),'utf8'),'updated work');
 });
 test('bot working directory saves preserve bindings and permissions; invalid paths never replace a working choice',async t=>{
-  const f=await fixture(t);const assets=new Assets(f.store);const runtime=new BotRuntime(f.store,assets,new MediaService(f.store,assets),{run:async()=>{throw Error('unused');},cancel:()=>{},dispose:async()=>{},validateModel:async()=>{}},{} as any,{} as any);t.after(()=>runtime.close());
+  const f=await fixture(t);const assets=new Assets(f.store);const adapter={beginLogin:async()=>({status:'pending' as const}),pollLogin:async()=>({status:'expired' as const}),connect:async()=>{},materialize:async()=>Buffer.alloc(0),send:async()=> 'receipt'};const runtime=new BotRuntime(f.store,assets,new MediaService(f.store,assets),{run:async()=>{throw Error('unused');},cancel:()=>{},dispose:async()=>{},validateModel:async()=>{}},fixtureChannels(adapter),{} as any);t.after(()=>runtime.close());
   const binding=f.store.binding({botId:f.bot.id,platform:'qq',accountId:'one',kind:'private',channelId:'alice',senderId:'alice'});
   const directory=path.join(f.folder,'自定义 工作目录 & literal');const saved=runtime.saveBot({...f.bot,workingDirectory:directory});
   assert.equal(workingDirectory(saved,binding.key),directory);assert.deepEqual(saved.trustedUsers,f.bot.trustedUsers);assert.equal(f.store.binding(binding.scope).sessionId,binding.sessionId);

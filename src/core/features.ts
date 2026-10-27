@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import type {BotRuntime} from './runtime.js';
-import {configSchema,type BotConfig,type SessionBinding,type SessionRecord,type TurnSnapshot} from './types.js';
+import {configSchema,type BotConfig,type SessionBinding,type TurnSnapshot} from './types.js';
 import {allowedNow} from './policy.js';
 import {DynamicSkills} from './skills.js';
 import {EvolutionService} from './evolution.js';
@@ -131,9 +131,11 @@ export class BotFeatures {
     }
   }
   async backfill(history:SessionHistoryPort):Promise<void>{
+    const sessions:string[]=[];
     for(const record of this.runtime.store.sessionsAll()){
-      if(!record.persisted)continue;this.stats.observeSession(record.id,record.scope.botId,record.id,'agent');
-      try{const log=await history.readSession(record.id);for(const event of log.events)this.stats.recordNative(record.id,event);}catch{/* Missing history is not zero usage and is never assigned to a guessed owner. */}
+      if(!record.persisted)continue;this.stats.observeSession(record.id,record.scope.botId,record.id,'agent');sessions.push(record.id);
+      try{const log=await history.readSession(record.id);for(const event of log.events)this.stats.recordNative(record.id,event,{refresh:false});}catch{/* Missing history is not zero usage and is never assigned to a guessed owner. */}
     }
+    this.stats.refreshSessions(sessions);
   }
 }

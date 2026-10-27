@@ -5,6 +5,7 @@ import path from 'node:path';
 import {Store,scopeKey} from '../src/core/store.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {BotRuntime,type HarnessPort} from '../src/core/runtime.js';
+import {createChannelRegistry} from '../src/core/channel-registry.js';
 import {botSchema,configSchema,type CallerScope,type InboundMessage,type ChannelAdapter} from '../src/core/types.js';
 import {freezeTurn} from '../src/core/policy.js';
 import {parseCommand} from '../src/core/commands.js';
@@ -18,7 +19,7 @@ async function fixture(t:any,overrides:Partial<HarnessPort>={}){
   const runs:InboundMessage[][]=[];const sent:string[]=[];const assets=new Assets(store),media=new MediaService(store,assets);
   const harness:HarnessPort={run:async(binding,messages)=>{runs.push(messages);binding.persisted=true;store.updateSession(binding);return{turnId:`turn-${runs.length}`,outputs:[],snapshot:freezeTurn(store.effectiveConfig(binding),store.bot('one'),binding.scope,messages.map(m=>m.id))};},cancel:()=>{},dispose:async()=>{},validateModel:async config=>{if(config.model?.model==='bad')throw Error('BAD_MODEL');},inspectSession:async()=>{},models:async()=>[{provider:'ProviderA',model:'ModelCase'}],...overrides};
   const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async()=>Buffer.from('media'),send:async(_b,_c,d)=>{sent.push(d.output.text??'asset');return'receipt';}};
-  const runtime=new BotRuntime(store,assets,media,harness,{qq:adapter,weixin:adapter},{read:async()=>({accountId:'one'}),write:async()=>{},remove:async()=>{}},60000);
+  const runtime=new BotRuntime(store,assets,media,harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),{read:async()=>({accountId:'one'}),write:async()=>{},remove:async()=>{}},60000);
   t.after(async()=>{await runtime.close();store.close();await rm(home,{recursive:true,force:true});});return{store,runtime,harness,runs,sent,media,assets};
 }
 

@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import type { HarnessPort } from './runtime-ports.js';
 import type { CallerScope, InboundMessage, Output, SessionBinding } from './types.js';
 import type { Store } from './store.js';
 import { scopeKey } from './store.js';

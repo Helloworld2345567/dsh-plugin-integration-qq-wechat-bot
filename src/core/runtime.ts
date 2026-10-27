@@ -1,6 +1,6 @@
 import { Store, scopeKey } from './store.js';
 import { Assets, MediaService } from './media.js';
-import type { BotConfig, BotInstance, ChannelAdapter, Credential, InboundMessage, SessionBinding, Output, TurnSnapshot, CallerScope } from './types.js';
+import type { BotConfig, BotInstance, InboundMessage, SessionBinding, Output, TurnSnapshot, CallerScope } from './types.js';
 import {randomUUID} from 'node:crypto';
 import {permissionsRevoked,trusted} from './policy.js';
 import {analysisEnabled} from './analysis.js';
@@ -8,16 +8,12 @@ import {botSchema,modelSchema,skillNameSchema} from './types.js';
 import {validateWorkingDirectory} from './workspaces.js';
 import {parseCommand,unescapeChat,commandHelp,type ParsedCommand} from './commands.js';
 import {parseNaturalControl} from './natural-commands.js';
-import {CommandBus,managementCommand} from './command-bus.js';
-import {registryFromLegacy,type ChannelRegistry} from './channel-registry.js';
+import {CommandBus,managementCommand,type CommandServices} from './command-bus.js';
+import type {ChannelRegistry} from './channel-registry.js';
 import {deferredSessionActionSchema,sameSessionAction,sameSources,type DeferredSessionAction,type SessionActionRecord} from './session-actions.js';
 import {validateBatch,INPUT_LIMITS} from './limits.js';
 import {DurableDeliveryWorker,type DeliveryWorker} from './delivery-worker.js';
 import {DurableConnectionSupervisor,type ConnectionSupervisor} from './connection-supervisor.js';
-import {RuntimeTurnCoordinator,type TurnCoordinator} from './turn-coordinator.js';
-import {RuntimeCommandDispatcher,type CommandDispatcher} from './command-dispatcher.js';
-import {RuntimeSessionActionExecutor,type SessionActionExecutor} from './session-action-executor.js';
-import {RuntimeLifecycleFacade,type RuntimeLifecycle} from './runtime-lifecycle.js';
 import type {ProcessingFailure} from './failure-context.js';
 import {AutomationScheduler,type AutomationKind} from './automation.js';
 
@@ -28,19 +24,10 @@ function modelFailureCode(error:unknown):string {
 
 export type {HarnessResult,HarnessPort,Credentials} from './runtime-ports.js';
 import type {HarnessPort,Credentials} from './runtime-ports.js';
-export interface CommandServices {
-  skills?:{list(binding:SessionBinding):Promise<string>;toggle(binding:SessionBinding,name:string,enabled:boolean,authorize?:()=>void):Promise<string>;reload(binding:SessionBinding):Promise<string>};
-  evolution?:{request(binding:SessionBinding,goal:string):Promise<string>;status(binding:SessionBinding,id?:string):Promise<string>;history(binding:SessionBinding):Promise<string>;rollback(binding:SessionBinding,id:string):Promise<string>;restart(binding:SessionBinding):Promise<string>};
-  stats?:(binding:SessionBinding,args:string)=>Promise<string>;
-  automation?:{proactive(binding:SessionBinding,action:'on'|'off'|'status'|'now'|'set',args:string):Promise<string>;schedule(binding:SessionBinding,action:'list'|'create'|'pause'|'resume'|'run'|'delete',args:string):Promise<string>};
-}
+export type {CommandServices} from './command-bus.js';
 export class BotRuntime {
   readonly states=new Map<string,string>();
   readonly connectionSupervisor:ConnectionSupervisor;
-  readonly turnCoordinator:TurnCoordinator;
-  readonly commandDispatcher:CommandDispatcher;
-  readonly sessionActionExecutor:SessionActionExecutor;
-  readonly lifecycle:RuntimeLifecycle;
   private readonly timers=new Map<string,ReturnType<typeof setTimeout>>();
   private readonly processing=new Map<string,{controller:AbortController;sessionId:string;sourceIds:string[];done:Promise<void>}>();
   readonly deliveryWorker:DeliveryWorker;
@@ -51,8 +38,6 @@ export class BotRuntime {
   commandServices:CommandServices={};
   readonly commandBus:CommandBus;
   readonly automation:AutomationScheduler;
-  readonly channels:ChannelRegistry;
-  private readonly strictChannels:boolean;
   private quiescing=false;
   private closed=false;
   private readonly owner=randomUUID();
@@ -68,8 +53,8 @@ export class BotRuntime {
   models(){return this.harness.models?this.harness.models():Promise.resolve([]);}
   sessionStatus(scope:CallerScope):'waiting_upgrade'|'compacting'|'running'|'idle'{const key=scopeKey(scope);return this.quiescing?'waiting_upgrade':this.maintenance.has(key)?'compacting':this.processing.has(key)||this.store.sessionActions<SessionActionRecord>().some(r=>r.scopeKey===key&&r.state==='running')?'running':'idle';}
   health():{ready:true;quiescing:boolean;activeTasks:number;pendingDeliveries:number;pendingSessionActions:number;connections:Record<string,string>;latency:{inboxToModel:{count:number;p50:number|null;p95:number|null;max:number|null};inboxToSent:{count:number;p50:number|null;p95:number|null;max:number|null}}}{return{ready:true,quiescing:this.quiescing,activeTasks:this.processing.size+this.maintenance.size+this.controls.size,pendingDeliveries:this.store.deliveries(['pending','sending']).length,pendingSessionActions:this.store.sessionActions<SessionActionRecord>().filter(r=>r.state==='queued').length,connections:Object.fromEntries(this.states),latency:{inboxToModel:this.store.metricPercentiles('modelStartedAt'),inboxToSent:this.store.metricPercentiles('sentAt')}};}
-  constructor(readonly store:Store,readonly assets:Assets,readonly media:MediaService,readonly harness:HarnessPort,readonly adapters:Readonly<Record<string,ChannelAdapter>>,readonly credentials:Credentials,readonly debounceMs=2000,readonly turnTimeoutMs=0,channels?:ChannelRegistry){
-    this.strictChannels=!!channels;this.channels=channels??registryFromLegacy(adapters);this.connectionSupervisor=new DurableConnectionSupervisor(store,this.channels,credentials,this.states,message=>this.receive(message));this.deliveryWorker=new DurableDeliveryWorker(store,this.channels,credentials);this.turnCoordinator=new RuntimeTurnCoordinator(this as any);this.commandDispatcher=new RuntimeCommandDispatcher(this as any);this.sessionActionExecutor=new RuntimeSessionActionExecutor(this as any);this.lifecycle=new RuntimeLifecycleFacade(this);this.commandBus=new CommandBus(this);this.automation=new AutomationScheduler(store,{runPrompt:(binding,prompt,kind,signal)=>this.runAutomationPrompt(binding,prompt,kind,signal),flush:()=>this.flushDeliveries()});this.commandServices.automation={proactive:(binding,action,args)=>this.automationCommand(binding,action,args),schedule:(binding,action,args)=>this.scheduleCommand(binding,action,args)};
+  constructor(readonly store:Store,readonly assets:Assets,readonly media:MediaService,readonly harness:HarnessPort,readonly channels:ChannelRegistry,readonly credentials:Credentials,readonly debounceMs=2000,readonly turnTimeoutMs=0){
+    this.connectionSupervisor=new DurableConnectionSupervisor(store,this.channels,credentials,this.states,message=>this.receive(message));this.deliveryWorker=new DurableDeliveryWorker(store,this.channels,credentials);this.commandBus=new CommandBus(this);this.automation=new AutomationScheduler(store,{runPrompt:(binding,prompt,kind,signal)=>this.runAutomationPrompt(binding,prompt,kind,signal),flush:()=>this.flushDeliveries()});this.commandServices.automation={proactive:(binding,action,args)=>this.automationCommand(binding,action,args),schedule:(binding,action,args)=>this.scheduleCommand(binding,action,args)};
   }
   async initialize():Promise<void>{
     this.store.claimRuntime(this.owner);this.claimed=true;this.store.recover();
@@ -90,7 +75,7 @@ export class BotRuntime {
     const saved=this.store.saveConfig(file.config,file.config.revision,file.digest);
     this.recheckPermissions();return saved;
   }
-  saveBot(input:unknown):BotInstance{const candidate=botSchema.parse(input);if(this.strictChannels)this.channels.require(candidate.channel);let previous:BotInstance|undefined;try{previous=this.store.bot(candidate.id);}catch{}if(previous&&(previous.accountId!==candidate.accountId||previous.channel!==candidate.channel))throw new Error('已有机器人的渠道身份不可修改；请创建新机器人');if(candidate.workingDirectory)validateWorkingDirectory(candidate.workingDirectory);const next=this.store.saveBot(candidate);this.recheckPermissions();return next;}
+  saveBot(input:unknown):BotInstance{const candidate=botSchema.parse(input);this.channels.require(candidate.channel);let previous:BotInstance|undefined;try{previous=this.store.bot(candidate.id);}catch{}if(previous&&(previous.accountId!==candidate.accountId||previous.channel!==candidate.channel))throw new Error('已有机器人的渠道身份不可修改；请创建新机器人');if(candidate.workingDirectory)validateWorkingDirectory(candidate.workingDirectory);const next=this.store.saveBot(candidate);this.recheckPermissions();return next;}
   private recheckPermissions():void{
     this.harness.recheckPermissions?.();
     // A changed policy cancels in-flight work; new privileges still wait for the next frozen turn.
@@ -100,6 +85,8 @@ export class BotRuntime {
   async start(botId:string):Promise<void>{await this.connectionSupervisor.start(botId);}
   async stop(botId:string):Promise<void>{
     const bot=this.store.bot(botId);this.store.saveBot({...bot,enabled:false});
+    this.deliveryWorker.cancelBot(botId);
+    for(const d of this.store.deliveries(['pending']))if(d.botId===botId)this.store.deliveryState(d,'cancelled');
     for(const key of new Set(this.store.sessionActions<SessionActionRecord>().filter(r=>r.scope.botId===botId).map(r=>r.scopeKey)))this.cancelSessionActions(key,'机器人已停用，会话操作已取消。');
     this.recheckPermissions();
     await this.connectionSupervisor.disconnect(botId);
@@ -108,7 +95,6 @@ export class BotRuntime {
     for(const [key,task] of this.processing){const binding=this.store.findBinding(key);if(binding?.scope.botId===botId){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}}
     for(const [key,task] of this.maintenance){const binding=this.store.findBinding(key);if(binding?.scope.botId===botId){task.controller.abort();this.harness.cancel(task.sessionId);}}
     for(const key of this.store.scopesWithPending(['pending','deferred','control'])){const messages=this.store.messages(key,['pending','deferred','control']);if(messages[0]?.scope.botId===botId)this.store.mark(key,messages.map(m=>m.id),'cancelled');}
-    for(const d of this.store.deliveries(['pending']))if(d.botId===botId)this.store.deliveryState(d,'cancelled');
     await Promise.all([...this.processing.entries(),...this.maintenance.entries()].filter(([key])=>this.store.findBinding(key)?.scope.botId===botId).map(([,p])=>p.done.catch(()=>{})));this.states.set(botId,'stopped');
   }
   async receive(message:InboundMessage):Promise<void>{
@@ -116,7 +102,7 @@ export class BotRuntime {
     if(!message.id||!message.scope.senderId||!message.scope.channelId)throw new Error('INVALID_CHANNEL_IDENTITY');
     const key=scopeKey(message.scope);if(!this.store.accept(message))return;
     const command=this.inboundCommand(message);
-    if(command){this.store.mark(key,[message.id],'control');if(!this.quiescing||(command.name==='stop'&&(this.busy(key)||this.store.sessionActions<SessionActionRecord>().some(action=>action.scopeKey===key&&['queued','running'].includes(action.state)))))await this.commandDispatcher.dispatch(message,command);return;}
+    if(command){this.store.mark(key,[message.id],'control');if(!this.quiescing||(command.name==='stop'&&(this.busy(key)||this.store.sessionActions<SessionActionRecord>().some(action=>action.scopeKey===key&&['queued','running'].includes(action.state)))))await this.dispatchCommand(message,command);return;}
     const escaped=unescapeChat(message.text);if(escaped!==message.text){message={...message,text:escaped};this.store.updateMessage(key,message);}
     const stripped=message.text.trim();const onlyUrl=/^https?:\/\/\S+$/.test(stripped);const hold=/(?:先别|不要|暂不|等我).*(?:分析|处理|指令)/.test(stripped);
     if(hold||onlyUrl||(!stripped&&message.attachments.length>0&&message.attachments.every(a=>a.kind==='video'||a.kind==='file'))){this.store.mark(key,[message.id],'deferred');return;}
@@ -264,20 +250,11 @@ export class BotRuntime {
     return undefined;
   }
   private inboundCommand(message:InboundMessage):ParsedCommand|undefined{return parseCommand(message.text)??(message.text.trimStart().startsWith('//')?undefined:parseNaturalControl(message.text));}
-  resumeCommands():void{for(const key of this.store.scopesWithPending(['control']))for(const message of this.store.messages(key,['control'])){const command=this.inboundCommand(message);if(command)void this.commandDispatcher.dispatch(message,command);}}
-  controlActive(scopeKey:string):boolean{return this.controls.has(scopeKey);}
+  resumeCommands():void{for(const key of this.store.scopesWithPending(['control']))for(const message of this.store.messages(key,['control'])){const command=this.inboundCommand(message);if(command)void this.dispatchCommand(message,command);}}
   async drainControls():Promise<void>{await Promise.all([...this.controls.values()].map(task=>task.catch(()=>{})));}
   pauseProcessing():void{this.quiescing=true;for(const timer of this.timers.values())clearTimeout(timer);this.timers.clear();}
-  notifyTurn(scopeKey:string):void{this.schedule(scopeKey);}
-  runTurn(scopeKey:string):Promise<void>{return this.process(scopeKey);}
-  cancelTurn(scopeKey:string):void{const binding=this.store.findBinding(scopeKey);if(binding){this.processing.get(scopeKey)?.controller.abort();this.maintenance.get(scopeKey)?.controller.abort();this.harness.cancel(binding.sessionId);this.media.cancelScope(scopeKey);}}
-  turnBusy(scopeKey:string):boolean{return this.processing.has(scopeKey)||this.maintenance.has(scopeKey);}
-  turnActivity(){return{active:this.processing.size,maintenance:this.maintenance.size,pendingTimers:this.timers.size};}
-  async drainTurns():Promise<void>{await Promise.all([...this.processing.values(),...this.maintenance.values()].map(task=>task.done.catch(()=>{})));}
-  async closeTurns():Promise<void>{for(const timer of this.timers.values())clearTimeout(timer);this.timers.clear();for(const [key,task] of [...this.processing.entries(),...this.maintenance.entries()]){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}await this.drainTurns();}
-  async quiesce():Promise<void>{this.pauseProcessing();for(;;){await this.commandDispatcher.drain();await this.drainTurns();await this.harness.drain?.();await this.flushDeliveries();await this.deliveryWorker.drain();if(!this.controls.size&&!this.processing.size&&!this.maintenance.size&&!this.deliveryWorker.activity().activeLanes)return;}}
+  async quiesce():Promise<void>{this.pauseProcessing();for(;;){await this.drainControls();await Promise.all([...this.processing.values(),...this.maintenance.values()].map(task=>task.done.catch(()=>{})));await this.harness.drain?.();await this.flushDeliveries();await this.deliveryWorker.drain();if(!this.controls.size&&!this.processing.size&&!this.maintenance.size&&!this.deliveryWorker.activity().activeLanes)return;}}
   resumeProcessing():void{this.quiescing=false;this.resumeCommands();this.resumeSessionActions();for(const key of this.store.scopesWithPending())this.schedule(key);void this.flushDeliveries();}
-  resume():void{this.resumeProcessing();}
   private schedule(key:string):void{if(this.closed||this.quiescing)return;const previous=this.timers.get(key);if(previous)clearTimeout(previous);this.timers.set(key,setTimeout(()=>{this.timers.delete(key);void this.process(key);},this.debounceMs));}
   async process(key:string):Promise<void>{
     if(this.closed||this.quiescing||this.busy(key)||this.controls.has(key))return;
@@ -361,7 +338,6 @@ export class BotRuntime {
     if(action==='create'){let delayMs:number|undefined,prompt='执行定时任务并报告结果',timezone='Asia/Shanghai';try{const value=JSON.parse(args);if(value&&Number.isSafeInteger(value.delayMs))delayMs=value.delayMs;if(typeof value?.prompt==='string'&&value.prompt.trim())prompt=value.prompt.trim();if(typeof value?.timezone==='string'&&value.timezone)timezone=value.timezone;}catch{const match=/^(\d+)(?:\s+([\s\S]+))?$/.exec(args);if(match){delayMs=Number(match[1]);prompt=match[2]??prompt;}}if(delayMs===undefined||delayMs<1000)throw Error('用法：/schedule create <延迟毫秒> <任务提示词>');const job=this.automation.createJob(binding.scope,prompt,{runAt:Date.now()+delayMs,timezone});return`定时任务已创建：${job.id}`;}
     const id=args.trim();if(!id)throw Error('需要任务 ID');const job=this.automation.listJobs().find(item=>item.id===id&&item.scopeKey===binding.key);if(!job)throw Error('定时任务不存在');if(action==='pause'||action==='resume'){this.automation.setJob(id,action==='resume');return`定时任务已${action==='resume'?'恢复':'暂停'}。`;}if(action==='delete'){this.automation.deleteJob(id);return'定时任务已删除。';}if(action==='run'){const run=await this.automation.runJob(job);return`定时任务运行结果：${run.state}`;}return'用法：/schedule list|create|pause|resume|run|delete';
   }
-  private async flushBot(botId:string):Promise<void>{return this.deliveryWorker.flush({botId});}
-  async close():Promise<void>{this.closed=true;this.automation.close();for(const timer of this.timers.values())clearTimeout(timer);await this.deliveryWorker.close();for(const [key,task] of [...this.processing.entries(),...this.maintenance.entries()]){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}await this.connectionSupervisor.disconnectAll();await Promise.all([...this.processing.values(),...this.maintenance.values()].map(p=>p.done.catch(()=>{})));await this.commandDispatcher.drain();await this.deliveryWorker.drain();for(const signal of this.sessionActionSignals.values())signal.dispose();this.sessionActionSignals.clear();await this.harness.dispose();if(this.claimed){this.store.releaseRuntime(this.owner);this.claimed=false;}}
+  async close():Promise<void>{this.closed=true;this.automation.close();for(const timer of this.timers.values())clearTimeout(timer);await this.deliveryWorker.close();for(const [key,task] of [...this.processing.entries(),...this.maintenance.entries()]){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}await this.connectionSupervisor.disconnectAll();await Promise.all([...this.processing.values(),...this.maintenance.values()].map(p=>p.done.catch(()=>{})));await this.drainControls();await this.deliveryWorker.drain();for(const signal of this.sessionActionSignals.values())signal.dispose();this.sessionActionSignals.clear();await this.harness.dispose();if(this.claimed){this.store.releaseRuntime(this.owner);this.claimed=false;}}
 }
 

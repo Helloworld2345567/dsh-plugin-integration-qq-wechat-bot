@@ -1,4 +1,4 @@
-import type {BotInstance,ChannelAdapter,Credential} from './types.js';
+import type {Credential} from './types.js';
 import type {ChannelRegistry} from './channel-registry.js';
 import type {Credentials} from './runtime-ports.js';
 import type {Store} from './store.js';

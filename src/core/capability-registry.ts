@@ -66,7 +66,7 @@ export class CapabilityRegistry {
     });
   }
 
-  private async runLimited<Arguments, Result>(key: string, limit: number, descriptor: CapabilityDescriptor<Arguments, Result>, arguments_: Arguments, context: CapabilityContext): Promise<Result> {
+  private async runLimited<Arguments, Result>(key: string, _limit: number, descriptor: CapabilityDescriptor<Arguments, Result>, arguments_: Arguments, context: CapabilityContext): Promise<Result> {
     this.active.set(key, (this.active.get(key) ?? 0) + 1);
     try { context.signal.throwIfAborted(); return await descriptor.execute(arguments_, context); }
     finally {

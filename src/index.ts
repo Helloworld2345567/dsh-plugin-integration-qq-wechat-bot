@@ -13,7 +13,7 @@ import { NativeHarness,type HarnessExtensions } from './harness/bridge.js';
 import { Admin } from './harness/admin.js';
 import { QQAdapter,qqChannel } from './channels/qq.js';
 import { WeixinAdapter,weixinChannel } from './channels/weixin.js';
-import {createChannelRegistry,legacyChannelAdapters} from './core/channel-registry.js';
+import {createChannelRegistry} from './core/channel-registry.js';
 import {HarnessMediaProvider} from './harness/media-provider.js';
 import {ProcessWorker} from './harness/process-worker.js';
 import {BotFeatures} from './core/features.js';
@@ -36,7 +36,7 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
   };
   const extensions:HarnessExtensions={};const harness=new NativeHarness(ctx,store,assets,media,extensions);let disposeMode;try{disposeMode=await harness.registerMode();}catch(error){store.close();throw error;}
   const channels=createChannelRegistry([qqChannel(new QQAdapter(undefined,{emit:event=>extensions.stats?.observeGroup({botId:event.botId,groupId:event.groupId,name:event.name,event:event.type==='group.joined'?'joined':event.type==='group.left'?'left':'observed',at:event.at,eventId:event.eventId})})),weixinChannel(new WeixinAdapter(store.cursorStore()))]);
-  const runtime=new BotRuntime(store,assets,media,harness,legacyChannelAdapters(channels),credentials,config.debounceMs,undefined,channels);
+  const runtime=new BotRuntime(store,assets,media,harness,channels,credentials,config.debounceMs);
   const features=new BotFeatures(runtime,createLifecyclePort());extensions.stats=features.stats;extensions.model=(binding,snapshot,args,signal)=>features.model(binding,snapshot,args,signal);extensions.evolve=(binding,snapshot,args,signal)=>features.execute(binding,snapshot,args,signal);
   extensions.management=new BotManagement(runtime,features);
   const token=randomBytes(32).toString('base64url');const admin=new Admin(ctx,runtime,token,undefined,features);

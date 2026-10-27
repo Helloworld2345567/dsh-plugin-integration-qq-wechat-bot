@@ -5,14 +5,14 @@ import QRCode from 'qrcode';
 import type { Context } from '@deepseek-ai/cordis';
 import type { BotRuntime } from '../core/runtime.js';
 import { ConflictError } from '../core/store.js';
-import type { BotInstance, LoginState, Delivery } from '../core/types.js';
+import type { Delivery } from '../core/types.js';
 import type {} from '@deepseek-ai/dsh-session-query';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import {resolveImageSkill,imageSkillEnabled} from '../core/image-skill.js';
 import {defaultWorkspaceRoot,workingDirectory} from '../core/workspaces.js';
 import {openDirectory} from './open-directory.js';
 import type {BotFeatures} from '../core/features.js';
-import {adminCommandRequestSchema,adminQueryRequestSchema,type AdminSummaryData,type VersionedAdminResult,versioned,ADMIN_CONTRACT_VERSION} from './admin-contract.js';
+import {adminCommandRequestSchema,adminQueryRequestSchema,type AdminSummaryData,versioned,ADMIN_CONTRACT_VERSION} from './admin-contract.js';
 
 function publicDelivery(delivery:Delivery):Omit<Delivery,'reply'|'replyEnvelope'> & {attempt?:Pick<NonNullable<Delivery['attempt']>,'number'|'phase'|'assetId'|'startedAt'|'lastError'>} {
   const {reply:_reply,replyEnvelope:_replyEnvelope,attempt,...rest}=delivery;
@@ -37,7 +37,7 @@ export class Admin {
     if(value.name==='bots.list'){const bots=await Promise.all(store.bots().map(async bot=>({...bot,status:this.runtime.states.get(bot.id)??'stopped',activeSessions:this.runtime.activeSessions(bot.id),credentialConfigured:!!await this.runtime.credentials.read(bot.id)})));return versioned(bots,value.input.changedSince);}
     if(value.name==='overview.sessions'){const page=store.pageSessions({},value.input.limit,value.input.cursor);return{...page,contractVersion:ADMIN_CONTRACT_VERSION,items:page.items.map(row=>({id:row.id,scopeKey:row.scopeKey,botId:row.scope.botId,platform:row.scope.platform,kind:row.scope.kind,channelId:row.scope.channelId,senderId:row.scope.senderId,generation:row.generation,persisted:row.persisted,createdAt:row.createdAt,updatedAt:row.updatedAt,personaId:row.personaId})),hasMore:page.nextCursor!==null};}
     if(value.name==='automation.list')return versioned({scopes:store.bindings().filter(binding=>binding.scope.kind==='private').map(binding=>({scopeKey:binding.key,botId:binding.scope.botId,configId:store.bot(binding.scope.botId).configId,channelId:binding.scope.channelId,senderId:binding.scope.senderId})),proactive:this.runtime.automation.listProactive(),scheduled:this.runtime.automation.listJobs()},value.input.changedSince);
-    const page=store.deliveryRepository().pageDeliveries({filter:{scopeKey:value.input.scopeKey},limit:value.input.limit,cursor:value.input.cursor});return{...page,contractVersion:ADMIN_CONTRACT_VERSION,items:page.items.map(publicDelivery),hasMore:page.nextCursor!==null};
+    const page=store.deliveryRepository().pageDeliveries({filter:{scopeKey:value.input.scopeKey},limit:value.input.limit,cursor:value.input.cursor});return{...page,contractVersion:ADMIN_CONTRACT_VERSION,items:page.items.map((row:Delivery)=>publicDelivery(row)),hasMore:page.nextCursor!==null};
   }
   async command(request:unknown):Promise<unknown>{const value=adminCommandRequestSchema.parse(request);return this.invoke(value.name,value.input);}
   async invoke(action:string,input:any):Promise<unknown>{
@@ -56,13 +56,7 @@ export class Admin {
       case 'skill.media.status':return Object.fromEntries(await Promise.all(store.configs().map(async config=>[config.id,Object.fromEntries(await Promise.all((['asr','video'] as const).map(async role=>[role,await this.runtime.media.analysisStatus(config,role)])))])));
       case 'skill.voice.status':return Object.fromEntries(await Promise.all(store.configs().map(async config=>{
         const options=config.media.voice;const provider=options?.provider??config.model?.provider;const model=options?.model??config.model?.model;
-        // A provider-specific resolver may expose richer readiness details;
-        // keep this endpoint redacted and usable while it is unavailable.
-        const resolver=(this.runtime.media as any)?.voiceStatus;
-        if(typeof resolver==='function')return [config.id,await resolver.call(this.runtime.media,config)];
-        const analysisStatus=(this.runtime.media as any)?.analysisStatus;
-        if(typeof analysisStatus==='function')return [config.id,{...(await analysisStatus.call(this.runtime.media,config,'tts')),voice:options?.voice,format:options?.format??'mp3'}];
-        return [config.id,{enabled:options?.enabled===true,provider,model,voice:options?.voice,format:options?.format??'mp3',keyConfigured:options?.enabled===true&&!!provider&&!!model}];
+        return [config.id,{...(await this.runtime.media.analysisStatus(config,'tts')),provider,model,voice:options?.voice,format:options?.format??'mp3'}];
       })));
       case 'capability.list':return store.capabilityStatuses();
       case 'capability.record':{const value=z.object({configId:z.string(),revision:z.number().int(),role:z.enum(['image','asr','video','voice']),status:z.enum(['PASS','FAIL','BLOCKED','NOT_RUN']),evidence:z.string().min(1).max(2000)}).parse(input);const config=store.config(value.configId);if(config.revision!==value.revision)throw new ConflictError('配置已变化，请针对当前版本重新验收');const record={...value,updatedAt:Date.now(),source:'operator'};store.saveCapabilityStatus(`${value.configId}:${value.revision}:${value.role}`,record);return record;}

@@ -5,6 +5,7 @@ import path from 'node:path';
 import {Store,scopeKey} from '../src/core/store.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {BotRuntime,type HarnessPort} from '../src/core/runtime.js';
+import {createChannelRegistry} from '../src/core/channel-registry.js';
 import {botSchema,type CallerScope,type InboundMessage,type ChannelAdapter} from '../src/core/types.js';
 import {recentFailureContext} from '../src/core/failure-context.js';
 import {freezeTurn} from '../src/core/policy.js';
@@ -16,7 +17,7 @@ test('attachment download failure sends an explicit durable failure instead of s
   const message:InboundMessage={id:'new-reference',scope,text:'参考此图生成图片，将人物换成你',attachments:[{kind:'image',name:'reference.jpg',mime:'image/jpeg',url:'https://example.invalid/image'}],reply:{target:'alice'},timestamp:Date.now()};
   const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async()=>{throw Error('Invalid IP address: undefined');},send:async(_bot,_credential,delivery)=>{sent.push(delivery.output.text!);return'receipt';}};
   const harness:HarnessPort={run:async()=>{calls++;throw Error('model must not run');},cancel:()=>{},dispose:async()=>{},validateModel:async()=>{}};
-  const assets=new Assets(store);const runtime=new BotRuntime(store,assets,new MediaService(store,assets),harness,{qq:adapter,weixin:adapter},{read:async()=>({accountId:'one'}),write:async()=>{},remove:async()=>{}},60000);
+  const assets=new Assets(store);const runtime=new BotRuntime(store,assets,new MediaService(store,assets),harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),{read:async()=>({accountId:'one'}),write:async()=>{},remove:async()=>{}},60000);
   t.after(async()=>{await runtime.close();store.close();await rm(root,{recursive:true,force:true});});
   await runtime.receive(message);await runtime.process(scopeKey(scope));
   assert.equal(calls,0);assert.equal(sent.length,1,'the failed image request must not disappear without feedback');
@@ -38,7 +39,7 @@ test('model provider failures preserve an actionable error code in the user-faci
   const message:InboundMessage={id:'model-failure',scope,text:'为什么没有回复',attachments:[],reply:{target:'alice'},timestamp:Date.now()};
   const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async()=>Buffer.from(''),send:async(_bot,_credential,delivery)=>{sent.push(delivery.output.text!);return'receipt';}};
   const harness:HarnessPort={run:async()=>{throw Error('INVALID_REQUEST: upstream model rejected the request');},cancel:()=>{},dispose:async()=>{},validateModel:async()=>{}};
-  const assets=new Assets(store);const runtime=new BotRuntime(store,assets,new MediaService(store,assets),harness,{qq:adapter,weixin:adapter},{read:async()=>({accountId:'one'}),write:async()=>{},remove:async()=>{}},0);
+  const assets=new Assets(store);const runtime=new BotRuntime(store,assets,new MediaService(store,assets),harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),{read:async()=>({accountId:'one'}),write:async()=>{},remove:async()=>{}},0);
   t.after(async()=>{await runtime.close();store.close();await rm(root,{recursive:true,force:true});});
   await runtime.receive(message);await runtime.process(scopeKey(scope));
   assert.equal(sent.length,1);assert.match(sent[0],/模型请求失败/);assert.match(sent[0],/INVALID_REQUEST/);assert.match(sent[0],/重置模型/);
@@ -54,7 +55,7 @@ test('another bot credential failure cannot relabel a completed request or its a
   let acceptOwn!:()=>void;const ownAccepted=new Promise<void>(resolve=>acceptOwn=resolve);const sent:string[]=[];
   const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async()=>{throw Error('unused');},send:async(bot)=>{sent.push(bot.id);acceptOwn();return'accepted-receipt';}};
   const harness:HarnessPort={run:async(binding,messages)=>({turnId:'successful-turn',outputs:[{type:'text',text:'accepted reply'}],snapshot:freezeTurn(store.effectiveConfig(binding),store.bot('good'),scope,messages.map(m=>m.id))}),cancel:()=>{},dispose:async()=>{},validateModel:async()=>{}};
-  const runtime=new BotRuntime(store,assets,new MediaService(store,assets),harness,{qq:adapter,weixin:adapter},{read:async id=>{if(id==='bad'){await ownAccepted;await new Promise<void>(resolve=>setImmediate(resolve));throw Error('OTHER_BOT_CREDENTIAL_FAILURE');}return{accountId:id};},write:async()=>{},remove:async()=>{}},60000);
+  const runtime=new BotRuntime(store,assets,new MediaService(store,assets),harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),{read:async id=>{if(id==='bad'){await ownAccepted;await new Promise<void>(resolve=>setImmediate(resolve));throw Error('OTHER_BOT_CREDENTIAL_FAILURE');}return{accountId:id};},write:async()=>{},remove:async()=>{}},60000);
   t.after(async()=>{await runtime.close();store.close();await rm(root,{recursive:true,force:true});});
   await runtime.receive(message);await runtime.process(scopeKey(scope));
   assert.deepEqual(sent,['good']);assert.equal(store.deliveries(['sent'])[0].receipt,'accepted-receipt');

@@ -10,6 +10,7 @@ import {Assets,MediaService} from '../src/core/media.js';
 import {botSchema,configSchema,type BotConfig} from '../src/core/types.js';
 import {freezeTurn,allowedNow} from '../src/core/policy.js';
 import {Admin} from '../src/harness/admin.js';
+import {fixtureChannels} from './test-channel.js';
 
 function fixture(t:any){
   const root=mkdtempSync(path.resolve('.codex/personas-test-'));const home=path.join(root,'storages','bot-integration');const store=new Store(home);
@@ -18,12 +19,13 @@ function fixture(t:any){
   const settings=()=>JSON.parse(readFileSync(path.join(folder,'config.json'),'utf8'));
   const edit=(patch:any)=>writeFileSync(path.join(folder,'config.json'),JSON.stringify({...settings(),...patch},null,2));
   const assets=new Assets(store);let validations=0,cancellations=0;let validate:((c:BotConfig)=>Promise<void>)|undefined;
-  const runtime=new BotRuntime(store,assets,new MediaService(store,assets),{run:async()=>{throw Error('unused');},cancel:()=>{},dispose:async()=>{},validateModel:async c=>{validations++;if(c.model?.model==='invalid')throw Error('UNKNOWN_MODEL');await validate?.(c);},recheckPermissions:()=>{cancellations++;}},{} as any,{} as any);
+  const adapter={beginLogin:async()=>({status:'pending' as const}),pollLogin:async()=>({status:'expired' as const}),connect:async()=>{},materialize:async()=>Buffer.alloc(0),send:async()=> 'receipt'};
+  const runtime=new BotRuntime(store,assets,new MediaService(store,assets),{run:async()=>{throw Error('unused');},cancel:()=>{},dispose:async()=>{},validateModel:async c=>{validations++;if(c.model?.model==='invalid')throw Error('UNKNOWN_MODEL');await validate?.(c);},recheckPermissions:()=>{cancellations++;}},fixtureChannels(adapter),{} as any);
   t.after(()=>runtime.close());
   return{root,home,store,folder,settings,edit,runtime,validations:()=>validations,cancellations:()=>cancellations,setValidate:(fn:(c:BotConfig)=>Promise<void>)=>{validate=fn;}};
 }
 
-test('existing applied configurations export once at the product root, preserving revisions, history and sessions',t=>{
+test('existing applied configurations export once at the product root, preserving revisions, history and sessions',_t=>{
   const root=mkdtempSync(path.resolve('.codex/personas-migration-'));const home=path.join(root,'storages','bot-integration');mkdirSync(home,{recursive:true});
   const original=configSchema.parse({id:'sakura',name:'迁移人设',revision:9,personaPrompt:'原始人设\n第二行',model:{provider:'fixture',model:'chat'},tools:['web_search']});
   const db=new DatabaseSync(path.join(home,'bots.sqlite'));db.exec('CREATE TABLE records(kind TEXT,id TEXT,json TEXT,PRIMARY KEY(kind,id))');

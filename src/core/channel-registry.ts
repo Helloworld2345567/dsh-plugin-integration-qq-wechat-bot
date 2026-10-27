@@ -30,9 +30,3 @@ export function createChannelRegistry(inputs:readonly ChannelDefinition[]):Chann
   for(const definition of definitions){if(map.has(definition.id))throw Error(`CHANNEL_ALREADY_REGISTERED: ${definition.id}`);map.set(definition.id,definition);}
   return Object.freeze({require(id:string){const result=map.get(id);if(!result)throw Error(`CHANNEL_NOT_REGISTERED: ${id}`);return result;},list(){return definitions;}});
 }
-export function legacyChannelAdapters(registry:ChannelRegistry):Readonly<Record<string,ChannelAdapter>> {
-  const result=Object.create(null) as Record<string,ChannelAdapter>;for(const definition of registry.list())result[definition.id]=definition.adapter;return Object.freeze(result);
-}
-export function registryFromLegacy(adapters:Readonly<Record<string,ChannelAdapter>>):ChannelRegistry {
-  return createChannelRegistry(Object.entries(adapters).map(([id,adapter])=>({id,displayName:id,adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}})));
-}

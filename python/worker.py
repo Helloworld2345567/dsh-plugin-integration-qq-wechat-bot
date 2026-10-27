@@ -75,9 +75,13 @@ def image(job):
         raise JobError("IMAGE_PROVIDER_FAILED")
     value = json.loads(record.read_text(encoding="utf-8"))
     # The canonical client records paths; never take a path from a model response.
-    files = value.get("outputs") or []
-    if not files or not all(isinstance(p, str) for p in files):
-        files = [str(p) for p in Path(job["output"]).glob("*.jpg")]
+    if "outputs" not in value:
+        raise JobError("IMAGE_OUTPUT_RECORD_MISSING")
+    files = value["outputs"]
+    if not isinstance(files, list) or not files:
+        raise JobError("IMAGE_OUTPUT_RECORD_INVALID")
+    if not all(isinstance(p, str) and p.strip() for p in files):
+        raise JobError("IMAGE_OUTPUT_RECORD_INVALID")
     if len(files) != 1:
         raise JobError("IMAGE_OUTPUT_COUNT_INVALID")
     return {"assets": [{"path": files[0], "name": "image.jpg", "mime": "image/jpeg", "kind": "image"}]}

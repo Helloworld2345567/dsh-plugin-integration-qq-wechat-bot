@@ -1,6 +1,6 @@
 import {skillOperationManifests, validateSkillSource} from './skill-operations.js';
 import {Buffer} from 'node:buffer';
-import type {InboundMessage, MediaInput} from './types.js';
+import type {InboundMessage} from './types.js';
 
 /** Hard caps are deliberately centralized so channel adapters, tools and workers share one contract. */
 export const INPUT_LIMITS = Object.freeze({

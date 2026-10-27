@@ -6,7 +6,6 @@ import fs from 'node:fs';
 import {syncBuiltinESMExports} from 'node:module';
 import {Store} from '../src/core/store.js';
 import {DynamicSkills} from '../src/core/skills.js';
-import {configSchema} from '../src/core/types.js';
 import {parseStatsArguments,renderStats} from '../src/core/features.js';
 import {StatsService} from '../src/core/stats.js';
 import {SqliteStatsData} from '../src/core/sqlite-stats-data.js';

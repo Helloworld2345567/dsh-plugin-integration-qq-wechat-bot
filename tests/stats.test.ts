@@ -26,6 +26,12 @@ test('native replay deduplicates and a retry opens a new metered attempt',async 
   stats.migrateLegacy();const result=stats.query();assert.equal(result.summary.calls,3);assert.equal(result.summary.unknownUsageCalls,1);assert.equal(result.summary.inputTokens,50);assert.equal(result.summary.outputTokens,10);assert.equal(result.summary.reasoningTokens,4);assert.equal(result.summary.knownTokens,70);
   assert.equal(result.models.find(m=>m.model==='actual-model')?.calls,2);assert.equal(result.models.find(m=>m.model==='requested')?.unknownUsageCalls,1);
 });
+test('duplicate native events add one fact and rebuild only once while recovering a missing projection',async t=>{
+  const {stats}=await fixture(t);stats.observeSession('counted','qq');let rebuilds=0;const replace=stats.data.projection.replaceUsageCalls.bind(stats.data.projection);stats.data.projection.replaceUsageCalls=(owner,calls)=>{rebuilds++;replace(owner,calls);};
+  const event={seq:1,time:now,type:'assistant/message',data:{turn:0,step:0,message:{source:{provider:'p',model:'m'}},usage:usage(2)}};
+  for(let i=0;i<10;i++)stats.recordNative('counted',event);assert.equal(rebuilds,1);
+  stats.data.projection.replaceUsageCalls('session:counted',[]);stats.recordNative('counted',event);assert.equal(rebuilds,3);
+});
 test('child, compaction and media attribution retain unknown usage without counting local work',async t=>{
   const {stats,store}=await fixture(t);stats.observeSession('child','qq','parent');
   stats.recordNative('child',{seq:1,time:now-10,type:'assistant/message',data:{turn:0,step:0,message:{source:{provider:'p',model:'child'}},usage:usage(1)}});

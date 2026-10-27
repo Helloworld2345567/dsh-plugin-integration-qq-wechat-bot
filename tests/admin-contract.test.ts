@@ -10,7 +10,7 @@ import {botSchema} from '../src/core/types.js';
 async function fixture(t:any){
   const home=await mkdtemp(path.resolve('.codex/admin-contract-'));const store=new Store(home,undefined,{secureDefaults:true});
   store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',enabled:true}));
-  const runtime:any={store,states:new Map([['bot','connected']]),activeSessions:()=>0,health:()=>({ready:true,quiescing:false,activeTasks:0,pendingDeliveries:0,pendingSessionActions:0,connections:{bot:'connected'},latency:{}}),credentials:{read:async()=>({accountId:'account'})}};
+  const runtime:any={store,states:new Map([['bot','connected']]),activeSessions:()=>0,health:()=>({ready:true,quiescing:false,activeTasks:0,pendingDeliveries:0,pendingSessionActions:0,connections:{bot:'connected'},latency:{}}),credentials:{read:async()=>({accountId:'account'})},media:{analysisStatus:async()=>({enabled:false,available:false})}};
   const admin=new Admin({} as any,runtime,'token',async()=>{});t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});return{store,admin};
 }
 

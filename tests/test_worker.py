@@ -176,6 +176,21 @@ class WorkerTests(unittest.TestCase):
             return Mock(returncode=0)
         with patch.object(worker.subprocess, 'run', side_effect=fake): self.assertEqual(len(worker.execute(job)['assets']), 1)
 
+    def test_image_requires_exact_output_record_without_directory_scan_fallback(self):
+        from PIL import Image
+        job = self.job('image_generate', prompt='recorded')
+        output = self.root / 'generated.jpg'; Image.new('RGB', (10, 10), 'blue').save(output)
+        def fake(command, **kwargs):
+            (self.root / 'image-result.json').write_text(json.dumps({'outputs': []}), encoding='utf-8')
+            return Mock(returncode=0)
+        with patch.object(worker.subprocess, 'run', side_effect=fake):
+            with self.assertRaisesRegex(worker.JobError, 'IMAGE_OUTPUT_RECORD_INVALID'): worker.execute(job)
+        def missing(command, **kwargs):
+            (self.root / 'image-result.json').write_text(json.dumps({'verdict': 'PASS'}), encoding='utf-8')
+            return Mock(returncode=0)
+        with patch.object(worker.subprocess, 'run', side_effect=missing):
+            with self.assertRaisesRegex(worker.JobError, 'IMAGE_OUTPUT_RECORD_MISSING'): worker.execute(job)
+
     def test_image_client_normalizes_jpeg_and_does_not_replay_paid_requests(self):
         from PIL import Image
         buf = io.BytesIO(); Image.new('RGBA', (12,12), (0,255,0,100)).save(buf, 'PNG')

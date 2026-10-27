@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {AutomationScheduler,chunkText} from '../src/core/automation.js';
-import {Store,scopeKey} from '../src/core/store.js';
+import {Store} from '../src/core/store.js';
 import {botSchema} from '../src/core/types.js';
 
 async function fixture(){const home=await mkdtemp(path.resolve('.codex/automation-'));const store=new Store(home);const scope={botId:'bot',platform:'qq',accountId:'account',kind:'private' as const,channelId:'user',senderId:'trusted'};store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',enabled:true,trustedUsers:['trusted']}));store.accept({id:'source',scope,text:'上次我们聊了旅行。',attachments:[],reply:{target:'user',kind:'private',msgId:'source'},timestamp:Date.now()-3600000});const calls:{prompt:string}[]=[];const scheduler=new AutomationScheduler(store,{runPrompt:async(_binding,prompt)=>{calls.push({prompt});return{turnId:'turn',outputs:[{type:'text',text:'这是一段主动消息。'}]};},flush:async()=>{}});return{home,store,scope,scheduler,calls};}
