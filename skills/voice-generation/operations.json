@@ -1,52 +1,6 @@
 {
   "skill": "voice-generation",
   "worker": "scripts/voice_api.py",
-  "permissionTool": "bot_voice",
-  "tool": {
-    "name": "bot_voice",
-    "description": "按用户明确要求生成并发送 AI 语音。mode=speak 为普通朗读，mode=chant 为轻量旋律化表达；不承诺完整歌曲、伴奏、翻唱或稳定音准。",
-    "parameters": {
-      "mode": {
-        "type": "string",
-        "enum": ["speak", "chant"]
-      },
-      "text": {
-        "type": "string",
-        "required": true
-      },
-      "voice": {
-        "type": "string"
-      },
-      "style": {
-        "type": "string"
-      },
-      "speed": {
-        "type": "number"
-      },
-      "format": {
-        "type": "string",
-        "enum": ["mp3", "wav"]
-      }
-    }
-  },
-  "defaults": {
-    "mode": "speak",
-    "format": "mp3"
-  },
-  "routes": [
-    {
-      "match": {
-        "mode": "speak"
-      },
-      "operation": "voice_speak"
-    },
-    {
-      "match": {
-        "mode": "chant"
-      },
-      "operation": "voice_chant"
-    }
-  ],
   "operations": [
     {
       "id": "voice_speak",
@@ -63,5 +17,63 @@
       "deliver": true
     }
   ],
-  "enabledRoles": ["tts"]
+  "tools": [
+    {
+      "tool": {
+        "name": "bot_voice",
+        "description": "按用户明确要求生成并发送 AI 语音。mode=speak 为普通朗读，mode=chant 为轻量旋律化表达；不承诺完整歌曲、伴奏、翻唱或稳定音准。",
+        "parameters": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "speak",
+              "chant"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "required": true
+          },
+          "voice": {
+            "type": "string"
+          },
+          "style": {
+            "type": "string"
+          },
+          "speed": {
+            "type": "number"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "mp3",
+              "wav"
+            ]
+          }
+        }
+      },
+      "defaults": {
+        "mode": "speak",
+        "format": "mp3"
+      },
+      "routes": [
+        {
+          "match": {
+            "mode": "speak"
+          },
+          "operation": "voice_speak"
+        },
+        {
+          "match": {
+            "mode": "chant"
+          },
+          "operation": "voice_chant"
+        }
+      ],
+      "enabledRoles": [
+        "tts"
+      ],
+      "permissionTool": "bot_voice"
+    }
+  ]
 }

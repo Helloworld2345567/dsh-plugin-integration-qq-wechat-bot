@@ -1,4 +1,4 @@
-import {skillOperationManifests, type SkillOperation} from './skill-operations.js';
+import {skillToolManifests, type SkillOperation} from './skill-operations.js';
 export interface MediaOperationDescriptor {
   id: string;
   skill?: string;
@@ -8,9 +8,10 @@ export interface MediaOperationDescriptor {
   /** Tool whose permission gates this operation (defaults to the skill tool). */
   permissionTool?: string;
   deliver?: boolean;
+  localTransform?: boolean;
   /** Optional timeout; zero means run until completion or cancellation. */
   timeoutMs: number;
-  /** Units charged to the per-scope daily quota. */
+  /** Per-scope daily call limit; local transforms do not consume it. */
   quotaUnits: number;
   /** Worker handler name in the versioned protocol. */
   handler: string;
@@ -39,12 +40,11 @@ export class MediaOperationRegistry {
 }
 
 export const DEFAULT_MEDIA_OPERATIONS: readonly MediaOperationDescriptor[] = Object.freeze([
-  ...skillOperationManifests.flatMap(manifest => manifest.operations.map(operation => ({...operation, source: operation, skill: manifest.skill, tool: manifest.tool.name, permissionTool: manifest.permissionTool ?? manifest.tool.name, handler: 'skill', timeoutMs: 0}))),
+  ...skillToolManifests.flatMap(manifest => manifest.operations.map(operation => ({...operation, source: operation, skill: manifest.skill, tool: manifest.tool.name, permissionTool: manifest.permissionTool ?? manifest.tool.name, handler: 'skill', timeoutMs: 0}))),
   {id: 'image_generate', handler: 'image', timeoutMs: 0, quotaUnits: 10000, inputKinds: []},
   {id: 'image_edit', handler: 'image', timeoutMs: 0, quotaUnits: 10000, inputKinds: ['image']},
   {id: 'image_understand', handler: 'native', timeoutMs: 0, quotaUnits: 1, inputKinds: ['image']},
   {id: 'document_read', handler: 'document', timeoutMs: 0, quotaUnits: 50, inputKinds: ['file']},
-  {id: 'convert_gif', handler: 'convert_gif', timeoutMs: 0, quotaUnits: 50, inputKinds: ['video']},
   {id: 'convert_mp4', handler: 'convert_mp4', timeoutMs: 0, quotaUnits: 50, inputKinds: ['video']},
   {id: 'social_read', handler: 'social_read', timeoutMs: 0, quotaUnits: 20, inputKinds: []},
 ]);

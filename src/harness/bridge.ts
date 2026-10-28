@@ -1,4 +1,4 @@
-import {skillOperationManifests, resolveSkillOperation} from '../core/skill-operations.js';
+import {skillToolManifests, resolveSkillOperation} from '../core/skill-operations.js';
 import {mediaOperationRegistry} from '../core/media-operation-registry.js';
 import type { Context } from '@deepseek-ai/cordis';
 import { installModelSelection, type Agent, type AgentHandle, type ModelSelectionRef } from '@deepseek-ai/dsh-agent';
@@ -248,6 +248,11 @@ export class NativeHarness implements HarnessPort {
       return JSON.stringify({coverage:'NATIVE_CHAT_IMAGE_PIXELS',text:'图片像素已附带在本工具结果中，请用当前模型直接读取。',modelImages:await this.imageBlocks(scope,ids),assetIds:[]});
     }
     const image=operation==='image_generate'||operation==='image_edit';
+    const authorize=()=>{
+      const latest=this.current(live);const owner=this.store.bot(live.binding.scope.botId);
+      if(!allowedNow(permissionTool,live.snapshot,latest,owner,live.binding.scope)
+        || descriptor.tool&&!allowedNow(descriptor.tool,live.snapshot,latest,owner,live.binding.scope))throw new Error('MEDIA_TOOL_DISABLED');
+    };
     const config=mediaConfigNow(live.snapshot,current);
     const role=descriptor.role;
     if(descriptor.tool&&!allowedNow(descriptor.tool,live.snapshot,current,bot,live.binding.scope))throw new Error('MEDIA_ANALYSIS_DISABLED');
@@ -264,7 +269,7 @@ export class NativeHarness implements HarnessPort {
       imageState.inFlight=true;
     }
     try{
-    const result=await this.media.run(scope,operation,config,inputs,{...args,prompt:args.prompt?`${args.prompt}\n${live.snapshot.config.imageStyle}`:undefined},signal) as Awaited<ReturnType<MediaService['run']>>;
+    const result=await this.media.run(scope,operation,config,inputs,{...args,prompt:args.prompt?`${args.prompt}\n${live.snapshot.config.imageStyle}`:undefined},signal,authorize) as Awaited<ReturnType<MediaService['run']>>;
     if(image)imageState.completed=true;
     if(deliver){for(const assetId of result.assetIds)if(!live.assets.some(a=>a.assetId===assetId))live.assets.push({type:'asset',assetId});}
     const modelImages=await this.imageBlocks(scope,result.contextAssetIds??[]);
@@ -274,7 +279,7 @@ export class NativeHarness implements HarnessPort {
   private tools(ctx:Context,ownerLive:LiveSession):void{
     const scope=ownerLive.binding.key;
     const register=(tool:any):()=>void=>{
-      if(!this.capabilities.has(tool.name))this.capabilities.register({name:tool.name,schema:tool.parameters,concurrency:tool.name==='bot_media'?'scope':'parallel',execute:(_args:any,context:any)=>context.invoke()});
+      if(!this.capabilities.has(tool.name))this.capabilities.register({name:tool.name,schema:tool.parameters,concurrency:'parallel',execute:(_args:any,context:any)=>context.invoke()});
       const wrapped={...tool,execute:(args:any,exec:any)=>this.capabilities.execute(tool.name,args,{signal:exec.signal,scopeKey:ownerLive.binding.key,agent:exec.agent,invoke:()=>tool.execute(args,exec)})};
       return ctx.tools.register(wrapped);
     };
@@ -290,7 +295,7 @@ export class NativeHarness implements HarnessPort {
     const managerRegistrar=new ToolRegistrar<any>(tool=>register(tool));
     ownerLive.refreshTools=()=>{managerRegistrar.clear('management');const bot=this.store.bot(ownerLive.binding.scope.botId);for(const tool of managers){try{if(allowedNow(tool.name,ownerLive.snapshot,this.current(ownerLive),bot,ownerLive.binding.scope))managerRegistrar.add('management',tool);}catch{}}};
     ownerLive.refreshTools();
-    for(const manifest of skillOperationManifests) register(defineTool({...manifest.tool,output:{schema:{type:'string'},render:renderMedia},execute:async(args:any,exec:any)=>this.mediaTool(ownerLive,exec.agent,resolveSkillOperation(manifest,args),args.inputs??[],args,exec.signal)}));
+    for(const manifest of skillToolManifests) register(defineTool({...manifest.tool,output:{schema:{type:'string'},render:renderMedia},execute:async(args:any,exec:any)=>this.mediaTool(ownerLive,exec.agent,resolveSkillOperation(manifest,args),args.inputs??[],args,exec.signal)}));
     register(defineTool({name:'image_generation',description:'执行image-generation技能，生成或编辑一张图片。默认继承已配置的环境变量，无需单独配置密钥；编辑inputs填写本会话参考图ID。成功自动登记图片回传。',parameters:{prompt:{type:'string',required:true},operation:{type:'string',enum:['generate','edit']},inputs:{type:'array',items:{type:'string'}}},output:{schema:{type:'string'},render:renderMedia},execute:async(args,exec)=>this.mediaTool(ownerLive,exec.agent,args.operation==='edit'||(!args.operation&&args.inputs?.length)?'image_edit':'image_generate',args.inputs??[],args,exec.signal)}));
     register(defineTool({name:'bot_media',description:'读取图片像素、提取文档/扫描页供当前聊天模型理解，或处理语音、视频和固定转码。下载链接原图用image_download并填url（支持图片直链或公开网页，自动登记图片附件，保留原始字节）。图片生成请用image_generation。',parameters:{operation:{type:'string',enum:[...MEDIA_OPERATIONS],required:true},inputs:{type:'array',items:{type:'string'}},prompt:{type:'string'},question:{type:'string'},text:{type:'string'},url:{type:'string'},startSeconds:{type:'number'},durationSeconds:{type:'number'}},output:{schema:{type:'string'},render:renderMedia},execute:async(args,exec)=>this.mediaTool(ownerLive,exec.agent,args.operation as MediaOperation,args.inputs??[],args,exec.signal)}));
     register(defineTool({name:'bot_send_file',description:'将产物ID登记为本轮最终回复附件；可信私聊也可登记工作目录下真实产生的文件。相同作用域的历史投递默认复用并返回状态；只有用户明确要求重新发送时才传 resend=true，此时可能重复。平台投递在本轮结束后进行。',parameters:{assetId:{type:'string'},path:{type:'string'},mime:{type:'string'},resend:{type:'boolean'}},output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},execute:async(args,exec)=>{const live=this.turn(ownerLive,exec.agent);

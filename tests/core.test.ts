@@ -36,6 +36,18 @@ test('configuration revisions publish atomically, sharing and copies preserve bi
   assert.throws(()=>store.saveBot({...store.bot('one'),accountId:'different'}),/身份/);
   assert.throws(()=>store.saveBot({...store.bot('two'),accountId:'one'}));
 });
+
+test('startup interrupts both queued and running media jobs without replay',async t=>{
+  const f=await runtimeFixture(t,async()=>{throw Error('must not replay a media job');});
+  f.store.saveBot({...f.store.bot('one'),enabled:false});
+  for(const state of ['queued','running','complete'])f.store.saveJob(state,{id:state,operation:'image_convert',state});
+  try{
+    await f.runtime.initialize();
+    assert.equal(f.store.findJob('queued')?.state,'interrupted');
+    assert.equal(f.store.findJob('running')?.state,'interrupted');
+    assert.equal(f.store.findJob('complete')?.state,'complete');
+  }finally{await f.runtime.close();}
+});
 test('scope identity isolates bots, platforms, senders and group/private sessions',async t=>{
   const store=await fixture(t);const cases=[scope(),scope('two'),scope('one','bob'),scope('one','alice','group'),{...scope(),platform:'weixin' as const},{...scope(),accountId:'another'}];
   assert.equal(new Set(cases.map(scopeKey)).size,cases.length);assert.equal(new Set(cases.map(s=>store.binding(s).sessionId)).size,cases.length);

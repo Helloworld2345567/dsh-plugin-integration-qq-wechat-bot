@@ -59,7 +59,7 @@ export class BotRuntime {
   }
   async initialize():Promise<void>{
     this.store.claimRuntime(this.owner);this.claimed=true;this.store.recover();
-    for(const job of this.store.jobs())if(job.state==='running')this.store.saveJob(job.id,{...job,state:'interrupted'});
+    for(const job of this.store.jobs())if(job.state==='running'||job.state==='queued')this.store.saveJob(job.id,{...job,state:'interrupted'});
     for(const action of this.store.sessionActions<SessionActionRecord>())if(action.state==='running')this.finishSessionAction(action,'interrupted','会话操作在重启前被中断，结果未知；请先查看当前状态，再决定是否重试。');
     for(const bot of this.store.bots())if(bot.enabled&&!bot.archived)void this.start(bot.id).catch(()=>this.states.set(bot.id,'error'));
     this.store.retain();

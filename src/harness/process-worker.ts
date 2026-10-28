@@ -10,7 +10,7 @@ export class ProcessWorker implements WorkerPort {
   async run(job: MediaWorkerJob, signal: AbortSignal, credentials: WorkerCredentials = {}): Promise<MediaResult> {
     validateMediaWorkerJob(job);
     return new Promise((resolve, reject) => {
-      const safeEnv:NodeJS.ProcessEnv={PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,SYSTEMROOT:process.env.SYSTEMROOT,TEMP:process.env.TEMP,TMP:process.env.TMP,PYTHONIOENCODING:'utf-8',PYTHONUTF8:'1'};
+      const safeEnv:NodeJS.ProcessEnv={PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,SYSTEMROOT:process.env.SYSTEMROOT,TEMP:job.output,TMP:job.output,PYTHONDONTWRITEBYTECODE:'1',PYTHONIOENCODING:'utf-8',PYTHONUTF8:'1'};
       const keyEnv=typeof job.endpoint?.keyEnv==='string'?job.endpoint.keyEnv:undefined;
       for(const [key,value] of Object.entries(credentials)){
         if(!/^[A-Z][A-Z0-9_]{0,127}$/.test(key)||typeof value!=='string'||value.length>8192||keyEnv!==key){reject(new Error('MEDIA_WORKER_CREDENTIALS_INVALID'));return;}

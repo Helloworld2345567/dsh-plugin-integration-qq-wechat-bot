@@ -18,6 +18,8 @@ export interface MediaWorkerJob {
   deadline: number;
   timeoutMs: number;
   quotaUnits: number;
+  /** Host-assigned encoder budget, never taken from tool parameters. */
+  processingSlots?: number;
 }
 /** Provider secrets are carried out-of-band and are never serialized into a job. */
 export type WorkerCredentials = Readonly<Record<string, string>>;
@@ -46,6 +48,7 @@ export function validateMediaWorkerResult(value: unknown): asserts value is Medi
 }
 
 export function validateMediaWorkerJob(job: MediaWorkerJob): void {
+  if(job.processingSlots!==undefined&&(!Number.isInteger(job.processingSlots)||job.processingSlots<1||job.processingSlots>2))throw new Error('MEDIA_WORKER_SLOTS_INVALID');
   if (job.protocol !== MEDIA_WORKER_PROTOCOL || job.protocolVersion !== MEDIA_WORKER_PROTOCOL_VERSION) throw new Error('MEDIA_WORKER_PROTOCOL_UNSUPPORTED');
   if (!/^[a-zA-Z0-9._:-]{1,128}$/.test(job.id) || !/^[a-zA-Z0-9._:-]{1,256}$/.test(job.scope) || !/^[a-z][a-z0-9_]{1,80}$/.test(job.operation) || !/^[a-z][a-z0-9_]{1,80}$/.test(job.handler) || !Array.isArray(job.inputs) || job.inputs.length > 8) throw new Error('MEDIA_WORKER_JOB_INVALID');
   for (const input of job.inputs) validateFile(input);

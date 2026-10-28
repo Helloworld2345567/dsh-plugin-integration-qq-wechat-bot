@@ -167,6 +167,12 @@ async def analyze_video(job):
 
 def execute(job):
     remaining(job)
+    if job.get('operation') in ('image_convert', 'image_compress', 'image_resize'):
+        from image_transform import execute as transform_image
+        return transform_image(job)
+    if job.get('operation') == 'convert_gif':
+        from video_transform import execute as transform_video
+        return transform_video(job)
     if not isinstance(job.get('inputs'), list) or len(job['inputs']) > 1:
         raise AnalysisError('ONE_MEDIA_INPUT_REQUIRED')
     if job.get('operation') == 'image_download':

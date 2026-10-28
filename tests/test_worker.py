@@ -58,7 +58,7 @@ class WorkerTests(unittest.TestCase):
             worker.load_skill_operations(skills)
 
     def test_shipped_skill_operations_dispatch_declared_entry(self):
-        self.assertEqual(set(worker.SKILL_OPERATIONS), {'transcribe', 'video_analyze', 'image_download', 'video_download', 'voice_speak', 'voice_chant'})
+        self.assertEqual(set(worker.SKILL_OPERATIONS), {'transcribe', 'video_analyze', 'image_download', 'video_download', 'voice_speak', 'voice_chant', 'image_convert', 'image_compress', 'image_resize', 'convert_gif'})
         job = self.job('image_download')
         job['handler'] = 'skill'
         # Real entry import and error translation, without a provider/network call.
@@ -279,7 +279,8 @@ class WorkerTests(unittest.TestCase):
     def test_real_fixed_ffmpeg_conversion(self):
         source=self.root/'clip.mp4'
         subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=c=red:s=96x96:d=1','-c:v','libx264',str(source)],check=True,capture_output=True)
-        result=worker.execute(self.job('convert_gif',source,durationSeconds=0.5))
+        job=self.job('convert_gif',source,durationSeconds=0.5);job['inputs'][0]['kind']='video'
+        result=worker.execute(job)
         from PIL import Image
         with Image.open(result['assets'][0]['path']) as image: self.assertEqual(image.format,'GIF')
         with self.assertRaisesRegex(worker.JobError,'INVALID_MEDIA_RANGE'):worker.execute(self.job('convert_mp4',source,durationSeconds=999))

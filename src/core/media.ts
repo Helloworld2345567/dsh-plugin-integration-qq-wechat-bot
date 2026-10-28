@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {resolveImageSkill} from './image-skill.js';
 import {analysisEnabled,type AnalysisProvider,type AnalysisRole} from './analysis.js';
@@ -9,6 +9,7 @@ import {normalizeProviderUsage,type MediaUsageCall} from './usage.js';
 import {validateMediaParameters,INPUT_LIMITS} from './limits.js';
 import {mediaOperationRegistry,MediaOperationRegistry, type MediaOperation} from './media-operation-registry.js';
 import {MEDIA_WORKER_PROTOCOL,MEDIA_WORKER_PROTOCOL_VERSION,validateMediaWorkerJob,type MediaWorkerJob,type WorkerPort} from './worker-port.js';
+import {TransformSlots,transformSlots} from './transform-slots.js';
 
 export const MEDIA_OPERATIONS=mediaOperationRegistry.ids();
 export type {MediaOperation} from './media-operation-registry.js';
@@ -32,24 +33,27 @@ export class Assets {
   recent(scope:string,kind?:string):Asset[]{const sessionId=this.currentSession(scope);return sessionId?this.store.recentAssets(scope,sessionId,kind,24):[];}
 }
 export class MediaService {
-  readonly active=new Map<string,{scope:string;controller:AbortController}>();
+  readonly active=new Map<string,{scope:string;controller:AbortController;localTransform?:boolean}>();
   readonly operations:MediaOperationRegistry;
   readonly worker:WorkerPort;
-  constructor(readonly store:Store,readonly assets:Assets,readonly python=process.env.BOT_PYTHON||'python',readonly analysisProvider?:AnalysisProvider,worker?:WorkerPort,operations:MediaOperationRegistry=mediaOperationRegistry){this.worker=worker??{run:async()=>{throw new Error('MEDIA_WORKER_NOT_CONFIGURED');}};this.operations=operations;}
+  constructor(readonly store:Store,readonly assets:Assets,readonly python=process.env.BOT_PYTHON||'python',readonly analysisProvider?:AnalysisProvider,worker?:WorkerPort,operations:MediaOperationRegistry=mediaOperationRegistry,readonly slots:TransformSlots=transformSlots){this.worker=worker??{run:async()=>{throw new Error('MEDIA_WORKER_NOT_CONFIGURED');}};this.operations=operations;}
   async analysisStatus(config:BotConfig,role:AnalysisRole){try{if(!this.analysisProvider)throw new Error('MEDIA_PROVIDER_SETTINGS_UNAVAILABLE');const value=await this.analysisProvider.resolve(config,role);return{enabled:true,provider:value.provider,model:value.endpoint.model,keyConfigured:!!value.apiKey,protocol:value.endpoint.protocol};}catch(error){return{enabled:analysisEnabled(config,role),error:error instanceof Error?error.message:'MEDIA_CONFIGURATION_INVALID',keyConfigured:false};}}
   cancelScope(scope:string):void{for(const item of this.active.values()) if(item.scope===scope)item.controller.abort(new Error('任务已取消'));}
-  async run(scope:string,operation:MediaOperation,config:BotConfig,inputs:string[],parameters:Record<string,unknown>,signal:AbortSignal):Promise<{text?:string;coverage?:string;assetIds:string[];contextAssetIds?:string[];incomplete?:boolean}>{
+  async run(scope:string,operation:MediaOperation,config:BotConfig,inputs:string[],parameters:Record<string,unknown>,signal:AbortSignal,authorize?:()=>void):Promise<{text?:string;coverage?:string;assetIds:string[];contextAssetIds?:string[];incomplete?:boolean}>{
     const descriptor=this.operations.get(operation);
     if(operation==='image_understand')throw new Error('IMAGE_READ_USE_NATIVE_CHAT_MODEL');
     validateMediaParameters(operation,inputs,parameters);
-    if(this.active.size>=2 || [...this.active.values()].some(a=>a.scope===scope))throw new Error('MEDIA_CONCURRENCY_LIMIT');
+    const other=[...this.active.values()].filter(a=>!a.localTransform);
+    if(!descriptor.localTransform&&(other.length>=2||other.some(a=>a.scope===scope)))throw new Error('MEDIA_CONCURRENCY_LIMIT');
     const id=randomUUID();const controller=new AbortController(); const combined=AbortSignal.any([signal,controller.signal,...(descriptor.timeoutMs>0?[AbortSignal.timeout(descriptor.timeoutMs)]:[])]);
     const directory=path.join(this.store.home,'jobs',id),startedAt=Date.now();let provider:string|undefined;let requestedModel:string|undefined;
     const persist=(value:Record<string,unknown>)=>this.store.patchJob(id,value);
+    let lease:Awaited<ReturnType<TransformSlots['acquire']>>|undefined;
     const captureUsage=async()=>{try{const raw=JSON.parse(await readFile(path.join(directory,'model-usage.json'),'utf8'));if(!Array.isArray(raw))return;const modelCalls:MediaUsageCall[]=raw.filter(c=>c?.attempted===true&&typeof c.id==='string'&&Number.isSafeInteger(c.at)).map(c=>({id:c.id,attempted:true,at:c.at,provider,model:typeof c.model==='string'?c.model:requestedModel,usage:normalizeProviderUsage(c.usage)}));persist({modelCalls});const binding=this.store.findBinding(scope);if(binding)this.store.stats.upsertMediaCalls(id,binding.scope.botId,modelCalls);}catch{/* No dispatched model call is claimed without a journal entry. */}};
-    this.active.set(id,{scope,controller});persist({id,scope,operation,state:'running',startedAt});
+    this.active.set(id,{scope,controller,localTransform:descriptor.localTransform});persist({id,scope,operation,state:descriptor.localTransform?'queued':'running',startedAt});
     try{
     combined.throwIfAborted();
+    if(descriptor.localTransform){lease=await this.slots.acquire(operation==='convert_gif'?2:1,combined);combined.throwIfAborted();authorize?.();persist({state:'running'});}
     if(inputs.length>INPUT_LIMITS.attachmentCount)throw new Error('MEDIA_INPUT_LIMIT');
     const source=await Promise.all(inputs.map(id=>this.assets.resolve(scope,id)));
     if(descriptor.inputKinds?.length&&source.some(item=>!descriptor.inputKinds!.includes(item.kind)))throw new Error('MEDIA_INPUT_KIND_INVALID');
@@ -61,7 +65,7 @@ export class MediaService {
     provider=connection?.provider??(endpoint?new URL(endpoint.baseUrl).hostname:undefined);requestedModel=endpoint?.model;
     persist({provider,requestedModel});
     const day=new Date().toISOString().slice(0,10);const quotaKey=`${day}:${scope}:${operation}`;
-    this.store.consumeMediaQuota(quotaKey,descriptor.quotaUnits);
+    if(!descriptor.localTransform)this.store.consumeMediaQuota(quotaKey,descriptor.quotaUnits);
     const credentials:Record<string,string>={};
     if(endpoint){const value=connection?.apiKey??process.env[endpoint.keyEnv];if(!value)throw new Error(`MISSING_PROVIDER_KEY: ${endpoint.keyEnv}`);credentials[endpoint.keyEnv]=value;}
     if(descriptor.inputKinds?.includes('audio')&&source[0]?.mime==='audio/silk'){
@@ -70,18 +74,23 @@ export class MediaService {
       const header=Buffer.alloc(44);header.write('RIFF',0);header.writeUInt32LE(36+pcm.length,4);header.write('WAVEfmt ',8);header.writeUInt32LE(16,16);header.writeUInt16LE(1,20);header.writeUInt16LE(1,22);header.writeUInt32LE(24000,24);header.writeUInt32LE(48000,28);header.writeUInt16LE(2,32);header.writeUInt16LE(16,34);header.write('data',36);header.writeUInt32LE(pcm.length,40);
       const wav=path.join(directory,'decoded.wav');await writeFile(wav,Buffer.concat([header,pcm]));source[0]={...source[0],path:wav,name:'decoded.wav',mime:'audio/wav'};
     }
-      const job:MediaWorkerJob={protocol:MEDIA_WORKER_PROTOCOL,protocolVersion:MEDIA_WORKER_PROTOCOL_VERSION,id,scope,operation,handler:descriptor.handler,inputs:source.map(a=>({path:a.path,name:a.name,mime:a.mime,kind:a.kind})),parameters,endpoint,output:directory,usagePath:path.join(directory,'model-usage.json'),deadline:descriptor.timeoutMs>0?Date.now()+descriptor.timeoutMs:0,timeoutMs:descriptor.timeoutMs,quotaUnits:descriptor.quotaUnits};
+      const job:MediaWorkerJob={protocol:MEDIA_WORKER_PROTOCOL,protocolVersion:MEDIA_WORKER_PROTOCOL_VERSION,id,scope,operation,handler:descriptor.handler,inputs:source.map(a=>({path:a.path,name:a.name,mime:a.mime,kind:a.kind})),parameters,endpoint,output:directory,usagePath:path.join(directory,'model-usage.json'),deadline:descriptor.timeoutMs>0?Date.now()+descriptor.timeoutMs:0,timeoutMs:descriptor.timeoutMs,quotaUnits:descriptor.quotaUnits,processingSlots:lease?.slots};
       validateMediaWorkerJob(job);
       combined.throwIfAborted();
+      authorize?.();
       // Registered fixture/native handlers stay in the same operation registry;
       // worker-backed operations cross the versioned process boundary.
       const result=descriptor.execute
         ? await this.operations.dispatch<MediaResult>(operation,job,combined)
         : await this.worker.run(job,combined,credentials);
-      const save=async(files:MediaFile[])=>{const ids:string[]=[];for(const file of files){const resolved=await realpath(file.path);const root=await realpath(directory);if(!resolved.startsWith(root+path.sep))throw new Error('WORKER_OUTPUT_OUTSIDE_JOB');if((await stat(resolved)).size>(file.kind==='video'?50:20)*1024*1024)throw new Error('OUTPUT_TOO_LARGE');const asset=await this.assets.save(scope,{name:file.name,mime:file.mime,kind:file.kind},await readFile(resolved),id);ids.push(asset.id);}return ids;};
+      combined.throwIfAborted();
+      const save=async(files:MediaFile[])=>{const ids:string[]=[];for(const file of files){const resolved=await realpath(file.path);const root=await realpath(directory);if(!resolved.startsWith(root+path.sep))throw new Error('WORKER_OUTPUT_OUTSIDE_JOB');const size=(await stat(resolved)).size;if(size>(file.kind==='video'?50:20)*1024*1024||operation==='convert_gif'&&size>=10_000_000)throw new Error('OUTPUT_TOO_LARGE');const asset=await this.assets.save(scope,{name:file.name,mime:file.mime,kind:file.kind},await readFile(resolved),id);ids.push(asset.id);}return ids;};
       const assetIds=await save(result.assets??[]);const contextAssetIds=await save(result.contextAssets??[]);
       persist({state:'complete',assetIds,contextAssetIds,finishedAt:Date.now()});
       return {text:result.text,coverage:result.coverage,incomplete:result.incomplete,assetIds,contextAssetIds};
-    }catch(error){persist({state:combined.aborted?'cancelled':'failed',finishedAt:Date.now(),error:error instanceof Error?error.message:'MEDIA_FAILED'});throw error;}finally{await captureUsage();this.active.delete(id);}
+    }catch(error){persist({state:combined.aborted?'cancelled':'failed',finishedAt:Date.now(),error:error instanceof Error?error.message:'MEDIA_FAILED'});throw error;}finally{
+      try{if(descriptor.localTransform){try{await rm(directory,{recursive:true,force:true,maxRetries:3,retryDelay:100});}catch(error){persist({cleanupError:error instanceof Error?error.message:'JOB_CLEANUP_FAILED'});}}else await captureUsage();}
+      finally{this.active.delete(id);lease?.release();}
+    }
   }
 }

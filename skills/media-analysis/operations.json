@@ -1,72 +1,6 @@
 {
   "skill": "media-analysis",
   "worker": "scripts/media_api.py",
-  "tool": {
-    "name": "media_analysis",
-    "description": "执行media-analysis脚本；kind=image从url下载原图并自动作为图片附件交付，kind=audio识别语音，kind=video分析视频（action=download则仅下载并回传原视频），复用原生模型提供商的URL和凭据，无需单独配置密钥。视频支持抖音/B站作品链接或分享短链：提取分享文字中的https链接填url，不要用网页抓取代替视频分析。输入本会话附件ID；url与inputs二选一，均留空选同类型最近附件。返回实际分析结果与覆盖范围。",
-    "parameters": {
-      "kind": {
-        "type": "string",
-        "enum": [
-          "audio",
-          "video",
-          "image"
-        ],
-        "required": true
-      },
-      "action": {
-        "type": "string",
-        "enum": [
-          "analyze",
-          "download"
-        ]
-      },
-      "inputs": {
-        "type": "array",
-        "items": {
-          "type": "string"
-        }
-      },
-      "question": {
-        "type": "string"
-      },
-      "url": {
-        "type": "string"
-      }
-    }
-  },
-  "defaults": {
-    "action": "analyze"
-  },
-  "routes": [
-    {
-      "match": {
-        "kind": "audio",
-        "action": "analyze"
-      },
-      "operation": "transcribe"
-    },
-    {
-      "match": {
-        "kind": "image"
-      },
-      "operation": "image_download"
-    },
-    {
-      "match": {
-        "kind": "video",
-        "action": "download"
-      },
-      "operation": "video_download"
-    },
-    {
-      "match": {
-        "kind": "video",
-        "action": "analyze"
-      },
-      "operation": "video_analyze"
-    }
-  ],
   "operations": [
     {
       "id": "image_download",
@@ -122,10 +56,202 @@
         "www.iesdouyin.com"
       ],
       "urlHostError": "UNSUPPORTED_VIDEO_PLATFORM"
+    },
+    {
+      "id": "image_convert",
+      "quotaUnits": 1,
+      "inputKinds": [
+        "image"
+      ],
+      "deliver": true,
+      "localTransform": true,
+      "requiredInputError": "ONE_MEDIA_INPUT_REQUIRED"
+    },
+    {
+      "id": "image_compress",
+      "quotaUnits": 1,
+      "inputKinds": [
+        "image"
+      ],
+      "deliver": true,
+      "localTransform": true,
+      "requiredInputError": "ONE_MEDIA_INPUT_REQUIRED"
+    },
+    {
+      "id": "image_resize",
+      "quotaUnits": 1,
+      "inputKinds": [
+        "image"
+      ],
+      "deliver": true,
+      "localTransform": true,
+      "requiredInputError": "ONE_MEDIA_INPUT_REQUIRED"
+    },
+    {
+      "id": "convert_gif",
+      "quotaUnits": 50,
+      "inputKinds": [
+        "video"
+      ],
+      "deliver": true,
+      "localTransform": true,
+      "requiredInputError": "ONE_MEDIA_INPUT_REQUIRED"
     }
   ],
-  "enabledRoles": [
-    "asr",
-    "video"
+  "tools": [
+    {
+      "tool": {
+        "name": "media_analysis",
+        "description": "执行media-analysis脚本；kind=image从url下载原图并自动作为图片附件交付，kind=audio识别语音，kind=video分析视频（action=download则仅下载并回传原视频），复用原生模型提供商的URL和凭据，无需单独配置密钥。视频支持抖音/B站作品链接或分享短链：提取分享文字中的https链接填url，不要用网页抓取代替视频分析。输入本会话附件ID；url与inputs二选一，均留空选同类型最近附件。返回实际分析结果与覆盖范围。",
+        "parameters": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "audio",
+              "video",
+              "image"
+            ],
+            "required": true
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "analyze",
+              "download"
+            ]
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "question": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "defaults": {
+        "action": "analyze"
+      },
+      "routes": [
+        {
+          "match": {
+            "kind": "audio",
+            "action": "analyze"
+          },
+          "operation": "transcribe"
+        },
+        {
+          "match": {
+            "kind": "image"
+          },
+          "operation": "image_download"
+        },
+        {
+          "match": {
+            "kind": "video",
+            "action": "download"
+          },
+          "operation": "video_download"
+        },
+        {
+          "match": {
+            "kind": "video",
+            "action": "analyze"
+          },
+          "operation": "video_analyze"
+        }
+      ],
+      "enabledRoles": [
+        "asr",
+        "video"
+      ]
+    },
+    {
+      "tool": {
+        "name": "media_transform",
+        "description": "快速本地处理一个本会话附件，可并发调用。image_convert/image_compress/image_resize支持JPEG/PNG/WebP/AVIF转换、压缩及等比例缩小，可组合format/quality/maxWidth/maxHeight/maxBytes。convert_gif默认完整视频、12fps、最长边480，长视频自动分段并发合并，成品严格小于10MB；降尺寸和颜色但不缩短时长、不低于12fps。startSeconds/durationSeconds仅用于用户明确指定的片段。成功自动交付附件，无需模型或密钥。",
+        "parameters": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "image_convert",
+              "image_compress",
+              "image_resize",
+              "convert_gif"
+            ],
+            "required": true
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "jpeg",
+              "png",
+              "webp",
+              "avif"
+            ]
+          },
+          "quality": {
+            "type": "number"
+          },
+          "maxWidth": {
+            "type": "number"
+          },
+          "maxHeight": {
+            "type": "number"
+          },
+          "maxBytes": {
+            "type": "number"
+          },
+          "startSeconds": {
+            "type": "number"
+          },
+          "durationSeconds": {
+            "type": "number"
+          },
+          "fps": {
+            "type": "number"
+          }
+        }
+      },
+      "defaults": {},
+      "routes": [
+        {
+          "match": {
+            "operation": "image_convert"
+          },
+          "operation": "image_convert"
+        },
+        {
+          "match": {
+            "operation": "image_compress"
+          },
+          "operation": "image_compress"
+        },
+        {
+          "match": {
+            "operation": "image_resize"
+          },
+          "operation": "image_resize"
+        },
+        {
+          "match": {
+            "operation": "convert_gif"
+          },
+          "operation": "convert_gif"
+        }
+      ]
+    }
   ]
 }

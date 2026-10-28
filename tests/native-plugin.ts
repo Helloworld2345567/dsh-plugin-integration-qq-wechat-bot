@@ -96,7 +96,7 @@ export async function apply(ctx:Context){
       releaseTool();await toolRun;assert.equal(toolStages.at(-1),'model');
     }finally{releaseTool();runtime.media.run=originalRun;}
 
-    const tools=ctx.tools.schemas(agent).map(t=>t.name);assert.ok(tools.includes('bot_media'));assert.ok(!tools.includes('pwsh'));assert.ok(!tools.includes('spawn_agent'));
+    const tools=ctx.tools.schemas(agent).map(t=>t.name);assert.ok(tools.includes('bot_media'));assert.ok(tools.includes('media_transform'));assert.ok(!tools.includes('pwsh'));assert.ok(!tools.includes('spawn_agent'));
     for(const name of ['bot_stats','bot_evolve','bot_model','bot_persona']){assert.ok(!tools.includes(name),`${name} schema must be hidden from ordinary channel callers`);const denied=await ctx.tools.execute({name,arguments:name==='bot_stats'?{range:'all'}:{action:name==='bot_evolve'?'status':'list'},callId:ToolCallId('ordinary-'+name),agent,signal:AbortSignal.timeout(5000)});assert.equal(denied.isError,true,`${name} must deny ordinary channel callers`);}
     for(const name of ['bot_session','bot_skills'])assert.ok(tools.includes(name),`${name} basic schema must be available to ordinary users`);
     for(const action of ['help','status','list']){const result=toolJson(await ctx.tools.execute({name:'bot_session',arguments:{action},callId:ToolCallId('ordinary-session-'+action),agent,signal:AbortSignal.timeout(5000)}));assert.equal(result.action,action);if(action==='status')assert.equal(result.sessionId,binding.sessionId);if(action==='list')assert.ok(result.sessions.every((item:any)=>item.sessionId===binding.sessionId));}
@@ -133,6 +133,12 @@ export async function apply(ctx:Context){
     const pixels=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP8z4AdMOEQH6QSAM1BAQ/oQeJvAAAAAElFTkSuQmCC','base64');
     // Real image admission verifies actual decodable pixels, not an attachment path placeholder.
     const asset=await runtime.assets.save(binding.key,{kind:'image',name:'reference.png',mime:'image/png'},pixels);
+    const transformAgent=bridge.live.get(binding.sessionId)!.handle.agent;
+    const transformed=await Promise.all(['png','webp'].map(format=>ctx.tools.execute({name:'media_transform',arguments:{operation:'image_convert',inputs:[asset.id],format},callId:ToolCallId('local-transform-'+format),agent:transformAgent,signal:AbortSignal.timeout(15000)})));
+    for(let i=0;i<transformed.length;i++){
+      const result=toolJson(transformed[i]);assert.equal(result.registeredForDelivery,true);assert.equal(result.assetIds.length,1);
+      const output=store.asset(binding.key,result.assetIds[0]);assert.equal(output.mime,i===0?'image/png':'image/webp');assert.ok((await runtime.assets.read(binding.key,output.id)).length>0);
+    }
     const currentPhoto=msg('current-photo','直接查看这次消息上传的参考照片');currentPhoto.attachments=[{kind:'image',name:'reference.png',mime:'image/png',handle:asset.id}];
     await bridge.run(binding,[currentPhoto],AbortSignal.timeout(30000));const currentPhotoUser=requests.at(-1)!.messages.findLast(m=>m.role==='user')!;assert.equal(currentPhotoUser.role,'user');assert.ok(currentPhotoUser.content.some(b=>b.type==='image'),'current user attachment must deliver native image pixels');assert.ok(currentPhotoUser.content.some(b=>b.type==='text'&&b.text.includes(`[附件] id=${asset.id}`)),'image pixels must share the same message with their host asset identity');assert.ok(currentPhotoUser.content.some(b=>b.type==='text'&&b.text.includes('[sourceId=current-photo]')));
     // Exercise the production adapter's encoding seam with a local provider callback, never a network provider.
@@ -207,7 +213,7 @@ export async function apply(ctx:Context){
     try{
       mediaCall={name:'media_analysis',args:{kind:'audio',question:'转写'}};await bridge.run(binding,[msg('analysis','分析最近语音')],AbortSignal.timeout(30000));assert.equal(analysisCalls,1);assert.ok(JSON.stringify(requests.at(-1)!.messages).includes('SCRIPT_TRANSCRIPT'));
       const {personaPrompt,...draft}=store.config('default');await writeFile(path.join(store.personas.directory('default'),'config.json'),JSON.stringify({...draft,skills:['image-generation']}));await runtime.applyPersonaFiles('default');
-      for(const call of [{name:'media_analysis',arguments:{kind:'audio',inputs:[audio.id]}},{name:'bot_media',arguments:{operation:'transcribe',inputs:[audio.id]}},{name:'skill',arguments:{name:'media-analysis'}}]){const denied=await ctx.tools.execute({...call,callId:ToolCallId('revoked-'+call.name),agent:bridge.live.get(binding.sessionId)!.handle.agent,signal:AbortSignal.timeout(5000)});assert.equal(denied.isError,true);}assert.equal(analysisCalls,1);
+      for(const call of [{name:'media_analysis',arguments:{kind:'audio',inputs:[audio.id]}},{name:'media_transform',arguments:{operation:'image_convert',inputs:[asset.id]}},{name:'bot_media',arguments:{operation:'transcribe',inputs:[audio.id]}},{name:'skill',arguments:{name:'media-analysis'}}]){const denied=await ctx.tools.execute({...call,callId:ToolCallId('revoked-'+call.name),agent:bridge.live.get(binding.sessionId)!.handle.agent,signal:AbortSignal.timeout(5000)});assert.equal(denied.isError,true);}assert.equal(analysisCalls,1);
     }finally{runtime.media.run=mediaRun;}
     const webChecks:string[]=[];
     if(process.env.BOT_TEST_WEB_TOOLS_SOURCE){

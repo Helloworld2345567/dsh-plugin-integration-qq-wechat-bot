@@ -138,6 +138,15 @@ export function validateMediaParameters(operation: string, inputs: string[], par
     if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 36000)) throw new Error('INVALID_MEDIA_RANGE');
   }
   const declaration = skillOperationManifests.flatMap(manifest => manifest.operations).find(item => item.id === operation);
+  if(declaration?.localTransform){
+    if(inputs.length!==1)throw new Error('ONE_MEDIA_INPUT_REQUIRED');
+    if(parameters.url!==undefined)throw new Error('TRANSFORM_ATTACHMENT_REQUIRED');
+    for(const [key,min,max] of [['quality',1,100],['maxWidth',1,16384],['maxHeight',1,16384],['maxBytes',1,20*1024*1024],['fps',12,50]] as const){const value=parameters[key];if(value!==undefined&&(typeof value!=='number'||!Number.isInteger(value)||value<min||value>max))throw new Error('INVALID_TRANSFORM_PARAMETERS');}
+    if(parameters.format!==undefined&&!['jpeg','png','webp','avif'].includes(String(parameters.format)))throw new Error('UNSUPPORTED_IMAGE_FORMAT');
+    if(operation==='convert_gif'&&parameters.maxBytes!==undefined)throw new Error('GIF_SIZE_LIMIT_FIXED');
+    if(operation==='image_resize'&&parameters.maxWidth===undefined&&parameters.maxHeight===undefined)throw new Error('IMAGE_SIZE_REQUIRED');
+    if(operation==='convert_gif'&&parameters.durationSeconds===0)throw new Error('INVALID_MEDIA_RANGE');
+  }
   if (declaration) validateSkillSource(declaration, inputs, parameters);
   if (operation === 'social_read' && url === undefined) throw new Error('SOCIAL_URL_REQUIRED');
 }

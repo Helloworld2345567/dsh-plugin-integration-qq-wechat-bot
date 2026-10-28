@@ -185,14 +185,13 @@ def convert(job):
     params = job["parameters"]
     start = checked_number(params.get("startSeconds", 0), 0, 36000)
     duration = checked_number(params.get("durationSeconds", 6), 0.1, 30)
-    gif = job["operation"] == "convert_gif"
-    output = Path(job["output"]) / ("result.gif" if gif else "result.mp4")
+    output = Path(job["output"]) / "result.mp4"
     command = ["ffmpeg", "-v", "error", "-nostdin", "-ss", str(start), "-i", job["inputs"][0]["path"], "-t", str(duration)]
-    command += ["-vf", "fps=12,scale=480:-2:flags=lanczos", "-loop", "0"] if gif else ["-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart"]
+    command += ["-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart"]
     result = subprocess.run([*command, str(output)], capture_output=True, timeout=(job.get("timeoutMs", 0) / 1000 or None))
     if result.returncode or not output.exists():
         raise JobError("FFMPEG_FAILED")
-    return {"assets": [{"path": str(output), "name": output.name, "mime": "image/gif" if gif else "video/mp4", "kind": "image" if gif else "video"}]}
+    return {"assets": [{"path": str(output), "name": output.name, "mime": "video/mp4", "kind": "video"}]}
 
 
 class OperationRegistry:
@@ -257,6 +256,8 @@ def _social(job):
 def _validate_protocol(job):
     if not isinstance(job, dict):
         raise JobError("MEDIA_WORKER_PROTOCOL_UNSUPPORTED")
+    if 'processingSlots' in job and (type(job['processingSlots']) is not int or not 1 <= job['processingSlots'] <= 2):
+        raise JobError('MEDIA_WORKER_SLOTS_INVALID')
     # Keep the pre-Phase-5 direct Python API usable for existing integrations;
     # jobs crossing the process boundary are emitted with an explicit version.
     if "protocol" not in job and "protocolVersion" not in job:
@@ -309,7 +310,6 @@ OPERATIONS.register("document", document)
 OPERATIONS.register("image_generate", image)
 OPERATIONS.register("image_edit", image)
 OPERATIONS.register("document_read", document)
-OPERATIONS.register("convert_gif", convert)
 OPERATIONS.register("convert_mp4", convert)
 OPERATIONS.register("social_read", _social)
 
