@@ -2,14 +2,14 @@ import {skillToolManifests} from './skill-operations.js';
 import type { BotConfig, BotInstance, CallerScope, TurnSnapshot } from './types.js';
 import {imageSkillEnabled} from './image-skill.js';
 import {analysisEnabled} from './analysis.js';
-export const BUSINESS_TOOLS = new Set([...skillToolManifests.map(manifest=>manifest.tool.name),'image_generation','bot_media','bot_voice','bot_send_file','bot_remember','bot_forget_memory','bot_read_social','skill','bot_stats','bot_evolve','bot_model','bot_session','bot_persona','bot_skills']);
+export const BUSINESS_TOOLS = new Set([...skillToolManifests.map(manifest=>manifest.tool.name),'image_generation','bot_media','bot_voice','bot_send_file','bot_remember','bot_forget_memory','bot_read_social','skill','bot_stats','bot_evolve','bot_model','bot_session','bot_persona','bot_skills','bot_schedule','bot_proactive']);
 export const NATIVE_HOST_TOOLS = new Set(['pwsh','bash','read','write','edit','read_file','write_file','str_replace','list_directory','glob','grep','terminal','read_terminal','write_terminal']);
 export const CHANNEL_WEB_TOOLS=new Set(['web_search','web_fetch']);
 export function trusted(bot:BotInstance,scope:CallerScope):boolean { return scope.kind==='private' && bot.trustedUsers.includes(scope.senderId); }
 export function permitted(name:string,config:BotConfig,bot:BotInstance,scope:CallerScope):boolean {
   if(!bot.enabled || bot.archived) return false;
   if(name==='bot_session'||name==='bot_skills')return true;
-  if(name==='bot_stats'||name==='bot_model'||name==='bot_persona')return trusted(bot,scope);
+  if(name==='bot_stats'||name==='bot_model'||name==='bot_persona'||name==='bot_schedule'||name==='bot_proactive')return trusted(bot,scope);
   if(name==='bot_evolve')return trusted(bot,scope)&&config.allowHostTools;
   // Voice generation is an explicitly billable capability.  Keep it behind
   // both the operator permission and the persona-level opt-in; a frozen turn

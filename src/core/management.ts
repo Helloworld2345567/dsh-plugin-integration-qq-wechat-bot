@@ -7,6 +7,8 @@ import {trusted} from './policy.js';
 import {commandHelp} from './commands.js';
 import {packagedSkills} from './skills.js';
 import {managementCommand} from './command-bus.js';
+import {botScheduleArgumentsSchema,botProactiveArgumentsSchema} from './automation-contract.js';
+import type {ScheduledJob} from './automation.js';
 
 export const botSessionArgumentsSchema=z.object({
   action:z.enum(['help','status','list','new','stop','compact','resume']),
@@ -32,6 +34,26 @@ export type BotSkillsArguments=z.infer<typeof botSkillsArgumentsSchema>;
 /** Identity comes from the native Agent closure; channel mutations run outside the calling turn. */
 export class BotManagement {
   constructor(readonly runtime:BotRuntime,readonly features:BotFeatures){}
+  async schedule(binding:SessionBinding,snapshot:TurnSnapshot,input:unknown,signal:AbortSignal){
+    const current=this.current(binding,snapshot,signal,true),args=botScheduleArgumentsSchema.parse(input),scheduler=this.runtime.automation;
+    const publicJob=(job:ScheduledJob)=>({jobId:job.id,prompt:job.prompt,timezone:job.timezone,nextAt:job.nextAt?new Date(job.nextAt).toISOString():null,intervalMs:job.intervalMs,dailyAt:job.dailyAt,enabled:job.enabled,state:job.state});
+    const timezone=scheduler.listProactive().find(item=>item.scopeKey===current.key)?.timezone??scheduler.defaultTimezone;
+    if(args.action==='list')return{action:args.action,now:new Date().toISOString(),timezone,jobs:scheduler.listJobs().filter(job=>job.scopeKey===current.key).map(publicJob)};
+    if(args.action==='create'){
+      const job=scheduler.createJob(current.scope,args.prompt!,{runAt:args.runAt?Date.parse(args.runAt):args.delayMs?Date.now()+args.delayMs:undefined,intervalMs:args.intervalMs,dailyAt:args.dailyAt,timezone:args.timezone??timezone});
+      return{action:args.action,...publicJob(job)};
+    }
+    const job=scheduler.listJobs().find(item=>item.id===args.jobId&&item.scopeKey===current.key);if(!job)throw Error('SCHEDULE_NOT_FOUND');
+    if(args.action==='delete'){scheduler.deleteJob(job.id);return{action:args.action,jobId:job.id,deleted:true};}
+    return{action:args.action,...publicJob(scheduler.setJob(job.id,args.action==='resume'))};
+  }
+  async proactive(binding:SessionBinding,snapshot:TurnSnapshot,input:unknown,signal:AbortSignal){
+    const current=this.current(binding,snapshot,signal,true),{action,...patch}=botProactiveArgumentsSchema.parse(input),scheduler=this.runtime.automation;
+    const config=action==='status'?scheduler.listProactive().find(item=>item.scopeKey===current.key):action==='set'?scheduler.configureProactive(current.scope,patch):scheduler.setProactive(current.scope,action==='on');
+    if(!config)return{action,configured:false,enabled:false,timezone:scheduler.defaultTimezone};
+    const {id,kind,botId,scopeKey,scope,createdAt,updatedAt,...settings}=config;
+    return{action,configured:true,...settings,nextAt:config.nextAt?new Date(config.nextAt).toISOString():null};
+  }
   private async busSession(binding:SessionBinding,snapshot:TurnSnapshot,input:BotSessionArguments,signal:AbortSignal){
     if(!['status','new','stop','compact','resume'].includes(input.action))return;
     const args=input.action==='resume'?input.sessionId??'':'';const command=managementCommand({name:input.action,args});if(!command)throw Error('UNKNOWN_MANAGEMENT_COMMAND');const result=await this.runtime.commandBus.execute({source:'tool',binding,snapshot,signal},command);

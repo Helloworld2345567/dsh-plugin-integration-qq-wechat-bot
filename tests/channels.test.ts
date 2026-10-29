@@ -1,7 +1,16 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {randomBytes,createCipheriv} from 'node:crypto';import {mkdtemp,writeFile,rm} from 'node:fs/promises';import {join} from 'node:path';
-import {decryptBinding,qqInbound,qqGroupObservation,QQAdapter} from '../src/channels/qq.js';import {decodeMediaKey,weixinInbound,WeixinAdapter} from '../src/channels/weixin.js';import {botSchema} from '../src/core/types.js';
+import {decryptBinding,qqInbound,qqGroupObservation,QQAdapter,qqChannel} from '../src/channels/qq.js';import {decodeMediaKey,weixinInbound,WeixinAdapter} from '../src/channels/weixin.js';import {botSchema} from '../src/core/types.js';
 import {EventEmitter} from 'node:events';
 const qq=botSchema.parse({id:'qq',name:'QQ',channel:'qq',accountId:'app'});const wx=botSchema.parse({id:'wx',name:'WX',channel:'weixin',accountId:'bot'});
+test('QQ active automation delivery uses a durable sequence without an expired reply message ID',async()=>{
+  const payloads:any[]=[];
+  const adapter=new QQAdapter((async(url:string,init:any)=>{if(url.includes('getAppAccessToken'))return{access_token:'fixture',expires_in:3600};payloads.push(JSON.parse(init.body));return{id:'active-receipt'};}) as any);
+  const reply=qqChannel(adapter).normalizeReply!({target:'owner',kind:'private'}).payload;
+  const delivery:any={reply,index:0,output:{type:'text',text:'晚安'},replySequence:17};
+  assert.equal(await adapter.send(qq,{accountId:'app',appSecret:'fixture'},delivery,undefined,new AbortController().signal),'active-receipt');
+  assert.equal(payloads[0].msg_id,undefined);assert.equal(payloads[0].msg_seq,17);
+  await adapter.send(qq,{accountId:'app',appSecret:'fixture'},delivery,undefined,new AbortController().signal);assert.deepEqual(payloads[1],payloads[0]);
+});
 test('QQ QR secret requires authentic AES-GCM and never returns key to UI',async()=>{
  let key:Buffer;const request:any=async(url:string,init:any)=>{if(url.endsWith('create_bind_task')){key=Buffer.from(JSON.parse(init.body).key,'base64');return{data:{task_id:'ticket'}};}const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',key,iv);return{data:{status:2,bot_appid:'app',bot_encrypt_secret:Buffer.concat([iv,cipher.update('fixture-secret'),cipher.final(),cipher.getAuthTag()]).toString('base64')}};};
  const adapter=new QQAdapter(request);const begin=await adapter.beginLogin();assert.equal(begin.credential,undefined);assert.ok(begin.qr?.includes('ticket'));const result=await adapter.pollLogin(begin.ticket!);assert.equal(result.credential?.appSecret,'fixture-secret');assert.equal((await adapter.pollLogin(begin.ticket!)).status,'expired');assert.throws(()=>decryptBinding(randomBytes(40).toString('base64'),randomBytes(32).toString('base64')));

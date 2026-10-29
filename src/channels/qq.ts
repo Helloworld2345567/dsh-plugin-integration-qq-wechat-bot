@@ -83,5 +83,5 @@ export class QQAdapter implements ChannelAdapter {
     const result:any=await this.request(`${API}/v2/${base}/messages`,{method:'POST',headers,body:JSON.stringify(payload),signal});if(!result.id)throw new RemoteError('QQ_SEND_RECEIPT_MISSING');return String(result.id);
   }
 }
-const qqCredential=z.object({accountId:z.string().min(1).max(200),appSecret:z.string().min(1).max(500)}).strict();const qqReply=z.object({target:z.string().min(1).max(4096),kind:z.enum(['private','group']),msgId:z.string().min(1).max(4096)}).strict();
+const qqCredential=z.object({accountId:z.string().min(1).max(200),appSecret:z.string().min(1).max(500)}).strict();const qqReply=z.object({target:z.string().min(1).max(4096),kind:z.enum(['private','group']),msgId:z.string().min(1).max(4096).optional()}).strict();
 export function qqChannel(adapter:QQAdapter):ChannelDefinition{return{id:'qq',displayName:'QQ 官方',adapter,capabilities:{conversations:['private','group'],login:['qr','credentials'],groupSupport:'observed_only'},normalizeCredential:value=>{const credential=qqCredential.parse(value);return{accountId:credential.accountId,credential};},normalizeReply:value=>{const candidate=value as any;if(candidate?.channelId==='qq'&&candidate.version===1)return{channelId:'qq',version:1,payload:qqReply.parse(candidate.payload)};return{channelId:'qq',version:1,payload:qqReply.parse(value)};}};}

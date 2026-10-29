@@ -39,6 +39,7 @@ export function AutomationPanel({React,query,mutate,configs,bots,confirm,onError
       h('section',{className:'card'},ui.toggle('主动会话',proactive.enabled,async()=>{
         await update('automation.proactive',{scopeKey:scope.scopeKey,action:proactive.enabled?'off':'on',args:''},'已更新');
       }),h('p',{className:'muted'},`每日最多 ${proactive.dailyLimit} 次 · ${proactive.quietFrom}–${proactive.quietTo} 静默 · ${proactive.timezone}`),
+      proactive.enabled&&proactive.nextAt?h('p',{className:'muted'},`下次主动会话：${new Intl.DateTimeFormat('zh-CN',{timeZone:proactive.timezone,dateStyle:'short',timeStyle:'short'}).format(proactive.nextAt)}`):null,
       ui.details('设置',h('div',{className:'fields'},
         ui.field('每日上限',value.dailyLimit,v=>patch('dailyLimit',Number(v)),'number',{min:1,max:10}),
         ui.field('静默开始',value.quietFrom,v=>patch('quietFrom',v),'time'),ui.field('静默结束',value.quietTo,v=>patch('quietTo',v),'time')),
@@ -65,6 +66,6 @@ export function AutomationPanel({React,query,mutate,configs,bots,confirm,onError
             if(await confirm('删除此定时任务？'))await update('automation.schedule',{scopeKey:job.scopeKey,action:'delete',args:job.id},'已删除');
           },{className:'quiet danger'})),
           h('p',{className:'muted'},`${job.timezone} · ${job.nextAt?new Intl.DateTimeFormat('zh-CN',{timeZone:job.timezone,dateStyle:'short',timeStyle:'short'}).format(job.nextAt):'暂无下次执行'}`),
-          ui.toggle('启用任务',job.enabled,async()=>{await update('automation.schedule',{scopeKey:job.scopeKey,action:job.enabled?'pause':'resume',args:job.id},'已更新');}),
+          job.state==='completed'?h('span',{className:'muted'},'已完成'):ui.toggle('启用任务',job.enabled,async()=>{await update('automation.schedule',{scopeKey:job.scopeKey,action:job.enabled?'pause':'resume',args:job.id},'已更新');}),
           job.prompt.length>80?ui.details('详情',h('p',null,job.prompt)):null)))));
 }

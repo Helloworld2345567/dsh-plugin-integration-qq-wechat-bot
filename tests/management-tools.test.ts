@@ -11,6 +11,7 @@ import {BotManagement,botSessionArgumentsSchema,botPersonaArgumentsSchema,botSki
 import {defineBotSessionTool,defineBotPersonaTool,defineBotSkillsTool} from '../src/harness/management-tools.js';
 import {botSchema,type CallerScope,type SessionBinding} from '../src/core/types.js';
 import {freezeTurn} from '../src/core/policy.js';
+import {defineBotScheduleTool,defineBotProactiveTool} from '../src/harness/automation-tools.js';
 
 const owner:CallerScope={botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'owner',senderId:'owner'};
 const signal=()=>new AbortController().signal;
@@ -31,6 +32,35 @@ test('management schemas reject identities, paths, mismatched action parameters 
   for(const input of [{action:'list',personaId:'sakura'},{action:'set'},{action:'set',personaId:'../persona'},{action:'set',personaId:'sakura',botId:'other'}])assert.equal(botPersonaArgumentsSchema.safeParse(input).success,false,JSON.stringify(input));
   for(const input of [{action:'enable'},{action:'disable',name:'../skill'},{action:'list',name:'image-generation'},{action:'enable',name:'image-generation',path:'C:/private'}])assert.equal(botSkillsArgumentsSchema.safeParse(input).success,false,JSON.stringify(input));
   assert.deepEqual(botPersonaArgumentsSchema.parse({action:'set',personaId:'PersonaCase'}),{action:'set',personaId:'PersonaCase'});
+});
+
+test('chat automation tools create daily tasks, preserve proactive settings and keep jobs in their own channel',async t=>{
+  const f=await fixture(t),binding=f.binding(),snapshot=f.snapshot();
+  const schedule=defineBotScheduleTool((args,exec)=>f.management.schedule(binding,snapshot,args,exec.signal));
+  const proactive=defineBotProactiveTool((args,exec)=>f.management.proactive(binding,snapshot,args,exec.signal));
+  const exec={signal:signal()} as ToolRunContext;
+  const created=JSON.parse(await schedule.execute({action:'create',prompt:'说晚安',dailyAt:'00:00',timezone:'Asia/Shanghai'},exec) as string);
+  assert.ok(created.jobId);assert.ok(created.nextAt);assert.equal(created.dailyAt,'00:00');assert.equal(created.state,'active');
+  const list=JSON.parse(await schedule.execute({action:'list'},exec) as string);assert.equal(list.jobs.length,1);assert.ok(list.now);assert.equal(list.jobs[0].jobId,created.jobId);
+  await proactive.execute({action:'on'},exec);const settings=JSON.parse(await proactive.execute({action:'set',dailyLimit:2,quietFrom:'23:00'},exec) as string);
+  assert.equal(settings.enabled,true);assert.equal(settings.dailyLimit,2);assert.ok(settings.nextAt);assert.equal(settings.scope,undefined);
+  for(const input of [{action:'create',prompt:'oops',delayMs:1000,scope:owner},{action:'create',prompt:'oops',delayMs:1000,dailyAt:'00:00'},{action:'delete',jobId:created.jobId,senderId:'other'}])await assert.rejects(schedule.execute(input,exec));
+  const other={...owner,channelId:'other',senderId:'other'};f.store.saveBot({...f.store.bot('bot'),trustedUsers:['owner','other']});
+  assert.deepEqual((await f.management.schedule(f.binding(other),f.snapshot(other),{action:'list'},signal())).jobs,[]);
+  await assert.rejects(f.management.schedule(f.binding(other),f.snapshot(other),{action:'delete',jobId:created.jobId},signal()),/SCHEDULE_NOT_FOUND/);
+  await schedule.execute({action:'pause',jobId:created.jobId},exec);assert.equal(f.runtime.automation.listJobs()[0].enabled,false);
+  await schedule.execute({action:'resume',jobId:created.jobId},exec);assert.equal(f.runtime.automation.listJobs()[0].enabled,true);
+  await schedule.execute({action:'delete',jobId:created.jobId},exec);assert.equal(f.runtime.automation.listJobs().length,0);
+});
+
+test('automation tools reject groups, untrusted callers, revoked trust, stale sessions and cancelled turns',async t=>{
+  const f=await fixture(t),binding=f.binding(),snapshot=f.snapshot();
+  const calls=(b:SessionBinding,s:any,abort=signal())=>[()=>f.management.schedule(b,s,{action:'create',prompt:'hello',delayMs:1000},abort),()=>f.management.proactive(b,s,{action:'on'},abort)];
+  for(const scope of [{...owner,kind:'group' as const},{...owner,senderId:'other',channelId:'other'}])for(const call of calls(f.binding(scope),f.snapshot(scope)))await assert.rejects(call(),/TRUSTED/);
+  const cancelled=new AbortController();cancelled.abort();for(const call of calls(binding,snapshot,cancelled.signal))await assert.rejects(call());
+  f.store.saveBot({...f.store.bot('bot'),trustedUsers:[]});for(const call of calls(binding,snapshot))await assert.rejects(call(),/TRUSTED/);
+  f.store.saveBot({...f.store.bot('bot'),trustedUsers:['owner']});f.store.reset(owner);for(const call of calls(binding,snapshot))await assert.rejects(call(),/SESSION_CHANGED/);
+  assert.equal(f.runtime.automation.listJobs().length,0);assert.equal(f.runtime.automation.listProactive().length,0);
 });
 
 test('tool facades expose only their typed arguments and await the supplied host-bound callbacks',async()=>{
