@@ -6,7 +6,7 @@ import {analysisEnabled,type AnalysisProvider,type AnalysisRole} from './analysi
 import type { Store } from './store.js';
 import type { Asset, BotConfig, MediaInput } from './types.js';
 import {normalizeProviderUsage,type MediaUsageCall} from './usage.js';
-import {validateMediaParameters,INPUT_LIMITS} from './limits.js';
+import {validateMediaParameters,INPUT_LIMITS,VIDEO_LIMITS} from './limits.js';
 import {mediaOperationRegistry,MediaOperationRegistry, type MediaOperation} from './media-operation-registry.js';
 import {MEDIA_WORKER_PROTOCOL,MEDIA_WORKER_PROTOCOL_VERSION,validateMediaWorkerJob,type MediaWorkerJob,type WorkerPort} from './worker-port.js';
 import {TransformSlots,transformSlots} from './transform-slots.js';
@@ -21,7 +21,7 @@ export class Assets {
   async save(scope:string,input:MediaInput,bytes:Buffer,jobId?:string):Promise<Asset>{
     // Capture ownership before any I/O: a concurrent /new must not reassign an older upload.
     const sessionId=this.currentSession(scope);
-    if(bytes.length>50*1024*1024) throw new Error('MEDIA_TOO_LARGE');
+    if(bytes.length>(input.kind==='video'?VIDEO_LIMITS.attachmentBytes:INPUT_LIMITS.attachmentBytes)) throw new Error('MEDIA_TOO_LARGE');
     const usage=this.store.assetUsage(scope);if(usage.scope+bytes.length>512*1024*1024||usage.total+bytes.length>2*1024*1024*1024)throw new Error('MEDIA_STORAGE_LIMIT');
     const id=randomUUID(); const name=path.basename(input.name.replaceAll('\\','/')).replace(/[^\p{L}\p{N}._ -]/gu,'_').slice(0,180)||'attachment.bin';
     const folder=path.join(this.root,scope,id); await mkdir(folder,{recursive:true}); const file=path.join(folder,name);await writeFile(file,bytes,{flag:'wx'});
@@ -84,7 +84,7 @@ export class MediaService {
         ? await this.operations.dispatch<MediaResult>(operation,job,combined)
         : await this.worker.run(job,combined,credentials);
       combined.throwIfAborted();
-      const save=async(files:MediaFile[])=>{const ids:string[]=[];for(const file of files){const resolved=await realpath(file.path);const root=await realpath(directory);if(!resolved.startsWith(root+path.sep))throw new Error('WORKER_OUTPUT_OUTSIDE_JOB');const size=(await stat(resolved)).size;if(size>(file.kind==='video'?50:20)*1024*1024||operation==='convert_gif'&&size>=10_000_000)throw new Error('OUTPUT_TOO_LARGE');const asset=await this.assets.save(scope,{name:file.name,mime:file.mime,kind:file.kind},await readFile(resolved),id);ids.push(asset.id);}return ids;};
+      const save=async(files:MediaFile[])=>{const ids:string[]=[];for(const file of files){const resolved=await realpath(file.path);const root=await realpath(directory);if(!resolved.startsWith(root+path.sep))throw new Error('WORKER_OUTPUT_OUTSIDE_JOB');const size=(await stat(resolved)).size;if(size>(file.kind==='video'?VIDEO_LIMITS.attachmentBytes:20*1024*1024)||operation==='convert_gif'&&size>=10_000_000)throw new Error('OUTPUT_TOO_LARGE');const asset=await this.assets.save(scope,{name:file.name,mime:file.mime,kind:file.kind},await readFile(resolved),id);ids.push(asset.id);}return ids;};
       const assetIds=await save(result.assets??[]);const contextAssetIds=await save(result.contextAssets??[]);
       persist({state:'complete',assetIds,contextAssetIds,finishedAt:Date.now()});
       return {text:result.text,coverage:result.coverage,incomplete:result.incomplete,assetIds,contextAssetIds};

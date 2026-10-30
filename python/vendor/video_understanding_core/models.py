@@ -47,7 +47,7 @@ class AnalysisRequest:
 
 @dataclass(frozen=True)
 class Limits:
-    max_download_bytes: int = 50 * 1024**2
+    max_download_bytes: int = 500 * 1024**2
     max_inline_bytes: int = 8 * 1024**2
     max_request_bytes: int = 12 * 1024**2
     max_storage_bytes: int = 512 * 1024**2

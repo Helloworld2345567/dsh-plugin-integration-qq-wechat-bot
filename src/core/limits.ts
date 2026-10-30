@@ -20,6 +20,12 @@ export const INPUT_LIMITS = Object.freeze({
   replyFieldBytes: 4 * 1024,
 });
 
+export const VIDEO_LIMITS = Object.freeze({
+  attachmentBytes: 500 * 1024 * 1024,
+  deliveryBytes: 200 * 1024 * 1024,
+  batchAttachmentBytes: 1000 * 1024 * 1024,
+});
+
 const byteLength = (value: string): number => Buffer.byteLength(value, 'utf8');
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const stringWithin = (value: unknown, limit: number): value is string => typeof value === 'string' && byteLength(value) <= limit;
@@ -47,7 +53,7 @@ function validateMediaInput(input: unknown): string | undefined {
     if (typeof input.bytes !== 'string') return 'INVALID_MEDIA_BYTES';
     const size = decodedBytes(input.bytes);
     if (size === undefined) return 'INVALID_MEDIA_BYTES';
-    if (size > INPUT_LIMITS.attachmentBytes) return 'MEDIA_TOO_LARGE';
+    if (size > (input.kind === 'video' ? VIDEO_LIMITS.attachmentBytes : INPUT_LIMITS.attachmentBytes)) return 'MEDIA_TOO_LARGE';
   }
   if (input.transcript !== undefined && !stringWithin(input.transcript, INPUT_LIMITS.textParameterBytes)) return 'MEDIA_TRANSCRIPT_TOO_LARGE';
   if (input.remote !== undefined) {
@@ -74,13 +80,16 @@ export function validateInboundMessage(message: InboundMessage): string | undefi
   if (!Number.isSafeInteger(message.timestamp) || message.timestamp < 0) return 'INVALID_MESSAGE_TIMESTAMP';
   if (!stringWithin(message.text, INPUT_LIMITS.messageTextBytes)) return 'MESSAGE_TOO_LARGE';
   if (!Array.isArray(message.attachments) || message.attachments.length > INPUT_LIMITS.attachmentCount) return 'ATTACHMENT_COUNT_LIMIT';
-  let attachmentBytes = 0;
+  let attachmentBytes = 0, videoBytes = 0;
   for (const attachment of message.attachments) {
     const error = validateMediaInput(attachment);
     if (error) return error;
-    if (attachment.bytes) attachmentBytes += decodedBytes(attachment.bytes) ?? 0;
+    if (attachment.bytes) {
+      const size = decodedBytes(attachment.bytes) ?? 0;
+      if (attachment.kind === 'video') videoBytes += size; else attachmentBytes += size;
+    }
   }
-  if (attachmentBytes > INPUT_LIMITS.attachmentBytes) return 'ATTACHMENT_BYTES_LIMIT';
+  if (attachmentBytes > INPUT_LIMITS.attachmentBytes || videoBytes > VIDEO_LIMITS.attachmentBytes) return 'ATTACHMENT_BYTES_LIMIT';
   if (message.quoted !== undefined) {
     if (!isRecord(message.quoted)) return 'INVALID_QUOTED_MESSAGE';
     if (message.quoted.id !== undefined && !stringWithin(message.quoted.id, INPUT_LIMITS.identifierBytes)) return 'INVALID_QUOTED_MESSAGE';
@@ -90,9 +99,12 @@ export function validateInboundMessage(message: InboundMessage): string | undefi
       for (const attachment of message.quoted.attachments) {
         const error = validateMediaInput(attachment);
         if (error) return error;
-        if (attachment.bytes) attachmentBytes += decodedBytes(attachment.bytes) ?? 0;
+        if (attachment.bytes) {
+          const size = decodedBytes(attachment.bytes) ?? 0;
+          if (attachment.kind === 'video') videoBytes += size; else attachmentBytes += size;
+        }
       }
-      if (attachmentBytes > INPUT_LIMITS.attachmentBytes) return 'ATTACHMENT_BYTES_LIMIT';
+      if (attachmentBytes > INPUT_LIMITS.attachmentBytes || videoBytes > VIDEO_LIMITS.attachmentBytes) return 'ATTACHMENT_BYTES_LIMIT';
     }
   }
   const replyError=validateReply(message.reply);if(replyError)return replyError;
@@ -103,14 +115,19 @@ export function validateInboundMessage(message: InboundMessage): string | undefi
 export function messageInputBytes(message: InboundMessage, assetSize?: (handle: string) => number): number {
   const text = byteLength(message.text) + (message.quoted?.text ? byteLength(message.quoted.text) : 0);
   const attachments = [...message.attachments, ...(message.quoted?.attachments ?? [])];
-  return text + attachments.reduce((total, input) => total + (input.bytes ? decodedBytes(input.bytes) ?? 0 : input.handle ? assetSize?.(input.handle) ?? 0 : 0), 0);
+  // Video bytes use their own budget below.
+  return text + attachments.filter(input => input.kind !== 'video').reduce((total, input) => total + (input.bytes ? decodedBytes(input.bytes) ?? 0 : input.handle ? assetSize?.(input.handle) ?? 0 : 0), 0);
 }
 
 export function validateBatch(messages: readonly InboundMessage[], assetSize?: (handle: string) => number): void {
   if (messages.length > INPUT_LIMITS.batchMessages) throw new Error('BATCH_MESSAGE_LIMIT');
   const attachments = messages.flatMap(message => [...message.attachments, ...(message.quoted?.attachments ?? [])]);
-  const attachmentBytes = attachments.reduce((total, input) => total + (input.bytes ? decodedBytes(input.bytes) ?? 0 : input.handle ? assetSize?.(input.handle) ?? 0 : 0), 0);
-  if (attachmentBytes > INPUT_LIMITS.batchAttachmentBytes) throw new Error('BATCH_ATTACHMENT_BYTES_LIMIT');
+  let attachmentBytes = 0, videoBytes = 0;
+  for (const input of attachments) {
+    const size = input.bytes ? decodedBytes(input.bytes) ?? 0 : input.handle ? assetSize?.(input.handle) ?? 0 : 0;
+    if (input.kind === 'video') videoBytes += size; else attachmentBytes += size;
+  }
+  if (attachmentBytes > INPUT_LIMITS.batchAttachmentBytes || videoBytes > VIDEO_LIMITS.batchAttachmentBytes) throw new Error('BATCH_ATTACHMENT_BYTES_LIMIT');
   if (messages.reduce((total, message) => total + messageInputBytes(message, assetSize), 0) > INPUT_LIMITS.batchInputBytes) throw new Error('BATCH_INPUT_TOO_LARGE');
 }
 

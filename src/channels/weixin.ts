@@ -6,6 +6,7 @@ import { assertRemoteUrl, backoff, download, jsonRequest, RemoteError } from '..
 import type { ChannelAdapter, LoginState, Credential, BotInstance, InboundMessage, MediaInput, Delivery, Asset } from '../core/types.js';
 import type {ChannelDefinition} from '../core/channel-registry.js';
 import type {CursorStore} from '../core/channel-ports.js';
+import {VIDEO_LIMITS} from '../core/limits.js';
 const BASE='https://ilinkai.weixin.qq.com';const CDN='https://novac2c.cdn.weixin.qq.com/c2c';
 const lossless=JSONbigFactory({storeAsString:true,protoAction:'error',constructorAction:'error'});
 function ilinkUrl(base:string,endpoint:string):string{const url=new URL(endpoint,base+'/');if(url.protocol!=='https:'||!(url.hostname==='ilinkai.weixin.qq.com'||url.hostname.endsWith('.ilinkai.weixin.qq.com')))throw new Error('INVALID_ILINK_HOST');return url.href;}
@@ -42,12 +43,23 @@ export class WeixinAdapter implements ChannelAdapter{
     }catch(error){if(signal.aborted)break;if(error instanceof Error&&error.message==='ILINK_AUTH_EXPIRED'){status('reauthorize');return;}status(`reconnecting: ${error instanceof Error?error.message:'ILINK_CONNECTION_FAILED'}`);await backoff(attempt++,signal).catch(()=>{});}}
     status('stopped');
   }
-  async materialize(input:MediaInput,signal:AbortSignal):Promise<Buffer>{if(!input.remote)throw new Error('ILINK_MEDIA_MISSING');const url=cdnUrl(input.remote.fullUrl??`${CDN}/download?encrypted_query_param=${encodeURIComponent(input.remote.query??'')}`);const bytes=await download(url,signal,50*1024*1024,0,{hosts:WEIXIN_CDN_HOSTS,allowQuery:true,allowPorts:new Set([''])});if(!input.remote.key)return bytes;const decipher=createDecipheriv('aes-128-ecb',decodeMediaKey(input.remote.key),null);return Buffer.concat([decipher.update(bytes),decipher.final()]);}
+  async materialize(input:MediaInput,signal:AbortSignal):Promise<Buffer>{
+    if(!input.remote)throw new Error('ILINK_MEDIA_MISSING');
+    const url=cdnUrl(input.remote.fullUrl??`${CDN}/download?encrypted_query_param=${encodeURIComponent(input.remote.query??'')}`);
+    const video=input.kind==='video',limit=video?VIDEO_LIMITS.attachmentBytes:50*1024*1024;
+    // PKCS#7 adds a full AES block when the plaintext is block-aligned.
+    const bytes=await download(url,signal,limit+(video&&input.remote.key?16:0),0,{hosts:WEIXIN_CDN_HOSTS,allowQuery:true,allowPorts:new Set([''])});
+    if(!input.remote.key)return bytes;
+    const decipher=createDecipheriv('aes-128-ecb',decodeMediaKey(input.remote.key),null);const decoded=Buffer.concat([decipher.update(bytes),decipher.final()]);
+    if(video&&decoded.length>limit)throw new Error('MEDIA_TOO_LARGE');
+    return decoded;
+  }
   async send(_bot:BotInstance,credential:Credential,delivery:Delivery,asset:Asset|undefined,signal:AbortSignal):Promise<string>{
     if(!delivery.reply.contextToken)throw new Error('ILINK_REPLY_CONTEXT_MISSING');
     let item:any={type:1,text_item:{text:delivery.output.text??''}};
     if(asset){
-      const data=await readFile(asset.path);if(data.length>20*1024*1024)throw new Error('ILINK_OUTPUT_TOO_LARGE');const isImage=asset.kind==='image';const isVideo=asset.kind==='video';const attempt=delivery.attempt;
+      const maxBytes=asset.kind==='video'?VIDEO_LIMITS.deliveryBytes:20*1024*1024;if(asset.size>maxBytes)throw new Error('ILINK_OUTPUT_TOO_LARGE');
+      const data=await readFile(asset.path);if(data.length>maxBytes)throw new Error('ILINK_OUTPUT_TOO_LARGE');const isImage=asset.kind==='image';const isVideo=asset.kind==='video';const attempt=delivery.attempt;
       const reusable=attempt?.assetId===asset.id&&!!attempt.uploadQuery&&!!attempt.aesKey;
       let media:{encrypt_query_param:string;aes_key:string;encrypt_type:number};let encryptedSize=attempt?.encryptedSize??data.length;
       if(reusable){

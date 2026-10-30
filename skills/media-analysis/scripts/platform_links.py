@@ -92,7 +92,7 @@ async def download_video(job):
     from video_understanding_core.models import Limits, CallerContext
     from video_understanding_core.media import MediaProcessor
     directory = Path(job['output'])
-    limits = Limits(max_download_bytes=50 * 1024 * 1024, download_timeout=None, resolve_timeout=None, process_timeout=None)
+    limits = Limits(max_download_bytes=500 * 1024 * 1024, download_timeout=None, resolve_timeout=None, process_timeout=None)
     resolver = PublicLinkResolver(directory / 'sources', limits)
     caller = CallerContext(job['scope'], job['scope'], job['scope'])
     source = resolver.describe(job['parameters']['url'], caller)
