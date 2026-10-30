@@ -28,7 +28,7 @@ export interface WorkerPort { run(job: MediaWorkerJob, signal: AbortSignal, cred
 const MAX_TEXT = 4096;
 const MAX_PARAMETER_BYTES = 256 * 1024;
 const MAX_TIMEOUT = 15 * 60 * 1000;
-const MAX_OUTPUT_FILES = 16;
+const MAX_OUTPUT_FILES = 100;
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const boundedString = (value: unknown, max = MAX_TEXT): value is string => typeof value === 'string' && value.length > 0 && value.length <= max;
 const validateFile = (value: unknown): void => {

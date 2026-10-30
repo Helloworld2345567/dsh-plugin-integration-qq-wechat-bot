@@ -221,7 +221,7 @@ def _validate_result(result):
         raise JobError("MEDIA_WORKER_RESULT_INVALID")
     for key in ("assets", "contextAssets"):
         files = result.get(key, [])
-        if not isinstance(files, list) or len(files) > 16:
+        if not isinstance(files, list) or len(files) > 100:
             raise JobError("MEDIA_WORKER_RESULT_INVALID")
         for file in files:
             if not isinstance(file, dict) or any(not isinstance(file.get(field), str) or not file[field] for field in ("path", "name", "mime", "kind")):

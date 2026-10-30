@@ -129,6 +129,44 @@ class WorkerTests(unittest.TestCase):
         file.write_text('<html>not an image</html>')
         self.assertIsNone(image_file(file, 2))
 
+    def test_gallery_download_delivers_100_and_reports_overflow(self):
+        import image_download
+        from PIL import Image
+        content = io.BytesIO()
+        Image.new('RGB', (3, 2), 'green').save(content, format='PNG')
+        original = content.getvalue()
+        for count in (100, 101):
+            with self.subTest(discovered=count):
+                directory = self.root / str(count)
+                directory.mkdir()
+                urls = [f'https://example.com/image-{index}.png' for index in range(count)]
+                downloaded = []
+                async def resolve(url):
+                    return {'images': urls}
+                async def download(url, target, *args, **kwargs):
+                    downloaded.append(url)
+                    target.write_bytes(original)
+                    return len(original)
+                job = self.job('image_download', url='https://www.douyin.com/note/fixture')
+                job.update(handler='skill', output=str(directory))
+                with patch.object(image_download, 'resolve_link', side_effect=resolve), patch.object(image_download, 'download', side_effect=download):
+                    result = worker.execute(job)
+                self.assertEqual(downloaded, urls[:100])
+                self.assertEqual(len(result['assets']), 100)
+                self.assertEqual(result['incomplete'], count > 100)
+                self.assertEqual(json.loads(result['text'])['discovered'], count)
+                for asset in result['assets']:
+                    self.assertEqual(Path(asset['path']).read_bytes(), original)
+
+    def test_worker_result_protocol_accepts_100_files_and_rejects_101(self):
+        files = [dict(path=f'/job/original-{index}.png', name=f'original-{index}.png', mime='image/png', kind='image') for index in range(101)]
+        for key in ('assets', 'contextAssets'):
+            with self.subTest(field=key):
+                result = {key: files[:100]}
+                self.assertIs(worker._validate_result(result), result)
+                with self.assertRaisesRegex(worker.JobError, 'MEDIA_WORKER_RESULT_INVALID'):
+                    worker._validate_result({key: files})
+
     def test_documents_use_actual_contents_and_preserve_unicode(self):
         from docx import Document
         from openpyxl import Workbook

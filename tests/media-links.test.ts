@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {stripImageReferences} from '../src/core/output-text.js';
 import {validateMediaParameters} from '../src/core/limits.js';
 import {DEFAULT_MEDIA_OPERATIONS} from '../src/core/media-operation-registry.js';
-import {validateMediaWorkerJob,MEDIA_WORKER_PROTOCOL,MEDIA_WORKER_PROTOCOL_VERSION,type MediaWorkerJob} from '../src/core/worker-port.js';
+import {validateMediaWorkerJob,validateMediaWorkerResult,MEDIA_WORKER_PROTOCOL,MEDIA_WORKER_PROTOCOL_VERSION,type MediaWorkerJob} from '../src/core/worker-port.js';
 
 test('channel image delivery removes markdown and asset references while retaining prose',()=>{
   assert.equal(stripImageReferences('给你。\n\n![雨中](asset://image-one)\n\n别着凉。',['image-one']),'给你。\n\n别着凉。');
@@ -25,4 +25,12 @@ test('default media operations have no wall-clock deadline but explicit expired 
   const job:MediaWorkerJob={protocol:MEDIA_WORKER_PROTOCOL,protocolVersion:MEDIA_WORKER_PROTOCOL_VERSION,id:'job',scope:'scope',operation:'video_analyze',handler:'analyze_media',inputs:[],parameters:{},output:'C:/job',usagePath:'C:/job/usage.json',deadline:0,timeoutMs:0,quotaUnits:1};
   assert.doesNotThrow(()=>validateMediaWorkerJob(job));
   assert.throws(()=>validateMediaWorkerJob({...job,timeoutMs:1000}),/JOB_EXPIRED/);
+});
+
+test('worker result protocol accepts 100 files and rejects 101',()=>{
+  const files=Array.from({length:101},(_,index)=>({path:`C:/job/original-${index+1}.png`,name:`original-${index+1}.png`,mime:'image/png',kind:'image'}));
+  for(const key of ['assets','contextAssets']){
+    assert.doesNotThrow(()=>validateMediaWorkerResult({[key]:files.slice(0,100)}));
+    assert.throws(()=>validateMediaWorkerResult({[key]:files}),/MEDIA_WORKER_RESULT_INVALID/);
+  }
 });

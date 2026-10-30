@@ -11,7 +11,7 @@ from video_understanding_core.network import download
 from video_understanding_core.models import VideoError
 from platform_links import PLATFORM_HOSTS, resolve_link, MEDIA_USER_AGENT
 
-MAX_IMAGES = 8
+MAX_IMAGES = 100
 MAX_BYTES = 20 * 1024 * 1024
 
 
