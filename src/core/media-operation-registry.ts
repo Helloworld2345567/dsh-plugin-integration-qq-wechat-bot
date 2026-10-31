@@ -11,7 +11,7 @@ export interface MediaOperationDescriptor {
   localTransform?: boolean;
   /** Optional timeout; zero means run until completion or cancellation. */
   timeoutMs: number;
-  /** Per-scope daily call limit; local transforms do not consume it. */
+  /** Per-scope daily call limit; trusted private turns and local transforms are exempt. */
   quotaUnits: number;
   /** Worker handler name in the versioned protocol. */
   handler: string;

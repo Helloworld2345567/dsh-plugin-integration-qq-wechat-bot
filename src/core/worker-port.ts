@@ -18,6 +18,8 @@ export interface MediaWorkerJob {
   deadline: number;
   timeoutMs: number;
   quotaUnits: number;
+  /** Host-authorized exemption from daily call limits; never a tool parameter. */
+  dailyQuotaExempt?: boolean;
   /** Host-assigned encoder budget, never taken from tool parameters. */
   processingSlots?: number;
 }
@@ -48,6 +50,7 @@ export function validateMediaWorkerResult(value: unknown): asserts value is Medi
 }
 
 export function validateMediaWorkerJob(job: MediaWorkerJob): void {
+  if(job.dailyQuotaExempt!==undefined&&typeof job.dailyQuotaExempt!=='boolean')throw new Error('MEDIA_WORKER_QUOTA_INVALID');
   if(job.processingSlots!==undefined&&(!Number.isInteger(job.processingSlots)||job.processingSlots<1||job.processingSlots>2))throw new Error('MEDIA_WORKER_SLOTS_INVALID');
   if (job.protocol !== MEDIA_WORKER_PROTOCOL || job.protocolVersion !== MEDIA_WORKER_PROTOCOL_VERSION) throw new Error('MEDIA_WORKER_PROTOCOL_UNSUPPORTED');
   if (!/^[a-zA-Z0-9._:-]{1,128}$/.test(job.id) || !/^[a-zA-Z0-9._:-]{1,256}$/.test(job.scope) || !/^[a-z][a-z0-9_]{1,80}$/.test(job.operation) || !/^[a-z][a-z0-9_]{1,80}$/.test(job.handler) || !Array.isArray(job.inputs) || job.inputs.length > 8) throw new Error('MEDIA_WORKER_JOB_INVALID');

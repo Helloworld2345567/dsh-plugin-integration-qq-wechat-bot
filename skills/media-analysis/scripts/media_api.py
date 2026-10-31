@@ -149,7 +149,7 @@ async def analyze_video(job):
     root = Path(job['output']) / 'video'
     service = VideoService(root, backend, limits=limits,
                            resolver=PublicLinkResolver(root / 'attachments', limits))
-    caller = CallerContext(job['scope'], job['scope'], job['scope'])
+    caller = CallerContext(job['scope'], job['scope'], job['scope'], daily_quota_exempt=job.get('dailyQuotaExempt') is True)
     try:
         if len(job['inputs']) > 1:
             raise AnalysisError('ONE_VIDEO_REQUIRED')

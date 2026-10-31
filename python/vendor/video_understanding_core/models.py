@@ -15,6 +15,7 @@ class CallerContext:
     bot: str
     user: str
     session: str
+    daily_quota_exempt: bool = False
 
     @property
     def scope(self) -> tuple[str, str, str]:

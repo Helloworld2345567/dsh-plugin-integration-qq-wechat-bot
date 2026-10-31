@@ -78,7 +78,8 @@ class JobStore:
         day, user = self.day(), self.quota_user(caller)
         usage = self.db.execute("SELECT jobs,seconds FROM daily_usage WHERE day=? AND quota_user=?", (day, user)).fetchone()
         total = self.db.execute("SELECT COALESCE(SUM(jobs),0),COALESCE(SUM(seconds),0) FROM daily_usage WHERE day=?", (day,)).fetchone()
-        if (usage and (usage[0] >= limits.daily_jobs_per_user or usage[1] >= limits.daily_seconds_per_user)
+        if caller.daily_quota_exempt is not True and (
+                usage and (usage[0] >= limits.daily_jobs_per_user or usage[1] >= limits.daily_seconds_per_user)
                 or total[0] >= limits.daily_total_jobs or total[1] >= limits.daily_total_seconds):
             raise VideoError("DAILY_BUDGET_EXCEEDED")
         now = time.time()
@@ -91,7 +92,9 @@ class JobStore:
         day, user = self.day(), self.quota_user(caller)
         usage = self.db.execute("SELECT seconds FROM daily_usage WHERE day=? AND quota_user=?", (day, user)).fetchone()
         total = self.db.execute("SELECT COALESCE(SUM(seconds),0) FROM daily_usage WHERE day=?", (day,)).fetchone()[0]
-        if (usage[0] if usage else 0) + seconds > limits.daily_seconds_per_user or total + seconds > limits.daily_total_seconds:
+        if caller.daily_quota_exempt is not True and (
+                (usage[0] if usage else 0) + seconds > limits.daily_seconds_per_user
+                or total + seconds > limits.daily_total_seconds):
             raise VideoError("DAILY_DURATION_EXCEEDED")
         with self.db:
             self.db.execute("INSERT INTO daily_usage VALUES(?,?,0,?) ON CONFLICT(day,quota_user) DO UPDATE SET seconds=seconds+excluded.seconds", (day, user, seconds))

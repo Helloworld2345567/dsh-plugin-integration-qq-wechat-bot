@@ -310,7 +310,7 @@ export class BotRuntime {
           if(previous){input.transcript=previous;return;}
           autoAsrFailure=true;progress?.update('transcription');
           if(!analysisEnabled(config,'asr'))throw new Error('MEDIA_ANALYSIS_DISABLED');
-          const result=await this.media.run(key,'transcribe',config,[assetId],{question:'请忠实转写这段语音。'},signal);
+          const result=await this.media.run(key,'transcribe',config,[assetId],{question:'请忠实转写这段语音。'},signal,()=>{if(!active())throw new Error('MEDIA_TOOL_DISABLED');},snapshot);
           let value:any;try{value=result.text?JSON.parse(result.text):undefined;}catch{value=undefined;}
           const transcript=typeof value?.transcript==='string'?value.transcript.trim():'';
           if(!transcript)throw new Error('EMPTY_TRANSCRIPT');

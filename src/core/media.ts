@@ -3,8 +3,9 @@ import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises
 import path from 'node:path';
 import {resolveImageSkill} from './image-skill.js';
 import {analysisEnabled,type AnalysisProvider,type AnalysisRole} from './analysis.js';
-import type { Store } from './store.js';
-import type { Asset, BotConfig, MediaInput } from './types.js';
+import {scopeKey,type Store} from './store.js';
+import type { Asset, BotConfig, MediaInput, TurnSnapshot } from './types.js';
+import {trusted} from './policy.js';
 import {normalizeProviderUsage,type MediaUsageCall} from './usage.js';
 import {validateMediaParameters,INPUT_LIMITS,VIDEO_LIMITS} from './limits.js';
 import {mediaOperationRegistry,MediaOperationRegistry, type MediaOperation} from './media-operation-registry.js';
@@ -39,7 +40,14 @@ export class MediaService {
   constructor(readonly store:Store,readonly assets:Assets,readonly python=process.env.BOT_PYTHON||'python',readonly analysisProvider?:AnalysisProvider,worker?:WorkerPort,operations:MediaOperationRegistry=mediaOperationRegistry,readonly slots:TransformSlots=transformSlots){this.worker=worker??{run:async()=>{throw new Error('MEDIA_WORKER_NOT_CONFIGURED');}};this.operations=operations;}
   async analysisStatus(config:BotConfig,role:AnalysisRole){try{if(!this.analysisProvider)throw new Error('MEDIA_PROVIDER_SETTINGS_UNAVAILABLE');const value=await this.analysisProvider.resolve(config,role);return{enabled:true,provider:value.provider,model:value.endpoint.model,keyConfigured:!!value.apiKey,protocol:value.endpoint.protocol};}catch(error){return{enabled:analysisEnabled(config,role),error:error instanceof Error?error.message:'MEDIA_CONFIGURATION_INVALID',keyConfigured:false};}}
   cancelScope(scope:string):void{for(const item of this.active.values()) if(item.scope===scope)item.controller.abort(new Error('任务已取消'));}
-  async run(scope:string,operation:MediaOperation,config:BotConfig,inputs:string[],parameters:Record<string,unknown>,signal:AbortSignal,authorize?:()=>void):Promise<{text?:string;coverage?:string;assetIds:string[];contextAssetIds?:string[];incomplete?:boolean}>{
+  private dailyQuotaExempt(scope:string,snapshot?:TurnSnapshot):boolean {
+    if(!snapshot?.trusted)return false;
+    const binding=this.store.findBinding(scope);
+    if(!binding||binding.key!==scope||scopeKey(binding.scope)!==scope||binding.scope.botId!==snapshot.botId)return false;
+    const bot=this.store.bot(binding.scope.botId);
+    return bot.id===snapshot.botId&&trusted(bot,binding.scope);
+  }
+  async run(scope:string,operation:MediaOperation,config:BotConfig,inputs:string[],parameters:Record<string,unknown>,signal:AbortSignal,authorize?:()=>void,snapshot?:TurnSnapshot):Promise<{text?:string;coverage?:string;assetIds:string[];contextAssetIds?:string[];incomplete?:boolean}>{
     const descriptor=this.operations.get(operation);
     if(operation==='image_understand')throw new Error('IMAGE_READ_USE_NATIVE_CHAT_MODEL');
     validateMediaParameters(operation,inputs,parameters);
@@ -64,8 +72,6 @@ export class MediaService {
     const endpoint=connection?.endpoint??((operation==='image_generate'||operation==='image_edit')?resolveImageSkill(config):undefined);
     provider=connection?.provider??(endpoint?new URL(endpoint.baseUrl).hostname:undefined);requestedModel=endpoint?.model;
     persist({provider,requestedModel});
-    const day=new Date().toISOString().slice(0,10);const quotaKey=`${day}:${scope}:${operation}`;
-    if(!descriptor.localTransform)this.store.consumeMediaQuota(quotaKey,descriptor.quotaUnits);
     const credentials:Record<string,string>={};
     if(endpoint){const value=connection?.apiKey??process.env[endpoint.keyEnv];if(!value)throw new Error(`MISSING_PROVIDER_KEY: ${endpoint.keyEnv}`);credentials[endpoint.keyEnv]=value;}
     if(descriptor.inputKinds?.includes('audio')&&source[0]?.mime==='audio/silk'){
@@ -78,6 +84,8 @@ export class MediaService {
       validateMediaWorkerJob(job);
       combined.throwIfAborted();
       authorize?.();
+      job.dailyQuotaExempt=this.dailyQuotaExempt(scope,snapshot);
+      if(!descriptor.localTransform&&!job.dailyQuotaExempt)this.store.consumeMediaQuota(`${new Date().toISOString().slice(0,10)}:${scope}:${operation}`,descriptor.quotaUnits);
       // Registered fixture/native handlers stay in the same operation registry;
       // worker-backed operations cross the versioned process boundary.
       const result=descriptor.execute

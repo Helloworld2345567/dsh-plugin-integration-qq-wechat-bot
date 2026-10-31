@@ -160,7 +160,7 @@ export async function apply(ctx:Context){
     const mediaRun=runtime.media.run.bind(runtime.media);let imageCalls=0;let imageEntered!:()=>void;let finishImage!:()=>void;
     const imageReady=new Promise<void>(resolve=>{imageEntered=resolve;});const imageFinish=new Promise<void>(resolve=>{finishImage=resolve;});
     try{
-      runtime.media.run=async(scope,operation,_config,inputs,parameters)=>{assert.equal(scope,binding.key);assert.equal(operation,'image_download');assert.deepEqual(inputs,[]);assert.equal(parameters.url,'https://example.com/original.png');return{assetIds:[asset.id]};};
+      runtime.media.run=async(scope,operation,_config,inputs,parameters,_signal,authorize,snapshot)=>{assert.equal(scope,binding.key);assert.equal(operation,'image_download');assert.deepEqual(inputs,[]);assert.equal(parameters.url,'https://example.com/original.png');assert.equal(typeof authorize,'function');assert.equal(snapshot,bridge.live.get(binding.sessionId)!.snapshot);return{assetIds:[asset.id]};};
       mediaCall={name:'media_analysis',args:{kind:'image',url:'https://example.com/original.png'}};
       finalText=`已下载。\n\n![图片](asset://${asset.id})`;
       const downloaded=await bridge.run(binding,[msg('download-original','下载链接中的原图')],AbortSignal.timeout(30000));
@@ -172,7 +172,11 @@ export async function apply(ctx:Context){
       runtime.media.run=async(_scope,operation,_config,inputs,parameters)=>{assert.equal(operation,'video_download');assert.deepEqual(inputs,[]);assert.equal(parameters.url,'https://b23.tv/test');return{assetIds:[]};};
       mediaCall={name:'media_analysis',args:{kind:'video',action:'download',url:'https://b23.tv/test'}};
       await bridge.run(binding,[msg('download-video-link','只下载视频')],AbortSignal.timeout(30000));
-      await writeFile(path.join(path.dirname(resultPath),'media-links-result.json'),JSON.stringify({status:'PASS',checks:['image download dispatch and automatic delivery registration','image markdown removed from channel text','video URL analysis dispatch','video-only download dispatch']}));
+      runtime.media.run=async(scope,operation,_config,_inputs,_parameters,_signal,authorize,snapshot)=>{assert.equal(scope,binding.key);assert.equal(operation,'social_read');assert.equal(typeof authorize,'function');assert.equal(snapshot,bridge.live.get(binding.sessionId)!.snapshot);authorize!();return{text:'SOCIAL_LINK_ROUTED',assetIds:[]};};
+      mediaCall={name:'bot_read_social',args:{url:'https://www.xiaohongshu.com/explore/fixture'}};
+      await bridge.run(binding,[msg('read-social-link','读取公开帖子')],AbortSignal.timeout(30000));
+      assert.ok(JSON.stringify(requests.at(-1)!.messages).includes('SOCIAL_LINK_ROUTED'));
+      await writeFile(path.join(path.dirname(resultPath),'media-links-result.json'),JSON.stringify({status:'PASS',checks:['image download dispatch and automatic delivery registration','image markdown removed from channel text','video URL analysis dispatch','video-only download dispatch','media and social tools carry host turn snapshots and execution authorization']}));
 
     }finally{runtime.media.run=mediaRun;}
     try{

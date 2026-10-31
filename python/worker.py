@@ -258,6 +258,8 @@ def _validate_protocol(job):
         raise JobError("MEDIA_WORKER_PROTOCOL_UNSUPPORTED")
     if 'processingSlots' in job and (type(job['processingSlots']) is not int or not 1 <= job['processingSlots'] <= 2):
         raise JobError('MEDIA_WORKER_SLOTS_INVALID')
+    if 'dailyQuotaExempt' in job and type(job['dailyQuotaExempt']) is not bool:
+        raise JobError('MEDIA_WORKER_QUOTA_INVALID')
     # Keep the pre-Phase-5 direct Python API usable for existing integrations;
     # jobs crossing the process boundary are emitted with an explicit version.
     if "protocol" not in job and "protocolVersion" not in job:
