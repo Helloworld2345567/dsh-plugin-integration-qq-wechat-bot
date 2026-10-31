@@ -42,7 +42,7 @@ test('installer moves shared runtime storage and preserves other composition and
 
 test('launcher confines plugin home and temporary defaults to workspace runtime',async t=>{
   const root=await mkdtemp(path.resolve('.codex/storage-env-'));t.after(()=>rm(root,{recursive:true,force:true}));
-  const code='const {runtimeEnv}=await import("./scripts/runtime.mjs");console.log(JSON.stringify(Object.fromEntries(["USERPROFILE","HOME","TEMP","TMP","APPDATA","LOCALAPPDATA","BOT_DATA_HOME"].map(key=>[key,runtimeEnv[key]]))))';
+  const code='const {runtimeEnv}=await import("./scripts/runtime.mjs");console.log(JSON.stringify(Object.fromEntries(["USERPROFILE","HOME","TEMP","TMP","APPDATA","LOCALAPPDATA","BOT_DATA_HOME","npm_config_store_dir"].map(key=>[key,runtimeEnv[key]]))))';
   const env=JSON.parse(execFileSync(process.execPath,['--input-type=module','-e',code],{env:{...process.env,BOT_HOME:path.join(root,'home'),BOT_WORKSPACE_ROOT:path.join(root,'workspaces')},windowsHide:true,encoding:'utf8'}));
   for(const value of Object.values(env))assert.ok(String(value).startsWith(path.join(root,'workspaces','.runtime')+path.sep));
   assert.ok((await readdir(path.join(root,'workspaces','.runtime'))).includes('tmp'));

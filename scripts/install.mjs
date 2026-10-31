@@ -10,7 +10,7 @@ const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 await mkdir(productHome,{recursive:true});
 try{await writeFile(path.join(productHome,'workspace.json'),JSON.stringify({root:workspaceRoot},null,2)+'\n',{flag:'wx'});}catch(error){if(error.code!=='EEXIST')throw error;}
 await mkdir(workspaceRoot,{recursive:true});
-const command=(file,args)=>new Promise((resolve,reject)=>{const child=spawn(file,args,{stdio:'inherit',windowsHide:true});child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(new Error(`${file} exited ${code}`)));});
+const command=(file,args,options={})=>new Promise((resolve,reject)=>{const child=spawn(file,args,{stdio:'inherit',windowsHide:true,...options});child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(new Error(`${file} exited ${code}`)));});
 const mediaEnv=path.join(productHome,'media-venv');
 const python=process.env.BOT_PYTHON||path.join(mediaEnv,process.platform==='win32'?'Scripts/python.exe':'bin/python');
 if(!process.env.BOT_PYTHON){
@@ -42,6 +42,9 @@ const patchEntries=YAML.parse(await readFile(patch,'utf8'))??[];
 await configureWorkspaceStorage(productHome,workspaceRoot,patchEntries);
 await writeFile(patch,YAML.stringify(patchEntries));
 await mkdir(runtimeEnv.TEMP,{recursive:true});
+// pnpm requires a reinstall when an existing profile changes its store location.
+let oldStore;try{oldStore=YAML.parse(await readFile(path.join(profile,'node_modules','.modules.yaml'),'utf8')).storeDir;}catch(error){if(error.code!=='ENOENT')throw error;}
+if(oldStore){const relative=path.relative(runtimeEnv.npm_config_store_dir,oldStore);if(relative.startsWith('..')||path.isAbsolute(relative))await command(process.platform==='win32'?'pnpm.cmd':'pnpm',['install','--force','--frozen-lockfile'],{cwd:profile,env:{...runtimeEnv,CI:'1'},shell:process.platform==='win32'});}
 const source=path.resolve(process.argv[2]||root);await access(source);
 const archive=await archivePackage(source,productHome);
 const lifecycleArchive=await archivePackage(path.join(root,'packages','bot-lifecycle'),productHome);
