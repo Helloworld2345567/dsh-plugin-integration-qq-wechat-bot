@@ -22,7 +22,7 @@ import {registerLifecycleRuntime,handleLifecycleShutdown,createLifecyclePort,pac
 import {SessionId} from '@deepseek-ai/dsh-session';
 
 export const name='bot-integration';
-export const inject=['agents','agentPresets','llm','settings','tools','skills','systemPrompt','attachments','credentials','webServer','permissionPresets','sessions','sessionPersistence','sessionQuery','workingDirectory','commands'];
+export const inject=['agents','agentPresets','llm','settings','tools','skills','systemPrompt','attachments','credentials','webServer','permissionPresets','sessions','sessionPersistence','sessionQuery','storageDomain','workingDirectory','commands'];
 export interface Config { dataDir?:string; python?:string; debounceMs?:number }
 declare module '@deepseek-ai/cordis' {interface Context {botIntegration:BotRuntime}}
 export async function apply(ctx:Context,config:Config={}):Promise<void>{

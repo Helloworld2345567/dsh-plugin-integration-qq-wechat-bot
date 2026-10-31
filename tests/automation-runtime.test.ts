@@ -14,7 +14,7 @@ async function fixture(t:any){
   store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',configId:'sakura',enabled:true,trustedUsers:['owner']}));
   store.accept({id:'context',scope,text:'我们刚聊过天',attachments:[],timestamp:Date.now()-3600000,reply:{target:'owner',kind:'private',msgId:'old'},replyEnvelope:{channelId:'qq',version:1,payload:{target:'owner',kind:'private',msgId:'old'}}});store.mark(scopeKey(scope),['context'],'complete');
   const sent:Delivery[]=[];
-  const harness:HarnessPort={run:async(_b,_m,_s,options)=>({turnId:'background',outputs:[{type:'text',text:'晚安'}],snapshot:options!.snapshot!}),cancel:()=>{},dispose:async()=>{},validateModel:async()=>{}};
+  const harness:HarnessPort={run:async(_b,_m,_s,options)=>({turnId:'background',outputs:[{type:'text',text:'晚安'}],snapshot:options!.snapshot!}),cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async()=>{}};
   const adapter={beginLogin:async()=>({status:'pending' as const}),pollLogin:async()=>({status:'expired' as const}),connect:async()=>{},materialize:async()=>Buffer.alloc(0),send:async(_b:any,_c:any,delivery:Delivery)=>{sent.push(delivery);return'receipt';}};
   const runtime=new BotRuntime(store,assets,new MediaService(store,assets),harness,fixtureChannels(adapter),{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}},60000);
   t.after(async()=>{await runtime.close();store.close();await rm(directory,{recursive:true,force:true});});

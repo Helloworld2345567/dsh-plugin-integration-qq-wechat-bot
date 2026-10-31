@@ -19,7 +19,7 @@ function gate(){let resolve!:()=>void;const promise=new Promise<void>(r=>resolve
 async function runtimeFixture(t:any,run:HarnessPort['run'],send:ChannelAdapter['send']=async()=> 'receipt'){
   const store=await fixture(t);bot(store);const assets=new Assets(store);const media=new MediaService(store,assets);
   const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async()=>Buffer.from('pixels'),send};
-  const harness:HarnessPort={run,cancel:()=>{},dispose:async()=>{},validateModel:async c=>{if(c.model?.model==='invalid')throw new Error('UNKNOWN_MODEL');}};
+  const harness:HarnessPort={run,cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async c=>{if(c.model?.model==='invalid')throw new Error('UNKNOWN_MODEL');}};
   const runtime=new BotRuntime(store,assets,media,harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),{read:async id=>({accountId:id}),write:async()=>{},remove:async()=>{}},60000);
   t.after(()=>runtime.close());return{store,runtime,assets,media};
 }
@@ -37,7 +37,7 @@ test('configuration revisions publish atomically, sharing and copies preserve bi
   assert.throws(()=>store.saveBot({...store.bot('two'),accountId:'one'}));
 });
 
-test('deleting a bot cancels its work, removes credentials and pauses automation while preserving history and other bots',async t=>{
+test('deleting a bot cancels its work and deletes history and automation while preserving other bots',async t=>{
   const entered=gate();const f=await runtimeFixture(t,async(_binding,_messages,signal,options)=>{
     entered.resolve();await new Promise<void>(resolve=>signal.addEventListener('abort',()=>resolve(),{once:true}));
     return{turnId:'cancelled',outputs:[{type:'text',text:'must not send'}],snapshot:options!.snapshot!};
@@ -52,14 +52,15 @@ test('deleting a bot cancels its work, removes credentials and pauses automation
   assert.equal(f.store.bot('one').archived,true);assert.equal(f.store.bot('one').enabled,false);
   assert.deepEqual(removed,['one']);assert.equal(f.runtime.states.has('one'),false);
   assert.equal(f.store.bot('two').archived,false);assert.equal(f.store.bot('two').enabled,true);
-  assert.equal(f.runtime.automation.listJobs().find(item=>item.id===job.id)?.enabled,false);
+  assert.equal(f.runtime.automation.listJobs().find(item=>item.id===job.id),undefined);
   assert.equal(f.runtime.automation.listJobs().find(item=>item.id===otherJob.id)?.enabled,true);
-  assert.equal(f.runtime.automation.listProactive()[0].enabled,false);
-  assert.ok(f.store.sessions(scope()).some(session=>session.id===binding.sessionId));
+  assert.equal(f.runtime.automation.listProactive().length,0);
+  assert.equal(f.store.sessionsAll().filter(item=>item.scope.botId==='one').length,0);
+  assert.equal(f.store.allMessages().length,0);assert.equal(f.store.turnMetrics().length,0);
   assert.equal(f.store.deliveries().filter(item=>item.botId==='one'&&['pending','sending'].includes(item.state)).length,0);
   assert.throws(()=>f.runtime.saveBot({...f.store.bot('one'),archived:false}),/已删除/);
   await assert.rejects(f.runtime.start('one'),/归档|删除/);
-  await f.runtime.deleteBot('one');assert.deepEqual(removed,['one']);
+  await f.runtime.deleteBot('one');assert.deepEqual(removed,['one','one']);
 });
 
 test('failed bot credential removal leaves a stopped visible bot and can be retried',async t=>{
@@ -75,6 +76,15 @@ test('a start waiting for credentials cannot reconnect a deleted bot',async t=>{
   f.runtime.credentials.read=async()=>{entered.resolve();await release.promise;return{accountId:'one'};};
   const starting=f.runtime.start('one');await entered.promise;await f.runtime.deleteBot('one');release.resolve();
   await assert.rejects(starting,/已删除/);assert.equal(f.store.bot('one').enabled,false);assert.equal(f.store.bot('one').archived,true);
+});
+
+test('failed native history cleanup leaves a stopped visible bot for retry and keeps history ownership',async t=>{
+  const f=await runtimeFixture(t,async()=>{throw Error('not used');});const binding=f.store.binding(scope());
+  f.runtime.harness.deleteSessions=async()=>{throw Error('HISTORY_DELETE_FAILED');};
+  await assert.rejects(f.runtime.deleteBot('one'),/HISTORY_DELETE_FAILED/);
+  assert.equal(f.store.bot('one').archived,false);assert.equal(f.store.bot('one').enabled,false);assert.ok(f.store.findSession(binding.sessionId));
+  f.runtime.harness.deleteSessions=async ids=>{assert.ok(ids.includes(binding.sessionId));};
+  await f.runtime.deleteBot('one');assert.equal(f.store.findSession(binding.sessionId),undefined);
 });
 
 test('startup interrupts both queued and running media jobs without replay',async t=>{

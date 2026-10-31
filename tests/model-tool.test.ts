@@ -23,7 +23,7 @@ test('trusted natural-language model switching has a bot_model capability withou
 async function fixture(t:any){
   const directory=await mkdtemp(path.resolve('.codex/model-tool-'));const store=new Store(directory);const assets=new Assets(store),media=new MediaService(store,assets);
   const catalog=[{provider:'Fixture',model:'chat'},{provider:'Fixture',model:'Gemini-Case'}];
-  const harness:HarnessPort={run:async()=>{throw Error('NO_MODEL_CALL');},cancel:()=>{},dispose:async()=>{},models:async()=>catalog,validateModel:async config=>{if(config.model&&!catalog.some(m=>m.provider===config.model!.provider&&m.model===config.model!.model))throw Error('UNKNOWN_MODEL');}};
+  const harness:HarnessPort={run:async()=>{throw Error('NO_MODEL_CALL');},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},models:async()=>catalog,validateModel:async config=>{if(config.model&&!catalog.some(m=>m.provider===config.model!.provider&&m.model===config.model!.model))throw Error('UNKNOWN_MODEL');}};
   const adapter={beginLogin:async()=>({status:'pending' as const}),pollLogin:async()=>({status:'expired' as const}),connect:async()=>{},materialize:async()=>Buffer.alloc(0),send:async()=> 'receipt'};
   const runtime=new BotRuntime(store,assets,media,harness,fixtureChannels(adapter),{} as any);const features=new BotFeatures(runtime);
   const previous=store.config('sakura');store.saveConfig({...previous,allowHostTools:false,model:catalog[0]},previous.revision);

@@ -83,7 +83,7 @@ test('panel retains summary options, drafts and local errors across its sections
     };
     tree=render();assert.equal(tree.filter(n=>n.type==='button'&&n.children.includes('删除')).length,2);
     tree.find(n=>n.props?.['aria-label']==='删除机器人 sakura（1）').props.onClick();await new Promise(resolve=>setImmediate(resolve));
-    tree=render();assert.match(tree.find(n=>n.props?.role==='dialog').props['aria-label'],/ID：1/);
+    tree=render();assert.match(tree.find(n=>n.props?.role==='dialog').props['aria-label'],/ID：1/);assert.match(tree.find(n=>n.props?.role==='dialog').props['aria-label'],/永久删除.*聊天记录/);
     tree.find(n=>n.type==='button'&&n.children.includes('取消')).props.onClick();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(deleted,[]);
     tree=render();tree.find(n=>n.props?.['aria-label']==='删除机器人 sakura（1）').props.onClick();await new Promise(resolve=>setImmediate(resolve));
     tree=render();tree.find(n=>n.props?.role==='dialog').props.onSubmit({preventDefault:()=>{}});await new Promise(resolve=>setImmediate(resolve));

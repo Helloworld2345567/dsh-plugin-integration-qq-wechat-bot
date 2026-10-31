@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-integration-qq-wechat-bot",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Native DeepSeek Harness QQ and WeChat bots with hot-switchable personas and media tools",
   "type": "module",
   "license": "MIT",

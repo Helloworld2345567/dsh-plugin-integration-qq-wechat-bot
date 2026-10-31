@@ -42,6 +42,7 @@ import {PromptAssembler} from './prompt-assembler.js';
 import {StatsEventAdapter} from './stats-event-adapter.js';
 import {ToolRegistrar} from './tool-registrar.js';
 import {CapabilityRegistry} from '../core/capability-registry.js';
+import {deleteNativeSessions} from './session-deletion.js';
 
 export interface LiveSession { handle:AgentHandle; binding:SessionBinding; snapshot:TurnSnapshot; skills:Readonly<Record<string,FrozenSkill>>; sources:string[]; assets:Output[]; images:{inFlight:boolean;completed:boolean}; voice:{attempted:boolean}; cwd:string; shellDirectory?:string; selection:ModelSelectionRef; restrictions?:()=>void; invalidator?:()=>void; refreshTools?:()=>void; policyError?:Error }
 export interface HarnessExtensions {skills?:DynamicSkills;stats?:StatsService;management?:BotManagement;model?:(binding:SessionBinding,snapshot:TurnSnapshot,args:BotModelArguments,signal:AbortSignal)=>Promise<unknown>;evolve?:(binding:SessionBinding,snapshot:TurnSnapshot,args:Record<string,unknown>,signal:AbortSignal)=>Promise<unknown>}
@@ -436,4 +437,5 @@ export class NativeHarness implements HarnessPort {
   }
   cancel(sessionId:string):void{const root=this.live.get(sessionId)?.handle.agent;if(!root)return;const pending=[root];const seen=new Set<Agent>();while(pending.length){const parent=pending.shift()!;if(seen.has(parent))continue;seen.add(parent);for(const child of this.ctx.agents.list())if(this.ctx.agents.isOwnedBy(child.id,parent))pending.push(child);parent.cancel({kind:'user'});}}
   async dispose(sessionId?:string):Promise<void>{for(const [id,live] of this.live){if(!sessionId||id===sessionId){await live.handle.dispose();this.live.delete(id);}}}
+  async deleteSessions(sessionIds:readonly string[]):Promise<void>{await deleteNativeSessions(this.ctx,sessionIds,id=>this.dispose(id));}
 }

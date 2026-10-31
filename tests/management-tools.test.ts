@@ -17,7 +17,7 @@ const owner:CallerScope={botId:'bot',platform:'qq',accountId:'account',kind:'pri
 const signal=()=>new AbortController().signal;
 async function fixture(t:any){
   const directory=await mkdtemp(path.resolve('.codex/management-tools-'));const store=new Store(directory);const assets=new Assets(store);
-  const harness:HarnessPort={run:async()=>{throw Error('NO_MODEL_CALL');},cancel:()=>{},dispose:async()=>{},validateModel:async()=>{}};
+  const harness:HarnessPort={run:async()=>{throw Error('NO_MODEL_CALL');},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async()=>{}};
   const runtime=new BotRuntime(store,assets,new MediaService(store,assets),harness,{} as any,{read:async()=>undefined,write:async()=>{},remove:async()=>{}},60000);const features=new BotFeatures(runtime);const management=new BotManagement(runtime,features);
   const previous=store.config('sakura');store.saveConfig({...previous,allowHostTools:false,model:{provider:'fixture',model:'chat'}},previous.revision);
   store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',configId:'sakura',enabled:true,trustedUsers:['owner']}));

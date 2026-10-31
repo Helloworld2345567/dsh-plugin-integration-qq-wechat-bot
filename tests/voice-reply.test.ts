@@ -20,7 +20,7 @@ async function fixture(t:any){
   store.accept({id:'context',scope,text:'已有上下文',attachments:[],timestamp:Date.now()-3600000,reply:{target:'owner',kind:'private',msgId:'old'}});store.mark(binding.key,['context'],'complete');
   const audio=await assets.save(binding.key,{kind:'audio',name:'ai-voice.wav',mime:'audio/wav'},Buffer.from('audio fixture'));
   const sent:Delivery[]=[];const calls:Array<{config:any;parameters:any;signal:AbortSignal}>=[];
-  const harness:HarnessPort={run:async(_b,_m,_s,options)=>({turnId:'reply',outputs:[{type:'text',text:'你好'}],snapshot:options!.snapshot!}),cancel:()=>{},dispose:async()=>{},validateModel:async()=>{}};
+  const harness:HarnessPort={run:async(_b,_m,_s,options)=>({turnId:'reply',outputs:[{type:'text',text:'你好'}],snapshot:options!.snapshot!}),cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async()=>{}};
   const adapter={beginLogin:async()=>({status:'pending' as const}),pollLogin:async()=>({status:'expired' as const}),connect:async()=>{},materialize:async()=>Buffer.alloc(0),send:async(_b:any,_c:any,delivery:Delivery)=>{sent.push(delivery);return'receipt';}};
   const media=new MediaService(store,assets);media.run=async(_scope,operation,config,inputs,parameters,signal,authorize)=>{
     assert.equal(operation,'voice_speak');assert.deepEqual(inputs,[]);authorize?.();calls.push({config,parameters,signal});return{assetIds:[audio.id]};

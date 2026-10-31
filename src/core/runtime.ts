@@ -26,6 +26,7 @@ function modelFailureCode(error:unknown):string {
 }
 
 export type {HarnessResult,HarnessPort,Credentials} from './runtime-ports.js';
+import {botHistory,deleteBotFiles,deleteBotRecords} from './bot-history.js';
 import type {HarnessPort,HarnessResult,Credentials} from './runtime-ports.js';
 export type {CommandServices} from './command-bus.js';
 export class BotRuntime {
@@ -86,15 +87,21 @@ export class BotRuntime {
     for(const [key,task] of this.maintenance){const binding=this.store.findBinding(key);if(!binding)continue;const bot=this.store.bot(binding.scope.botId);if(!bot.enabled||bot.archived){task.controller.abort();this.harness.cancel(task.sessionId);}}
   }
   async start(botId:string):Promise<void>{await this.connectionSupervisor.start(botId);}
-  /** Remove a bot from active use while preserving its identity and session history. Failed cleanup leaves it stopped for retry. */
+  /** Keep only the reserved identity; remove owned history after all writers stop. */
   async deleteBot(botId:string):Promise<void>{
-    const bot=this.store.bot(botId);if(bot.archived)return;
+    const bot=this.store.bot(botId);
     this.store.saveBot({...bot,enabled:false,archived:true});
     try{
       await this.stop(botId);
       await this.credentials.remove(botId);
       for(const job of this.automation.listJobs())if(job.botId===botId)this.automation.setJob(job.id,false);
       for(const config of this.automation.listProactive())if(config.botId===botId)this.automation.setProactive(config.scope,false);
+      await this.automation.drain();await this.drainControls();await this.deliveryWorker.drain();
+      let history=botHistory(this.store,botId);
+      await this.harness.deleteSessions([...history.sessions]);
+      history=botHistory(this.store,botId);
+      await deleteBotFiles(this.store,this.assets.root,history);
+      deleteBotRecords(this.store,botId,history);
       this.states.delete(botId);
     }catch(error){this.store.saveBot({...this.store.bot(botId),enabled:false,archived:false});throw error;}
   }
