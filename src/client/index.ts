@@ -97,7 +97,7 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
     if(tab==='catalog'){
       const selected=edit?{...edit,tools:list(edit.tools),skills:list(edit.skills),hostTools:list(edit.hostTools),media:edit.media??{}}:null;
       const update=(patch:any)=>{setEdit({...selected,...patch});setDirty(true);setNotice('');};const existing=selected&&configs.some((c:any)=>c.id===selected.id);const personaFile=directories.personas.find((p:any)=>p.id===selected?.id);
-      const newConfig=async()=>{if(dirty&&!await confirm('放弃未保存修改并新建人格？'))return;++loadSequence.current;setConfigLoading(false);setEdit({schemaVersion:3,id:'',name:'',revision:1,personaPrompt:'你是自然、具体的中文助手。',model:null,media:{voice:{enabled:false,protocol:'speech',replyMode:'on_demand',format:'mp3'}},tools:['bot_media','bot_voice','bot_send_file','bot_remember','bot_forget_memory','bot_read_social'],skills:['image-generation','media-analysis','voice-generation'],allowHostTools:false,hostTools:[],imageStyle:'',archived:false});setDirty(true);setSection('basic');};
+      const newConfig=async()=>{if(dirty&&!await confirm('放弃未保存修改并新建人格？'))return;++loadSequence.current;setConfigLoading(false);setEdit({schemaVersion:3,id:'',name:'',revision:1,personaPrompt:'你是自然、具体的中文助手。',model:null,media:{voice:{enabled:false,protocol:'edge_tts',replyMode:'on_demand',format:'mp3',voice:'zh-CN-XiaoxiaoNeural'}},tools:['bot_media','bot_voice','bot_send_file','bot_remember','bot_forget_memory','bot_read_social'],skills:['image-generation','media-analysis','voice-generation'],allowHostTools:false,hostTools:[],imageStyle:'',archived:false});setDirty(true);setSection('basic');};
       const fileApply=async(id:string)=>{if(dirty&&!await confirm('应用文件将覆盖未保存修改，继续？'))return;const result=await mutate('config.files.apply',{id},'文件已应用，下一轮生效');setEdit(result);setDirty(false);};
       body=h('section',{'aria-label':'人格'},h('div',{className:'toolbar'},ui.select('人格',existing?selected.id:'',[...(!existing?[{id:'',name:selected?'新建人格':'请选择'}]:[]),...configs],loadConfig,{disabled:busy||configLoading}),ui.button('新建',newConfig),ui.button('导入',async()=>{const id=await ask('人格 ID');if(id)await fileApply(id);})),configLoading?h('p',{role:'status'},'加载中…'):null,
         selected?h('section',{className:'card'},h('div',{className:'row spread'},h('h3',null,selected.name||'新建人格'),h('small',null,`${dirty?'未保存':'已保存'} · 关联 ${summaryBots.filter((b:any)=>b.configId===selected.id).length} 个机器人`)),
@@ -113,7 +113,7 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
               return h('section',{key:role,className:'item'},ui.toggle(label,enabled,()=>set({enabled:!enabled})),h('p',{className:'muted'},!enabled?'已关闭':role==='voice'?voiceStatus:!status?'状态未加载':ready?'已就绪':'待配置'),enabled?ui.details('配置',...(role==='image'?[
                 ui.textarea('图片风格',selected.imageStyle,v=>update({imageStyle:v})),h('small',null,status?.overridden?'使用人格配置':'继承环境配置'),...([['baseUrl','地址'],['model','模型'],['keyEnv','密钥变量']] as const).map(([key,name])=>ui.field(name,options[key]??'',v=>set({[key]:v||undefined})))
               ]:role==='voice'?[
-                ui.select('语音协议',options.protocol??'speech',[{id:'speech',name:'OpenAI-compatible speech'},{id:'gpt_sovits',name:'GPT-SoVITS'}],v=>set({protocol:v,format:v==='gpt_sovits'?'wav':'mp3',voice:undefined})),
+                ui.select('语音协议',options.protocol??'edge_tts',[{id:'edge_tts',name:'Edge TTS'},{id:'gpt_sovits',name:'GPT-SoVITS'}],v=>set({protocol:v,format:v==='gpt_sovits'?'wav':'mp3',voice:v==='edge_tts'?'zh-CN-XiaoxiaoNeural':undefined})),
                 ui.select('语音回复策略',options.replyMode??'on_demand',[{id:'on_demand',name:'按需语音'},{id:'auto',name:'文字加自动语音'}],v=>set({replyMode:v})),
                 ...(gpt?[
                   ui.field('推理服务地址',gptOptions.baseUrl??'',v=>setGpt({baseUrl:v})),
@@ -127,7 +127,14 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
                   ui.field('音色标识',options.voice??'',v=>set({voice:v||undefined}),'text',{placeholder:'默认使用人格 ID'}),
                   h('small',null,'输出 WAV；路径由推理服务读取。每次完整加载模型后合成，支持普通朗读。'),
                   h('small',null,'该服务由一个机器人进程独占。首次接入，或改变已有参考文本对应的语言／v1 前端家族时，先重启推理服务以清除旧缓存。')
-                ]:[ui.select('提供商',options.provider??'',[{id:'',name:'跟随主模型'},...models],v=>set({provider:v||undefined,model:undefined})),ui.select('模型',options.model??'',[{id:'',name:'跟随主模型'},...(models.find((p:any)=>p.id===provider)?.models??[])],v=>set({model:v||undefined})),ui.field('声音',options.voice??'',v=>set({voice:v||undefined}),'text',{placeholder:'例如 alloy'}),ui.select('格式',options.format??'mp3',[{id:'mp3',name:'MP3'},{id:'wav',name:'WAV'}],v=>set({format:v})),h('small',null,'支持普通朗读和轻量旋律化表达')]),
+                ]:[ui.select('本机音色',options.voice??'zh-CN-XiaoxiaoNeural',[
+                  {id:'zh-CN-XiaoxiaoNeural',name:'中文女声 · 晓晓'},
+                  {id:'zh-CN-YunxiNeural',name:'中文男声 · 云希'},
+                  {id:'zh-CN-YunyangNeural',name:'中文男声 · 云扬'},
+                  {id:'en-US-AriaNeural',name:'英语女声 · Aria'},
+                  {id:'en-US-GuyNeural',name:'英语男声 · Guy'},
+                  {id:'ja-JP-NanamiNeural',name:'日语女声 · Nanami'},
+                ],v=>set({voice:v||undefined})),ui.field('自定义音色',options.voice??'',v=>set({voice:v||undefined}),'text',{placeholder:'例如 zh-CN-XiaoxiaoNeural'}),h('small',null,'Edge TTS 不需要 API Key，输出 MP3；音色名称由本机配置保存。')]),
                 h('small',null,'自动语音保留文字；本轮已经调用语音工具时不重复合成。配置完整不代表模型与参考音频已经通过实际合成验收。')
               ]:[ui.select('提供商',options.provider??'',[{id:'',name:'跟随主模型'},...models],v=>set({provider:v||undefined,model:undefined})),ui.select('模型',options.model??'',[{id:'',name:'跟随主模型'},...(models.find((p:any)=>p.id===provider)?.models??[])],v=>set({model:v||undefined})),role==='asr'?ui.select('协议',options.protocol??'chat_completions',[{id:'chat_completions',name:'聊天'},{id:'transcriptions',name:'转写'}],v=>set({protocol:v})):null]),status?.error&&!['IMAGE_SKILL_DISABLED','MEDIA_ANALYSIS_DISABLED','VOICE_DISABLED','VOICE_OUTPUT_DISABLED'].includes(status.error)?h('p',{className:'error',role:'alert'},status.error):null,ui.button('恢复默认',()=>{const media={...selected.media};delete media[role];update({media});})):null);
             })):null,

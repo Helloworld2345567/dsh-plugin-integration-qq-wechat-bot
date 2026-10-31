@@ -49,7 +49,7 @@ export const adminCommandRequestSchema=z.discriminatedUnion('name',[
 export type AdminCommandRequest=z.infer<typeof adminCommandRequestSchema>;
 
 export interface AdminSummaryBot {id:string;name:string;channel:string;accountId:string;configId:string;enabled:boolean;archived:boolean;status:string;activeSessions:number;credentialConfigured:boolean;trustedUserCount:number;workspaceConfigured:boolean}
-export interface AdminSummaryConfig {id:string;name:string;revision:number;archived:boolean;model:{provider:string;model:string}|null;toolCount:number;skillCount:number;allowHostTools:boolean;voice:{enabled:boolean;protocol?:'speech'|'gpt_sovits';replyMode?:'on_demand'|'auto';provider?:string;model?:string;voice?:string;format:'mp3'|'wav'}|null}
+export interface AdminSummaryConfig {id:string;name:string;revision:number;archived:boolean;model:{provider:string;model:string}|null;toolCount:number;skillCount:number;allowHostTools:boolean;voice:{enabled:boolean;protocol?:'edge_tts'|'gpt_sovits';replyMode?:'on_demand'|'auto';voice?:string;format:'mp3'|'wav'}|null}
 export interface AdminSummaryData {
   channels:Array<{id:string;displayName:string;capabilities:{conversations:readonly ('private'|'group')[];login:readonly ('qr'|'credentials')[];groupSupport:'unsupported'|'observed_only'}}>;
   bots:AdminSummaryBot[];

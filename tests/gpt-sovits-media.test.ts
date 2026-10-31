@@ -44,12 +44,12 @@ test('media inherits frozen persona defaults and explicit tool parameters win wi
   assert.throws(()=>validateMediaWorkerJob({...jobs[0],endpoint:{...jobs[0].endpoint,refAudioPath:''}}),/MEDIA_WORKER_ENDPOINT_INVALID/);
 });
 
-test('speech persona defaults also reach the worker and retain secret injection',async t=>{
+test('Edge TTS persona defaults reach the worker without credentials',async t=>{
   let captured:MediaWorkerJob|undefined;
-  const f=await fixture(t,{run:async(job,_signal,credentials)=>{captured=job;assert.deepEqual(credentials,{VOICE_KEY:'fixture'});return{};}});
-  const native=new MediaService(f.store,f.media.assets,'python',{resolve:async()=>({provider:'speech',apiKey:'fixture',endpoint:{baseUrl:'https://example.invalid/v1',model:'tts',keyEnv:'VOICE_KEY',protocol:'speech'}})},f.media.worker);
-  await native.run('speech','voice_speak',config('native',{protocol:'speech',voice:'nova',format:'wav'}),[],{text:'Hello'},new AbortController().signal);
-  assert.equal(captured?.parameters.voice,'nova');assert.equal(captured?.parameters.format,'wav');
+  const f=await fixture(t,{run:async(job,_signal,credentials)=>{captured=job;assert.deepEqual(credentials,{});return{};}});
+  const edge=new MediaService(f.store,f.media.assets,'python',{resolve:async()=>({provider:'edge_tts',endpoint:{protocol:'edge_tts',voice:'en-US-AriaNeural'}})},f.media.worker);
+  await edge.run('edge','voice_speak',config('native',{protocol:'edge_tts',voice:'en-US-AriaNeural',format:'mp3'}),[],{text:'Hello'},new AbortController().signal);
+  assert.equal(captured?.parameters.voice,'en-US-AriaNeural');assert.equal(captured?.parameters.format,'mp3');
 });
 
 test('service queue normalizes addresses, cancels waiting callers, and releases failed leases',async()=>{

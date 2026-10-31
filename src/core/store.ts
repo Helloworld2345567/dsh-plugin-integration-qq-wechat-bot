@@ -54,18 +54,22 @@ export class Store {
     }
     if (!this.get('config','default')) {
       const hostTools=secureDefaults?false:undefined;
-      const voiceDefaults={enabled:false,protocol:'speech' as const,format:'mp3' as const};
+      const voiceDefaults={enabled:false,protocol:'edge_tts' as const,format:'mp3' as const};
       this.put('config', 'default', configSchema.parse({ id:'default', name:'默认', personaPrompt:'你是自然、真诚、具体的中文聊天伙伴。回应用户实际意图，默认简洁，任务结果按需要展开。不编造记忆、工具执行或媒体内容。保留工具、skills和运行环境信息。',media:{voice:voiceDefaults},...(hostTools===undefined?{}:{allowHostTools:hostTools}) }));
       this.put('config', 'sakura', configSchema.parse({ id:'sakura', name:'小樱', personaPrompt:'你是成年猫娘小樱：银白长发、翠绿色眼睛、白色猫耳和尾巴、黑白女仆装。自然简短地交流，日常文字尽量不超过100字，任务结果可以展开。按用户意图决定是否调用图片工具，每轮最多一张生成图。参考图编辑必须使用真实原图。不输出配图描述，不编造工具或媒体观察。',media:{voice:voiceDefaults},...(hostTools===undefined?{}:{allowHostTools:hostTools}) }));
     }
     for(const raw of this.list<BotConfig>('config')){
-      if(raw.schemaVersion!==3){
+      const legacySpeech=(raw as any).media?.voice?.protocol==='speech';
+      if(raw.schemaVersion!==3||legacySpeech){
         // Keep historical revisions intact; publish one migrated effective configuration.
         if(!this.get('config-version',`${raw.id}:${raw.revision}`))this.put('config-version',`${raw.id}:${raw.revision}`,raw);
         const media={...raw.media};for(const role of ['asr','video'] as const){if(media[role]&&('baseUrl' in media[role]||'keyEnv' in media[role]))media[role]={enabled:true,protocol:'chat_completions'};}
         // Voice output was not present in the previous schema.  Publish an
         // explicit, closed declaration so an upgrade cannot incur TTS usage.
-        media.voice={enabled:false,protocol:'speech',replyMode:'on_demand',format:'mp3'};
+        // A former OpenAI-compatible speech declaration is converted to the
+        // keyless Edge TTS protocol while keeping voice disabled until the
+        // operator explicitly enables it.
+        media.voice={enabled:false,protocol:'edge_tts',replyMode:'on_demand',format:'mp3'};
         const next=configSchema.parse({...raw,schemaVersion:3,media,tools:[...new Set([...(raw.tools??[]),'bot_voice'])],skills:[...new Set([...(raw.skills??[]),'media-analysis','voice-generation'])],revision:raw.revision+1});
         this.transaction(()=>{this.put('config-version',`${next.id}:${next.revision}`,next);this.put('config',next.id,next);});
       }

@@ -31,13 +31,25 @@ export const gptSovitsSchema=z.object({
   }
 });
 export type GptSovitsConfig=z.infer<typeof gptSovitsSchema>;
-export const voiceSkillSchema=z.object({
+const edgeTtsVoiceSchema=z.string().trim().min(1).max(100).refine(value=>new TextEncoder().encode(value).length<=128,'Edge TTS 音色名称不能超过 128 字节');
+export const edgeTtsSchema=z.object({
+  protocol:z.literal('edge_tts'),
+  voice:edgeTtsVoiceSchema,
+});
+export type EdgeTtsConfig=z.infer<typeof edgeTtsSchema>;
+export const edgeTtsFallbackSchema=z.object({enabled:z.boolean().default(false),voice:edgeTtsVoiceSchema});
+export type EdgeTtsFallbackConfig=z.infer<typeof edgeTtsFallbackSchema>;
+export const voiceSkillSchema=z.preprocess(input=>{
+  // Read old persisted `speech` declarations without reviving their provider,
+  // model, or API-key fields. They are rewritten as keyless Edge TTS by Store.
+  if(input&&typeof input==='object'&&!Array.isArray(input)&&(input as any).protocol==='speech')return{...(input as Record<string,unknown>),protocol:'edge_tts',provider:undefined,model:undefined,format:'mp3'};
+  return input;
+},z.object({
   enabled:z.boolean().default(false),
-  provider:z.string().min(1).max(150).optional(),
-  model:z.string().min(1).max(200).optional(),
-  protocol:z.enum(['speech','gpt_sovits']).default('speech'),
+  protocol:z.enum(['edge_tts','gpt_sovits']).default('edge_tts'),
   replyMode:z.enum(['on_demand','auto']).default('on_demand'),
-  voice:z.string().trim().min(1).max(100).refine(value=>new TextEncoder().encode(value).length<=128,'音色标识不能超过 128 字节').optional(),
+  voice:edgeTtsVoiceSchema.optional(),
+  edgeTts:edgeTtsFallbackSchema.optional(),
   format:z.enum(['mp3','wav']).optional(),
   gptSovits:gptSovitsSchema.optional(),
 }).superRefine((value,ctx)=>{
@@ -45,7 +57,8 @@ export const voiceSkillSchema=z.object({
     if(!value.gptSovits)ctx.addIssue({code:'custom',path:['gptSovits'],message:'请配置 GPT-SoVITS 服务、模型与参考音频'});
     if(value.format==='mp3')ctx.addIssue({code:'custom',path:['format'],message:'GPT-SoVITS 语音输出仅支持 WAV'});
   }
-}).transform(value=>({...value,format:value.format??(value.protocol==='gpt_sovits'?'wav' as const:'mp3' as const)}));
+  if(value.enabled&&value.protocol==='edge_tts'&&value.format==='wav')ctx.addIssue({code:'custom',path:['format'],message:'Edge TTS 语音输出仅支持 MP3'});
+}).transform(value=>({...value,format:value.format??(value.protocol==='gpt_sovits'?'wav' as const:'mp3' as const)})));
 export const configSchema = z.object({
   schemaVersion:z.literal(3).default(3),
   id: idSchema, name: z.string().trim().min(1).max(100), revision: z.number().int().positive().default(1),

@@ -1,7 +1,7 @@
 import type {Context} from '@deepseek-ai/cordis';
 import {credentialKey,credentialRef,isCredentialKeySegment} from '@deepseek-ai/dsh-credentials';
 import type {} from '@deepseek-ai/dsh-settings';
-import {endpointSchema,gptSovitsSchema,type BotConfig} from '../core/types.js';
+import {endpointSchema,gptSovitsSchema,type BotConfig,edgeTtsSchema} from '../core/types.js';
 import {analysisEnabled,type AnalysisProvider,type AnalysisRole,type AnalysisConnection} from '../core/analysis.js';
 import {normalizeGptSovitsBaseUrl} from '../core/voice-config.js';
 
@@ -15,8 +15,14 @@ export class HarnessMediaProvider implements AnalysisProvider{
       if(!parsed.success)throw new Error('GPT_SOVITS_CONFIGURATION_INVALID');
       return{provider:'gpt_sovits',endpoint:{...parsed.data,baseUrl:normalizeGptSovitsBaseUrl(parsed.data.baseUrl),protocol:'gpt_sovits',voice:config.media.voice.voice??config.id}};
     }
+    if(role==='tts'){
+      const options=config.media.voice;
+      const parsed=edgeTtsSchema.safeParse({protocol:'edge_tts',voice:options?.voice??'zh-CN-XiaoxiaoNeural'});
+      if(!parsed.success)throw new Error('EDGE_TTS_CONFIGURATION_INVALID');
+      return{provider:'edge_tts',endpoint:parsed.data};
+    }
     const media=config.media as Record<string,any>;
-    const options=role==='tts'?media.voice:media[role];
+    const options=media[role];
     const provider=options?.provider??config.model?.provider;
     const model=options?.model??config.model?.model;
     if(!provider||!model)throw new Error('请选择聊天模型或媒体分析模型');
@@ -38,7 +44,7 @@ export class HarnessMediaProvider implements AnalysisProvider{
     }
     if(!apiKey?.trim())throw new Error('MEDIA_PROVIDER_KEY_NOT_CONFIGURED');
     const headers:Record<string,string>={};for(const [key,entry] of Object.entries(value.headers??{})){if(['openai-organization','openai-project'].includes(key.toLowerCase())&&typeof entry==='string')headers[key]=entry;}
-    const protocol=role==='tts'?'speech':role==='asr'?(options?.protocol??'chat_completions'):'chat_completions';
+    const protocol=role==='asr'?(options?.protocol??'chat_completions'):'chat_completions';
     return{provider,endpoint:{baseUrl:endpoint.data.baseUrl,model,keyEnv:'BOT_ANALYSIS_API_KEY',protocol,headers},apiKey};
   }
 }

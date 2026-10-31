@@ -9,8 +9,8 @@ import {normalizeGptSovitsBaseUrl,normalizeGptSovitsPromptText} from '../src/cor
 const reference={baseUrl:'http://tts.invalid:9880/',modelVersion:'v4',gptWeightsPath:'models/voice.ckpt',sovitsWeightsPath:'models/voice.pth',refAudioPath:'references/voice.wav',promptText:'参考语音',promptLang:'all_zh',textLang:'all_zh'};
 const persona=(id:string,patch:Record<string,unknown>={})=>configSchema.parse({id,name:id,personaPrompt:'A',media:{voice:{enabled:true,protocol:'gpt_sovits',gptSovits:{...reference,...patch}}}});
 
-test('voice defaults preserve speech and choose WAV for configured GPT-SoVITS',()=>{
-  assert.deepEqual(voiceSkillSchema.parse({}),{enabled:false,protocol:'speech',replyMode:'on_demand',format:'mp3'});
+test('voice defaults use Edge TTS and choose WAV for configured GPT-SoVITS',()=>{
+  assert.deepEqual(voiceSkillSchema.parse({}),{enabled:false,protocol:'edge_tts',replyMode:'on_demand',format:'mp3'});
   const config=persona('voice');assert.equal(config.media.voice?.format,'wav');assert.equal(config.media.voice?.gptSovits?.baseUrl,'http://tts.invalid:9880');
   assert.throws(()=>voiceSkillSchema.parse({enabled:true,protocol:'gpt_sovits'}),/请配置/);
   assert.throws(()=>voiceSkillSchema.parse({enabled:true,protocol:'gpt_sovits',gptSovits:reference,format:'mp3'}),/仅支持 WAV/);

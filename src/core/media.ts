@@ -39,7 +39,7 @@ export class MediaService {
   readonly operations:MediaOperationRegistry;
   readonly worker:WorkerPort;
   constructor(readonly store:Store,readonly assets:Assets,readonly python=process.env.BOT_PYTHON||'python',readonly analysisProvider?:AnalysisProvider,worker?:WorkerPort,operations:MediaOperationRegistry=mediaOperationRegistry,readonly slots:TransformSlots=transformSlots){this.worker=worker??{run:async()=>{throw new Error('MEDIA_WORKER_NOT_CONFIGURED');}};this.operations=operations;}
-  async analysisStatus(config:BotConfig,role:AnalysisRole){try{if(!this.analysisProvider)throw new Error('MEDIA_PROVIDER_SETTINGS_UNAVAILABLE');const value=await this.analysisProvider.resolve(config,role);return{enabled:true,configured:true,provider:value.provider,model:value.endpoint.protocol==='gpt_sovits'?value.endpoint.modelVersion:value.endpoint.model,keyConfigured:!!value.apiKey,protocol:value.endpoint.protocol};}catch(error){return{enabled:analysisEnabled(config,role),configured:false,error:error instanceof Error?error.message:'MEDIA_CONFIGURATION_INVALID',keyConfigured:false};}}
+  async analysisStatus(config:BotConfig,role:AnalysisRole){try{if(!this.analysisProvider)throw new Error('MEDIA_PROVIDER_SETTINGS_UNAVAILABLE');const value=await this.analysisProvider.resolve(config,role);const model=value.endpoint.protocol==='gpt_sovits'?value.endpoint.modelVersion:value.endpoint.protocol==='edge_tts'?value.endpoint.voice:value.endpoint.model;return{enabled:true,configured:true,provider:value.provider,model,keyConfigured:!!value.apiKey,protocol:value.endpoint.protocol};}catch(error){return{enabled:analysisEnabled(config,role),configured:false,error:error instanceof Error?error.message:'MEDIA_CONFIGURATION_INVALID',keyConfigured:false};}}
   cancelScope(scope:string):void{for(const item of this.active.values()) if(item.scope===scope)item.controller.abort(new Error('任务已取消'));}
   private dailyQuotaExempt(scope:string,snapshot?:TurnSnapshot):boolean {
     if(!snapshot?.trusted)return false;
@@ -55,7 +55,7 @@ export class MediaService {
       const voice=config.media.voice;
       parameters={...parameters};
       if(parameters.voice===undefined&&voice?.voice!==undefined)parameters.voice=voice.voice;
-      if(parameters.format===undefined)parameters.format=voice?.format??(voice?.protocol==='gpt_sovits'?'wav':'mp3');
+      if(parameters.format===undefined)parameters.format=voice?.format??'mp3';
     }
     validateMediaParameters(operation,inputs,parameters);
     const other=[...this.active.values()].filter(a=>!a.localTransform);
@@ -79,18 +79,19 @@ export class MediaService {
     const connection=role?await this.analysisProvider!.resolve(config,role):undefined;
     const endpoint=connection?.endpoint??((operation==='image_generate'||operation==='image_edit')?resolveImageSkill(config):undefined);
     const gptEndpoint=connection?.endpoint.protocol==='gpt_sovits'?connection.endpoint:undefined;
-    provider=connection?.provider??(endpoint?new URL(endpoint.baseUrl).hostname:undefined);requestedModel=gptEndpoint?.modelVersion??endpoint?.model;
+    const edgeEndpoint=connection?.endpoint.protocol==='edge_tts'?connection.endpoint:undefined;
+    provider=connection?.provider??(endpoint&&typeof endpoint.baseUrl==='string'?new URL(endpoint.baseUrl).hostname:undefined);requestedModel=gptEndpoint?.modelVersion??(edgeEndpoint?.voice??(endpoint&&typeof endpoint.model==='string'?endpoint.model:undefined));
     persist({provider,requestedModel});
     if(gptEndpoint){persist({state:'queued'});releaseVoice=await voiceServiceQueue.acquire(gptEndpoint.baseUrl,combined);combined.throwIfAborted();authorize?.();persist({state:'running'});}
     const credentials:Record<string,string>={};
-    if(endpoint&&!gptEndpoint){const keyEnv=endpoint.keyEnv;if(!keyEnv)throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');const value=connection?.apiKey??process.env[keyEnv];if(!value)throw new Error(`MISSING_PROVIDER_KEY: ${keyEnv}`);credentials[keyEnv]=value;}
+    if(endpoint&&'keyEnv' in endpoint&&typeof endpoint.keyEnv==='string'){const keyEnv=endpoint.keyEnv;const value=connection?.apiKey??process.env[keyEnv];if(!value)throw new Error(`MISSING_PROVIDER_KEY: ${keyEnv}`);credentials[keyEnv]=value;}
     if(descriptor.inputKinds?.includes('audio')&&source[0]?.mime==='audio/silk'){
       const {decode}=await import('silk-wasm');const decoded=await decode(await this.assets.read(scope,source[0].id),24000);
       const pcm=Buffer.from(decoded.data);if(pcm.length>30*1024*1024)throw new Error('AUDIO_TOO_LONG');
       const header=Buffer.alloc(44);header.write('RIFF',0);header.writeUInt32LE(36+pcm.length,4);header.write('WAVEfmt ',8);header.writeUInt32LE(16,16);header.writeUInt16LE(1,20);header.writeUInt16LE(1,22);header.writeUInt32LE(24000,24);header.writeUInt32LE(48000,28);header.writeUInt16LE(2,32);header.writeUInt16LE(16,34);header.write('data',36);header.writeUInt32LE(pcm.length,40);
       const wav=path.join(directory,'decoded.wav');await writeFile(wav,Buffer.concat([header,pcm]));source[0]={...source[0],path:wav,name:'decoded.wav',mime:'audio/wav'};
     }
-      const job:MediaWorkerJob={protocol:MEDIA_WORKER_PROTOCOL,protocolVersion:MEDIA_WORKER_PROTOCOL_VERSION,id,scope,operation,handler:descriptor.handler,inputs:source.map(a=>({path:a.path,name:a.name,mime:a.mime,kind:a.kind})),parameters,endpoint,output:directory,usagePath:path.join(directory,'model-usage.json'),deadline:descriptor.timeoutMs>0?Date.now()+descriptor.timeoutMs:0,timeoutMs:descriptor.timeoutMs,quotaUnits:descriptor.quotaUnits,processingSlots:lease?.slots};
+      const job:MediaWorkerJob={protocol:MEDIA_WORKER_PROTOCOL,protocolVersion:MEDIA_WORKER_PROTOCOL_VERSION,id,scope,operation,handler:descriptor.handler,inputs:source.map(a=>({path:a.path,name:a.name,mime:a.mime,kind:a.kind})),parameters,endpoint:endpoint as unknown as Record<string,unknown>|undefined,output:directory,usagePath:path.join(directory,'model-usage.json'),deadline:descriptor.timeoutMs>0?Date.now()+descriptor.timeoutMs:0,timeoutMs:descriptor.timeoutMs,quotaUnits:descriptor.quotaUnits,processingSlots:lease?.slots};
       validateMediaWorkerJob(job);
       combined.throwIfAborted();
       authorize?.();

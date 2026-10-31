@@ -19,7 +19,7 @@ description: 根据用户明确要求生成 AI 语音回复，支持普通朗读
 
 省略 `voice`、`format` 时使用本轮人格配置，再使用协议默认值；显式工具参数优先。连接信息来自人格配置，技能调用不接受 API key、URL、模型权重或参考音频路径。
 
-- `speech` 使用已配置的 OpenAI-compatible provider，凭据由 Harness 注入；支持 MP3/WAV。provider 不支持风格 instructions 时返回明确的降级结果。
+- `edge_tts` 使用 Edge TTS，不需要 API key；音色来自人格配置，可在管理页选择或填写本机保存的 Edge 音色名称，输出 MP3。
 - `gpt_sovits` 使用人格配置的模型与参考音频，只支持普通朗读和 WAV。`voice` 只能是当前人格配置的音色标识，省略时自动继承；不要填 `alloy` 等其他提供商音色。`chant`、显式 MP3 会返回不支持；`style` 会明确降级为普通朗读，不承诺改变风格。
 
 音频输出限制为 20 MiB。只依据工具真实结果描述完成情况，不伪装成歌曲。

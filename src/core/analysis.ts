@@ -1,10 +1,11 @@
 import type {BotConfig,GptSovitsConfig} from './types.js';
-/** Media provider roles share the native model connection, with TTS using the speech endpoint. */
+/** ASR/video use the native model connection; TTS is local Edge TTS or GPT-SoVITS. */
 export type AnalysisRole='asr'|'video'|'tts';
-export type AnalysisProtocol='chat_completions'|'transcriptions'|'speech'|'gpt_sovits';
-export interface NativeAnalysisEndpoint {baseUrl:string;model:string;keyEnv:string;protocol:Exclude<AnalysisProtocol,'gpt_sovits'>;headers?:Record<string,string>}
+export type AnalysisProtocol='chat_completions'|'transcriptions'|'edge_tts'|'gpt_sovits';
+export interface NativeAnalysisEndpoint {baseUrl:string;model:string;keyEnv:string;protocol:Exclude<AnalysisProtocol,'gpt_sovits'|'edge_tts'>;headers?:Record<string,string>}
+export interface EdgeTtsEndpoint {protocol:'edge_tts';voice:string;baseUrl?:never;model?:never;keyEnv?:never}
 export type GptSovitsEndpoint=GptSovitsConfig&{protocol:'gpt_sovits';voice:string;model?:never;keyEnv?:never;headers?:never};
-export type AnalysisEndpoint=NativeAnalysisEndpoint|GptSovitsEndpoint;
+export type AnalysisEndpoint=NativeAnalysisEndpoint|EdgeTtsEndpoint|GptSovitsEndpoint;
 export interface AnalysisConnection {provider:string;endpoint:AnalysisEndpoint;apiKey?:string}
 export interface AnalysisProvider {resolve(config:BotConfig,role:AnalysisRole):Promise<AnalysisConnection>}
 export function analysisEnabled(config:Readonly<BotConfig>,role?:AnalysisRole):boolean{

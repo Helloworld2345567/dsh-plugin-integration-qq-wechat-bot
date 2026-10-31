@@ -1,18 +1,16 @@
-"""Speech synthesis through OpenAI-compatible or GPT-SoVITS services.
+"""Speech synthesis through Edge TTS or GPT-SoVITS services.
 
-The worker receives the provider key through the managed process environment and
-never places it in a job, request record, result, or exception.  It accepts the
-binary response returned by ``/audio/speech`` and registers one audio asset.
+Edge TTS has no API key. GPT-SoVITS endpoint settings are trusted persona
+configuration and never come from tool parameters.
 """
 from __future__ import annotations
 
 import contextlib
+import asyncio
 import io
 import json
 import math
-import os
 from pathlib import Path
-import struct
 import sys
 import time
 import wave
@@ -57,23 +55,12 @@ def _endpoint(job: dict) -> dict:
         raise VoiceError("MEDIA_PROVIDER_SETTINGS_UNAVAILABLE")
     if endpoint.get("protocol") == "gpt_sovits":
         return _gpt_endpoint(endpoint)
-    if endpoint.get("protocol") not in (None, "speech"):
+    if endpoint.get("protocol") != "edge_tts":
         raise VoiceError("VOICE_PROTOCOL_UNSUPPORTED")
-    base = endpoint.get("baseUrl")
-    parsed = urlparse(str(base or ""))
-    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise VoiceError("MEDIA_PROVIDER_ENDPOINT_INVALID")
-    if parsed.port not in (None, 443):
-        raise VoiceError("MEDIA_PROVIDER_ENDPOINT_INVALID")
-    if not isinstance(endpoint.get("model"), str) or not endpoint["model"].strip():
-        raise VoiceError("MEDIA_PROVIDER_ENDPOINT_INVALID")
-    key_env = endpoint.get("keyEnv")
-    if not isinstance(key_env, str) or not key_env or not key_env.isupper() or not key_env.replace("_", "").isalnum():
-        raise VoiceError("MEDIA_PROVIDER_ENDPOINT_INVALID")
-    headers = endpoint.get("headers")
-    if headers is not None and not isinstance(headers, dict):
-        raise VoiceError("MEDIA_PROVIDER_ENDPOINT_INVALID")
-    return endpoint
+    voice = endpoint.get("voice")
+    if not isinstance(voice, str) or not voice.strip() or len(voice.encode("utf-8")) > MAX_VOICE_BYTES:
+        raise VoiceError("EDGE_TTS_VOICE_INVALID")
+    return {"protocol": "edge_tts", "voice": voice.strip()}
 
 
 def _gpt_endpoint(endpoint: dict) -> dict:
@@ -221,84 +208,44 @@ def _execute_gpt(job: dict, endpoint: dict, mode: str, text: str, voice: str,
     }
 
 
-def _headers(endpoint: dict, key: str) -> dict[str, str]:
-    headers = {
-        str(name): str(value)
-        for name, value in (endpoint.get("headers") or {}).items()
-        if str(name).lower() in ("openai-organization", "openai-project")
-    }
-    headers.update({"Authorization": f"Bearer {key}", "Accept": "audio/mpeg, audio/wav, audio/pcm, application/octet-stream"})
-    return headers
-
-
-def _request_audio(job: dict, body: dict) -> tuple[bytes, str]:
-    """Perform one non-replayed paid request and return bytes plus content type."""
-    import requests
-
-    endpoint = _endpoint(job)
-    key = os.environ.get(endpoint["keyEnv"], "").strip()
-    if not key:
-        raise VoiceError("MEDIA_PROVIDER_KEY_NOT_CONFIGURED")
-    timeout = remaining(job)
-    call = journal(job)
+async def _edge_tts_save(text: str, voice: str, target: Path, rate: str | None) -> None:
     try:
-        with requests.Session() as session:
-            session.trust_env = False
-            with session.post(
-                endpoint["baseUrl"].rstrip("/") + "/audio/speech",
-                headers={**_headers(endpoint, key), "Content-Type": "application/json"},
-                json=body,
-                timeout=timeout,
-                allow_redirects=False,
-                stream=True,
-            ) as response:
-                if response.status_code != 200:
-                    raise VoiceError(f"VOICE_PROVIDER_HTTP_{response.status_code}")
-                chunks: list[bytes] = []
-                total = 0
-                for chunk in response.iter_content(64 * 1024):
-                    remaining(job)
-                    if not isinstance(chunk, (bytes, bytearray)):
-                        raise VoiceError("VOICE_PROVIDER_OUTPUT_INVALID")
-                    total += len(chunk)
-                    if total > MAX_AUDIO_BYTES:
-                        raise VoiceError("VOICE_OUTPUT_TOO_LARGE")
-                    chunks.append(bytes(chunk))
-                data = b"".join(chunks)
-                if not data:
-                    raise VoiceError("EMPTY_VOICE_OUTPUT")
-                return data, (response.headers.get("content-type") or "").split(";", 1)[0].lower()
+        import edge_tts
+    except ImportError:
+        raise VoiceError("EDGE_TTS_NOT_INSTALLED") from None
+    communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate or "+0%")
+    await communicate.save(str(target))
+
+
+def _request_edge_audio(job: dict, endpoint: dict, text: str, speed: float | None) -> bytes:
+    remaining(job)
+    output = Path(job["output"])
+    output.mkdir(parents=True, exist_ok=True)
+    target = output / "edge-tts.mp3"
+    rate = None if speed is None else f"{round((speed - 1) * 100):+d}%"
+    try:
+        asyncio.run(_edge_tts_save(text, endpoint["voice"], target, rate))
     except VoiceError:
         raise
-    except requests.Timeout:
-        raise VoiceError("MODEL_TIMEOUT_MAY_BE_BILLED") from None
-    except requests.RequestException:
-        raise VoiceError("PROVIDER_CONNECTION_FAILED_MAY_BE_BILLED") from None
-
-
-def request(job: dict, route: str = "/audio/speech", *, body: dict | None = None) -> bytes | tuple[bytes, str]:
-    """Compatibility helper used by tests and local callers.
-
-    The route is fixed to ``/audio/speech``; accepting it as an argument keeps
-    this function shaped like the analysis worker while preventing arbitrary
-    provider paths from crossing the worker boundary.
-    """
-    if route != "/audio/speech":
-        raise VoiceError("VOICE_ROUTE_UNSUPPORTED")
-    return _request_audio(job, body or {})
-
-
-def _wav_wrap(pcm: bytes, *, rate: int = 24000, channels: int = 1, width: int = 2) -> bytes:
-    if not pcm or len(pcm) % (channels * width):
-        raise VoiceError("VOICE_PCM_INVALID")
-    block = channels * width
-    byte_rate = rate * block
-    header = struct.pack(
-        "<4sI4s4sIHHIIHH4sI",
-        b"RIFF", 36 + len(pcm), b"WAVE", b"fmt ", 16, 1, channels,
-        rate, byte_rate, block, width * 8, b"data", len(pcm),
-    )
-    return header + pcm
+    except Exception as error:
+        name = type(error).__name__.upper()
+        if "TIMEOUT" in name:
+            raise VoiceError("EDGE_TTS_TIMEOUT") from None
+        raise VoiceError("EDGE_TTS_FAILED") from None
+    remaining(job)
+    try:
+        data = target.read_bytes()
+    except OSError:
+        raise VoiceError("EDGE_TTS_OUTPUT_MISSING") from None
+    if not data:
+        raise VoiceError("EMPTY_VOICE_OUTPUT")
+    if len(data) > MAX_AUDIO_BYTES:
+        raise VoiceError("VOICE_OUTPUT_TOO_LARGE")
+    # Edge TTS writes a local file; do not trust a nominal MIME type when the
+    # bytes are actually an error document.
+    if _audio_kind(data, "", "mp3") != "mp3":
+        raise VoiceError("VOICE_OUTPUT_FORMAT_INVALID")
+    return data
 
 
 def _audio_kind(data: bytes, content_type: str, requested: str) -> str:
@@ -334,7 +281,7 @@ def _parameter(job: dict) -> tuple[str, str, str, str | None, float | None, str]
         raise VoiceError("VOICE_TEXT_INVALID")
     endpoint = job.get("endpoint") if isinstance(job.get("endpoint"), dict) else {}
     gpt_sovits = endpoint.get("protocol") == "gpt_sovits"
-    voice = params.get("voice") or (endpoint.get("voice") if gpt_sovits else "alloy")
+    voice = params.get("voice") or endpoint.get("voice")
     if not isinstance(voice, str) or not voice.strip() or len(voice.encode("utf-8")) > MAX_VOICE_BYTES:
         raise VoiceError("VOICE_NAME_INVALID")
     style = params.get("style")
@@ -359,67 +306,24 @@ def execute(job: dict) -> dict:
     endpoint = _endpoint(job)
     if endpoint.get("protocol") == "gpt_sovits":
         return _execute_gpt(job, endpoint, mode, text, voice, style, speed, output_format)
-    instructions = style.strip() if isinstance(style, str) and style.strip() else None
-    if mode == "chant":
-        base = "Use a light, expressive, melodic speaking style with a gentle humming feel. This is short expressive TTS, not a full song, accompaniment, or cover."
-        instructions = f"{base} Style: {instructions}" if instructions else base
-    body = {"model": endpoint["model"], "input": text, "voice": voice, "response_format": output_format}
-    if speed is not None:
-        body["speed"] = speed
-    if instructions:
-        body["instructions"] = instructions
-    # Route through the public helper so callers can exercise the exact
-    # OpenAI-compatible request contract without touching transport internals.
-    degraded = False
-    try:
-        response = request(job, "/audio/speech", body=body)
-    except VoiceError as error:
-        # Some OpenAI-compatible providers reject the optional instructions
-        # field before dispatching a model call.  A known 400 validation error
-        # is safe to downgrade once; timeouts, 5xx responses, and connection
-        # failures remain non-replayed because their billing state is unknown.
-        if instructions and error.code == "VOICE_PROVIDER_HTTP_400":
-            fallback = {key: value for key, value in body.items() if key != "instructions"}
-            response = request(job, "/audio/speech", body=fallback)
-            degraded = True
-        else:
-            raise
-    # Keep the private transport easy to stub: callers may return raw bytes,
-    # while the built-in transport also supplies the provider content type.
-    if isinstance(response, tuple) and len(response) == 2:
-        data, content_type = response
-    else:
-        data, content_type = response, ""
-    if not isinstance(data, (bytes, bytearray)) or not isinstance(content_type, str):
-        raise VoiceError("VOICE_PROVIDER_OUTPUT_INVALID")
-    data = bytes(data)
-    kind = _audio_kind(data, content_type, output_format)
-    if kind == "pcm":
-        if output_format != "wav":
-            raise VoiceError("VOICE_PCM_REQUIRES_WAV")
-        data = _wav_wrap(data)
-        kind = "wav"
-    if kind != output_format:
-        raise VoiceError("VOICE_OUTPUT_FORMAT_INVALID")
-    if len(data) > MAX_AUDIO_BYTES:
-        raise VoiceError("VOICE_OUTPUT_TOO_LARGE")
+    if endpoint.get("protocol") != "edge_tts":
+        raise VoiceError("VOICE_PROTOCOL_UNSUPPORTED")
+    if output_format != "mp3":
+        raise VoiceError("EDGE_TTS_FORMAT_UNSUPPORTED")
+    if voice != endpoint["voice"]:
+        raise VoiceError("EDGE_TTS_VOICE_NOT_CONFIGURED")
+    data = _request_edge_audio(job, endpoint, text, speed)
     output = Path(job["output"])
     output.mkdir(parents=True, exist_ok=True)
-    target = output / f"voice.{FORMATS[kind][1].lstrip('.')}"
+    target = output / "voice.mp3"
     target.write_bytes(data)
+    degraded = bool((style and style.strip()) or mode == "chant")
     return {
-        "text": (
-            "已生成 AI 语音；当前提供商不支持旋律化 instructions，已降级为普通语音。" if mode == "chant" else
-            "已生成 AI 语音；当前提供商不支持 style instructions，已降级为普通语音。"
-            if degraded else
-            "已生成 AI 语音（轻量旋律化表达，不是完整歌曲）。" if mode == "chant" else
-            "已生成 AI 语音。"
-        ),
-        "assets": [{"path": str(target), "name": target.name, "mime": FORMATS[kind][0], "kind": "audio"}],
+        "text": "已生成 AI 语音；Edge TTS 不支持 style 或旋律化指令，已降级为普通朗读。" if degraded else "已生成 AI 语音。",
+        "assets": [{"path": str(target), "name": target.name, "mime": "audio/mpeg", "kind": "audio"}],
         "coverage": "VOICE_SYNTHESIS_DEGRADED" if degraded else "VOICE_SYNTHESIS",
         "incomplete": False,
     }
-
 
 if __name__ == "__main__":
     try:

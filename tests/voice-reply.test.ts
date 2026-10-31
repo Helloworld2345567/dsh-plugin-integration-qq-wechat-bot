@@ -14,7 +14,7 @@ function deferred(){let resolve!:()=>void;const promise=new Promise<void>(done=>
 
 async function fixture(t:any){
   const directory=await mkdtemp(path.resolve('.codex/voice-reply-')),store=new Store(directory),assets=new Assets(store);
-  const initial=store.config('sakura');store.saveConfig({...initial,media:{voice:{enabled:true,protocol:'speech',replyMode:'auto',voice:'first',format:'wav'}}},initial.revision);
+  const initial=store.config('sakura');store.saveConfig({...initial,media:{voice:{enabled:true,protocol:'edge_tts',replyMode:'auto',voice:'first',format:'mp3'}}},initial.revision);
   store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',configId:'sakura',enabled:true,trustedUsers:['owner']}));
   const binding=store.binding(scope);
   store.accept({id:'context',scope,text:'已有上下文',attachments:[],timestamp:Date.now()-3600000,reply:{target:'owner',kind:'private',msgId:'old'}});store.mark(binding.key,['context'],'complete');
@@ -44,7 +44,7 @@ test('foreground auto voice synthesizes once before text chunking and delivery r
   const f=await fixture(t);const answer='正文'.repeat(1000);
   f.harness.run=async(_b,_m,_s,options)=>({turnId:'reply',outputs:[{type:'text',text:answer},{type:'text',text:'[链接文字](https://example.invalid)'}],snapshot:options!.snapshot!});
   await f.chat();assert.equal(f.calls.length,1);assert.equal(f.calls[0].parameters.text,`${answer}\n\n链接文字`);
-  assert.equal(f.calls[0].config.media.voice.voice,'first');assert.equal(f.calls[0].config.media.voice.format,'wav');
+  assert.equal(f.calls[0].config.media.voice.voice,'first');assert.equal(f.calls[0].config.media.voice.format,'mp3');
   assert.equal(f.sent.filter(delivery=>delivery.output.type==='asset').length,1);assert.ok(f.sent.some(delivery=>delivery.output.text?.includes('AI 生成语音')));
   await f.runtime.flushDeliveries();assert.equal(f.calls.length,1);
 });

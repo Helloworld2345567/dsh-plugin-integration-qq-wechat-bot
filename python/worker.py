@@ -302,6 +302,10 @@ def _validate_protocol(job):
                     for key, limit in required.items()) or endpoint.get("modelVersion") not in (
                         "v1", "v2", "v2Pro", "v2ProPlus", "v3", "v4", "v5dev", "v5turbo"):
                 raise JobError("MEDIA_WORKER_ENDPOINT_INVALID")
+        elif endpoint.get("protocol") == "edge_tts":
+            voice = endpoint.get("voice")
+            if job["operation"] not in ("voice_speak", "voice_chant") or not isinstance(voice, str) or not voice.strip() or len(voice.encode("utf-8")) > 128:
+                raise JobError("MEDIA_WORKER_ENDPOINT_INVALID")
         elif (not isinstance(endpoint.get("model"), str) or not endpoint["model"] or len(endpoint["model"]) > 256
               or not isinstance(endpoint.get("keyEnv"), str) or not endpoint["keyEnv"]
               or not endpoint["keyEnv"][0].isalpha() or not endpoint["keyEnv"].replace("_", "").isalnum()
