@@ -98,7 +98,7 @@ export interface InboundMessage {
 export interface SessionBinding { key: string; scope: CallerScope; sessionId: string; generation: number; persisted: boolean; personaId?:string; modelOverride?:z.infer<typeof modelSchema>; recentSince?:number }
 export interface SessionRecord { id:string; scopeKey:string; scope:CallerScope; generation:number; persisted:boolean; createdAt:number; updatedAt:number; personaId?:string; modelOverride?:z.infer<typeof modelSchema>; recentSince?:number }
 export interface TurnSnapshot { config: Readonly<BotConfig>; botId: string; trusted: boolean; sourceIds: string[]; startedAt: number }
-export interface Asset { id: string; scopeKey: string; name: string; mime: string; path: string; size: number; kind: MediaInput['kind']; createdAt: number; jobId?: string; sessionId?:string }
+export interface Asset { id: string; scopeKey: string; name: string; mime: string; path: string; size: number; kind: MediaInput['kind']; createdAt: number; jobId?: string; sessionId?:string;workspace?:string;origin?:'received'|'generated'|'sent' }
 export type DeliveryAttemptPhase = 'prepare' | 'upload' | 'commit';
 export interface DeliveryAttempt {
   number:number;

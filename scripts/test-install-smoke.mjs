@@ -26,7 +26,7 @@ const profile=JSON.parse(await readFile(path.join(home,'profiles','bots','packag
 assert.ok(profile.dsh.profile.bundles.includes('dsh-bot-lifecycle'));assert.ok(profile.dsh.profile.bundles.includes(bundleName));
 assert.equal(await identity(path.join(home,'profiles','bots','node_modules',bundleName)),sourceIdentity);
 
-const database=path.join(env.BOT_DATA_HOME,'bots.sqlite');
+const database=path.join(folder,'workspaces','.runtime','storages','bot-integration','bots.sqlite');
 const runtimeState=()=>{const db=new DatabaseSync(database,{readOnly:true});try{return{owner:JSON.parse(db.prepare("SELECT json FROM records WHERE kind='runtime' AND id='owner'").get()?.json??'null'),bots:Number(db.prepare("SELECT COUNT(*) AS count FROM records WHERE kind='bot'").get().count)};}finally{db.close();}};
 const host=spawn(process.execPath,['scripts/start.mjs','--port','0'],{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']});let logs='';host.stdout.on('data',data=>logs+=data);host.stderr.on('data',data=>logs+=data);const hostExit=new Promise(resolve=>host.once('exit',(code,signal)=>resolve({code,signal})));
 const wait=async(check,timeoutMs=90000)=>{const deadline=Date.now()+timeoutMs;let last;while(Date.now()<deadline){try{const value=await check();if(value)return value;}catch(error){last=error;}if(host.exitCode!==null)throw Error(`Host exited before acceptance: ${host.exitCode}`);await new Promise(resolve=>setTimeout(resolve,100));}throw Error(`Acceptance timeout: ${last??'condition not met'}`);};

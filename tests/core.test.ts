@@ -180,7 +180,7 @@ test('deferred video is silent, materialized only after instruction, handles sta
 });
 test('audio without a platform transcript is transcribed once per attachment and passed to the harness',async t=>{
   let calls=0;let seen:any[]=[];const f=await runtimeFixture(t,async(_binding,messages)=>{seen=messages;return{turnId:'audio',outputs:[],snapshot:freezeTurn(f.store.config('default'),f.store.bot('one'),scope(),messages.map(m=>m.id))};});
-  const scopeId=scopeKey(scope());const saved=await f.assets.save(scopeId,{kind:'audio',mime:'audio/wav',name:'voice.wav'},Buffer.from('fixture'));
+  f.store.binding(scope());const scopeId=scopeKey(scope());const saved=await f.assets.save(scopeId,{kind:'audio',mime:'audio/wav',name:'voice.wav'},Buffer.from('fixture'));
   (f.media as any).run=async()=>{calls++;return{text:JSON.stringify({transcript:'你好，这是转写内容。'}),assetIds:[]};};
   const attachment:any={kind:'audio',mime:'audio/wav',name:'voice.wav',handle:saved.id};
   await f.runtime.receive(message('audio','',scope()));
@@ -276,7 +276,7 @@ test('ASR, reminders and first model turn share the snapshot frozen before attac
   f=await runtimeFixture(t,async(_b,_m,_s,options)=>{snapshots.push(options!.snapshot!.config.id);return{turnId:String(snapshots.length),outputs:[{type:'text',text:'final'}],snapshot:options!.snapshot!};});
   f.media.run=async(key,_operation,config,_inputs,_parameters,_signal,authorize,snapshot)=>{assert.equal(config.id,'default');assert.equal(key,scopeKey(scope()));assert.equal(snapshot?.botId,f.store.findBinding(key)!.scope.botId);assert.equal(snapshot?.config,config);assert.deepEqual(snapshot,f.store.findTurnSnapshot(f.store.findBinding(key)!.sessionId));assert.equal(typeof authorize,'function');authorize!();entered.resolve();await release.promise;authorize!();return{text:JSON.stringify({transcript:'你好'}),assetIds:[]};};
   f.runtime.harness.formatProgress=async(_binding,snapshot,facts)=>{assert.equal(snapshot.config.id,'default');assert.equal(facts.stage,'transcription');return '语音还在转写中。';};
-  const asset=await f.assets.save(scopeKey(scope()),{kind:'audio',name:'voice.wav',mime:'audio/wav'},Buffer.from('fixture'));
+  f.store.binding(scope());const asset=await f.assets.save(scopeKey(scope()),{kind:'audio',name:'voice.wav',mime:'audio/wav'},Buffer.from('fixture'));
   const input=message('audio-progress','听语音');input.attachments=[{kind:'audio',name:'voice.wav',mime:'audio/wav',handle:asset.id}];
   t.mock.timers.enable({apis:['Date','setTimeout','setInterval'],now:Date.now()});await f.runtime.receive(input);const work=f.runtime.process(scopeKey(scope()));await entered.promise;
   await f.runtime.switchPersona(scope(),'sakura');t.mock.timers.tick(60000);await settleProgress();assert.equal(f.store.deliveries(['sent'])[0]?.purpose,'progress');

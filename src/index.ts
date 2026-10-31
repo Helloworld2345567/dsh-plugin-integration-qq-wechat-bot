@@ -2,7 +2,6 @@ import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-host-webserver';
 import type {} from '@deepseek-ai/dsh-llm';
 import { randomBytes } from 'node:crypto';
-import os from 'node:os';
 import path from 'node:path';
 import { Store } from './core/store.js';
 import { Assets, MediaService } from './core/media.js';
@@ -26,7 +25,7 @@ export const inject=['agents','agentPresets','llm','settings','tools','skills','
 export interface Config { dataDir?:string; python?:string; debounceMs?:number }
 declare module '@deepseek-ai/cordis' {interface Context {botIntegration:BotRuntime}}
 export async function apply(ctx:Context,config:Config={}):Promise<void>{
-  const home=config.dataDir??process.env.BOT_DATA_HOME??path.join(process.env.DSH_HOME??path.join(os.homedir(),'.dsh-bots'),'storages','bot-integration');
+  const home=config.dataDir??process.env.BOT_DATA_HOME??path.join(process.env.DSH_HOME??path.join(process.cwd(),'.runtime','bot-data'),'storages','bot-integration');
   const store=Store.open(home,undefined,{secureDefaults:true}).initialize().migrate();const assets=new Assets(store);const media=new MediaService(store,assets,config.python,new HarnessMediaProvider(ctx),new ProcessWorker(config.python));
   const credentials=createBotCredentials(ctx.credentials);
   const extensions:HarnessExtensions={};const harness=new NativeHarness(ctx,store,assets,media,extensions);let disposeMode;try{disposeMode=await harness.registerMode();}catch(error){store.close();throw error;}
@@ -42,7 +41,7 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
   const shutdown=(message:unknown)=>{handleLifecycleShutdown(message);};
   process.on('message',shutdown);ctx.effect(()=>()=>process.off('message',shutdown));
   if(features.evolution.history().some(task=>['queued','draining','applying','restarting','reconnecting','rolling-back'].includes(task.phase)))runtime.pauseProcessing();
-  await features.backfill({readSession:id=>ctx.sessionQuery.readSession(SessionId(id))});await runtime.initialize();store.start();
+  await assets.migrate();await harness.exportHistory();await features.backfill({readSession:id=>ctx.sessionQuery.readSession(SessionId(id))});await runtime.initialize();store.start();
   const runtimePackageRoot=packageRoot();
   detachLifecycle=registerLifecycleRuntime({packageRoot:runtimePackageRoot,quiesce:()=>runtime.quiesce(),resumeProcessing:()=>runtime.resumeProcessing(),health:()=>runtime.health()});
   // The lifecycle bundle normally reports readiness. Emit the same authenticated

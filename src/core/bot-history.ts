@@ -1,6 +1,8 @@
-import {rm} from 'node:fs/promises';
+import {rm,readdir} from 'node:fs/promises';
 import path from 'node:path';
 import {scopeKey,type Store} from './store.js';
+import {assetFolder,scopeWorkspace,mediaFolders} from './workspace-files.js';
+import type {Asset} from './types.js';
 
 /** Ownership is taken from persisted channel identities, never from model paths. */
 export function botHistory(store:Store,botId:string){
@@ -23,6 +25,19 @@ export function botHistory(store:Store,botId:string){
 }
 
 export async function deleteBotFiles(store:Store,assetsRoot:string,history:ReturnType<typeof botHistory>):Promise<void>{
+  for(const row of history.records)if(row.kind==='asset'){
+    const asset=row.value as Asset;
+    if(asset.workspace){const directory=assetFolder(asset.workspace,asset);if(path.dirname(asset.path)!==directory)throw Error('BOT_HISTORY_PATH_INVALID');await rm(directory,{recursive:true,force:true});}
+  }
+  for(const row of history.records)if(row.kind==='history-location'){const file=row.value.file as string;if(path.basename(file)!==`${row.id}.jsonl`)throw Error('BOT_HISTORY_PATH_INVALID');await rm(file,{force:true});}
+  for(const scope of history.scopes){const workspace=await scopeWorkspace(store,scope);
+    for(const folder of [path.join(workspace,'history',scope),path.join(workspace,'.bot','jobs',scope)])await rm(folder,{recursive:true,force:true});
+    // Remove scope partitions, keeping other scopes that share a custom workspace.
+    for(const kind of Object.values(mediaFolders))for(const origin of ['received','generated','sent']){
+      const root=path.join(workspace,kind,origin);let dates:string[];try{dates=await readdir(root);}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')continue;throw error;}
+      for(const date of dates)await rm(path.join(root,date,scope),{recursive:true,force:true});
+    }
+  }
   for(const [root,ids] of [[assetsRoot,history.scopes],[path.join(store.home,'jobs'),history.jobs]] as const){
     for(const id of ids){const target=path.resolve(root,id);if(path.dirname(target)!==path.resolve(root))throw Error('BOT_HISTORY_PATH_INVALID');await rm(target,{recursive:true,force:true});}
   }

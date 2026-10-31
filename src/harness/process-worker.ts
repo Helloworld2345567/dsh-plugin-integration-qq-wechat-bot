@@ -10,13 +10,13 @@ export class ProcessWorker implements WorkerPort {
   async run(job: MediaWorkerJob, signal: AbortSignal, credentials: WorkerCredentials = {}): Promise<MediaResult> {
     validateMediaWorkerJob(job);
     return new Promise((resolve, reject) => {
-      const safeEnv:NodeJS.ProcessEnv={PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,SYSTEMROOT:process.env.SYSTEMROOT,TEMP:job.output,TMP:job.output,PYTHONDONTWRITEBYTECODE:'1',PYTHONIOENCODING:'utf-8',PYTHONUTF8:'1'};
+      const safeEnv:NodeJS.ProcessEnv={PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,SYSTEMROOT:process.env.SYSTEMROOT,HOME:job.output,USERPROFILE:job.output,APPDATA:job.output,LOCALAPPDATA:job.output,TEMP:job.output,TMP:job.output,PYTHONDONTWRITEBYTECODE:'1',PYTHONIOENCODING:'utf-8',PYTHONUTF8:'1'};
       const keyEnv=typeof job.endpoint?.keyEnv==='string'?job.endpoint.keyEnv:undefined;
       for(const [key,value] of Object.entries(credentials)){
         if(!/^[A-Z][A-Z0-9_]{0,127}$/.test(key)||typeof value!=='string'||value.length>8192||keyEnv!==key){reject(new Error('MEDIA_WORKER_CREDENTIALS_INVALID'));return;}
         safeEnv[key]=value;
       }
-      const child=spawn(this.python,['-u',this.workerFile],{env:safeEnv,windowsHide:true,stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32'});
+      const child=spawn(this.python,['-u',this.workerFile],{cwd:job.output,env:safeEnv,windowsHide:true,stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32'});
       let output='';let errors='';let kill:ReturnType<typeof setTimeout>|undefined;let timedOut=false;
       const abort=()=>{if(process.platform==='win32'&&child.pid)spawn('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});else if(child.pid){try{process.kill(-child.pid,'SIGTERM');}catch{child.kill();}}kill=setTimeout(()=>child.kill('SIGKILL'),1500);};
       const timer=job.timeoutMs>0?setTimeout(()=>{timedOut=true;abort();},job.timeoutMs):undefined;timer?.unref();signal.addEventListener('abort',abort,{once:true});

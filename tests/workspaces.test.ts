@@ -24,7 +24,7 @@ test('default workspaces are repository-local and ignored, with isolated scope d
   process.env.BOT_WORKSPACE_ROOT=path.join(f.folder,'default-root');
   const legacy=path.join(f.store.home,'workspaces','scope-a');await mkdir(legacy,{recursive:true});await writeFile(path.join(legacy,'keep.txt'),'legacy work');
   const a=await prepareWorkingDirectory(f.bot,'scope-a',f.store.home);const b=await prepareWorkingDirectory(f.bot,'scope-b',f.store.home);assert.notEqual(a,b);
-  assert.equal(await readFile(path.join(a,'keep.txt'),'utf8'),'legacy work');assert.equal(await readFile(path.join(legacy,'keep.txt'),'utf8'),'legacy work');
+  assert.equal(await readFile(path.join(a,'keep.txt'),'utf8'),'legacy work');await assert.rejects(readFile(path.join(legacy,'keep.txt')),{code:'ENOENT'});
   await writeFile(path.join(a,'keep.txt'),'updated work');await prepareWorkingDirectory(f.bot,'scope-a',f.store.home);assert.equal(await readFile(path.join(a,'keep.txt'),'utf8'),'updated work');
 });
 test('bot working directory saves preserve bindings and permissions; invalid paths never replace a working choice',async t=>{

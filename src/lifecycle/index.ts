@@ -1,14 +1,13 @@
 import type {Context} from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-plugin-manager';
 import path from 'node:path';
-import os from 'node:os';
 import {LifecycleCoordinator} from './coordinator.js';
 import {lifecycleRuntime,markLifecycleAvailable,packageIdentity,handleLifecycleShutdown} from './protocol.js';
 
 export const name='bot-lifecycle';
 export const inject=['pluginManager'];
 export function apply(ctx:Context):void{
-  const home=process.env.BOT_HOME??process.env.DSH_HOME??path.join(os.homedir(),'.dsh-bots');
+  const home=process.env.BOT_HOME??process.env.DSH_HOME??path.join(process.cwd(),'.runtime','bot-data');
   const coordinator=new LifecycleCoordinator(home,ctx.pluginManager);markLifecycleAvailable(true);
   let reported=false;
   const timer=setInterval(()=>{

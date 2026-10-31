@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rm, stat, writeFile,rename,cp } from 'node:fs/promises';
 import path from 'node:path';
 import {resolveImageSkill} from './image-skill.js';
 import {analysisEnabled,type AnalysisProvider,type AnalysisRole} from './analysis.js';
@@ -12,6 +12,7 @@ import {mediaOperationRegistry,MediaOperationRegistry, type MediaOperation} from
 import {MEDIA_WORKER_PROTOCOL,MEDIA_WORKER_PROTOCOL_VERSION,validateMediaWorkerJob,type MediaWorkerJob,type WorkerPort} from './worker-port.js';
 import {TransformSlots,transformSlots} from './transform-slots.js';
 import {voiceServiceQueue} from './voice-service-queue.js';
+import {assetFolder,scopeWorkspace,moveFile,exists,type AssetOrigin} from './workspace-files.js';
 
 export const MEDIA_OPERATIONS=mediaOperationRegistry.ids();
 export type {MediaOperation} from './media-operation-registry.js';
@@ -19,19 +20,36 @@ export interface MediaFile {path:string;name:string;mime:string;kind:Asset['kind
 export interface MediaResult { text?:string; coverage?:string; assets?:MediaFile[]; contextAssets?:MediaFile[]; observations?:unknown; incomplete?:boolean }
 export class Assets {
   constructor(readonly store:Store,readonly root=path.join(store.home,'assets')){}
+  workspace(scope:string):Promise<string>{return scopeWorkspace(this.store,scope);}
   private currentSession(scope:string):string|undefined {const binding=this.store.findBinding(scope);return binding?.key===scope&&typeof binding.sessionId==='string'&&this.store.findSession(binding.sessionId)?.scopeKey===scope?binding.sessionId:undefined;}
-  async save(scope:string,input:MediaInput,bytes:Buffer,jobId?:string):Promise<Asset>{
+  async save(scope:string,input:MediaInput,bytes:Buffer,jobId?:string,origin:AssetOrigin=jobId?'generated':'received'):Promise<Asset>{
     // Capture ownership before any I/O: a concurrent /new must not reassign an older upload.
     const sessionId=this.currentSession(scope);
     if(bytes.length>(input.kind==='video'?VIDEO_LIMITS.attachmentBytes:INPUT_LIMITS.attachmentBytes)) throw new Error('MEDIA_TOO_LARGE');
     const usage=this.store.assetUsage(scope);if(usage.scope+bytes.length>512*1024*1024||usage.total+bytes.length>2*1024*1024*1024)throw new Error('MEDIA_STORAGE_LIMIT');
     const id=randomUUID(); const name=path.basename(input.name.replaceAll('\\','/')).replace(/[^\p{L}\p{N}._ -]/gu,'_').slice(0,180)||'attachment.bin';
-    const folder=path.join(this.root,scope,id); await mkdir(folder,{recursive:true}); const file=path.join(folder,name);await writeFile(file,bytes,{flag:'wx'});
-    const asset:Asset={id,scopeKey:scope,name,mime:input.mime,path:file,size:bytes.length,kind:input.kind,createdAt:Date.now(),jobId,sessionId};
+    const workspace=await this.workspace(scope),createdAt=Date.now();
+    const folder=assetFolder(workspace,{id,scopeKey:scope,kind:input.kind,createdAt,jobId,origin});await mkdir(folder,{recursive:true});const file=path.join(folder,name);await writeFile(file,bytes,{flag:'wx'});
+    const asset:Asset={id,scopeKey:scope,name,mime:input.mime,path:file,size:bytes.length,kind:input.kind,createdAt,jobId,sessionId,workspace,origin};
     this.store.saveAsset(asset);return asset;
   }
-  async read(scope:string,id:string):Promise<Buffer>{ const asset=this.store.asset(scope,id);const resolved=await realpath(asset.path);const root=await realpath(this.root);if(!resolved.startsWith(root+path.sep))throw new Error('ASSET_OUTSIDE_STORAGE');return readFile(resolved); }
-  async resolve(scope:string,id:string):Promise<Asset>{const asset=this.store.asset(scope,id);const resolved=await realpath(asset.path);const root=await realpath(this.root);if(!resolved.startsWith(root+path.sep))throw new Error('ASSET_OUTSIDE_STORAGE');return {...asset,path:resolved};}
+  async read(scope:string,id:string):Promise<Buffer>{return readFile((await this.resolve(scope,id)).path);}
+  async resolve(scope:string,id:string):Promise<Asset>{const asset=this.store.asset(scope,id);const resolved=await realpath(asset.path);const root=await realpath(asset.workspace?assetFolder(asset.workspace,asset):this.root);if(!resolved.startsWith(root+path.sep))throw new Error('ASSET_OUTSIDE_STORAGE');return {...asset,path:resolved};}
+  async migrate(scope?:string):Promise<void>{
+    for(const asset of this.store.list<Asset>('asset').filter(asset=>!scope||asset.scopeKey===scope)){
+      const workspace=await this.workspace(asset.scopeKey),origin=asset.origin??(asset.jobId?'generated':'received');
+      const target=path.join(assetFolder(workspace,{...asset,origin}),path.basename(asset.path));
+      if(path.resolve(asset.path)===path.resolve(target)&&asset.workspace)continue;
+      const source=await exists(asset.path)?asset.path:path.join(this.root,asset.scopeKey,asset.id,path.basename(asset.path));
+      if(await exists(source)){await moveFile(source,target);this.store.saveAsset({...asset,path:target,workspace,origin});}
+    }
+    for(const job of this.store.jobs().filter(job=>!scope||job.scope===scope)){
+      const legacy=path.join(this.store.home,'jobs',job.id);if(!await exists(legacy))continue;
+      const workspace=await this.workspace(job.scope),directory=path.join(workspace,'.bot','jobs',job.scope,job.id);
+      await mkdir(path.dirname(directory),{recursive:true});try{await rename(legacy,directory);}catch(error){if((error as NodeJS.ErrnoException).code!=='EXDEV')throw error;await cp(legacy,directory,{recursive:true,errorOnExist:true,force:false});await rm(legacy,{recursive:true});}
+      this.store.patchJob(job.id,{directory,workspace});
+    }
+  }
   recent(scope:string,kind?:string):Asset[]{const sessionId=this.currentSession(scope);return sessionId?this.store.recentAssets(scope,sessionId,kind,24):[];}
 }
 export class MediaService {
@@ -61,12 +79,13 @@ export class MediaService {
     const other=[...this.active.values()].filter(a=>!a.localTransform);
     if(!descriptor.localTransform&&(other.length>=2||other.some(a=>a.scope===scope)))throw new Error('MEDIA_CONCURRENCY_LIMIT');
     const id=randomUUID();const controller=new AbortController(); const combined=AbortSignal.any([signal,controller.signal,...(descriptor.timeoutMs>0?[AbortSignal.timeout(descriptor.timeoutMs)]:[])]);
-    const directory=path.join(this.store.home,'jobs',id),startedAt=Date.now();let provider:string|undefined;let requestedModel:string|undefined;
+    this.active.set(id,{scope,controller,localTransform:descriptor.localTransform});
+    const workspace=await this.assets.workspace(scope).catch(error=>{this.active.delete(id);throw error;}),directory=path.join(workspace,'.bot','jobs',scope,id),startedAt=Date.now();let provider:string|undefined;let requestedModel:string|undefined;
     const persist=(value:Record<string,unknown>)=>this.store.patchJob(id,value);
     let lease:Awaited<ReturnType<TransformSlots['acquire']>>|undefined;
     let releaseVoice:(()=>void)|undefined;
     const captureUsage=async()=>{try{const raw=JSON.parse(await readFile(path.join(directory,'model-usage.json'),'utf8'));if(!Array.isArray(raw))return;const modelCalls:MediaUsageCall[]=raw.filter(c=>c?.attempted===true&&typeof c.id==='string'&&Number.isSafeInteger(c.at)).map(c=>({id:c.id,attempted:true,at:c.at,provider,model:typeof c.model==='string'?c.model:requestedModel,usage:normalizeProviderUsage(c.usage)}));persist({modelCalls});const binding=this.store.findBinding(scope);if(binding)this.store.stats.upsertMediaCalls(id,binding.scope.botId,modelCalls);}catch{/* No dispatched model call is claimed without a journal entry. */}};
-    this.active.set(id,{scope,controller,localTransform:descriptor.localTransform});persist({id,scope,operation,state:descriptor.localTransform?'queued':'running',startedAt});
+    persist({id,scope,operation,directory,workspace,state:descriptor.localTransform?'queued':'running',startedAt});
     try{
     combined.throwIfAborted();
     if(descriptor.localTransform){lease=await this.slots.acquire(operation==='convert_gif'?2:1,combined);combined.throwIfAborted();authorize?.();persist({state:'running'});}
@@ -109,7 +128,7 @@ export class MediaService {
       persist({state:'complete',assetIds,contextAssetIds,finishedAt:Date.now()});
       return {text:result.text,coverage:result.coverage,incomplete:result.incomplete,assetIds,contextAssetIds};
     }catch(error){persist({state:combined.aborted?'cancelled':'failed',finishedAt:Date.now(),error:error instanceof Error?error.message:'MEDIA_FAILED'});throw error;}finally{
-      try{if(descriptor.localTransform){try{await rm(directory,{recursive:true,force:true,maxRetries:3,retryDelay:100});}catch(error){persist({cleanupError:error instanceof Error?error.message:'JOB_CLEANUP_FAILED'});}}else await captureUsage();}
+      try{if(!descriptor.localTransform)await captureUsage();try{await rm(directory,{recursive:true,force:true,maxRetries:3,retryDelay:100});}catch(error){persist({cleanupError:error instanceof Error?error.message:'JOB_CLEANUP_FAILED'});}}
       finally{this.active.delete(id);lease?.release();releaseVoice?.();}
     }
   }

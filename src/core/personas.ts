@@ -7,6 +7,7 @@ type Pair={config:string|null;persona:string|null};
 const fileSchema=configSchema.omit({personaPrompt:true}).strict();
 const digest=(pair:Pair)=>createHash('sha256').update(JSON.stringify(pair)).digest('hex');
 export function defaultPersonasRoot(home:string):string {
+  if(process.env.BOT_PERSONAS_ROOT)return path.resolve(process.env.BOT_PERSONAS_ROOT);
   const absolute=path.resolve(home);
   return path.basename(absolute)==='bot-integration'&&path.basename(path.dirname(absolute))==='storages'
     ?path.resolve(absolute,'../..','personas'):path.join(absolute,'personas');

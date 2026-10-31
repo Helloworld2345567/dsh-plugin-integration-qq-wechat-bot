@@ -43,6 +43,7 @@ import {StatsEventAdapter} from './stats-event-adapter.js';
 import {ToolRegistrar} from './tool-registrar.js';
 import {CapabilityRegistry} from '../core/capability-registry.js';
 import {deleteNativeSessions} from './session-deletion.js';
+import {writeChatHistory} from '../core/workspace-files.js';
 
 export interface LiveSession { handle:AgentHandle; binding:SessionBinding; snapshot:TurnSnapshot; skills:Readonly<Record<string,FrozenSkill>>; sources:string[]; assets:Output[]; images:{inFlight:boolean;completed:boolean}; voice:{attempted:boolean}; cwd:string; shellDirectory?:string; selection:ModelSelectionRef; restrictions?:()=>void; invalidator?:()=>void; refreshTools?:()=>void; policyError?:Error }
 export interface HarnessExtensions {skills?:DynamicSkills;stats?:StatsService;management?:BotManagement;model?:(binding:SessionBinding,snapshot:TurnSnapshot,args:BotModelArguments,signal:AbortSignal)=>Promise<unknown>;evolve?:(binding:SessionBinding,snapshot:TurnSnapshot,args:Record<string,unknown>,signal:AbortSignal)=>Promise<unknown>}
@@ -157,6 +158,7 @@ export class NativeHarness implements HarnessPort {
   async registerMode():Promise<()=>Promise<void>>{return registerMode(this.ctx);}
   async models():Promise<Array<{provider:string;model:string;inputModalities?:string[]}>> {return (await Promise.all(this.ctx.llm.listProviders().map(async provider=>(await this.ctx.llm.listModels(provider.id)).map(model=>({provider:provider.id,model:model.id,...model.inputModalities?{inputModalities:[...model.inputModalities]}:{}}))))).flat();}
   async inspectSession(sessionId:string):Promise<void> {await this.ctx.sessionQuery.readSession(SessionId(sessionId));}
+  async exportHistory():Promise<void>{for(const record of this.store.sessionsAll())if(record.persisted){const log=await this.ctx.sessionQuery.readSession(SessionId(record.id));await writeChatHistory(this.store,record.scopeKey,record.id,log.events);}}
   async compact(binding:SessionBinding,signal:AbortSignal):Promise<string> {
     const live=await this.session(binding);signal.throwIfAborted();
     const execution=await this.ctx.commands.execute(live.handle.agent,'/compact',[],signal);
@@ -195,6 +197,7 @@ export class NativeHarness implements HarnessPort {
     const cwd=await prepareWorkingDirectory(bot,binding.key,this.store.home);live.cwd=cwd;
     const setup=async(scopeCtx:Context,agent:Agent)=>{await scopeCtx.inject(['skills','tools','systemPrompt','permissionPresets','llm'],async agentCtx=>{
       await this.ctx.agentPresets.mount(agentCtx,'bot-unified-chat');
+      agentCtx.systemPrompt.section({name:'bot-files',order:10003,interpolate:false,text:'所有聊天产物保存在当前工作目录：图片放 images，视频放 videos，语音放 audio，文档和其他附件放 files，程序与其他产物放 outputs。按用途和日期分目录，禁止把聊天文件写入系统用户目录或桌面。临时工作放 .bot/tmp，完成后清理。history 为自动保存的聊天记录，不要改写。'});
       this.scoped.set(agent,live);
       const selection=new Proxy(live.selection,{get:(_target,key)=>Reflect.get(this.turn(live,this.ctx.agents.currentInitiator()).selection,key),set:(_target,key,value)=>Reflect.set(this.turn(live,this.ctx.agents.currentInitiator()).selection,key,value)});
       installModelSelection(agentCtx,selection);
@@ -337,7 +340,7 @@ export class NativeHarness implements HarnessPort {
           const registered=this.store.asset(scope,output.assetId!);
           if(registered.size===bytes.length&&bytes.equals(await this.assets.read(scope,registered.id))){id=registered.id;break;}
         }
-        if(!id){const mime=args.mime??'application/octet-stream';const asset=await this.assets.save(scope,{name:path.basename(file),mime,kind:mime.startsWith('image/')?'image':mime.startsWith('video/')?'video':mime.startsWith('audio/')?'audio':'file'},bytes);id=asset.id;}
+        if(!id){const mime=args.mime??'application/octet-stream';const asset=await this.assets.save(scope,{name:path.basename(file),mime,kind:mime.startsWith('image/')?'image':mime.startsWith('video/')?'video':mime.startsWith('audio/')?'audio':'file'},bytes,undefined,'sent');id=asset.id;}
       }
       if(!id)throw new Error('需要assetId');this.store.asset(scope,id);
       const previous=this.store.deliveryRepository().findByAsset(scope,id,['pending','sending','unknown','failed','sent']).at(-1);
@@ -401,6 +404,7 @@ export class NativeHarness implements HarnessPort {
   }
   private async runTurn(binding:SessionBinding,messages:InboundMessage[],signal:AbortSignal):Promise<HarnessResult>{
     const live=await this.session(binding);const cwd=await prepareWorkingDirectory(this.store.bot(binding.scope.botId),binding.key,this.store.home);
+    if(live.cwd!==cwd)await this.assets.migrate(binding.key);
     const sourceIds=messages.map(message=>message.id);const metricIds=sourceIds.map(sourceId=>`inbox:${binding.key}:${sourceId}`);
     const markFirst=()=>{const at=Date.now();for(const id of metricIds){const metric=this.store.findTurnMetric(id);if(metric&&!metric.modelFirstFeedbackAt)this.store.updateTurnMetric(id,{modelFirstFeedbackAt:at});}};
     await this.ctx.workingDirectory.set(live.handle.agent,cwd,signal);live.cwd=cwd;
@@ -433,7 +437,7 @@ export class NativeHarness implements HarnessPort {
       const rawText=last?.type==='assistant/message'?last.data.message.content.filter(b=>b.type==='text').map(b=>b.text).join(''):'';
       const text=stripImageReferences(rawText,live.assets.filter(a=>this.store.asset(binding.key,a.assetId!).kind==='image').map(a=>a.assetId!));
       return{turnId:String(end.data.turn),outputs:[...(text?[{type:'text' as const,text}]:[]),...live.assets],snapshot:live.snapshot,voiceAttempted:live.voice.attempted};
-    }finally{signal.removeEventListener('abort',abort);}
+    }finally{signal.removeEventListener('abort',abort);await this.ctx.sessions.flush(live.handle.agent.session);await writeChatHistory(this.store,binding.key,binding.sessionId,live.handle.agent.session.snapshotEvents());}
   }
   cancel(sessionId:string):void{const root=this.live.get(sessionId)?.handle.agent;if(!root)return;const pending=[root];const seen=new Set<Agent>();while(pending.length){const parent=pending.shift()!;if(seen.has(parent))continue;seen.add(parent);for(const child of this.ctx.agents.list())if(this.ctx.agents.isOwnedBy(child.id,parent))pending.push(child);parent.cancel({kind:'user'});}}
   async dispose(sessionId?:string):Promise<void>{for(const [id,live] of this.live){if(!sessionId||id===sessionId){await live.handle.dispose();this.live.delete(id);}}}

@@ -28,13 +28,14 @@ test('history purge removes old sessions, memories, media, automation and stats 
     store.saveJob(b.sessionId,{id:b.sessionId,scope:b.key});await mkdir(path.join(home,'jobs',b.sessionId),{recursive:true});await writeFile(path.join(home,'jobs',b.sessionId,'input.json'),'private input');
   }
   const history=botHistory(store,'one');assert.deepEqual(history.sessions,new Set([old.sessionId,fresh.sessionId]));
+  const ownedPaths=store.list<any>('asset').filter(item=>item.scopeKey===old.key).map(item=>item.path),otherPath=store.list<any>('asset').find(item=>item.scopeKey===other.key).path;
   await deleteBotFiles(store,assets.root,history);deleteBotRecords(store,'one',history);
   assert.deepEqual(store.sessionsAll().map(item=>item.id),[other.sessionId]);
   assert.equal(store.bindings().length,1);assert.equal(store.allMessages().length,1);
   assert.equal(store.db.prepare('SELECT COUNT(*) n FROM memory').get()!.n,1);
   assert.equal(store.list('scheduled-job').length,1);assert.equal(store.list('job-run').length,1);assert.equal(store.list('stats-native').length,1);assert.equal(store.list('reply-sequence').length,1);
   assert.equal(store.deliveries().length,1);assert.equal(store.list('asset').length,1);assert.equal(store.jobs().length,1);
-  await assert.rejects(stat(path.join(assets.root,old.key)),{code:'ENOENT'});await stat(path.join(assets.root,other.key));
+  for(const file of ownedPaths)await assert.rejects(stat(file),{code:'ENOENT'});await stat(otherPath);
   await assert.rejects(stat(path.join(home,'jobs',old.sessionId)),{code:'ENOENT'});await stat(path.join(home,'jobs',other.sessionId));
   assert.equal(store.config('sakura').id,'sakura');assert.equal(store.bot('one').id,'one');
 });

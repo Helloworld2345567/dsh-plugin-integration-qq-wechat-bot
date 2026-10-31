@@ -345,7 +345,10 @@ export async function apply(ctx:Context){
     const nativeBefore=await ctx.sessionPersistence.list();for(let changed=true;changed;){changed=false;for(const {header} of nativeBefore)if(header.parentSession&&deletedIds.has(header.parentSession)&&!deletedIds.has(header.id)){deletedIds.add(header.id);changed=true;}}
     const unrelatedIds=nativeBefore.filter(item=>!deletedIds.has(item.header.id)).map(item=>item.header.id);assert.ok(unrelatedIds.length>0);
     const indexedBefore=await ctx.sessionQuery.searchSessions({query:'FINAL_ONLY',limit:100});assert.ok(indexedBefore.items.some(item=>deletedIds.has(item.header.id)));
+    const locations=store.list<any>('history-location').filter(item=>deletedIds.has(item.sessionId));assert.ok(locations.length>0);for(const location of locations){assert.match(await readFile(location.file,'utf8'),/user\/message/);assert.doesNotMatch(await readFile(location.file,'utf8'),/PRIVATE_REASONING/);}
+    const storedAssets=store.list<any>('asset').filter(item=>store.findSession(item.sessionId)?.scope.botId===scope.botId);assert.ok(storedAssets.some(item=>item.path.includes(`${path.sep}images${path.sep}`)));for(const asset of storedAssets)assert.ok(asset.path.startsWith(asset.workspace+path.sep));
     await runtime.deleteBot(scope.botId);
+    for(const location of locations)await assert.rejects(readFile(location.file),{code:'ENOENT'});for(const asset of storedAssets)await assert.rejects(readFile(asset.path),{code:'ENOENT'});
     const nativeAfter=new Set((await ctx.sessionPersistence.list()).map(item=>item.header.id));for(const id of deletedIds){assert.ok(!nativeAfter.has(id as any),`deleted log remains: ${id}`);assert.equal(ctx.storageDomain.get('session_projcache')?.table('sessions').get(id),undefined);}
     for(const id of unrelatedIds)assert.ok(nativeAfter.has(id),`unrelated log removed: ${id}`);
     const indexedAfter=await ctx.sessionQuery.searchSessions({query:'FINAL_ONLY',limit:100});assert.ok(!indexedAfter.items.some(item=>deletedIds.has(item.header.id)));

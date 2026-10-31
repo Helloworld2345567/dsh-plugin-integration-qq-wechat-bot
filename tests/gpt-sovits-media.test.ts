@@ -18,7 +18,7 @@ const deferred=()=>{let resolve!:()=>void;const promise=new Promise<void>(r=>{re
 async function fixture(t:TestContext,worker:WorkerPort){
   const home=await mkdtemp(path.resolve('.codex/gpt-media-'));const store=new Store(home,path.join(home,'personas'));
   t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
-  return{store,media:new MediaService(store,new Assets(store),'python',resolver,worker)};
+  const assets=new Assets(store);assets.workspace=async scope=>path.join(home,'workspaces',scope);return{store,media:new MediaService(store,assets,'python',resolver,worker)};
 }
 
 test('GPT endpoint is independent from chat providers and never requires a placeholder credential',async()=>{

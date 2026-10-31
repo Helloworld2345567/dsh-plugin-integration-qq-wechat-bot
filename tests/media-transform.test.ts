@@ -20,7 +20,7 @@ async function fixture(t:any,capacity=2){
   const home=await mkdtemp(path.resolve('.codex/transform-runtime-'));t.after(()=>rm(home,{recursive:true,force:true}));
   const jobs=new Map<string,any>();const saved:any[]=[];let calls:any[]=[];
   const store={home,patchJob:(id:string,v:any)=>jobs.set(id,{...jobs.get(id),...v}),consumeMediaQuota:()=>{throw Error('LOCAL_TRANSFORMS_MUST_NOT_CONSUME_QUOTA');}} as any;
-  const assets={resolve:async(_scope:string,id:string)=>{if(id==='foreign')throw Error('ASSET_NOT_OWNED');return {id,path:'/fixture/input',name:'input.png',mime:'image/png',kind:'image'};},save:async(scope:string,file:any,bytes:Buffer)=>{const id=String(saved.length);saved.push({scope,file,bytes});return{id};}} as any;
+  const assets={workspace:async()=>home,resolve:async(_scope:string,id:string)=>{if(id==='foreign')throw Error('ASSET_NOT_OWNED');return {id,path:'/fixture/input',name:'input.png',mime:'image/png',kind:'image'};},save:async(scope:string,file:any,bytes:Buffer)=>{const id=String(saved.length);saved.push({scope,file,bytes});return{id};}} as any;
   const worker:WorkerPort={run:async(job)=>{calls.push(job);await tick();return{text:'converted'};}};
   const media=new MediaService(store,assets,undefined,undefined,worker,mediaOperationRegistry,new TransformSlots(capacity));
   return{media,jobs,saved,worker,get calls(){return calls;}};
@@ -73,7 +73,7 @@ test('same-scope transforms execute concurrently and queued failures release all
   permitted=false;waiting.release();await Promise.all([first,second,revoked]);assert.equal(peak,2);assert.equal(f.calls.length,2);
   f.worker.run=async()=>{throw Error('FAILED');};await assert.rejects(run(),/FAILED/);
   f.worker.run=async()=>({text:'ok'});assert.equal((await run()).text,'ok');assert.equal(f.media.active.size,0);
-  assert.deepEqual(await readdir(path.join(f.media.store.home,'jobs')),[]);
+  assert.deepEqual(await readdir(path.join(f.media.store.home,'.bot','jobs','same')),[]);
 });
 
 test('local transforms preserve ownership, isolate outputs and save attachments before cleanup',async t=>{
@@ -83,7 +83,7 @@ test('local transforms preserve ownership, isolate outputs and save attachments 
   assert.notEqual(f.calls[0].output,f.calls[1].output);assert.ok(f.calls.every(job=>job.processingSlots===1));
   assert.equal(f.saved[0].scope,'same');assert.notEqual(f.saved[0].bytes.toString(),f.saved[1].bytes.toString());
   await assert.rejects(run('foreign'),/ASSET_NOT_OWNED/);assert.equal(f.saved.length,2);
-  assert.deepEqual(await readdir(path.join(f.media.store.home,'jobs')),[]);
+  assert.deepEqual(await readdir(path.join(f.media.store.home,'.bot','jobs','same')),[]);
 });
 
 test('cancelScope cancels running and queued transforms before delivering assets',async t=>{

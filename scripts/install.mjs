@@ -2,7 +2,8 @@ import { mkdir, readFile, writeFile, access,stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { productHome,run,workspaceRoot } from './runtime.mjs';
+import { productHome,run,workspaceRoot,runtimeEnv } from './runtime.mjs';
+import {configureWorkspaceStorage} from './workspace-storage.mjs';
 import YAML from 'yaml';
 import {archivePackage,recordInstallation,bundleName} from './installation.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -37,6 +38,10 @@ try{await access(patch);}catch{await writeFile(patch,`# Product-owned initial co
 - id: session-log-deepseek
   disabled: true
 `);}
+const patchEntries=YAML.parse(await readFile(patch,'utf8'))??[];
+await configureWorkspaceStorage(productHome,workspaceRoot,patchEntries);
+await writeFile(patch,YAML.stringify(patchEntries));
+await mkdir(runtimeEnv.TEMP,{recursive:true});
 const source=path.resolve(process.argv[2]||root);await access(source);
 const archive=await archivePackage(source,productHome);
 const lifecycleArchive=await archivePackage(path.join(root,'packages','bot-lifecycle'),productHome);

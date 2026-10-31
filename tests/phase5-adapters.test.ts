@@ -29,7 +29,7 @@ test('MediaService dispatches a registered native operation handler',async()=>{
   try{
     const registry=new MediaOperationRegistry([{id:'fixture',handler:'fixture',timeoutMs:1000,quotaUnits:1,execute:async(job:any)=>{assert.equal(job.operation,'fixture');return{text:'fixture-result'};}}]);
     const store={home,patchJob:()=>{},consumeMediaQuota:()=>{}} as any;
-    const assets={resolve:async()=>{throw new Error('unexpected asset lookup');}} as any;
+    const assets={workspace:async()=>home,resolve:async()=>{throw new Error('unexpected asset lookup');}} as any;
     const media=new MediaService(store,assets,'python',undefined,undefined,registry);
     assert.deepEqual(await media.run('scope','fixture',{} as any,[],{},AbortSignal.timeout(1000)),{text:'fixture-result',coverage:undefined,assetIds:[],contextAssetIds:[],incomplete:undefined});
   }finally{await rm(home,{recursive:true,force:true});}

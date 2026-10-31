@@ -6,7 +6,7 @@ import path from 'node:path';
 import {Assets,MediaService} from '../src/core/media.js';
 import {Store} from '../src/core/store.js';
 import {INPUT_LIMITS,validateBatch,validateInboundMessage} from '../src/core/limits.js';
-import type {CallerScope,InboundMessage,MediaInput} from '../src/core/types.js';
+import {botSchema,type CallerScope,type InboundMessage,type MediaInput} from '../src/core/types.js';
 import type {WorkerPort} from '../src/core/worker-port.js';
 
 const MiB=1024*1024;
@@ -15,7 +15,7 @@ const video=(handle='video'):MediaInput=>({kind:'video',name:'clip.mp4',mime:'vi
 const message=(overrides:Partial<InboundMessage>={}):InboundMessage=>({id:'message',scope,text:'analyze',attachments:[],reply:{target:'owner'},timestamp:Date.now(),...overrides});
 async function fixture(t:any){
   const base=process.env.BOT_TEST_TMP??path.resolve('.codex');await mkdir(base,{recursive:true});
-  const folder=await mkdtemp(path.join(base,'video-core-'));const store=new Store(folder);
+  const folder=await mkdtemp(path.join(base,'video-core-'));const store=new Store(folder);store.saveBot(botSchema.parse({id:scope.botId,name:scope.botId,channel:scope.platform}));
   t.after(async()=>{store.close();await rm(folder,{recursive:true,force:true});});
   return{store,assets:new Assets(store)};
 }
