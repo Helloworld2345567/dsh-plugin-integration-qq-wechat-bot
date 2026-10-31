@@ -6,11 +6,13 @@ import {Store} from '../src/core/store.js';
 import {Admin} from '../src/harness/admin.js';
 import {adminCommandRequestSchema,adminQueryRequestSchema} from '../src/harness/admin-contract.js';
 import {botSchema} from '../src/core/types.js';
+import {createBotCredentials} from '../src/harness/credentials.js';
+import type {Credentials} from '../src/core/runtime-ports.js';
 
-async function fixture(t:any){
+async function fixture(t:any,credentials?:Credentials){
   const home=await mkdtemp(path.resolve('.codex/admin-contract-'));const store=new Store(home,undefined,{secureDefaults:true});
   store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',enabled:true}));
-  const runtime:any={store,states:new Map([['bot','connected']]),activeSessions:()=>0,health:()=>({ready:true,quiescing:false,activeTasks:0,pendingDeliveries:0,pendingSessionActions:0,connections:{bot:'connected'},latency:{}}),credentials:{read:async()=>({accountId:'account'})},media:{analysisStatus:async()=>({enabled:false,available:false})}};
+  const runtime:any={store,states:new Map([['bot','connected']]),activeSessions:()=>0,health:()=>({ready:true,quiescing:false,activeTasks:0,pendingDeliveries:0,pendingSessionActions:0,connections:{bot:'connected'},latency:{}}),credentials:credentials??{read:async()=>({accountId:'account'})},media:{analysisStatus:async()=>({enabled:false,available:false})}};
   const admin=new Admin({} as any,runtime,'token',async()=>{});t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});return{store,admin};
 }
 
@@ -36,6 +38,15 @@ test('overview summary is bounded, redacted and supports unchanged revision resp
 
 test('legacy state facade remains available separately from the summary query',async t=>{
   const {admin}=await fixture(t);const legacy:any=await admin.invoke('state',{});assert.ok(Array.isArray(legacy.configs));assert.ok(Array.isArray(legacy.bots));assert.ok('sessions' in legacy);const summary:any=await admin.query({version:1,kind:'query',name:'overview.summary',input:{}});assert.equal('sessions' in summary.data,false);assert.equal('jobs' in summary.data,false);
+});
+
+test('numeric and mixed-case bot IDs do not break summary, bot list or legacy state queries',async t=>{
+  const {admin,store}=await fixture(t,createBotCredentials({readRecord:async()=>undefined,modifyRecord:async(_key,mutate)=>mutate(undefined),deleteRecord:async()=>{}}));
+  for(const id of ['1','QQ_Bot'])store.saveBot(botSchema.parse({id,name:id,channel:'qq'}));
+  const summary:any=await admin.query({version:1,kind:'query',name:'overview.summary',input:{}});
+  const bots:any=await admin.query({version:1,kind:'query',name:'bots.list',input:{}});
+  const state:any=await admin.invoke('state',{});
+  for(const result of [summary.data.bots,bots.data,state.bots])for(const id of ['1','QQ_Bot'])assert.equal(result.find((bot:any)=>bot.id===id).credentialConfigured,false);
 });
 
 test('GPT-SoVITS status separates complete configuration from revision-specific synthesis acceptance',async t=>{
