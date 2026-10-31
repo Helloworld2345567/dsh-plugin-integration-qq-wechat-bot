@@ -72,5 +72,23 @@ test('panel retains summary options, drafts and local errors across its sections
     states[3]='保留本地错误';states[0]='overview';tree=render();assert.ok(tree.some(n=>n.props?.role==='alert'));
     states[0]='catalog';states[7]=null;tree=render();assert.ok(tree.some(n=>n.type==='option'&&n.children.includes('其他人格')));
     assert.ok(!tree.some(n=>n.props?.role==='switch'));
+    const duplicateBots=['1','2'].map(id=>({id,name:'sakura',channel:'qq',configId:'default',enabled:false,archived:false,credentialConfigured:false,trustedUsers:[]}));
+    let remaining=duplicateBots;const deleted:string[]=[];
+    states[0]='bots';states[1]={...summary,bots:duplicateBots};states[6]=duplicateBots;states[18]={id:'1'};states[19]={botId:'1'};
+    globalThis.fetch=async(_url,init)=>{
+      const body=JSON.parse(String(init?.body));
+      if(body.action==='bot.delete'){deleted.push(body.input.id);remaining=remaining.filter(bot=>bot.id!==body.input.id);return Response.json({result:{ok:true}});}
+      const data=body.name==='bots.list'?remaining:{...summary,bots:remaining};
+      return Response.json({result:{data,revision:'sha256:'+'2'.repeat(64)}});
+    };
+    tree=render();assert.equal(tree.filter(n=>n.type==='button'&&n.children.includes('删除')).length,2);
+    tree.find(n=>n.props?.['aria-label']==='删除机器人 sakura（1）').props.onClick();await new Promise(resolve=>setImmediate(resolve));
+    tree=render();assert.match(tree.find(n=>n.props?.role==='dialog').props['aria-label'],/ID：1/);
+    tree.find(n=>n.type==='button'&&n.children.includes('取消')).props.onClick();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(deleted,[]);
+    tree=render();tree.find(n=>n.props?.['aria-label']==='删除机器人 sakura（1）').props.onClick();await new Promise(resolve=>setImmediate(resolve));
+    tree=render();tree.find(n=>n.props?.role==='dialog').props.onSubmit({preventDefault:()=>{}});await new Promise(resolve=>setImmediate(resolve));
+    tree=render();assert.deepEqual(deleted,['1']);assert.equal(states[18],null);assert.equal(states[19],null);
+    assert.ok(!tree.some(n=>n.props?.['aria-label']==='删除机器人 sakura（1）'));assert.ok(tree.some(n=>n.props?.['aria-label']==='删除机器人 sakura（2）'));
+    states[5]=true;tree=render();assert.equal(tree.find(n=>n.props?.['aria-label']==='删除机器人 sakura（2）').props.disabled,true);
   }finally{(globalThis as any).window=previous;globalThis.fetch=previousFetch;}
 });

@@ -24,7 +24,7 @@ export class Admin {
   constructor(readonly ctx:Context,readonly runtime:BotRuntime,readonly token:string,readonly revealDirectory:(directory:string)=>Promise<void>=openDirectory,readonly features?:BotFeatures){}
   private async summary():Promise<AdminSummaryData> {
     const {store}=this.runtime;const configs=store.configs().map(config=>({id:config.id,name:config.name,revision:config.revision,archived:config.archived,model:config.model?{provider:config.model.provider,model:config.model.model}:null,toolCount:config.tools.length,skillCount:config.skills.length,allowHostTools:config.allowHostTools,voice:config.media.voice?{enabled:config.media.voice.enabled,protocol:config.media.voice.protocol,replyMode:config.media.voice.replyMode,voice:config.media.voice.voice,format:config.media.voice.format}:null}));
-    const bots=await Promise.all(store.bots().map(async bot=>({id:bot.id,name:bot.name,channel:bot.channel,accountId:bot.accountId,configId:bot.configId,enabled:bot.enabled,archived:bot.archived,status:this.runtime.states.get(bot.id)??'stopped',activeSessions:this.runtime.activeSessions(bot.id),credentialConfigured:!!await this.runtime.credentials.read(bot.id),trustedUserCount:bot.trustedUsers.length,workspaceConfigured:!!bot.workingDirectory})));
+    const bots=await Promise.all(store.bots().filter(bot=>!bot.archived).map(async bot=>({id:bot.id,name:bot.name,channel:bot.channel,accountId:bot.accountId,configId:bot.configId,enabled:bot.enabled,archived:bot.archived,status:this.runtime.states.get(bot.id)??'stopped',activeSessions:this.runtime.activeSessions(bot.id),credentialConfigured:!!await this.runtime.credentials.read(bot.id),trustedUserCount:bot.trustedUsers.length,workspaceConfigured:!!bot.workingDirectory})));
     const health=this.runtime.health();const evolution=this.features?.history()[0];
     const channels=this.runtime.channels?.list?.().map(({id,displayName,capabilities})=>({id,displayName,capabilities}))??[];
     return{channels,bots,configs,counts:{bots:bots.filter(bot=>!bot.archived).length,configs:configs.filter(config=>!config.archived).length,sessions:store.recordCount('binding'),jobs:store.recordCount('job'),failures:store.recordCount('failure'),pendingDeliveries:health.pendingDeliveries,pendingSessionActions:health.pendingSessionActions},health,evolution:evolution?{id:evolution.id,phase:evolution.phase,updatedAt:evolution.updatedAt}:null};
@@ -34,7 +34,7 @@ export class Admin {
     if(value.name==='overview.summary')return versioned(await this.summary(),value.input.changedSince);
     const {store}=this.runtime;
     if(value.name==='catalog.config'){const config=store.config(value.input.id);return versioned(config,value.input.changedSince);}
-    if(value.name==='bots.list'){const bots=await Promise.all(store.bots().map(async bot=>({...bot,status:this.runtime.states.get(bot.id)??'stopped',activeSessions:this.runtime.activeSessions(bot.id),credentialConfigured:!!await this.runtime.credentials.read(bot.id)})));return versioned(bots,value.input.changedSince);}
+    if(value.name==='bots.list'){const bots=await Promise.all(store.bots().filter(bot=>!bot.archived).map(async bot=>({...bot,status:this.runtime.states.get(bot.id)??'stopped',activeSessions:this.runtime.activeSessions(bot.id),credentialConfigured:!!await this.runtime.credentials.read(bot.id)})));return versioned(bots,value.input.changedSince);}
     if(value.name==='overview.sessions'){const page=store.pageSessions({},value.input.limit,value.input.cursor);return{...page,contractVersion:ADMIN_CONTRACT_VERSION,items:page.items.map(row=>({id:row.id,scopeKey:row.scopeKey,botId:row.scope.botId,platform:row.scope.platform,kind:row.scope.kind,channelId:row.scope.channelId,senderId:row.scope.senderId,generation:row.generation,persisted:row.persisted,createdAt:row.createdAt,updatedAt:row.updatedAt,personaId:row.personaId})),hasMore:page.nextCursor!==null};}
     if(value.name==='automation.list')return versioned({scopes:store.bindings().filter(binding=>binding.scope.kind==='private').map(binding=>({scopeKey:binding.key,botId:binding.scope.botId,configId:store.bot(binding.scope.botId).configId,channelId:binding.scope.channelId,senderId:binding.scope.senderId})),proactive:this.runtime.automation.listProactive(),scheduled:this.runtime.automation.listJobs()},value.input.changedSince);
     const page=store.deliveryRepository().pageDeliveries({filter:{scopeKey:value.input.scopeKey},limit:value.input.limit,cursor:value.input.cursor});return{...page,contractVersion:ADMIN_CONTRACT_VERSION,items:page.items.map((row:Delivery)=>publicDelivery(row)),hasMore:page.nextCursor!==null};
@@ -46,7 +46,7 @@ export class Admin {
       case 'stats.query':if(!this.features)throw Error('STATS_UNAVAILABLE');return this.features.stats.query(input);
       case 'evolution.list':return this.features?.history()??[];
       case 'skills.list':{if(!this.features)throw Error('SKILLS_UNAVAILABLE');return this.features.skills.list(store.config(z.string().parse(input.id)));}
-      case 'state':return{configs:store.configs(),bots:await Promise.all(store.bots().map(async b=>({...b,status:this.runtime.states.get(b.id)??'stopped',activeSessions:this.runtime.activeSessions(b.id),credentialConfigured:!!await this.runtime.credentials.read(b.id)}))),sessions:store.bindings().map(binding=>{const snapshot=store.findTurnSnapshot(binding.sessionId);return {...binding,turn:snapshot?{configId:snapshot.config.id,revision:snapshot.config.revision,startedAt:snapshot.startedAt}:null};}),jobs:store.jobs(),failures:store.failures(),deliveries:store.deliveries().slice(-200).map(publicDelivery),versions:store.configVersions()};
+      case 'state':return{configs:store.configs(),bots:await Promise.all(store.bots().filter(b=>!b.archived).map(async b=>({...b,status:this.runtime.states.get(b.id)??'stopped',activeSessions:this.runtime.activeSessions(b.id),credentialConfigured:!!await this.runtime.credentials.read(b.id)}))),sessions:store.bindings().map(binding=>{const snapshot=store.findTurnSnapshot(binding.sessionId);return {...binding,turn:snapshot?{configId:snapshot.config.id,revision:snapshot.config.revision,startedAt:snapshot.startedAt}:null};}),jobs:store.jobs(),failures:store.failures(),deliveries:store.deliveries().slice(-200).map(publicDelivery),versions:store.configVersions()};
       case 'automation.proactive':{const value=z.object({scopeKey:z.string(),action:z.enum(['on','off','status','now','set']),args:z.string().default('')}).parse(input);const binding=store.findBinding(value.scopeKey);if(!binding)throw Error('会话不存在');return this.runtime.commandServices.automation!.proactive(binding,value.action,value.args);}
       case 'automation.schedule':{const value=z.object({scopeKey:z.string(),action:z.enum(['list','create','pause','resume','run','delete']),args:z.string().default('')}).parse(input);const binding=store.findBinding(value.scopeKey);if(!binding)throw Error('会话不存在');return this.runtime.commandServices.automation!.schedule(binding,value.action,value.args);}
       case 'models':return Promise.all(this.ctx.llm.listProviders().map(async p=>({id:p.id,models:(await this.ctx.llm.listModels(p.id)).map(m=>({id:m.id,name:m.name}))})));
@@ -67,25 +67,28 @@ export class Admin {
       case 'bot.save':{const bot=this.runtime.saveBot(input);if(!bot.enabled||bot.archived)await this.runtime.stop(bot.id);return bot;}
       case 'bot.start':await this.runtime.start(z.string().parse(input.id));return{ok:true};
       case 'bot.stop':await this.runtime.stop(z.string().parse(input.id));return{ok:true};
+      case 'bot.delete':{const id=z.string().parse(input.id);for(const [key,attempt] of this.attempts)if(attempt.botId===id)this.attempts.delete(key);await this.runtime.deleteBot(id);return{ok:true};}
       case 'bot.reconnect':await this.runtime.stop(z.string().parse(input.id));await this.runtime.start(input.id);return{ok:true};
       case 'bot.credentials':{
-        const bot=store.bot(z.string().parse(input.id));if(bot.enabled)throw new Error('请先停止机器人再更换授权');
+        const bot=store.bot(z.string().parse(input.id));if(bot.archived)throw new Error('机器人已删除');if(bot.enabled)throw new Error('请先停止机器人再更换授权');
         const definition=this.runtime.channels.require(bot.channel);if(!definition.capabilities.login.includes('credentials')||!definition.normalizeCredential)throw new Error('当前渠道不支持手工凭据');const normalized=definition.normalizeCredential(input.credential);
         store.saveBot({...bot,accountId:normalized.accountId});await this.runtime.credentials.write(bot.id,normalized.credential as any);return{configured:true};
       }
       case 'login.begin':{
         for(const [id,value] of this.attempts)if(value.expires<Date.now())this.attempts.delete(id);
         if(this.attempts.size>=20)throw new Error('LOGIN_ATTEMPT_LIMIT');
-        const bot=store.bot(z.string().parse(input.id));if(bot.enabled)throw new Error('请先停止机器人再重新授权');
+        const bot=store.bot(z.string().parse(input.id));if(bot.archived)throw new Error('机器人已删除');if(bot.enabled)throw new Error('请先停止机器人再重新授权');
         const state=await this.runtime.channels.require(bot.channel).adapter.beginLogin(AbortSignal.timeout(20000));if(!state.ticket||!state.qr)throw new Error('QR_RESPONSE_MISSING');
+        const current=store.bot(bot.id);if(current.archived||current.enabled)throw new Error('机器人状态已改变，请停止后重新扫码');
         const attempt=randomUUID();this.attempts.set(attempt,{botId:bot.id,ticket:state.ticket,expires:Date.now()+300000});
         const qrImage=state.qr.startsWith('data:image/')?state.qr:await QRCode.toDataURL(state.qr,{width:280,margin:2});
         return{status:state.status,attempt,qrImage,expiresAt:Date.now()+300000};
       }
       case 'login.poll':{
         const attempt=this.attempts.get(z.string().parse(input.attempt));if(!attempt||attempt.expires<Date.now())return{status:'expired'};
-        const bot=store.bot(attempt.botId);const result=await this.runtime.channels.require(bot.channel).adapter.pollLogin(attempt.ticket,AbortSignal.timeout(42000));
-        if(bot.enabled||bot.archived)throw new Error('机器人状态已改变，请停止后重新扫码');
+        const channel=store.bot(attempt.botId).channel;const result=await this.runtime.channels.require(channel).adapter.pollLogin(attempt.ticket,AbortSignal.timeout(42000));
+        const bot=store.bot(attempt.botId);
+        if(bot.enabled||bot.archived||this.attempts.get(input.attempt)!==attempt)throw new Error('机器人状态已改变，请停止后重新扫码');
         if(result.status==='confirmed'&&result.credential){const normalized=this.runtime.channels.require(bot.channel).normalizeCredential?.(result.credential)??{accountId:result.credential.accountId,credential:result.credential};store.saveBot({...bot,accountId:normalized.accountId});await this.runtime.credentials.write(bot.id,normalized.credential as any);this.attempts.delete(input.attempt);return{status:'confirmed',accountId:result.credential.accountId};}
         if(result.status!=='pending')this.attempts.delete(input.attempt);return{status:result.status};
       }

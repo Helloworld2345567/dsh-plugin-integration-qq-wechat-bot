@@ -78,7 +78,7 @@ export class AutomationScheduler {
     if(enabled&&!job.nextAt&&!job.intervalMs&&!job.dailyAt)throw Error('SCHEDULE_COMPLETED');
     const nextAt=enabled&&job.dailyAt?nextDailyTime(job.dailyAt,job.timezone):job.nextAt??(job.intervalMs?Date.now()+job.intervalMs:undefined);
     const next:ScheduledJob={...job,nextAt,enabled,state:enabled?'active':'paused',updatedAt:Date.now()};
-    this.store.put('scheduled-job',id,next);this.clear(`job:${id}`);if(enabled)this.scheduleJob(next);return next;
+    this.store.put('scheduled-job',id,next);this.clear(`job:${id}`);if(enabled)this.scheduleJob(next);else this.clear(`manual:scheduled:${id}`);return next;
   }
   deleteJob(id:string):void {this.clear(`job:${id}`);this.clear(`manual:scheduled:${id}`);this.store.db.prepare("DELETE FROM records WHERE kind='scheduled-job' AND id=?").run(id);}
   queueJob(job:ScheduledJob):void {this.queueManual(job);}

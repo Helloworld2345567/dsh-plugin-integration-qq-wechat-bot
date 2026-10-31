@@ -38,7 +38,7 @@ const loginPollInput=z.object({attempt:z.string().min(1).max(200)}).strict();
 
 export const adminCommandRequestSchema=z.discriminatedUnion('name',[
   commandRequest('config.save',configSaveInput),commandRequest('config.files.apply',configFilesInput),commandRequest('config.copy',configCopyInput),
-  commandRequest('bot.save',botSchema),commandRequest('bot.start',idInput),commandRequest('bot.stop',idInput),commandRequest('bot.reconnect',idInput),
+  commandRequest('bot.save',botSchema),commandRequest('bot.start',idInput),commandRequest('bot.stop',idInput),commandRequest('bot.reconnect',idInput),commandRequest('bot.delete',idInput),
   commandRequest('bot.credentials',botCredentialsInput),commandRequest('login.begin',loginBeginInput),commandRequest('login.poll',loginPollInput),
   commandRequest('config.directory.open',z.object({botId:z.string().min(1).max(80).optional(),configId:z.string().min(1).max(80).optional()}).strict()),
   commandRequest('capability.record',capabilityInput),commandRequest('memory.forget',memoryForgetInput),commandRequest('memory.correct',memoryCorrectInput),commandRequest('session.cancel',sessionCancelInput),

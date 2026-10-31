@@ -37,6 +37,46 @@ test('configuration revisions publish atomically, sharing and copies preserve bi
   assert.throws(()=>store.saveBot({...store.bot('two'),accountId:'one'}));
 });
 
+test('deleting a bot cancels its work, removes credentials and pauses automation while preserving history and other bots',async t=>{
+  const entered=gate();const f=await runtimeFixture(t,async(_binding,_messages,signal,options)=>{
+    entered.resolve();await new Promise<void>(resolve=>signal.addEventListener('abort',()=>resolve(),{once:true}));
+    return{turnId:'cancelled',outputs:[{type:'text',text:'must not send'}],snapshot:options!.snapshot!};
+  });
+  bot(f.store,'two');const removed:string[]=[];f.runtime.credentials.remove=async id=>{removed.push(id);};
+  await f.runtime.receive(message('delete-work','work'));const binding=f.store.binding(scope()),work=f.runtime.process(binding.key);await entered.promise;
+  const job=f.runtime.automation.createJob(scope(),'later',{runAt:Date.now()+3600000});
+  const otherJob=f.runtime.automation.createJob(scope('two'),'other',{runAt:Date.now()+3600000});
+  f.runtime.automation.setProactive(scope(),true);
+  f.store.enqueue(binding,'pending','delivery',[{type:'text',text:'queued'}],{});
+  await f.runtime.deleteBot('one');await work;
+  assert.equal(f.store.bot('one').archived,true);assert.equal(f.store.bot('one').enabled,false);
+  assert.deepEqual(removed,['one']);assert.equal(f.runtime.states.has('one'),false);
+  assert.equal(f.store.bot('two').archived,false);assert.equal(f.store.bot('two').enabled,true);
+  assert.equal(f.runtime.automation.listJobs().find(item=>item.id===job.id)?.enabled,false);
+  assert.equal(f.runtime.automation.listJobs().find(item=>item.id===otherJob.id)?.enabled,true);
+  assert.equal(f.runtime.automation.listProactive()[0].enabled,false);
+  assert.ok(f.store.sessions(scope()).some(session=>session.id===binding.sessionId));
+  assert.equal(f.store.deliveries().filter(item=>item.botId==='one'&&['pending','sending'].includes(item.state)).length,0);
+  assert.throws(()=>f.runtime.saveBot({...f.store.bot('one'),archived:false}),/已删除/);
+  await assert.rejects(f.runtime.start('one'),/归档|删除/);
+  await f.runtime.deleteBot('one');assert.deepEqual(removed,['one']);
+});
+
+test('failed bot credential removal leaves a stopped visible bot and can be retried',async t=>{
+  const f=await runtimeFixture(t,async()=>{throw Error('not used');});
+  f.runtime.credentials.remove=async()=>{throw Error('CREDENTIAL_REMOVE_FAILED');};
+  await assert.rejects(f.runtime.deleteBot('one'),/CREDENTIAL_REMOVE_FAILED/);
+  assert.equal(f.store.bot('one').enabled,false);assert.equal(f.store.bot('one').archived,false);
+  f.runtime.credentials.remove=async()=>{};await f.runtime.deleteBot('one');assert.equal(f.store.bot('one').archived,true);
+});
+
+test('a start waiting for credentials cannot reconnect a deleted bot',async t=>{
+  const entered=gate(),release=gate();const f=await runtimeFixture(t,async()=>{throw Error('not used');});
+  f.runtime.credentials.read=async()=>{entered.resolve();await release.promise;return{accountId:'one'};};
+  const starting=f.runtime.start('one');await entered.promise;await f.runtime.deleteBot('one');release.resolve();
+  await assert.rejects(starting,/已删除/);assert.equal(f.store.bot('one').enabled,false);assert.equal(f.store.bot('one').archived,true);
+});
+
 test('startup interrupts both queued and running media jobs without replay',async t=>{
   const f=await runtimeFixture(t,async()=>{throw Error('must not replay a media job');});
   f.store.saveBot({...f.store.bot('one'),enabled:false});

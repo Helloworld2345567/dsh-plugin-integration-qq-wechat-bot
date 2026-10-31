@@ -23,6 +23,9 @@ test('versioned query and command contracts reject unknown fields and invalid en
   assert.throws(()=>adminQueryRequestSchema.parse({...query,name:'state'}));
   assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'bot.start',input:{id:'bot',unexpected:true}}));
   assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'bot.start',input:{}}));
+  assert.equal(adminCommandRequestSchema.parse({version:1,kind:'command',name:'bot.delete',input:{id:'1'}}).name,'bot.delete');
+  assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'bot.delete',input:{}}));
+  assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'bot.delete',input:{id:'1',all:true}}));
   assert.equal(adminCommandRequestSchema.parse({version:1,kind:'command',name:'delivery.retry',input:{id:'delivery'}}).name,'delivery.retry');
 });
 
@@ -47,6 +50,36 @@ test('numeric and mixed-case bot IDs do not break summary, bot list or legacy st
   const bots:any=await admin.query({version:1,kind:'query',name:'bots.list',input:{}});
   const state:any=await admin.invoke('state',{});
   for(const result of [summary.data.bots,bots.data,state.bots])for(const id of ['1','QQ_Bot'])assert.equal(result.find((bot:any)=>bot.id===id).credentialConfigured,false);
+});
+
+test('deleting a bot hides it from all bot queries and invalidates a pending login result',async t=>{
+  const {admin,store}=await fixture(t);const runtime=admin.runtime as any;
+  store.saveBot({...store.bot('bot'),enabled:false});store.saveBot(botSchema.parse({id:'other',name:'Other',channel:'qq',accountId:'other'}));
+  let finishLogin!:(value:unknown)=>void;let writes=0;
+  runtime.channels={require:()=>({adapter:{pollLogin:()=>new Promise(resolve=>{finishLogin=resolve;})}})};
+  runtime.credentials.write=async()=>{writes++;};
+  runtime.deleteBot=async(id:string)=>{store.saveBot({...store.bot(id),enabled:false,archived:true});};
+  admin.attempts.set('pending',{botId:'bot',ticket:'ticket',expires:Date.now()+60000});
+  const polling=admin.invoke('login.poll',{attempt:'pending'});
+  assert.deepEqual(await admin.command({version:1,kind:'command',name:'bot.delete',input:{id:'bot'}}),{ok:true});
+  finishLogin({status:'confirmed',credential:{accountId:'account'}});
+  await assert.rejects(polling,/状态已改变/);assert.equal(writes,0);assert.equal(admin.attempts.size,0);
+  const summary:any=await admin.query({version:1,kind:'query',name:'overview.summary',input:{}});
+  const bots:any=await admin.query({version:1,kind:'query',name:'bots.list',input:{}});const state:any=await admin.invoke('state',{});
+  for(const list of [summary.data.bots,bots.data,state.bots])assert.deepEqual(list.map((bot:any)=>bot.id),['other']);
+  assert.equal(summary.data.counts.bots,1);
+  await assert.rejects(admin.invoke('login.begin',{id:'bot'}),/已删除/);
+  await assert.rejects(admin.invoke('bot.credentials',{id:'bot',credential:{accountId:'account',appSecret:'secret'}}),/已删除/);
+});
+
+test('a QR request completing after deletion cannot create a new login attempt',async t=>{
+  const {admin,store}=await fixture(t);const runtime=admin.runtime as any;store.saveBot({...store.bot('bot'),enabled:false});
+  let finishLogin!:(value:unknown)=>void;
+  runtime.channels={require:()=>({adapter:{beginLogin:()=>new Promise(resolve=>{finishLogin=resolve;})}})};
+  runtime.deleteBot=async(id:string)=>{store.saveBot({...store.bot(id),enabled:false,archived:true});};
+  const login=admin.invoke('login.begin',{id:'bot'});await admin.invoke('bot.delete',{id:'bot'});
+  finishLogin({status:'pending',ticket:'late-ticket',qr:'data:image/png;base64,AA=='});
+  await assert.rejects(login,/状态已改变/);assert.equal(admin.attempts.size,0);
 });
 
 test('GPT-SoVITS status separates complete configuration from revision-specific synthesis acceptance',async t=>{

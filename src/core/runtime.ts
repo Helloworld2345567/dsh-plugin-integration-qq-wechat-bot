@@ -78,7 +78,7 @@ export class BotRuntime {
     const saved=this.store.saveConfig(file.config,file.config.revision,file.digest);
     this.recheckPermissions();return saved;
   }
-  saveBot(input:unknown):BotInstance{const candidate=botSchema.parse(input);this.channels.require(candidate.channel);let previous:BotInstance|undefined;try{previous=this.store.bot(candidate.id);}catch{}if(previous&&(previous.accountId!==candidate.accountId||previous.channel!==candidate.channel))throw new Error('已有机器人的渠道身份不可修改；请创建新机器人');if(candidate.workingDirectory)validateWorkingDirectory(candidate.workingDirectory);const next=this.store.saveBot(candidate);this.recheckPermissions();return next;}
+  saveBot(input:unknown):BotInstance{const candidate=botSchema.parse(input);this.channels.require(candidate.channel);let previous:BotInstance|undefined;try{previous=this.store.bot(candidate.id);}catch{}if(previous?.archived&&!candidate.archived)throw new Error('机器人已删除，请使用新的 ID 创建机器人');if(previous&&(previous.accountId!==candidate.accountId||previous.channel!==candidate.channel))throw new Error('已有机器人的渠道身份不可修改；请创建新机器人');if(candidate.workingDirectory)validateWorkingDirectory(candidate.workingDirectory);const next=this.store.saveBot(candidate);this.recheckPermissions();return next;}
   private recheckPermissions():void{
     this.harness.recheckPermissions?.();
     // A changed policy cancels in-flight work; new privileges still wait for the next frozen turn.
@@ -86,6 +86,18 @@ export class BotRuntime {
     for(const [key,task] of this.maintenance){const binding=this.store.findBinding(key);if(!binding)continue;const bot=this.store.bot(binding.scope.botId);if(!bot.enabled||bot.archived){task.controller.abort();this.harness.cancel(task.sessionId);}}
   }
   async start(botId:string):Promise<void>{await this.connectionSupervisor.start(botId);}
+  /** Remove a bot from active use while preserving its identity and session history. Failed cleanup leaves it stopped for retry. */
+  async deleteBot(botId:string):Promise<void>{
+    const bot=this.store.bot(botId);if(bot.archived)return;
+    this.store.saveBot({...bot,enabled:false,archived:true});
+    try{
+      await this.stop(botId);
+      await this.credentials.remove(botId);
+      for(const job of this.automation.listJobs())if(job.botId===botId)this.automation.setJob(job.id,false);
+      for(const config of this.automation.listProactive())if(config.botId===botId)this.automation.setProactive(config.scope,false);
+      this.states.delete(botId);
+    }catch(error){this.store.saveBot({...this.store.bot(botId),enabled:false,archived:false});throw error;}
+  }
   async stop(botId:string):Promise<void>{
     const bot=this.store.bot(botId);this.store.saveBot({...bot,enabled:false});
     this.deliveryWorker.cancelBot(botId);
