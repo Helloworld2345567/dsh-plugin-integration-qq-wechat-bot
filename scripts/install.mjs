@@ -30,6 +30,7 @@ const workspaceFile=path.join(profile,'pnpm-workspace.yaml');let workspace={};tr
 workspace.allowBuilds??={};
 // Fixed native/runtime dependencies of the pinned Harness. Never approve arbitrary plugin scripts.
 for(const id of ['@deepseek-ai/dsh-subprocess-local@0.2.1-rc.2','@google/genai@2.21.0','koffi@3.1.1','node-pty@1.2.0-beta.15','protobufjs@7.6.6'])if(!(id in workspace.allowBuilds))workspace.allowBuilds[id]=true;
+workspace.storeDir=runtimeEnv.npm_config_store_dir;
 await writeFile(workspaceFile,YAML.stringify(workspace));
 const patch=path.join(profile,'cordis.patch.yml');
 try{await access(patch);}catch{await writeFile(patch,`# Product-owned initial composition. Upgrades never replace this document.
