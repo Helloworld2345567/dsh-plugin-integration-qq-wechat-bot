@@ -27,5 +27,7 @@ export async function prepareWorkingDirectory(bot:BotInstance,key:string,legacyH
       if(oldExists){await mkdir(path.dirname(directory),{recursive:true});try{await rename(legacy,directory);}catch(error){if((error as NodeJS.ErrnoException).code!=='EXDEV')throw error;await cp(legacy,directory,{recursive:true,force:false,errorOnExist:true});await rm(legacy,{recursive:true});}}
     }
   }
-  await mkdir(directory,{recursive:true});return realpath(directory);
+  await mkdir(directory,{recursive:true});
+  await Promise.all(['history','images','videos','audio','files','outputs',path.join('.bot','tmp')].map(folder=>mkdir(path.join(directory,folder),{recursive:true})));
+  return realpath(directory);
 }
