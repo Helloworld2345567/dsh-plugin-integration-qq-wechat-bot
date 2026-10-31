@@ -9,6 +9,7 @@ import {SqliteStatsProjection} from './stats-projection.js';
 import {decodeCursor,encodeCursor,filterHash} from './pagination.js';
 import type {Page} from './repositories.js';
 import {PersonaFiles,defaultPersonasRoot,sameConfig} from './personas.js';
+import {assertGptSovitsReferenceCompatibility} from './voice-config.js';
 
 export function scopeKey(scope: CallerScope): string { return createHash('sha256').update(JSON.stringify([scope.platform, scope.botId, scope.accountId, scope.kind, scope.channelId, scope.senderId])).digest('hex'); }
 export class ConflictError extends Error { constructor(message='配置已被其他操作修改，请刷新后重试') { super(message); } }
@@ -64,7 +65,7 @@ export class Store {
         const media={...raw.media};for(const role of ['asr','video'] as const){if(media[role]&&('baseUrl' in media[role]||'keyEnv' in media[role]))media[role]={enabled:true,protocol:'chat_completions'};}
         // Voice output was not present in the previous schema.  Publish an
         // explicit, closed declaration so an upgrade cannot incur TTS usage.
-        media.voice={enabled:false,protocol:'speech',format:'mp3'};
+        media.voice={enabled:false,protocol:'speech',replyMode:'on_demand',format:'mp3'};
         const next=configSchema.parse({...raw,schemaVersion:3,media,tools:[...new Set([...(raw.tools??[]),'bot_voice'])],skills:[...new Set([...(raw.skills??[]),'media-analysis','voice-generation'])],revision:raw.revision+1});
         this.transaction(()=>{this.put('config-version',`${next.id}:${next.revision}`,next);this.put('config',next.id,next);});
       }
@@ -169,6 +170,7 @@ export class Store {
     const check=()=>{
       const previous=this.get<BotConfig>('config',value.id);
       if(previous && previous.revision!==expectedRevision) throw new ConflictError();
+      assertGptSovitsReferenceCompatibility(value,this.configs());
       if(value.archived && (this.bots().some(b=>!b.archived && b.configId===value.id)||this.list<SessionBinding>('binding').some(b=>b.personaId===value.id))) throw new Error('请先解除机器人或活动会话配置绑定');
       return previous;
     };

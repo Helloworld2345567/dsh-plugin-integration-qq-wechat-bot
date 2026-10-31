@@ -53,8 +53,7 @@
         }
       },
       "defaults": {
-        "mode": "speak",
-        "format": "mp3"
+        "mode": "speak"
       },
       "routes": [
         {

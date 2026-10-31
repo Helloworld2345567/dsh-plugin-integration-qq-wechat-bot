@@ -2,7 +2,7 @@ import { Store, scopeKey } from './store.js';
 import { Assets, MediaService } from './media.js';
 import type { BotConfig, BotInstance, InboundMessage, SessionBinding, Output, TurnSnapshot, CallerScope } from './types.js';
 import {randomUUID} from 'node:crypto';
-import {freezeTurn,permissionsRevoked,trusted} from './policy.js';
+import {freezeTurn,permissionsRevoked,trusted,allowedNow} from './policy.js';
 import {TaskProgress,progressFallback} from './progress.js';
 import {analysisEnabled} from './analysis.js';
 import {botSchema,modelSchema,skillNameSchema} from './types.js';
@@ -18,6 +18,7 @@ import {DurableConnectionSupervisor,type ConnectionSupervisor} from './connectio
 import type {ProcessingFailure} from './failure-context.js';
 import {AutomationScheduler,type AutomationKind} from './automation.js';
 import {botScheduleArgumentsSchema} from './automation-contract.js';
+import {spokenReplyText,replyNotice,ReplyContextChangedError} from './voice-reply.js';
 
 function modelFailureCode(error:unknown):string {
   const message=error instanceof Error?error.message:typeof error==='string'?error:'MODEL_REQUEST_FAILED';
@@ -25,7 +26,7 @@ function modelFailureCode(error:unknown):string {
 }
 
 export type {HarnessResult,HarnessPort,Credentials} from './runtime-ports.js';
-import type {HarnessPort,Credentials} from './runtime-ports.js';
+import type {HarnessPort,HarnessResult,Credentials} from './runtime-ports.js';
 export type {CommandServices} from './command-bus.js';
 export class BotRuntime {
   readonly states=new Map<string,string>();
@@ -326,16 +327,16 @@ export class BotRuntime {
           this.store.updateMessage(key,message);
         }
         this.store.markTurnStage(key,messages.map(m=>m.id),'attachmentsCompletedAt');
-        stage='model';progress?.update('model');const modelAt=Date.now();this.store.updateTurnMetrics(key,messages.map(m=>m.id),{sessionId:binding.sessionId,modelStartedAt:modelAt});const result=await this.harness.run(binding,messages,signal,{snapshot,onProgress:stage=>progress?.update(stage),onEnd:()=>progress?.stop()});
-        progress?.stop();
+        stage='model';progress?.update('model');const modelAt=Date.now();this.store.updateTurnMetrics(key,messages.map(m=>m.id),{sessionId:binding.sessionId,modelStartedAt:modelAt});const result=await this.harness.run(binding,messages,signal,{snapshot,onProgress:stage=>progress?.update(stage)});
         if(signal.aborted||this.store.binding(binding.scope).sessionId!==binding.sessionId){this.store.mark(key,messages.map(m=>m.id),'cancelled');return;}
         this.store.markTurnStage(key,messages.map(m=>m.id),'modelCompletedAt');
-        stage='delivery';const outputs:Output[]=[];for(const output of result.outputs){if(output.type==='text'&&output.text){for(let index=0;index<output.text.length;index+=1800)outputs.push({type:'text',text:output.text.slice(index,index+1800)});}else if(output.type==='asset'){this.store.asset(key,output.assetId!);outputs.push(output);}}
+        stage='delivery';const prepared=await this.prepareReplyOutputs(binding,result,signal,()=>progress?.update('media'));progress?.stop();
+        const outputs:Output[]=[];for(const output of prepared){if(output.type==='text'&&output.text){for(let index=0;index<output.text.length;index+=1800)outputs.push({type:'text',text:output.text.slice(index,index+1800)});}else if(output.type==='asset'){this.store.asset(key,output.assetId!);outputs.push(output);}}
         if(!outputs.length)throw new Error('NO_DELIVERABLE_OUTPUT');
         this.store.updateTurnMetrics(key,messages.map(m=>m.id),{turnId:result.turnId,deliveryStartedAt:Date.now()});this.store.transaction(()=>{this.store.enqueue(binding,pending.at(-1)!.id,result.turnId,outputs,pending.at(-1)!.reply,this.replyEnvelope(pending.at(-1)!));this.store.mark(key,messages.map(m=>m.id),'complete');});
       }catch(error){
         progress?.stop();
-        const timedOut=deadline.aborted&&!controller.signal.aborted;const state=timedOut?'failed':controller.signal.aborted||signal.aborted?'cancelled':'failed';const at=Date.now();
+        const timedOut=deadline.aborted&&!controller.signal.aborted;const state=timedOut?'failed':controller.signal.aborted||signal.aborted||error instanceof ReplyContextChangedError?'cancelled':'failed';const at=Date.now();
         this.store.mark(key,messages.map(m=>m.id),state);this.store.saveFailure(`${binding.sessionId}:${at}`,{sessionId:binding.sessionId,scope:key,code:timedOut?'TURN_DEADLINE_EXCEEDED':error instanceof Error?error.message:'PROCESS_FAILED',state,stage,sourceIds:messages.map(m=>m.id),at} satisfies ProcessingFailure);
         const noDeliverableOutput=error instanceof Error&&error.message==='NO_DELIVERABLE_OUTPUT';
         if(state==='failed'&&(stage!=='delivery'||noDeliverableOutput)&&this.store.binding(binding.scope).sessionId===binding.sessionId){
@@ -351,6 +352,37 @@ export class BotRuntime {
     this.processing.set(key,{controller,sessionId:binding.sessionId,sourceIds:messages.map(m=>m.id),done});await done;
   }
   async flushDeliveries():Promise<void>{await this.deliveryWorker.flush();}
+  private assertReplyContext(binding:SessionBinding,snapshot:TurnSnapshot,signal:AbortSignal):void {
+    signal.throwIfAborted();
+    const current=this.store.findBinding(binding.key);
+    if(this.closed||!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation)throw new ReplyContextChangedError();
+    try{
+      if(permissionsRevoked(snapshot,this.effectiveConfig(current),this.store.bot(binding.scope.botId),binding.scope))throw new ReplyContextChangedError();
+    }catch{throw new ReplyContextChangedError();}
+  }
+  private async prepareReplyOutputs(binding:SessionBinding,result:HarnessResult,signal:AbortSignal,onVoice?:()=>void):Promise<Output[]> {
+    const snapshot=result.snapshot,config=snapshot.config as BotConfig;
+    this.assertReplyContext(binding,snapshot,signal);
+    if(config.media.voice?.replyMode!=='auto'||!analysisEnabled(config,'tts')||result.voiceAttempted)return result.outputs;
+    const text=spokenReplyText(result.outputs);if(!text)return result.outputs;
+    const authorize=()=>{
+      this.assertReplyContext(binding,snapshot,signal);
+      const current=this.store.findBinding(binding.key)!;
+      if(!allowedNow('bot_voice',snapshot,this.effectiveConfig(current),this.store.bot(binding.scope.botId),binding.scope))throw new ReplyContextChangedError();
+    };
+    authorize();onVoice?.();
+    try{
+      const voice=await this.media.run(binding.key,'voice_speak',config,[],{mode:'speak',text},signal,authorize,snapshot);
+      authorize();
+      if(!voice.assetIds.length||voice.incomplete)throw new Error('VOICE_OUTPUT_MISSING');
+      for(const id of voice.assetIds)if(this.store.asset(binding.key,id).kind!=='audio')throw new Error('VOICE_OUTPUT_INVALID');
+      return [...replyNotice(result.outputs,'附 AI 生成语音。'),...voice.assetIds.map(assetId=>({type:'asset' as const,assetId}))];
+    }catch(error){
+      // A cancelled/revoked turn must never be resurrected by the text fallback.
+      authorize();if(error instanceof ReplyContextChangedError)throw error;
+      return replyNotice(result.outputs,'本次语音生成失败，已用文字回复。');
+    }
+  }
   private async runAutomationPrompt(binding:SessionBinding,prompt:string,kind:AutomationKind,signal:AbortSignal):Promise<{turnId:string;outputs:Output[]}>{
     const key=binding.key;
     if(this.closed||this.quiescing||this.busy(key)||this.controls.has(key))throw Error('AUTOMATION_BUSY');
@@ -371,7 +403,7 @@ export class BotRuntime {
       const result=await this.harness.run(binding,[synthetic],runSignal,{snapshot});
       runSignal.throwIfAborted();const current=this.store.findBinding(key);
       if(!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation||permissionsRevoked(snapshot,this.effectiveConfig(current),this.store.bot(binding.scope.botId),binding.scope))throw Error('AUTOMATION_CONTEXT_CHANGED');
-      answer={turnId:result.turnId,outputs:result.outputs};
+      answer={turnId:result.turnId,outputs:await this.prepareReplyOutputs(binding,result,runSignal)};
     }).finally(()=>{this.processing.delete(key);this.resumeSessionActions(key);if(this.store.messages(key).length)this.schedule(key);});
     this.processing.set(key,{controller,sessionId:binding.sessionId,sourceIds:[],done});
     await done;return answer!;

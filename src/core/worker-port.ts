@@ -1,4 +1,5 @@
 import type {MediaFile, MediaResult} from './media.js';
+import {gptSovitsSchema} from './types.js';
 
 export const MEDIA_WORKER_PROTOCOL = 'dsh.media-worker';
 export const MEDIA_WORKER_PROTOCOL_VERSION = 1;
@@ -61,7 +62,10 @@ export function validateMediaWorkerJob(job: MediaWorkerJob): void {
   if (parameterBytes > MAX_PARAMETER_BYTES) throw new Error('MEDIA_WORKER_PARAMETERS_TOO_LARGE');
   if (!boundedString(job.output) || !boundedString(job.usagePath)) throw new Error('MEDIA_WORKER_PATH_INVALID');
   if (job.endpoint !== undefined) {
-    if (!isRecord(job.endpoint) || !boundedString(job.endpoint.model, 256) || !boundedString(job.endpoint.baseUrl, 2048) || !/^[A-Z][A-Z0-9_]{0,127}$/.test(String(job.endpoint.keyEnv ?? ''))) throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');
+    if(!isRecord(job.endpoint))throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');
+    if(job.endpoint.protocol==='gpt_sovits'){
+      if(!['voice_speak','voice_chant'].includes(job.operation)||!gptSovitsSchema.safeParse(job.endpoint).success||!boundedString(job.endpoint.voice,100))throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');
+    }else if (!boundedString(job.endpoint.model, 256) || !boundedString(job.endpoint.baseUrl, 2048) || !/^[A-Z][A-Z0-9_]{0,127}$/.test(String(job.endpoint.keyEnv ?? ''))) throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');
   }
   if (!Number.isSafeInteger(job.deadline) || (job.deadline !== 0 || job.timeoutMs !== 0) && job.deadline <= Date.now()) throw new Error('MEDIA_WORKER_JOB_EXPIRED');
   if (!Number.isSafeInteger(job.timeoutMs) || (job.timeoutMs !== 0 && job.timeoutMs < 1000) || job.timeoutMs > MAX_TIMEOUT) throw new Error('MEDIA_WORKER_TIMEOUT_INVALID');

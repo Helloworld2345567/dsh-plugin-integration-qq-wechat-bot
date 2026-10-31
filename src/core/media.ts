@@ -11,6 +11,7 @@ import {validateMediaParameters,INPUT_LIMITS,VIDEO_LIMITS} from './limits.js';
 import {mediaOperationRegistry,MediaOperationRegistry, type MediaOperation} from './media-operation-registry.js';
 import {MEDIA_WORKER_PROTOCOL,MEDIA_WORKER_PROTOCOL_VERSION,validateMediaWorkerJob,type MediaWorkerJob,type WorkerPort} from './worker-port.js';
 import {TransformSlots,transformSlots} from './transform-slots.js';
+import {voiceServiceQueue} from './voice-service-queue.js';
 
 export const MEDIA_OPERATIONS=mediaOperationRegistry.ids();
 export type {MediaOperation} from './media-operation-registry.js';
@@ -38,7 +39,7 @@ export class MediaService {
   readonly operations:MediaOperationRegistry;
   readonly worker:WorkerPort;
   constructor(readonly store:Store,readonly assets:Assets,readonly python=process.env.BOT_PYTHON||'python',readonly analysisProvider?:AnalysisProvider,worker?:WorkerPort,operations:MediaOperationRegistry=mediaOperationRegistry,readonly slots:TransformSlots=transformSlots){this.worker=worker??{run:async()=>{throw new Error('MEDIA_WORKER_NOT_CONFIGURED');}};this.operations=operations;}
-  async analysisStatus(config:BotConfig,role:AnalysisRole){try{if(!this.analysisProvider)throw new Error('MEDIA_PROVIDER_SETTINGS_UNAVAILABLE');const value=await this.analysisProvider.resolve(config,role);return{enabled:true,provider:value.provider,model:value.endpoint.model,keyConfigured:!!value.apiKey,protocol:value.endpoint.protocol};}catch(error){return{enabled:analysisEnabled(config,role),error:error instanceof Error?error.message:'MEDIA_CONFIGURATION_INVALID',keyConfigured:false};}}
+  async analysisStatus(config:BotConfig,role:AnalysisRole){try{if(!this.analysisProvider)throw new Error('MEDIA_PROVIDER_SETTINGS_UNAVAILABLE');const value=await this.analysisProvider.resolve(config,role);return{enabled:true,configured:true,provider:value.provider,model:value.endpoint.protocol==='gpt_sovits'?value.endpoint.modelVersion:value.endpoint.model,keyConfigured:!!value.apiKey,protocol:value.endpoint.protocol};}catch(error){return{enabled:analysisEnabled(config,role),configured:false,error:error instanceof Error?error.message:'MEDIA_CONFIGURATION_INVALID',keyConfigured:false};}}
   cancelScope(scope:string):void{for(const item of this.active.values()) if(item.scope===scope)item.controller.abort(new Error('任务已取消'));}
   private dailyQuotaExempt(scope:string,snapshot?:TurnSnapshot):boolean {
     if(!snapshot?.trusted)return false;
@@ -50,6 +51,12 @@ export class MediaService {
   async run(scope:string,operation:MediaOperation,config:BotConfig,inputs:string[],parameters:Record<string,unknown>,signal:AbortSignal,authorize?:()=>void,snapshot?:TurnSnapshot):Promise<{text?:string;coverage?:string;assetIds:string[];contextAssetIds?:string[];incomplete?:boolean}>{
     const descriptor=this.operations.get(operation);
     if(operation==='image_understand')throw new Error('IMAGE_READ_USE_NATIVE_CHAT_MODEL');
+    if(descriptor.role==='tts'){
+      const voice=config.media.voice;
+      parameters={...parameters};
+      if(parameters.voice===undefined&&voice?.voice!==undefined)parameters.voice=voice.voice;
+      if(parameters.format===undefined)parameters.format=voice?.format??(voice?.protocol==='gpt_sovits'?'wav':'mp3');
+    }
     validateMediaParameters(operation,inputs,parameters);
     const other=[...this.active.values()].filter(a=>!a.localTransform);
     if(!descriptor.localTransform&&(other.length>=2||other.some(a=>a.scope===scope)))throw new Error('MEDIA_CONCURRENCY_LIMIT');
@@ -57,6 +64,7 @@ export class MediaService {
     const directory=path.join(this.store.home,'jobs',id),startedAt=Date.now();let provider:string|undefined;let requestedModel:string|undefined;
     const persist=(value:Record<string,unknown>)=>this.store.patchJob(id,value);
     let lease:Awaited<ReturnType<TransformSlots['acquire']>>|undefined;
+    let releaseVoice:(()=>void)|undefined;
     const captureUsage=async()=>{try{const raw=JSON.parse(await readFile(path.join(directory,'model-usage.json'),'utf8'));if(!Array.isArray(raw))return;const modelCalls:MediaUsageCall[]=raw.filter(c=>c?.attempted===true&&typeof c.id==='string'&&Number.isSafeInteger(c.at)).map(c=>({id:c.id,attempted:true,at:c.at,provider,model:typeof c.model==='string'?c.model:requestedModel,usage:normalizeProviderUsage(c.usage)}));persist({modelCalls});const binding=this.store.findBinding(scope);if(binding)this.store.stats.upsertMediaCalls(id,binding.scope.botId,modelCalls);}catch{/* No dispatched model call is claimed without a journal entry. */}};
     this.active.set(id,{scope,controller,localTransform:descriptor.localTransform});persist({id,scope,operation,state:descriptor.localTransform?'queued':'running',startedAt});
     try{
@@ -70,10 +78,12 @@ export class MediaService {
     if(role&&!this.analysisProvider)throw new Error('MEDIA_PROVIDER_SETTINGS_UNAVAILABLE');
     const connection=role?await this.analysisProvider!.resolve(config,role):undefined;
     const endpoint=connection?.endpoint??((operation==='image_generate'||operation==='image_edit')?resolveImageSkill(config):undefined);
-    provider=connection?.provider??(endpoint?new URL(endpoint.baseUrl).hostname:undefined);requestedModel=endpoint?.model;
+    const gptEndpoint=connection?.endpoint.protocol==='gpt_sovits'?connection.endpoint:undefined;
+    provider=connection?.provider??(endpoint?new URL(endpoint.baseUrl).hostname:undefined);requestedModel=gptEndpoint?.modelVersion??endpoint?.model;
     persist({provider,requestedModel});
+    if(gptEndpoint){persist({state:'queued'});releaseVoice=await voiceServiceQueue.acquire(gptEndpoint.baseUrl,combined);combined.throwIfAborted();authorize?.();persist({state:'running'});}
     const credentials:Record<string,string>={};
-    if(endpoint){const value=connection?.apiKey??process.env[endpoint.keyEnv];if(!value)throw new Error(`MISSING_PROVIDER_KEY: ${endpoint.keyEnv}`);credentials[endpoint.keyEnv]=value;}
+    if(endpoint&&!gptEndpoint){const keyEnv=endpoint.keyEnv;if(!keyEnv)throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');const value=connection?.apiKey??process.env[keyEnv];if(!value)throw new Error(`MISSING_PROVIDER_KEY: ${keyEnv}`);credentials[keyEnv]=value;}
     if(descriptor.inputKinds?.includes('audio')&&source[0]?.mime==='audio/silk'){
       const {decode}=await import('silk-wasm');const decoded=await decode(await this.assets.read(scope,source[0].id),24000);
       const pcm=Buffer.from(decoded.data);if(pcm.length>30*1024*1024)throw new Error('AUDIO_TOO_LONG');
@@ -92,13 +102,14 @@ export class MediaService {
         ? await this.operations.dispatch<MediaResult>(operation,job,combined)
         : await this.worker.run(job,combined,credentials);
       combined.throwIfAborted();
+      authorize?.();
       const save=async(files:MediaFile[])=>{const ids:string[]=[];for(const file of files){const resolved=await realpath(file.path);const root=await realpath(directory);if(!resolved.startsWith(root+path.sep))throw new Error('WORKER_OUTPUT_OUTSIDE_JOB');const size=(await stat(resolved)).size;if(size>(file.kind==='video'?VIDEO_LIMITS.attachmentBytes:20*1024*1024)||operation==='convert_gif'&&size>=10_000_000)throw new Error('OUTPUT_TOO_LARGE');const asset=await this.assets.save(scope,{name:file.name,mime:file.mime,kind:file.kind},await readFile(resolved),id);ids.push(asset.id);}return ids;};
       const assetIds=await save(result.assets??[]);const contextAssetIds=await save(result.contextAssets??[]);
       persist({state:'complete',assetIds,contextAssetIds,finishedAt:Date.now()});
       return {text:result.text,coverage:result.coverage,incomplete:result.incomplete,assetIds,contextAssetIds};
     }catch(error){persist({state:combined.aborted?'cancelled':'failed',finishedAt:Date.now(),error:error instanceof Error?error.message:'MEDIA_FAILED'});throw error;}finally{
       try{if(descriptor.localTransform){try{await rm(directory,{recursive:true,force:true,maxRetries:3,retryDelay:100});}catch(error){persist({cleanupError:error instanceof Error?error.message:'JOB_CLEANUP_FAILED'});}}else await captureUsage();}
-      finally{this.active.delete(id);lease?.release();}
+      finally{this.active.delete(id);lease?.release();releaseVoice?.();}
     }
   }
 }

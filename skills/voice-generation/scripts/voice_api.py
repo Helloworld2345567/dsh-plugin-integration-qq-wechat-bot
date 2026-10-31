@@ -1,4 +1,4 @@
-"""OpenAI-compatible speech synthesis worker.
+"""Speech synthesis through OpenAI-compatible or GPT-SoVITS services.
 
 The worker receives the provider key through the managed process environment and
 never places it in a job, request record, result, or exception.  It accepts the
@@ -15,6 +15,7 @@ from pathlib import Path
 import struct
 import sys
 import time
+import wave
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -30,6 +31,8 @@ FORMATS = {
     "mp3": ("audio/mpeg", ".mp3"),
     "wav": ("audio/wav", ".wav"),
 }
+GPT_SOVITS_VERSIONS = {"v1", "v2", "v2Pro", "v2ProPlus", "v3", "v4", "v5dev", "v5turbo"}
+GPT_SOVITS_LANGUAGES = {"auto", "en", "zh", "ja", "all_zh", "all_ja", "auto_yue", "yue", "ko", "all_yue", "all_ko"}
 
 
 class VoiceError(Exception):
@@ -52,6 +55,8 @@ def _endpoint(job: dict) -> dict:
     endpoint = job.get("endpoint")
     if not isinstance(endpoint, dict):
         raise VoiceError("MEDIA_PROVIDER_SETTINGS_UNAVAILABLE")
+    if endpoint.get("protocol") == "gpt_sovits":
+        return _gpt_endpoint(endpoint)
     if endpoint.get("protocol") not in (None, "speech"):
         raise VoiceError("VOICE_PROTOCOL_UNSUPPORTED")
     base = endpoint.get("baseUrl")
@@ -69,6 +74,151 @@ def _endpoint(job: dict) -> dict:
     if headers is not None and not isinstance(headers, dict):
         raise VoiceError("MEDIA_PROVIDER_ENDPOINT_INVALID")
     return endpoint
+
+
+def _gpt_endpoint(endpoint: dict) -> dict:
+    """Only trusted endpoint configuration selects files on the TTS server."""
+    try:
+        parsed = urlparse(endpoint.get("baseUrl", ""))
+        valid_url = (parsed.scheme in ("http", "https") and parsed.hostname
+                     and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment)
+        parsed.port  # Validate an explicitly supplied port.
+    except (TypeError, ValueError):
+        valid_url = False
+    if not valid_url:
+        raise VoiceError("MEDIA_PROVIDER_ENDPOINT_INVALID")
+    for key, limit in (("baseUrl", 2048), ("gptWeightsPath", 4096), ("sovitsWeightsPath", 4096),
+                       ("refAudioPath", 4096), ("voice", 100)):
+        value = endpoint.get(key)
+        if not isinstance(value, str) or not value.strip() or len(value) > limit or any(ord(char) < 32 for char in value):
+            raise VoiceError("MEDIA_PROVIDER_ENDPOINT_INVALID")
+    prompt = endpoint.get("promptText")
+    if not isinstance(prompt, str) or not prompt.strip() or len(prompt.encode("utf-8")) > MAX_TEXT_BYTES:
+        raise VoiceError("GPT_SOVITS_REFERENCE_TEXT_INVALID")
+    if endpoint.get("modelVersion") not in GPT_SOVITS_VERSIONS:
+        raise VoiceError("GPT_SOVITS_VERSION_INVALID")
+    languages = {"auto", "en", "zh", "ja", "all_zh", "all_ja"} if endpoint["modelVersion"] == "v1" else GPT_SOVITS_LANGUAGES
+    if endpoint.get("promptLang") not in languages or endpoint.get("textLang") not in languages:
+        raise VoiceError("GPT_SOVITS_LANGUAGE_INVALID")
+    return endpoint
+
+
+def _request_gpt_audio(job: dict, endpoint: dict, body: dict) -> bytes:
+    """Reload both weights and reference on every call; the host serializes jobs."""
+    import requests
+
+    base = endpoint["baseUrl"].rstrip("/")
+    try:
+        with requests.Session() as session:
+            session.trust_env = False
+            for route, key, value in (
+                ("set_sovits_weights", "weights_path", endpoint["sovitsWeightsPath"]),
+                ("set_gpt_weights", "weights_path", endpoint["gptWeightsPath"]),
+                ("set_refer_audio", "refer_audio_path", endpoint["refAudioPath"]),
+            ):
+                with session.get(base + "/" + route, params={key: value},
+                                 timeout=remaining(job, None), allow_redirects=False) as response:
+                    if response.status_code != 200:
+                        raise VoiceError(f"GPT_SOVITS_{route.upper()}_HTTP_{response.status_code}")
+                    try:
+                        result = response.json()
+                    except ValueError:
+                        raise VoiceError("GPT_SOVITS_CONTROL_RESPONSE_INVALID") from None
+                    if not isinstance(result, dict) or result.get("message") != "success":
+                        raise VoiceError("GPT_SOVITS_CONTROL_RESPONSE_INVALID")
+            timeout = remaining(job, None)
+            journal(job)
+            with session.post(base + "/tts", json=body,
+                              headers={"Content-Type": "application/json", "Accept": "audio/wav"},
+                              timeout=timeout, allow_redirects=False, stream=True) as response:
+                if response.status_code != 200:
+                    raise VoiceError(f"GPT_SOVITS_TTS_HTTP_{response.status_code}")
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in response.iter_content(64 * 1024):
+                    remaining(job, None)
+                    if not isinstance(chunk, (bytes, bytearray)):
+                        raise VoiceError("VOICE_PROVIDER_OUTPUT_INVALID")
+                    total += len(chunk)
+                    if total > MAX_AUDIO_BYTES:
+                        raise VoiceError("VOICE_OUTPUT_TOO_LARGE")
+                    chunks.append(bytes(chunk))
+                return b"".join(chunks)
+    except VoiceError:
+        raise
+    except requests.Timeout:
+        raise VoiceError("GPT_SOVITS_TIMEOUT") from None
+    except requests.RequestException:
+        raise VoiceError("GPT_SOVITS_CONNECTION_FAILED") from None
+
+
+def _validate_gpt_wav(data: bytes) -> None:
+    if len(data) > MAX_AUDIO_BYTES:
+        raise VoiceError("VOICE_OUTPUT_TOO_LARGE")
+    if not data:
+        raise VoiceError("EMPTY_VOICE_OUTPUT")
+    if len(data) < 44 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        raise VoiceError("VOICE_OUTPUT_FORMAT_INVALID")
+    # Non-streaming GPT-SoVITS returns a finalized RIFF container, not the
+    # placeholder sizes used by its streaming WAV endpoint.
+    if int.from_bytes(data[4:8], "little") + 8 != len(data):
+        raise VoiceError("VOICE_WAV_INCOMPLETE")
+    position = 12
+    data_size = None
+    while position < len(data):
+        if position + 8 > len(data):
+            raise VoiceError("VOICE_WAV_INCOMPLETE")
+        chunk_size = int.from_bytes(data[position + 4:position + 8], "little")
+        if data[position:position + 4] == b"data":
+            if data_size is not None:
+                raise VoiceError("VOICE_OUTPUT_FORMAT_INVALID")
+            data_size = chunk_size
+        position += 8 + chunk_size + (chunk_size % 2)
+        if position > len(data):
+            raise VoiceError("VOICE_WAV_INCOMPLETE")
+    try:
+        with wave.open(io.BytesIO(data), "rb") as audio:
+            frames = audio.getnframes()
+            width = audio.getsampwidth()
+            channels = audio.getnchannels()
+            if frames <= 0 or audio.getframerate() <= 0:
+                raise VoiceError("EMPTY_VOICE_OUTPUT")
+            pcm = audio.readframes(frames)
+            if len(pcm) != frames * channels * width or data_size != len(pcm):
+                raise VoiceError("VOICE_WAV_INCOMPLETE")
+            silence = 128 if width == 1 else 0
+            if all(value == silence for value in pcm):
+                raise VoiceError("VOICE_SILENT_OUTPUT")
+    except (wave.Error, EOFError, ValueError):
+        raise VoiceError("VOICE_OUTPUT_FORMAT_INVALID") from None
+
+
+def _execute_gpt(job: dict, endpoint: dict, mode: str, text: str, voice: str,
+                 style: str | None, speed: float | None, output_format: str) -> dict:
+    if mode != "speak":
+        raise VoiceError("GPT_SOVITS_CHANT_UNSUPPORTED")
+    if output_format != "wav":
+        raise VoiceError("GPT_SOVITS_FORMAT_UNSUPPORTED")
+    if voice != endpoint["voice"]:
+        raise VoiceError("GPT_SOVITS_VOICE_NOT_CONFIGURED")
+    body = {"text": text, "text_lang": endpoint["textLang"],
+            "ref_audio_path": endpoint["refAudioPath"], "prompt_text": endpoint["promptText"],
+            "prompt_lang": endpoint["promptLang"], "aux_ref_audio_paths": [],
+            "media_type": "wav", "streaming_mode": False, "batch_size": 1}
+    if speed is not None:
+        body["speed_factor"] = speed
+    data = _request_gpt_audio(job, endpoint, body)
+    _validate_gpt_wav(data)
+    output = Path(job["output"])
+    output.mkdir(parents=True, exist_ok=True)
+    target = output / "voice.wav"
+    target.write_bytes(data)
+    degraded = bool(style and style.strip())
+    return {
+        "text": "已生成 AI 语音；GPT-SoVITS 不支持 style instructions，已降级为普通语音。" if degraded else "已生成 AI 语音。",
+        "assets": [{"path": str(target), "name": target.name, "mime": "audio/wav", "kind": "audio"}],
+        "coverage": "VOICE_SYNTHESIS_DEGRADED" if degraded else "VOICE_SYNTHESIS", "incomplete": False,
+    }
 
 
 def _headers(endpoint: dict, key: str) -> dict[str, str]:
@@ -182,7 +332,9 @@ def _parameter(job: dict) -> tuple[str, str, str, str | None, float | None, str]
     text = params.get("text")
     if not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > MAX_TEXT_BYTES:
         raise VoiceError("VOICE_TEXT_INVALID")
-    voice = params.get("voice") or "alloy"
+    endpoint = job.get("endpoint") if isinstance(job.get("endpoint"), dict) else {}
+    gpt_sovits = endpoint.get("protocol") == "gpt_sovits"
+    voice = params.get("voice") or (endpoint.get("voice") if gpt_sovits else "alloy")
     if not isinstance(voice, str) or not voice.strip() or len(voice.encode("utf-8")) > MAX_VOICE_BYTES:
         raise VoiceError("VOICE_NAME_INVALID")
     style = params.get("style")
@@ -191,7 +343,7 @@ def _parameter(job: dict) -> tuple[str, str, str, str | None, float | None, str]
     speed = params.get("speed")
     if speed is not None and (isinstance(speed, bool) or not isinstance(speed, (int, float)) or not math.isfinite(speed) or not 0.25 <= speed <= 4):
         raise VoiceError("VOICE_SPEED_INVALID")
-    output_format = params.get("format") or "mp3"
+    output_format = params.get("format") or ("wav" if gpt_sovits else "mp3")
     if output_format not in FORMATS:
         raise VoiceError("VOICE_FORMAT_INVALID")
     return mode, text.strip(), voice.strip(), style, float(speed) if speed is not None else None, output_format
@@ -204,11 +356,14 @@ def execute(job: dict) -> dict:
     if job.get("inputs"):
         raise VoiceError("VOICE_INPUTS_NOT_ALLOWED")
     mode, text, voice, style, speed, output_format = _parameter(job)
+    endpoint = _endpoint(job)
+    if endpoint.get("protocol") == "gpt_sovits":
+        return _execute_gpt(job, endpoint, mode, text, voice, style, speed, output_format)
     instructions = style.strip() if isinstance(style, str) and style.strip() else None
     if mode == "chant":
         base = "Use a light, expressive, melodic speaking style with a gentle humming feel. This is short expressive TTS, not a full song, accompaniment, or cover."
         instructions = f"{base} Style: {instructions}" if instructions else base
-    body = {"model": _endpoint(job)["model"], "input": text, "voice": voice, "response_format": output_format}
+    body = {"model": endpoint["model"], "input": text, "voice": voice, "response_format": output_format}
     if speed is not None:
         body["speed"] = speed
     if instructions:

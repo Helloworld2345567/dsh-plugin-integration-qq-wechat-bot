@@ -291,8 +291,22 @@ def _validate_protocol(job):
         if not isinstance(item, dict) or not all(isinstance(item.get(key), str) and item[key] for key in ("path", "name", "mime", "kind")) or any(len(item[key]) > limit for key, limit in (("path", 4096), ("name", 512), ("mime", 256), ("kind", 32))):
             raise JobError("MEDIA_WORKER_INPUT_INVALID")
     endpoint = job.get("endpoint")
-    if endpoint is not None and (not isinstance(endpoint, dict) or not isinstance(endpoint.get("model"), str) or not endpoint["model"] or len(endpoint["model"]) > 256 or not isinstance(endpoint.get("baseUrl"), str) or not endpoint["baseUrl"] or len(endpoint["baseUrl"]) > 2048 or not isinstance(endpoint.get("keyEnv"), str) or not endpoint["keyEnv"] or not endpoint["keyEnv"][0].isalpha() or not endpoint["keyEnv"].replace("_", "").isalnum() or not endpoint["keyEnv"].isupper()):
-        raise JobError("MEDIA_WORKER_ENDPOINT_INVALID")
+    if endpoint is not None:
+        if not isinstance(endpoint, dict) or not isinstance(endpoint.get("baseUrl"), str) or not endpoint["baseUrl"] or len(endpoint["baseUrl"]) > 2048:
+            raise JobError("MEDIA_WORKER_ENDPOINT_INVALID")
+        if endpoint.get("protocol") == "gpt_sovits":
+            required = {"gptWeightsPath": 4096, "sovitsWeightsPath": 4096, "refAudioPath": 4096,
+                        "promptText": 32768, "promptLang": 16, "textLang": 16, "voice": 100}
+            if job["operation"] not in ("voice_speak", "voice_chant") or any(
+                    not isinstance(endpoint.get(key), str) or not endpoint[key].strip() or len(endpoint[key]) > limit
+                    for key, limit in required.items()) or endpoint.get("modelVersion") not in (
+                        "v1", "v2", "v2Pro", "v2ProPlus", "v3", "v4", "v5dev", "v5turbo"):
+                raise JobError("MEDIA_WORKER_ENDPOINT_INVALID")
+        elif (not isinstance(endpoint.get("model"), str) or not endpoint["model"] or len(endpoint["model"]) > 256
+              or not isinstance(endpoint.get("keyEnv"), str) or not endpoint["keyEnv"]
+              or not endpoint["keyEnv"][0].isalpha() or not endpoint["keyEnv"].replace("_", "").isalnum()
+              or not endpoint["keyEnv"].isupper()):
+            raise JobError("MEDIA_WORKER_ENDPOINT_INVALID")
     if not isinstance(job.get("deadline"), (int, float)) or not math.isfinite(job["deadline"]) or (job.get("timeoutMs") != 0 and job["deadline"] < time.time() * 1000):
         raise JobError("JOB_EXPIRED")
     if not isinstance(job.get("timeoutMs"), int) or (job["timeoutMs"] != 0 and job["timeoutMs"] < 1000) or job["timeoutMs"] > 15 * 60 * 1000:

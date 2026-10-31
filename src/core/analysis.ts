@@ -1,9 +1,11 @@
-import type {BotConfig} from './types.js';
+import type {BotConfig,GptSovitsConfig} from './types.js';
 /** Media provider roles share the native model connection, with TTS using the speech endpoint. */
 export type AnalysisRole='asr'|'video'|'tts';
-export type AnalysisProtocol='chat_completions'|'transcriptions'|'speech';
-export interface AnalysisEndpoint {baseUrl:string;model:string;keyEnv:string;protocol:AnalysisProtocol;headers?:Record<string,string>}
-export interface AnalysisConnection {provider:string;endpoint:AnalysisEndpoint;apiKey:string}
+export type AnalysisProtocol='chat_completions'|'transcriptions'|'speech'|'gpt_sovits';
+export interface NativeAnalysisEndpoint {baseUrl:string;model:string;keyEnv:string;protocol:Exclude<AnalysisProtocol,'gpt_sovits'>;headers?:Record<string,string>}
+export type GptSovitsEndpoint=GptSovitsConfig&{protocol:'gpt_sovits';voice:string;model?:never;keyEnv?:never;headers?:never};
+export type AnalysisEndpoint=NativeAnalysisEndpoint|GptSovitsEndpoint;
+export interface AnalysisConnection {provider:string;endpoint:AnalysisEndpoint;apiKey?:string}
 export interface AnalysisProvider {resolve(config:BotConfig,role:AnalysisRole):Promise<AnalysisConnection>}
 export function analysisEnabled(config:Readonly<BotConfig>,role?:AnalysisRole):boolean{
   // Voice is a separately opt-in skill and permission so enabling media analysis

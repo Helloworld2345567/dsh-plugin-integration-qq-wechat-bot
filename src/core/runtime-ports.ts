@@ -2,7 +2,7 @@ import type {BotConfig,Credential,InboundMessage,Output,SessionBinding,TurnSnaps
 import type {EvolutionTask} from './evolution-contract.js';
 import type {ProgressFacts,ProgressStage} from './progress.js';
 export interface HarnessRunOptions {snapshot?:TurnSnapshot;onProgress?:(stage:ProgressStage)=>void;onEnd?:()=>void}
-export interface HarnessResult {turnId:string;outputs:Output[];snapshot:TurnSnapshot}
+export interface HarnessResult {turnId:string;outputs:Output[];snapshot:TurnSnapshot;voiceAttempted?:boolean}
 export interface LifecycleHandshake {protocol:'dsh.lifecycle';version:number;instance:string;capabilities:readonly string[]}
 /** Core depends on this port; the lifecycle bundle supplies the implementation. */
 export interface EvolutionJournalPort {

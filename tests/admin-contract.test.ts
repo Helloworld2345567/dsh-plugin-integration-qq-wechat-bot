@@ -30,12 +30,25 @@ test('overview summary is bounded, redacted and supports unchanged revision resp
   assert.equal(first.data.configs[0].allowHostTools,false);assert.equal(first.data.bots[0].credentialConfigured,true);
   assert.equal(first.data.configs[0].voice.enabled,false);
   const voiceStatus:any=await admin.invoke('skill.voice.status',{});assert.equal(voiceStatus.default.enabled,false);assert.equal(voiceStatus.default.format,'mp3');assert.doesNotMatch(JSON.stringify(voiceStatus),/token|appSecret|apiKey/i);
-  const serialized=JSON.stringify(first.data);assert.doesNotMatch(serialized,/personaPrompt|reply|storageDirectory|workspaceRoot|appSecret|token/);
+  const serialized=JSON.stringify(first.data);assert.doesNotMatch(serialized,/"(?:personaPrompt|reply|replyEnvelope|storageDirectory|workspaceRoot|appSecret|token)":/);
   assert.equal((await admin.query({version:1,kind:'query',name:'overview.summary',input:{changedSince:first.revision}}) as any).unchanged,true);
 });
 
 test('legacy state facade remains available separately from the summary query',async t=>{
   const {admin}=await fixture(t);const legacy:any=await admin.invoke('state',{});assert.ok(Array.isArray(legacy.configs));assert.ok(Array.isArray(legacy.bots));assert.ok('sessions' in legacy);const summary:any=await admin.query({version:1,kind:'query',name:'overview.summary',input:{}});assert.equal('sessions' in summary.data,false);assert.equal('jobs' in summary.data,false);
+});
+
+test('GPT-SoVITS status separates complete configuration from revision-specific synthesis acceptance',async t=>{
+  const {admin,store}=await fixture(t);
+  const config=store.saveConfig({id:'voice',name:'Voice',personaPrompt:'A',model:{provider:'chat-provider',model:'chat-model'},media:{voice:{enabled:true,protocol:'gpt_sovits',replyMode:'auto',gptSovits:{baseUrl:'http://tts.invalid:9880',modelVersion:'v4',gptWeightsPath:'models/voice.ckpt',sovitsWeightsPath:'models/voice.pth',refAudioPath:'references/voice.wav',promptText:'参考音频文字',promptLang:'all_zh',textLang:'all_zh'}}}});
+  admin.runtime.media.analysisStatus=async()=>({enabled:true,configured:true,keyConfigured:false,provider:'gpt_sovits',protocol:'gpt_sovits',model:'v4'});
+  let status:any=(await admin.invoke('skill.voice.status',{}) as any).voice;
+  assert.equal(status.provider,'gpt_sovits');assert.equal(status.model,'v4');assert.equal(status.format,'wav');assert.equal(status.replyMode,'auto');assert.equal(status.synthesisValidation.status,'NOT_RUN');
+  assert.doesNotMatch(JSON.stringify(status),/baseUrl|weights|refAudioPath|chat-provider|chat-model/);
+  store.saveCapabilityStatus('voice:1:voice',{configId:'voice',revision:config.revision,role:'voice',status:'PASS',evidence:'Audible reference fixture verified',updatedAt:1,source:'operator'});
+  status=(await admin.invoke('skill.voice.status',{}) as any).voice;assert.equal(status.synthesisValidation.status,'PASS');
+  store.saveConfig({...config,name:'Changed'},config.revision);
+  status=(await admin.invoke('skill.voice.status',{}) as any).voice;assert.equal(status.synthesisValidation.status,'NOT_RUN');
 });
 
 test('session and delivery queries are bounded and cursor-paginated without reply metadata',async t=>{

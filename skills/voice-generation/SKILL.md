@@ -5,7 +5,7 @@ description: 根据用户明确要求生成 AI 语音回复，支持普通朗读
 
 # Voice generation
 
-使用 `bot_voice` 生成并登记可播放的音频附件。只有用户明确要求语音、朗读、口播或轻量哼唱时才调用；普通文字对话不要主动生成语音。工具成功后音频会自动加入本轮投递，不要输出内部 asset ID、工作目录路径或 `asset://` 地址。
+使用 `bot_voice` 生成并登记可播放的音频附件。只有用户明确要求语音、朗读、口播或轻量哼唱时才调用。人格开启自动语音后，运行时会为最终正文附加语音，无需模型主动调用；本轮已尝试语音工具时不会再次自动合成。工具成功后音频会自动加入本轮投递，不要输出内部 asset ID、工作目录路径或 `asset://` 地址。
 
 `mode="speak"` 用于普通朗读，`mode="chant"` 用于轻快、旋律化或哼唱感的短句。`chant` 是表达性 TTS，不能宣称生成完整歌曲、伴奏、翻唱或稳定音准。语音由 AI 生成，应在自然回复中明确说明这一点。
 
@@ -13,11 +13,13 @@ description: 根据用户明确要求生成 AI 语音回复，支持普通朗读
 {
   "mode": "speak",
   "text": "要朗读的内容",
-  "voice": "alloy",
-  "style": "温柔、清晰",
-  "speed": 1.0,
-  "format": "mp3"
+  "speed": 1.0
 }
 ```
 
-默认使用已配置的 OpenAI-compatible speech provider、模型和 voice。凭据由 Harness 注入，技能调用不接受 API key、URL 或本地路径。音频输出限制为 20 MiB；provider 不支持风格 instructions 时会返回明确的降级结果，不伪装成歌曲。
+省略 `voice`、`format` 时使用本轮人格配置，再使用协议默认值；显式工具参数优先。连接信息来自人格配置，技能调用不接受 API key、URL、模型权重或参考音频路径。
+
+- `speech` 使用已配置的 OpenAI-compatible provider，凭据由 Harness 注入；支持 MP3/WAV。provider 不支持风格 instructions 时返回明确的降级结果。
+- `gpt_sovits` 使用人格配置的模型与参考音频，只支持普通朗读和 WAV。`voice` 只能是当前人格配置的音色标识，省略时自动继承；不要填 `alloy` 等其他提供商音色。`chant`、显式 MP3 会返回不支持；`style` 会明确降级为普通朗读，不承诺改变风格。
+
+音频输出限制为 20 MiB。只依据工具真实结果描述完成情况，不伪装成歌曲。

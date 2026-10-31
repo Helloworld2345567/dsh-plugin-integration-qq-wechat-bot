@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import path from 'node:path';
+import {normalizeGptSovitsBaseUrl} from './voice-config.js';
 
 export const idSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
 export const channelIdSchema=idSchema;
@@ -12,14 +13,39 @@ export const imageSkillOverrideSchema=endpointSchema.pick({baseUrl:true,model:tr
 export const analysisSkillSchema=z.object({enabled:z.boolean().default(true),provider:z.string().min(1).max(150).optional(),model:z.string().min(1).max(200).optional(),protocol:z.enum(['chat_completions','transcriptions']).default('chat_completions')});
 /** Persona-level speech output settings.  Voice is deliberately disabled by default
  * so an upgrade never starts consuming a provider quota without an operator action. */
+const voicePathSchema=z.string().trim().min(1).max(4096).refine(value=>!/[\x00-\x1f]/.test(value),'服务端路径不能包含控制字符');
+export const gptSovitsModelVersions=['v1','v2','v2Pro','v2ProPlus','v3','v4','v5dev','v5turbo'] as const;
+export const gptSovitsLanguages=['auto','en','zh','ja','all_zh','all_ja','auto_yue','yue','ko','all_yue','all_ko'] as const;
+export const gptSovitsSchema=z.object({
+  baseUrl:z.url().max(2048).refine(value=>{try{normalizeGptSovitsBaseUrl(value);return true;}catch{return false;}},'推理服务须使用无凭据、查询和片段的 HTTP 或 HTTPS 地址').transform(normalizeGptSovitsBaseUrl),
+  modelVersion:z.enum(gptSovitsModelVersions),
+  gptWeightsPath:voicePathSchema,
+  sovitsWeightsPath:voicePathSchema,
+  refAudioPath:voicePathSchema,
+  promptText:z.string().min(1).max(32000).refine(value=>value.trim().length>0,'请填写参考音频实际说出的文字').refine(value=>new TextEncoder().encode(value).length<=32*1024,'参考文本不能超过 32 KiB'),
+  promptLang:z.enum(gptSovitsLanguages),
+  textLang:z.enum(gptSovitsLanguages),
+}).superRefine((value,ctx)=>{
+  if(value.modelVersion==='v1')for(const field of ['promptLang','textLang'] as const){
+    if(!['auto','en','zh','ja','all_zh','all_ja'].includes(value[field]))ctx.addIssue({code:'custom',path:[field],message:'v1 仅支持中文、英文和日文语言模式'});
+  }
+});
+export type GptSovitsConfig=z.infer<typeof gptSovitsSchema>;
 export const voiceSkillSchema=z.object({
   enabled:z.boolean().default(false),
   provider:z.string().min(1).max(150).optional(),
   model:z.string().min(1).max(200).optional(),
-  protocol:z.literal('speech').default('speech'),
-  voice:z.string().trim().min(1).max(100).optional(),
-  format:z.enum(['mp3','wav']).default('mp3'),
-});
+  protocol:z.enum(['speech','gpt_sovits']).default('speech'),
+  replyMode:z.enum(['on_demand','auto']).default('on_demand'),
+  voice:z.string().trim().min(1).max(100).refine(value=>new TextEncoder().encode(value).length<=128,'音色标识不能超过 128 字节').optional(),
+  format:z.enum(['mp3','wav']).optional(),
+  gptSovits:gptSovitsSchema.optional(),
+}).superRefine((value,ctx)=>{
+  if(value.enabled&&value.protocol==='gpt_sovits'){
+    if(!value.gptSovits)ctx.addIssue({code:'custom',path:['gptSovits'],message:'请配置 GPT-SoVITS 服务、模型与参考音频'});
+    if(value.format==='mp3')ctx.addIssue({code:'custom',path:['format'],message:'GPT-SoVITS 语音输出仅支持 WAV'});
+  }
+}).transform(value=>({...value,format:value.format??(value.protocol==='gpt_sovits'?'wav' as const:'mp3' as const)}));
 export const configSchema = z.object({
   schemaVersion:z.literal(3).default(3),
   id: idSchema, name: z.string().trim().min(1).max(100), revision: z.number().int().positive().default(1),

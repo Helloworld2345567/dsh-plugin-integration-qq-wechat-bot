@@ -13,8 +13,9 @@ def journal(job, call=None, response=None):
     except (FileNotFoundError, ValueError):
         calls = []
     if call is None:
-        call = {'id': str(uuid4()), 'attempted': True, 'at': int(time.time() * 1000),
-                'model': job['endpoint']['model']}
+        call = {'id': str(uuid4()), 'attempted': True, 'at': int(time.time() * 1000)}
+        if isinstance(job['endpoint'].get('model'), str):
+            call['model'] = job['endpoint']['model']
         calls.append(call)
     elif isinstance(response, dict):
         call = {**call}
