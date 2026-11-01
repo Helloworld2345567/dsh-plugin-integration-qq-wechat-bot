@@ -49,10 +49,10 @@ test('foreground auto voice synthesizes once before text chunking and delivery r
   await f.runtime.flushDeliveries();assert.equal(f.calls.length,1);
 });
 
-for(const scenario of ['on_demand','explicit-success','explicit-failure','only-assets','code-only','too-long'] as const)test(`${scenario} does not start automatic synthesis`,async t=>{
+for(const scenario of ['on_demand','explicit-success','explicit-failure','singing-attempt','only-assets','code-only','too-long'] as const)test(`${scenario} does not start automatic synthesis`,async t=>{
   const f=await fixture(t);
   if(scenario==='on_demand'){const config=f.store.config('sakura');f.store.saveConfig({...config,media:{voice:{...config.media.voice!,replyMode:'on_demand'}}},config.revision);}
-  f.harness.run=async(_b,_m,_s,options)=>({turnId:'reply',outputs:scenario==='only-assets'?[{type:'asset',assetId:f.audio.id}]:[{type:'text',text:scenario==='code-only'?'```ts\nconst x=1;\n```':scenario==='too-long'?'字'.repeat(11000):'回复'},...(scenario==='explicit-success'?[{type:'asset' as const,assetId:f.audio.id}]:[])],snapshot:options!.snapshot!,voiceAttempted:scenario.startsWith('explicit-')});
+  f.harness.run=async(_b,_m,_s,options)=>({turnId:'reply',outputs:scenario==='only-assets'?[{type:'asset',assetId:f.audio.id}]:[{type:'text',text:scenario==='code-only'?'```ts\nconst x=1;\n```':scenario==='too-long'?'字'.repeat(11000):'回复'},...(scenario==='explicit-success'?[{type:'asset' as const,assetId:f.audio.id}]:[])],snapshot:options!.snapshot!,voiceAttempted:scenario.startsWith('explicit-'),singingAttempted:scenario==='singing-attempt'});
   await f.chat();assert.equal(f.calls.length,0);assert.ok(f.sent.length>0);
 });
 

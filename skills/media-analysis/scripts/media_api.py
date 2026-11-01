@@ -111,9 +111,13 @@ def analyze_audio(job):
                   '{"received_media":true,"transcript":"听清的原话，无法辨认处标注不清",'
                   '"summary":"回答问题","uncertainty":[]}。未实际收到音频时received_media必须为false。'
                   '不要根据文件名或问题猜测内容。用户问题：' + str(job['parameters'].get('question') or '请忠实转写语音。'))
+        encoded = base64.b64encode(source.read_bytes()).decode('ascii')
+        if endpoint['model'].rsplit('/', 1)[-1].lower().startswith('gemini-'):
+            audio = {'type': 'image_url', 'image_url': {'url': 'data:audio/wav;base64,' + encoded}}
+        else:
+            audio = {'type': 'input_audio', 'input_audio': {'data': encoded, 'format': 'wav'}}
         response = request(job, '/chat/completions', body={'model': endpoint['model'], 'stream': False, 'max_tokens': 4000,
-            'messages': [{'role': 'user', 'content': [{'type': 'text', 'text': prompt},
-                {'type': 'input_audio', 'input_audio': {'data': base64.b64encode(source.read_bytes()).decode('ascii'), 'format': 'wav'}}]}]})
+            'messages': [{'role': 'user', 'content': [{'type': 'text', 'text': prompt}, audio]}]})
         try:
             choice = response['choices'][0]
             if choice.get('finish_reason') != 'stop':

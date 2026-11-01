@@ -15,6 +15,8 @@ export function permitted(name:string,config:BotConfig,bot:BotInstance,scope:Cal
   // both the operator permission and the persona-level opt-in; a frozen turn
   // therefore cannot resurrect voice output after it has been disabled.
   if(name==='bot_voice')return config.skills.includes('voice-generation')&&config.tools.includes('bot_voice')&&config.media.voice?.enabled===true;
+  if(name==='bot_sing')return config.skills.includes('singing-conversion')&&config.tools.includes('bot_sing')&&config.media.singing?.enabled===true;
+  if(name==='bot_music')return config.skills.includes('music-download')&&config.tools.includes('bot_music')&&config.media.music?.enabled===true;
   if(name==='image_generation')return imageSkillEnabled(config);
   const skillTool=skillToolManifests.find(manifest=>manifest.tool.name===name);
   if(skillTool)return config.skills.includes(skillTool.skill)&&config.tools.includes('bot_media')&&(!skillTool.enabledRoles?.length||skillTool.enabledRoles.some(role=>(role==='tts'?config.media.voice:config.media[role])?.enabled!==false));
@@ -30,7 +32,7 @@ export function mediaConfigNow(snapshot:TurnSnapshot,current:BotConfig):BotConfi
   return {...snapshot.config,media:{...snapshot.config.media,...Object.fromEntries(Object.entries(current.media).filter(([,value])=>value?.enabled===false).map(([role])=>[role,{...snapshot.config.media[role as keyof BotConfig['media']],enabled:false}]))}} as BotConfig;
 }
 export function permissionsRevoked(snapshot:TurnSnapshot,current:BotConfig,bot:BotInstance,scope:CallerScope):boolean {
-  return !bot.enabled||bot.archived||current.archived||(snapshot.trusted&&!trusted(bot,scope))||snapshot.config.tools.some(name=>!current.tools.includes(name))||(snapshot.config.allowHostTools&&!current.allowHostTools)||snapshot.config.hostTools.some(name=>!current.hostTools.includes(name))||snapshot.config.skills.some(name=>!current.skills.includes(name))||(imageSkillEnabled(snapshot.config)&&!imageSkillEnabled(current))||(['asr','video'] as const).some(role=>analysisEnabled(snapshot.config,role)&&!analysisEnabled(current,role))||(snapshot.config.media.voice?.enabled===true&&current.media.voice?.enabled!==true);
+  return !bot.enabled||bot.archived||current.archived||(snapshot.trusted&&!trusted(bot,scope))||snapshot.config.tools.some(name=>!current.tools.includes(name))||(snapshot.config.allowHostTools&&!current.allowHostTools)||snapshot.config.hostTools.some(name=>!current.hostTools.includes(name))||snapshot.config.skills.some(name=>!current.skills.includes(name))||(imageSkillEnabled(snapshot.config)&&!imageSkillEnabled(current))||(['asr','video'] as const).some(role=>analysisEnabled(snapshot.config,role)&&!analysisEnabled(current,role))||(snapshot.config.media.voice?.enabled===true&&current.media.voice?.enabled!==true)||(snapshot.config.media.singing?.enabled===true&&current.media.singing?.enabled!==true)||(snapshot.config.media.music?.enabled===true&&current.media.music?.enabled!==true);
 }
 export function freezeTurn(config:BotConfig,bot:BotInstance,scope:CallerScope,sourceIds:string[]):TurnSnapshot { return Object.freeze({config:deepFreeze(structuredClone(config)),botId:bot.id,trusted:trusted(bot,scope),sourceIds:[...sourceIds],startedAt:Date.now()}); }
 function deepFreeze<T>(value:T):Readonly<T> { if(value && typeof value==='object') {Object.freeze(value); for(const child of Object.values(value)) deepFreeze(child);} return value; }

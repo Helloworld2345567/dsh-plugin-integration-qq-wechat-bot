@@ -3,6 +3,8 @@ import {AutomationPanel} from './automation.js';
 import {AdminClient} from './admin-client.js';
 import {panelStyles} from './styles.js';
 import {botStatus,createUI,list} from './ui.js';
+import {singingCard} from './singing.js';
+import {musicCard} from './music.js';
 
 /* Use the Harness module loader's React instance. */
 declare const window:Window & {__ModuleLoader__:any;__BOT_INTEGRATION__?:{endpoint:string;token:string}};
@@ -33,6 +35,8 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
     const refresh=async()=>{const next=await query('overview.summary');if(next){setSummary(next);setSummaryError('');}};
     const refreshBots=async()=>{client().invalidate('bots.list');const next=await query('bots.list');if(next)setBots(next);};
     const refreshVoiceStatus=async(signal?:AbortSignal)=>{const next=await api('skill.voice.status',{},signal);if(!signal?.aborted)setMediaSkills((old:any)=>Object.fromEntries(Object.entries(next).map(([id,status])=>[id,{...(old[id]??{}),voice:status}])));};
+    const refreshSingingStatus=async(signal?:AbortSignal)=>{const next=await api('skill.singing.status',{},signal);if(!signal?.aborted)setMediaSkills((old:any)=>({...old,...Object.fromEntries(Object.entries(next).map(([id,status])=>[id,{...(old[id]??{}),singing:status}]))}));};
+    const refreshMusicStatus=async(signal?:AbortSignal)=>{const next=await api('skill.music.status',{},signal);if(!signal?.aborted)setMediaSkills((old:any)=>({...old,...Object.fromEntries(Object.entries(next).map(([id,status])=>[id,{...(old[id]??{}),music:status}]))}));};
     const mutate=async(action:string,input:any={},message='已保存')=>{
       if(mutationRef.current)throw Error('操作进行中，请稍候');mutationRef.current=true;setBusy(true);setError('');setNotice('');
       try{
@@ -41,7 +45,7 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
         if(action.startsWith('automation.'))client().invalidate('automation.list');
         setNotice(message);
         // Refresh failures must not turn a successful write into an apparent failed save.
-        try{await refresh();if(action.startsWith('bot.'))await refreshBots();if(action.startsWith('config.')||action==='capability.record')await refreshVoiceStatus();}catch{setError('操作已完成，状态刷新失败，请稍后重新打开页面');}
+        try{await refresh();if(action.startsWith('bot.'))await refreshBots();if(action.startsWith('config.')||action==='capability.record'||action==='skill.singing.probe'||action==='skill.music.probe')await Promise.all([refreshVoiceStatus(),refreshSingingStatus(),refreshMusicStatus()]);}catch{setError('操作已完成，状态刷新失败，请稍后重新打开页面');}
         return result;
       }finally{mutationRef.current=false;setBusy(false);}
     };
@@ -60,6 +64,8 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
     React.useEffect(()=>{if(tab!=='bots')return;const abort=new AbortController();void query('bots.list',{},abort.signal).then((next:any)=>{if(next&&!abort.signal.aborted)setBots(next);}).catch((e:Error)=>{if(!abort.signal.aborted)setError(e.message);});void api('directories',{},abort.signal).then(setDirectories).catch(()=>{});return()=>abort.abort();},[tab]);
     React.useEffect(()=>{if(tab!=='catalog')return;const abort=new AbortController();for(const [action,set] of [['models',setModels],['directories',setDirectories],['skill.image.status',setImageSkills],['skill.media.status',setMediaSkills]] as const){void api(action,{},abort.signal).then((next:any)=>{if(abort.signal.aborted)return;if(action==='skill.media.status')setMediaSkills((old:any)=>Object.fromEntries(Object.entries(next).map(([id,status])=>[id,{...(old[id]??{}),...(status as any)}])));else set(next);}).catch((e:Error)=>{if(!abort.signal.aborted)setError(e.message);});}
       void refreshVoiceStatus(abort.signal).catch((e:Error)=>{if(!abort.signal.aborted)setError(e.message);});
+      void refreshSingingStatus(abort.signal).catch((e:Error)=>{if(!abort.signal.aborted)setError(e.message);});
+      void refreshMusicStatus(abort.signal).catch((e:Error)=>{if(!abort.signal.aborted)setError(e.message);});
       return()=>abort.abort();},[tab]);
     const configs=(summary?.configs??[]).filter((c:any)=>!c.archived);
     React.useEffect(()=>{if(tab==='catalog'&&!edit&&configs[0])void loadConfig(configs[0].id).catch((e:Error)=>setError(e.message));},[tab,configs[0]?.id]);
@@ -141,7 +147,7 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
                 ],v=>set({voice:v||undefined})),ui.field('自定义音色',options.voice??'',v=>set({voice:v||undefined}),'text',{placeholder:'例如 zh-CN-XiaoxiaoNeural'}),h('small',null,'Edge TTS 不需要 API Key，输出 MP3；音色名称由本机配置保存。')]),
                 h('small',null,'自动语音保留文字；本轮已经调用语音工具时不重复合成。配置完整不代表模型与参考音频已经通过实际合成验收。')
               ]:[ui.select('提供商',options.provider??'',[{id:'',name:'跟随主模型'},...models],v=>set({provider:v||undefined,model:undefined})),ui.select('模型',options.model??'',[{id:'',name:'跟随主模型'},...(models.find((p:any)=>p.id===provider)?.models??[])],v=>set({model:v||undefined})),role==='asr'?ui.select('协议',options.protocol??'chat_completions',[{id:'chat_completions',name:'聊天'},{id:'transcriptions',name:'转写'}],v=>set({protocol:v})):null]),status?.error&&!['IMAGE_SKILL_DISABLED','MEDIA_ANALYSIS_DISABLED','VOICE_DISABLED','VOICE_OUTPUT_DISABLED'].includes(status.error)?h('p',{className:'error',role:'alert'},status.error):null,ui.button('恢复默认',()=>{const media={...selected.media};delete media[role];update({media});})):null);
-            })):null,
+            }),musicCard(h,ui,selected,dirty,mediaSkills[selected.id]?.music,update,mutate,ask),singingCard(h,ui,selected,dirty,mediaSkills[selected.id]?.singing,update,mutate,ask)):null,
             section==='files'?h('div',{className:'stack'},h('div',{className:'row spread'},h('strong',null,'配置文件'),h('span',{className:'badge'},personaFile?.state==='error'?'未同步':personaFile?.state==='draft'?'有草稿':'已同步')),h('small',null,'config.json · persona.md'),existing?h('div',{className:'actions'},ui.button('目录',()=>mutate('config.directory.open',{configId:selected.id},'已打开目录')),ui.button('应用文件',()=>fileApply(selected.id))):h('p',{className:'muted'},'保存人格后可管理文件'),personaFile?.error?h('p',{className:'error',role:'alert'},personaFile.error):null,ui.details('路径与标识',h('small',{className:'path'},personaFile?.directory??'保存后生成'),h('small',null,`ID · ${selected.id}`))):null),
           h('div',{className:'save-bar'},h('small',null,'保存后下一轮生效'),ui.button('保存',async()=>{if(!selected.id.trim()||!selected.name.trim())throw Error('请填写 ID 和名称');const next=await mutate('config.save',{config:selected,expectedRevision:selected.revision},'已保存，下一轮生效');setEdit(next);setDirty(false);},{className:'primary',disabled:busy||configLoading||!dirty}))):!configLoading?h('p',{className:'empty'},'选择或新建一个人格'):null);
     }

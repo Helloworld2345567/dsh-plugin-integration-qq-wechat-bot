@@ -2,7 +2,7 @@ import type {Store} from './store.js';
 import type {Credentials} from './runtime-ports.js';
 import type {Delivery} from './types.js';
 import type {ChannelRegistry} from './channel-registry.js';
-import {errorCauseCode,errorCauseMessage,RemoteError} from './network.js';
+import {errorCauseCode,errorCauseMessage,RemoteError,sanitizeRemoteMessage} from './network.js';
 import {setTimeout as delay} from 'node:timers/promises';
 import {abortable,PROGRESS_SEND_MS} from './progress.js';
 
@@ -24,11 +24,25 @@ const AUTO_RETRY_LIMIT=2;
 const AUTO_RETRY_DELAYS=[1000,2000] as const;
 const SAFE_NOT_SENT_CAUSES=new Set(['EAI_AGAIN','ENETUNREACH','EHOSTUNREACH','ECONNREFUSED','ENOTFOUND','UND_ERR_CONNECT_TIMEOUT','UND_ERR_DNS']);
 const RETRYABLE_PRECOMMIT_STATUS=new Set([408,425,429,500,502,503,504]);
-type DeliveryFailure={message:string;causeCode?:string;causeMessage?:string};
+// A returned rejection establishes that this request did not commit. Timeouts,
+// duplicate/conflict replies and server errors can follow an earlier commit.
+const REJECTED_COMMIT_STATUS=new Set([400,401,403,404,405,410,413,415,422,429]);
+const REJECTED_QQ_CODES=new Set(['850018','850019','850026','850031','10000','40093001','40093002']);
+type DeliveryFailure={message:string;causeCode?:string;causeMessage?:string;httpStatus?:number;platformCode?:string;platformMessage?:string;platformTraceId?:string};
 function failure(error:unknown):DeliveryFailure {
-  const message=error instanceof Error?error.message:typeof error==='string'?error:'DELIVERY_UNKNOWN';
-  const causeCode=errorCauseCode(error);const causeMessage=errorCauseMessage(error);
-  return{message:causeCode?`${message} [cause.code=${causeCode}]`:message,causeCode,causeMessage};
+  const message=sanitizeRemoteMessage(error instanceof Error?error.message:error)??'DELIVERY_UNKNOWN';
+  const causeCode=sanitizeRemoteMessage(errorCauseCode(error)),causeMessage=sanitizeRemoteMessage(errorCauseMessage(error));
+  return{message:causeCode?`${message} [cause.code=${causeCode}]`:message,causeCode,causeMessage,
+    httpStatus:error instanceof RemoteError?error.status:undefined,platformCode:error instanceof RemoteError?error.platformCode:undefined,
+    platformMessage:error instanceof RemoteError?error.platformMessage:undefined,platformTraceId:error instanceof RemoteError?error.platformTraceId:undefined};
+}
+function terminalState(error:unknown,delivery:Delivery):'failed'|'unknown'{
+  if(delivery.attempt?.phase!=='commit')return 'failed';
+  if(SAFE_NOT_SENT_CAUSES.has(errorCauseCode(error)??''))return 'failed';
+  if(error instanceof RemoteError&&error.platformCode==='850027')return 'unknown';
+  if(error instanceof RemoteError&&error.code==='QQ_API_REJECTED'&&REJECTED_QQ_CODES.has(error.platformCode??''))return 'failed';
+  if(error instanceof RemoteError&&error.status!==undefined&&REJECTED_COMMIT_STATUS.has(error.status))return 'failed';
+  return 'unknown';
 }
 function mayAutoRetry(error:unknown,delivery:Delivery):boolean {
   if(delivery.purpose==='progress')return false;
@@ -97,32 +111,34 @@ export class DurableDeliveryWorker implements DeliveryWorker {
           if(!this.progressActive(delivery)||controller.signal.aborted){this.store.deliveryState(delivery,'cancelled');continue;}
           const asset=delivery.output.type==='asset'?this.store.asset(delivery.scopeKey,delivery.output.assetId!):undefined;
           const envelope=definition.normalizeReply?.(delivery.replyEnvelope??delivery.reply);
-          let sending:Delivery={...delivery,...(envelope?{replyEnvelope:envelope,reply:envelope.payload}: {})};
+          let sending:Delivery={...delivery,...(envelope?{replyEnvelope:envelope,reply:envelope.payload}: {}),...(delivery.attempt?{attempt:{...delivery.attempt,autoRetryCount:undefined}}:{})};
           const resultDelivery=delivery.purpose!=='progress';
           const metricId=`inbox:${delivery.scopeKey}:${delivery.sourceId}`;if(resultDelivery&&this.store.findTurnMetric(metricId))this.store.updateTurnMetric(metricId,{deliveryStartedAt:Date.now()});
           while(true){
             const attempt:NonNullable<Delivery['attempt']>={...sending.attempt,number:(sending.attempt?.number??0)+1,phase:'prepare',assetId:asset?.id,startedAt:Date.now()};
             sending={...sending,attempt};this.store.deliveryState(sending,'sending');
             try{
-              const sendSignal=resultDelivery?AbortSignal.any([controller.signal,AbortSignal.timeout(90000)]):controller.signal;
+              // Multipart media can exceed 90 seconds at normal upload speeds.
+              // Each adapter request still has its own shorter network timeout.
+              const sendTimeout=asset?15*60_000:90_000;
+              const sendSignal=resultDelivery?AbortSignal.any([controller.signal,AbortSignal.timeout(sendTimeout)]):controller.signal;
               const send=definition.adapter.send(bot,credential,sending,asset,sendSignal);
               const receipt=await (resultDelivery?send:abortable(send,sendSignal));
               this.store.deliveryState(sending,'sent',receipt);if(resultDelivery){if(this.store.findTurnMetric(metricId))this.store.updateTurnMetric(metricId,{sentAt:Date.now()});this.store.updateTurnMetricsByTurn(delivery.scopeKey,delivery.turnId,{sentAt:Date.now()});}break;
             }catch(error){
-              const detail=failure(error);attempt.lastError=detail.message;attempt.causeCode=detail.causeCode;attempt.causeMessage=detail.causeMessage;
+              const {message,...detail}=failure(error);attempt.lastError=message;Object.assign(attempt,detail);
               const retryCount=attempt.autoRetryCount??0;
-              if(retryCount<AUTO_RETRY_LIMIT&&mayAutoRetry(error,sending)){
+              if(!controller.signal.aborted&&!this.closed&&retryCount<AUTO_RETRY_LIMIT&&mayAutoRetry(error,sending)){
                 attempt.autoRetryCount=retryCount+1;this.store.deliveryState(sending,'sending',undefined,attempt.lastError);
-                try{await this.wait(AUTO_RETRY_DELAYS[retryCount]??AUTO_RETRY_DELAYS.at(-1)!,controller.signal);}catch{this.store.deliveryState(sending,'unknown',undefined,attempt.lastError);}
-                if(this.store.deliveryRepository().find(delivery.id,'unknown'))break;
+                try{await this.wait(AUTO_RETRY_DELAYS[retryCount]??AUTO_RETRY_DELAYS.at(-1)!,controller.signal);}catch{this.store.deliveryState(sending,terminalState(error,sending),undefined,attempt.lastError);break;}
                 continue;
               }
-              this.store.deliveryState(sending,'unknown',undefined,attempt.lastError);break;
+              this.store.deliveryState(sending,terminalState(error,sending),undefined,attempt.lastError);break;
             }
           }
         }catch(error){
           const pending=repository.find(delivery.id,'pending');if(!pending)continue;
-          this.store.deliveryState(pending,'failed',undefined,error instanceof Error?error.message:'DELIVERY_PREPARATION_FAILED');
+          this.store.deliveryState(pending,'failed',undefined,failure(error).message);
         }finally{if(progressTimer)clearTimeout(progressTimer);this.outbound.delete(delivery.id);}
       }
     }

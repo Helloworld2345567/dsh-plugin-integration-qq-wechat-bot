@@ -213,7 +213,7 @@ test('empty harness output fails explicitly instead of silently completing',asyn
   assert.match(String(f.store.deliveries(['sent']).at(-1)?.output.text),/没有可投递的文本或附件/);
 });
 test('unknown receipt does not freeze later outputs; an uncertain send is never replayed automatically',async t=>{
-  let attempts=0;const f=await runtimeFixture(t,async()=>{throw Error('unused');},async()=>{attempts++;throw Error('network lost after send');});
+  let attempts=0;const f=await runtimeFixture(t,async()=>{throw Error('unused');},async(_bot,_credential,delivery)=>{attempts++;delivery.attempt!.phase='commit';throw Error('network lost after send');});
   const binding=f.store.binding(scope());f.store.enqueue(binding,'a','turn',[{type:'text',text:'one'},{type:'text',text:'two'}],{});
   await f.runtime.flushDeliveries();await f.runtime.flushDeliveries();assert.equal(attempts,2);assert.deepEqual(f.store.deliveries().map(d=>d.state),['unknown','unknown']);
   const d=f.store.deliveries(['unknown'])[0];f.store.deliveryState(d,'sending');const reopened=new Store(f.store.home);try{reopened.recover();assert.equal(reopened.deliveries(['unknown']).length,2);}finally{reopened.close();}

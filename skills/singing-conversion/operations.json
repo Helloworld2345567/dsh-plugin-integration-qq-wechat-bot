@@ -1,0 +1,27 @@
+{
+  "skill": "singing-conversion",
+  "worker": "scripts/entry.py",
+  "operations": [{"id":"singing_convert","quotaUnits":10,"inputKinds":["audio","file"],"deliver":true}],
+  "tools": [{
+    "permissionTool":"bot_sing",
+    "tool": {
+      "name":"bot_sing",
+      "description":"按用户要求用当前人格的 AI 音色演唱歌曲。按歌名用 sing，宿主从曲库选择最高匹配、下载原曲并执行分离与转换；默认只交付转换结果。附件或明确 HTTPS 来源用 prepare/list/convert。混音须先配置分离。",
+      "parameters": {
+        "action":{"type":"string","enum":["sing","prepare","list","convert"],"required":true},
+        "song":{"type":"string"},
+        "artist":{"type":"string"},
+        "inputs":{"type":"array","items":{"type":"string"}},
+        "title":{"type":"string"},
+        "url":{"type":"string"},
+        "candidates":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"title":{"type":"string","required":true},"url":{"type":"string","required":true},"source":{"type":"string"},"license":{"type":"string"}}}},
+        "candidateSet":{"type":"string"},
+        "candidate":{"type":"number"},
+        "sourceType":{"type":"string","enum":["vocals","mixed","unknown"]},
+        "format":{"type":"string","enum":["mp3","wav"]}
+      }
+    },
+    "defaults":{"action":"list"},
+    "routes":[{"match":{"action":"convert"},"operation":"singing_convert"},{"match":{"action":"sing"},"operation":"singing_convert"}]
+  }]
+}

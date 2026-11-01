@@ -58,13 +58,21 @@ class WorkerTests(unittest.TestCase):
             worker.load_skill_operations(skills)
 
     def test_shipped_skill_operations_dispatch_declared_entry(self):
-        self.assertEqual(set(worker.SKILL_OPERATIONS), {'transcribe', 'video_analyze', 'image_download', 'video_download', 'voice_speak', 'voice_chant', 'image_convert', 'image_compress', 'image_resize', 'convert_gif'})
+        self.assertEqual(set(worker.SKILL_OPERATIONS), {'transcribe', 'video_analyze', 'image_download', 'video_download', 'voice_speak', 'image_convert', 'image_compress', 'image_resize', 'convert_gif', 'singing_convert', 'music_search', 'music_acquire', 'music_delivery'})
         job = self.job('image_download')
         job['handler'] = 'skill'
         # Real entry import and error translation, without a provider/network call.
         job['inputs'] = [{ 'path': 'unused', 'name': 'unused', 'kind': 'image', 'mime': 'image/png'}] * 2
         with self.assertRaisesRegex(worker.JobError, 'ONE_MEDIA_INPUT_REQUIRED'):
             worker.execute(job)
+
+    def test_music_catalog_operations_require_host_adapter(self):
+        for operation in ('music_search', 'music_acquire'):
+            job = self.job(operation)
+            job['handler'] = 'skill'
+            job.pop('endpoint')
+            with self.subTest(operation=operation), self.assertRaisesRegex(worker.JobError, 'MUSIC_HOST_ADAPTER_REQUIRED'):
+                worker.execute(job)
 
     def test_unlimited_media_job_and_platform_source_routing(self):
         job = self.job('transcribe')
@@ -255,15 +263,39 @@ class WorkerTests(unittest.TestCase):
         with patch.object(media_api,'request',return_value=response(value)) as request:
             result=media_api.execute(job);self.assertEqual(json.loads(result['text'])['transcript'],'known phrase')
             payload=request.call_args.kwargs['body'];self.assertEqual(payload['model'],'fixture');self.assertEqual(request.call_args.args[1],'/chat/completions')
-            audio=payload['messages'][0]['content'][1]['input_audio'];self.assertEqual(audio['format'],'wav');self.assertTrue(base64.b64decode(audio['data']).startswith(b'RIFF'))
+            audio=payload['messages'][0]['content'][1]['input_audio'];self.assertEqual(audio['format'],'wav');self.assertEqual(base64.b64decode(audio['data']),(self.root/'analysis-audio.wav').read_bytes())
             self.assertNotIn('TEST_PROVIDER_KEY',json.dumps(payload));self.assertGreater(json.loads(result['text'])['coverage']['endSeconds'],0)
         with patch.object(media_api,'request',return_value=response({'received_media':False})):
             with self.assertRaisesRegex(media_api.AnalysisError,'MEDIA_NOT_RECEIVED'):media_api.execute(job)
         job['endpoint']['protocol']='transcriptions'
+        job['endpoint']['model']='google/gemini-asr'
         with patch.object(media_api,'request',return_value={'text':'known phrase'}) as request:
             self.assertEqual(json.loads(media_api.execute(job)['text'])['transcript'],'known phrase');self.assertIn('file',request.call_args.kwargs['files'])
+            self.assertEqual(request.call_args.args[1],'/audio/transcriptions');self.assertEqual(request.call_args.kwargs['data']['model'],'google/gemini-asr')
         with patch.object(media_api,'request',return_value={'text':''}):
             with self.assertRaisesRegex(media_api.AnalysisError,'EMPTY_TRANSCRIPT'):media_api.execute(job)
+
+    @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'ffmpeg not installed')
+    def test_gemini_audio_uses_mime_data_url_without_retrying_missing_media(self):
+        import wave
+        file=self.root/'audio.wav'
+        with wave.open(str(file),'wb') as wav:
+            wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000);wav.writeframes(b'\x10\x00'*1600)
+        job=self.job('transcribe',file,question='转写');job['endpoint']['protocol']='chat_completions'
+        def response(body):return {'choices':[{'finish_reason':'stop','message':{'content':json.dumps(body)}}]}
+        value={'received_media':True,'transcript':'known phrase','summary':'测试','uncertainty':[]}
+        for model in ('gemini-3.8-flash-tiered','google/GeMiNi-3.8-flash-tiered'):
+            with self.subTest(model=model),patch.object(media_api,'request',return_value=response(value)) as request:
+                job['endpoint']['model']=model
+                self.assertEqual(json.loads(media_api.execute(job)['text'])['transcript'],'known phrase')
+                request.assert_called_once();self.assertEqual(request.call_args.args[1],'/chat/completions')
+                payload=request.call_args.kwargs['body'];self.assertEqual(payload['model'],model)
+                audio=payload['messages'][0]['content'][1];self.assertEqual(audio['type'],'image_url');self.assertNotIn('input_audio',audio)
+                mime,encoded=audio['image_url']['url'].split(',',1);self.assertEqual(mime,'data:audio/wav;base64')
+                self.assertEqual(base64.b64decode(encoded),(self.root/'analysis-audio.wav').read_bytes())
+        with patch.object(media_api,'request',return_value=response({'received_media':False})) as request:
+            with self.assertRaisesRegex(media_api.AnalysisError,'MEDIA_NOT_RECEIVED'):media_api.execute(job)
+            request.assert_called_once()
 
     def test_analysis_http_uses_only_injected_key_and_does_not_retry_uncertain_requests(self):
         import requests

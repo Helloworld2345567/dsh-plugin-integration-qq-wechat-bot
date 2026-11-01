@@ -1,12 +1,13 @@
 import { randomBytes, createDecipheriv } from 'node:crypto';
 import {z} from 'zod';
-import { readFile } from 'node:fs/promises';
 import WebSocket from 'ws';
 import { backoff, download, jsonRequest, RemoteError } from '../core/network.js';
 import type { ChannelAdapter, LoginState, Credential, BotInstance, InboundMessage, MediaInput, Delivery, Asset } from '../core/types.js';
 import type {ChannelDefinition} from '../core/channel-registry.js';
 import type {ChannelEvent,ChannelEventSink} from '../core/channel-ports.js';
-import {VIDEO_LIMITS} from '../core/limits.js';
+import {AUDIO_LIMITS,isAudioInput,VIDEO_LIMITS} from '../core/limits.js';
+import {assertQQUploadSize} from './qq-limits.js';
+import {assertQQResponse,uploadQQAsset} from './qq-upload.js';
 
 const API='https://api.sgroup.qq.com';
 const QQ_ATTACHMENT_HOSTS=new Set(['multimedia.nt.qq.com.cn']);
@@ -14,7 +15,18 @@ export function decryptBinding(encoded:string,key:string):string { const raw=Buf
 export function qqInbound(bot:BotInstance,event:any):InboundMessage|undefined {
   if(!['C2C_MESSAGE_CREATE','GROUP_AT_MESSAGE_CREATE'].includes(event.t))return;
   const data=event.d;if(!data)return;const group=event.t==='GROUP_AT_MESSAGE_CREATE'; const sender=String(data.author?.user_openid??data.author?.member_openid??data.author?.id??'');if(!sender||!data.id||(group&&!data.group_openid))return;
-  const attachments:MediaInput[]=(data.attachments??[]).map((a:any)=>{const mime=String(a.content_type??'application/octet-stream');return {name:String(a.filename??'attachment.bin'),mime,kind:mime.startsWith('image/')?'image':mime.startsWith('video/')?'video':mime.startsWith('audio/')?'audio':'file',url:String(a.url).startsWith('//')?`https:${a.url}`:a.url};});
+  const attachments:MediaInput[]=(data.attachments??[]).map((a:any)=>{
+    const declared=String(a.content_type??'application/octet-stream').toLowerCase();
+    const name=String(a.filename??(declared==='voice'?'voice.amr':'attachment.bin'));
+    const voiceExtension=/\.(amr|silk|slk|slac)$/i.exec(name)?.[1]?.toLowerCase();
+    // QQ uses the literal content_type "voice" for microphone messages.
+    // Its .amr downloads may contain SILK; the media decoder checks the bytes.
+    const mime=declared==='voice'||voiceExtension&&!declared.startsWith('audio/')
+      ? voiceExtension&&voiceExtension!=='amr'?'audio/silk':'audio/amr'
+      : declared;
+    const transcript=typeof a.asr_refer_text==='string'?a.asr_refer_text.trim()||undefined:undefined;
+    return {name,mime,kind:mime.startsWith('image/')?'image':mime.startsWith('video/')?'video':mime.startsWith('audio/')?'audio':'file',url:String(a.url).startsWith('//')?`https:${a.url}`:a.url,transcript};
+  });
   return {id:String(data.id),scope:{botId:bot.id,platform:'qq',accountId:bot.accountId,kind:group?'group':'private',channelId:group?String(data.group_openid):sender,senderId:sender},text:String(data.content??'').replace(/<@!?\d+>/g,'').trim(),attachments,quoted:data.message_reference?{id:String(data.message_reference.message_id)}:undefined,reply:{target:group?String(data.group_openid):sender,kind:group?'group':'private',msgId:String(data.id)},timestamp:Date.now()};
 }
 export function qqGroupObservation(bot:BotInstance,event:any):ChannelEvent|undefined{
@@ -26,7 +38,7 @@ export function qqGroupObservation(bot:BotInstance,event:any):ChannelEvent|undef
 export class QQAdapter implements ChannelAdapter {
   private readonly logins=new Map<string,{key:string;expires:number}>();
   private readonly tokens=new Map<string,{value:string;expires:number}>();
-  constructor(readonly request:typeof jsonRequest=jsonRequest,readonly events?:ChannelEventSink,readonly socketFactory:(url:string)=>WebSocket=url=>new WebSocket(url)){}
+  constructor(readonly request:typeof jsonRequest=jsonRequest,readonly events?:ChannelEventSink,readonly socketFactory:(url:string)=>WebSocket=url=>new WebSocket(url),readonly uploadFetch:typeof fetch=fetch){}
   async beginLogin(signal?:AbortSignal):Promise<LoginState>{
     for(const [ticket,pending] of this.logins)if(pending.expires<Date.now())this.logins.delete(ticket);
     const key=randomBytes(32).toString('base64');const result:any=await this.request('https://q.qq.com/lite/create_bind_task',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key}),signal});
@@ -68,20 +80,24 @@ export class QQAdapter implements ChannelAdapter {
     }catch(error){if(!signal.aborted){this.tokens.delete(credential.accountId);status(`reconnecting: ${error instanceof Error?error.message:'QQ_CONNECTION_FAILED'}`);}}if(!signal.aborted)await backoff(attempt++,signal).catch(()=>{});}
     status('stopped');
   }
-  async materialize(input:MediaInput,signal:AbortSignal):Promise<Buffer>{if(!input.url)throw new Error('QQ_MEDIA_URL_MISSING');const url=new URL(input.url);if(!QQ_ATTACHMENT_HOSTS.has(url.hostname.toLowerCase()))throw new Error('QQ_MEDIA_HOST_NOT_ALLOWED');return download(url.href,signal,input.kind==='video'?VIDEO_LIMITS.attachmentBytes:50*1024*1024,0,{hosts:QQ_ATTACHMENT_HOSTS,allowQuery:true,allowPorts:new Set([''])});}
+  async materialize(input:MediaInput,signal:AbortSignal):Promise<Buffer>{if(!input.url)throw new Error('QQ_MEDIA_URL_MISSING');const url=new URL(input.url);if(!QQ_ATTACHMENT_HOSTS.has(url.hostname.toLowerCase()))throw new Error('QQ_MEDIA_HOST_NOT_ALLOWED');const maxBytes=input.kind==='video'?VIDEO_LIMITS.attachmentBytes:isAudioInput(input)?AUDIO_LIMITS.inputBytes:50*1024*1024;return download(url.href,signal,maxBytes,0,{hosts:QQ_ATTACHMENT_HOSTS,allowQuery:true,allowPorts:new Set([''])});}
   async send(_bot:BotInstance,credential:Credential,delivery:Delivery,asset:Asset|undefined,signal:AbortSignal):Promise<string>{
+    signal.throwIfAborted();if(asset)assertQQUploadSize(asset.kind,asset.size);
     const token=await this.token(credential,signal);const headers={Authorization:`QQBot ${token}`,'Content-Type':'application/json'};const base=delivery.reply.kind==='group'?`groups/${encodeURIComponent(delivery.reply.target)}`:`users/${encodeURIComponent(delivery.reply.target)}`;
     let payload:any={content:delivery.output.text??'',msg_type:0,msg_id:delivery.reply.msgId,msg_seq:delivery.replySequence??delivery.index+1};
     if(asset){
-      if(asset.size>(asset.kind==='video'?VIDEO_LIMITS.deliveryBytes:20*1024*1024))throw new Error('QQ_OUTPUT_TOO_LARGE');const attempt=delivery.attempt;let fileInfo=attempt?.assetId===asset.id?attempt.fileInfo:undefined;
+      const attempt=delivery.attempt;
+      const validReceipt=attempt?.fileInfoExpiresAt===0||typeof attempt?.fileInfoExpiresAt==='number'&&attempt.fileInfoExpiresAt>Date.now();
+      let fileInfo=attempt?.assetId===asset.id&&validReceipt?attempt.fileInfo:undefined;
       if(!fileInfo){
         if(attempt)attempt.phase='upload';
-        const uploaded:any=await this.request(`${API}/v2/${base}/files`,{method:'POST',headers,body:JSON.stringify({file_type:asset.kind==='image'?1:asset.kind==='video'?2:asset.kind==='audio'?3:4,file_data:(await readFile(asset.path)).toString('base64'),srv_send_msg:false}),signal},60000);if(!uploaded.file_info)throw new Error('QQ_UPLOAD_FAILED');fileInfo=String(uploaded.file_info);if(attempt)attempt.fileInfo=fileInfo;
+        const uploaded=await uploadQQAsset({baseUrl:`${API}/v2/${base}`,token,asset,signal,request:this.request,fetcher:this.uploadFetch});
+        fileInfo=uploaded.fileInfo;if(attempt){attempt.fileInfo=fileInfo;attempt.fileInfoExpiresAt=uploaded.expiresAt;}
       }
       if(attempt)attempt.phase='commit';payload={...payload,msg_type:7,media:{file_info:fileInfo}};
     }
-    if(delivery.attempt)delivery.attempt.phase='commit';
-    const result:any=await this.request(`${API}/v2/${base}/messages`,{method:'POST',headers,body:JSON.stringify(payload),signal});if(!result.id)throw new RemoteError('QQ_SEND_RECEIPT_MISSING');return String(result.id);
+    signal.throwIfAborted();if(delivery.attempt)delivery.attempt.phase='commit';
+    const result:any=await this.request(`${API}/v2/${base}/messages`,{method:'POST',headers,body:JSON.stringify(payload),signal});assertQQResponse(result,token);if(!result.id)throw new RemoteError('QQ_SEND_RECEIPT_MISSING');return String(result.id);
   }
 }
 const qqCredential=z.object({accountId:z.string().min(1).max(200),appSecret:z.string().min(1).max(500)}).strict();const qqReply=z.object({target:z.string().min(1).max(4096),kind:z.enum(['private','group']),msgId:z.string().min(1).max(4096).optional()}).strict();

@@ -29,6 +29,15 @@ test('history projection handles content entries without recursively rewriting u
   assert.equal(projectEvolutionToolResult(speech),speech);
 });
 
+test('evolution summaries strip RVC service and model paths while preserving STS controls',()=>{
+  const stored=configSchema.parse({...config(),media:{singing:{enabled:true,serviceUrl:'http://private-rvc.invalid',modelVersion:'v2',singingModelId:'Singer',singingWeightsPath:'private/character.pth',singingIndexPath:'private/character.index',separation:{enabled:true,modelId:'vocals',modelPath:'private/separation.ckpt',instrumentalMix:true,volume:0.8}}}});
+  const projected:any=projectEvolutionToolResult(stored);
+  assert.equal(projected.media.singing.enabled,true);assert.equal(projected.media.singing.singingModelId,'Singer');
+  assert.equal(projected.media.singing.separation.modelId,'vocals');assert.equal(projected.media.singing.separation.instrumentalMix,true);
+  assert.doesNotMatch(JSON.stringify(projected),/private-rvc|private\/|serviceUrl|singingWeightsPath|singingIndexPath|modelPath/);
+  assert.equal(stored.media.singing!.singingWeightsPath,'private/character.pth');
+});
+
 test('registered bot_evolve serializes the projection rather than mutating its service result',async()=>{
   const persona=config(),stored=change(),agent={id:'agent'},tools=new Map<string,any>();
   const scope:CallerScope={botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'owner',senderId:'owner'};

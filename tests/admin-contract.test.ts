@@ -107,3 +107,10 @@ test('delivery query exposes recovery state without leaking channel upload secre
   const delivery=store.deliveries()[0];store.deliveryState({...delivery,attempt:{number:2,phase:'commit',assetId:'asset',aesKey:'secret-key',uploadQuery:'secret-query',lastError:'receipt lost',causeCode:'ECONNRESET',autoRetryCount:2}},'unknown',undefined,'receipt lost');
   const result:any=await admin.query({version:1,kind:'query',name:'overview.deliveries',input:{limit:10,scopeKey:binding.key}});assert.equal(result.items[0].state,'unknown');assert.equal(result.items[0].attempt.phase,'commit');assert.equal(result.items[0].attempt.causeCode,'ECONNRESET');assert.equal(result.items[0].attempt.autoRetryCount,2);assert.equal('aesKey' in result.items[0].attempt,false);assert.equal('uploadQuery' in result.items[0].attempt,false);
 });
+
+test('delivery query exposes sanitized platform rejection details and hides upload credentials',async t=>{
+  const {admin,store}=await fixture(t),binding=store.binding({botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'channel',senderId:'sender'});store.enqueue(binding,'source','turn',[{type:'asset',assetId:'asset'}],{});
+  const delivery=store.deliveries()[0];store.deliveryState({...delivery,attempt:{number:1,phase:'upload',httpStatus:400,platformCode:'400100',platformMessage:'file too large https://signed.example/private?token=secret',platformTraceId:'qq-trace-123',fileInfo:'secret-upload-receipt',aesKey:'secret-key',lastError:'HTTP 400'}},'failed',undefined,'HTTP 400');
+  const result:any=await admin.query({version:1,kind:'query',name:'overview.deliveries',input:{limit:10,scopeKey:binding.key}}),attempt=result.items[0].attempt;
+  assert.equal(attempt.httpStatus,400);assert.equal(attempt.platformCode,'400100');assert.equal(attempt.platformTraceId,'qq-trace-123');assert.match(attempt.platformMessage,/file too large/);assert.doesNotMatch(JSON.stringify(result),/signed\.example|token=secret|secret-upload-receipt|secret-key/);
+});

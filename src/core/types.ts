@@ -59,12 +59,59 @@ export const voiceSkillSchema=z.preprocess(input=>{
   }
   if(value.enabled&&value.protocol==='edge_tts'&&value.format==='wav')ctx.addIssue({code:'custom',path:['format'],message:'Edge TTS 语音输出仅支持 MP3'});
 }).transform(value=>({...value,format:value.format??(value.protocol==='gpt_sovits'?'wav' as const:'mp3' as const)})));
+const singingSeparationSchema=z.preprocess(input=>{
+  // `status` was the plan-only placeholder. Accept it while normalizing
+  // persisted personas to the operator-facing optional configuration.
+  if(input&&typeof input==='object'&&!Array.isArray(input)){
+    const value=input as Record<string,unknown>;
+    // A current editor payload includes `enabled`; only infer it from the
+    // legacy status placeholder when that field is absent.
+    if(!Object.hasOwn(value,'enabled')&&value.status==='unconfigured')return {...value,status:undefined,enabled:false};
+    if(!Object.hasOwn(value,'enabled')&&value.status==='configured')return {...value,status:undefined,enabled:true};
+  }
+  return input;
+},z.object({
+  enabled:z.boolean().default(false),
+  modelId:z.string().trim().min(1).max(120).refine(value=>['vocals','vocals-aggressive'].includes(value),'当前分离 runner 不支持此模型').optional(),
+  modelPath:voicePathSchema.optional(),
+  instrumentalMix:z.boolean().optional(),
+  volume:z.number().min(0).max(2).default(1),
+}).superRefine((value,ctx)=>{
+  if(value.enabled){
+    if(!value.modelId)ctx.addIssue({code:'custom',path:['modelId'],message:'开启人声分离前请配置分离模型'});
+    if(!value.modelPath)ctx.addIssue({code:'custom',path:['modelPath'],message:'开启人声分离前请配置分离模型权重路径'});
+  }
+}).transform(value=>({...value,instrumentalMix:value.instrumentalMix??(value.enabled?true:false),status:(value.enabled&&value.modelId&&value.modelPath?'configured':'unconfigured') as string})));
+export type SingingSeparationConfig=z.infer<typeof singingSeparationSchema>;
+/** Operator-owned RVC settings. Incomplete drafts stay disabled until a model is supplied. */
+export const singingSkillSchema=z.object({
+  enabled:z.boolean().default(false),
+  protocol:z.literal('rvc_http_v1').default('rvc_http_v1'),
+  serviceUrl:z.url().max(2048).refine(value=>{try{normalizeGptSovitsBaseUrl(value);return true;}catch{return false;}},'RVC 服务须使用无凭据、查询和片段的 HTTP 或 HTTPS 地址').transform(normalizeGptSovitsBaseUrl).optional(),
+  modelVersion:z.enum(['v1','v2']).optional(),
+  singingModelId:z.string().trim().min(1).max(100).optional(),
+  singingWeightsPath:voicePathSchema.optional(),
+  singingIndexPath:voicePathSchema.optional(),
+  speakerId:z.number().int().min(0).max(65535).default(0),
+  pitchShift:z.number().int().min(-24).max(24).default(0),
+  indexRate:z.number().min(0).max(1).optional(),
+  defaultOutput:z.enum(['mp3','wav']).default('mp3'),
+  separation:singingSeparationSchema.default({enabled:false,instrumentalMix:false,volume:1,status:'unconfigured'}),
+}).superRefine((value,ctx)=>{
+  if(value.enabled)for(const field of ['serviceUrl','modelVersion','singingModelId','singingWeightsPath'] as const){
+    if(!value[field])ctx.addIssue({code:'custom',path:[field],message:'开启 STS 前请配置 RVC 服务、模型版本、名称与独立角色权重'});
+  }
+  if(!value.singingIndexPath&&value.indexRate!==undefined&&value.indexRate!==0)ctx.addIssue({code:'custom',path:['indexRate'],message:'未配置 RVC 索引时，检索比例须为 0'});
+}).transform(value=>({...value,indexRate:value.indexRate??(value.singingIndexPath?0.75:0)}));
+export type SingingConfig=z.infer<typeof singingSkillSchema>;
+export const musicSkillSchema=z.object({enabled:z.boolean().default(false),includeLyrics:z.boolean().default(false)});
+export type MusicConfig=z.infer<typeof musicSkillSchema>;
 export const configSchema = z.object({
   schemaVersion:z.literal(3).default(3),
   id: idSchema, name: z.string().trim().min(1).max(100), revision: z.number().int().positive().default(1),
   personaPrompt: z.string().min(1).max(32000), model: modelSchema.nullable().default(null),
   // Legacy vision/TTS services and duplicated analysis connection fields are discarded.
-  media: z.object({image:imageSkillOverrideSchema.optional(),asr:analysisSkillSchema.optional(),video:analysisSkillSchema.optional(),voice:voiceSkillSchema.optional()}).default({}),
+  media: z.object({image:imageSkillOverrideSchema.optional(),asr:analysisSkillSchema.optional(),video:analysisSkillSchema.optional(),voice:voiceSkillSchema.optional(),singing:singingSkillSchema.optional(),music:musicSkillSchema.optional()}).default({}),
   tools: z.array(z.string().max(100)).max(100).default(['bot_media', 'bot_voice', 'bot_send_file', 'bot_remember', 'bot_forget_memory', 'bot_read_social']),
   skills: z.array(skillNameSchema).max(100).refine(value=>new Set(value).size===value.length,'技能名称不得重复').default(['image-generation','media-analysis','voice-generation']),
   skillVersions:z.record(skillNameSchema,z.string().regex(/^[a-f0-9]{64}$/)).default({}),
@@ -109,10 +156,16 @@ export interface DeliveryAttempt {
   aesKey?:string;
   encryptedSize?:number;
   fileInfo?:string;
+  /** QQ upload receipt expiry; 0 is the platform's non-expiring TTL. */
+  fileInfoExpiresAt?:number;
   startedAt?:number;
   lastError?:string;
   causeCode?:string;
   causeMessage?:string;
+  httpStatus?:number;
+  platformCode?:string;
+  platformMessage?:string;
+  platformTraceId?:string;
   autoRetryCount?:number;
 }
 export interface Output {

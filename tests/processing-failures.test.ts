@@ -103,7 +103,42 @@ test('uncertain delivery state is visible to the next turn without triggering a 
   const source:InboundMessage={id:'unknown-image',scope,text:'生成一张图片',attachments:[],reply:{},timestamp:now-100};store.accept(source);
   store.enqueue(binding,source.id,'image-turn',[{type:'asset',assetId:'asset-one'}],{});const delivery=store.deliveries()[0];store.deliveryState(delivery,'unknown',undefined,'receipt lost');
   const followup={...source,id:'ask-status',text:'图片发来了吗',timestamp:now};const context=recentFailureContext(store,binding,[followup],Date.now()+1);
-  assert.match(context!,/平台投递状态未知/);assert.match(context!,/asset-one/);assert.match(context!,/明确未建立连接的错误自动重试/);
+  assert.match(context!,/平台投递状态未知/);assert.match(context!,/asset-one/);assert.match(context!,/不要自行重复发送/);assert.match(context!,/已排队说成已送达/);
+});
+
+for(const phase of ['prepare','upload'] as const)test(`failed ${phase} rejection is described as unsubmitted rather than possibly delivered`,async t=>{
+  const root=await mkdtemp(path.resolve('.codex/process-failure-')),store=new Store(root);t.after(async()=>{store.close();await rm(root,{recursive:true,force:true});});
+  store.saveBot(botSchema.parse({id:'one',name:'One',channel:'qq',accountId:'one',enabled:true}));
+  const scope:CallerScope={botId:'one',platform:'qq',accountId:'one',kind:'private',channelId:'alice',senderId:'alice'},binding=store.binding(scope),now=Date.now();
+  const source:InboundMessage={id:'long-reading',scope,text:'朗读完整文章',attachments:[],reply:{},timestamp:now-100};store.accept(source);
+  store.enqueue(binding,source.id,'voice-turn',[{type:'asset',assetId:'long-audio'}],{});const delivery=store.deliveries()[0];
+  store.deliveryState({...delivery,attempt:{number:1,phase,assetId:'long-audio',startedAt:now-50}},'failed',undefined,'REMOTE_HTTP_400');
+  const context=recentFailureContext(store,binding,[{...source,id:'followup',text:'没有收到语音',timestamp:now}],Date.now()+1)!;
+  assert.match(context,/消息尚未提交，未送达/);assert.match(context,/等待用户明确要求重试/);assert.match(context,/long-audio/);
+  assert.doesNotMatch(context,/可能已经送达|队列继续处理|自动重试/);assert.equal(store.deliveries()[0].state,'failed');
+});
+
+for(const phase of ['prepare','upload'] as const)test(`crash recovery with a persisted ${phase} snapshot remains unknown`,async t=>{
+  const root=await mkdtemp(path.resolve('.codex/process-failure-')),store=new Store(root);t.after(async()=>{store.close();await rm(root,{recursive:true,force:true});});
+  store.saveBot(botSchema.parse({id:'one',name:'One',channel:'qq',accountId:'one',enabled:true}));
+  const scope:CallerScope={botId:'one',platform:'qq',accountId:'one',kind:'private',channelId:'alice',senderId:'alice'},binding=store.binding(scope),now=Date.now();
+  const source:InboundMessage={id:'interrupted-reading',scope,text:'朗读完整文章',attachments:[],reply:{},timestamp:now-100};store.accept(source);
+  store.enqueue(binding,source.id,'voice-turn',[{type:'asset',assetId:'long-audio'}],{});const delivery=store.deliveries()[0];
+  store.deliveryState({...delivery,attempt:{number:1,phase,assetId:'long-audio',startedAt:now-50}},'sending');
+  store.recover();
+  const context=recentFailureContext(store,binding,[{...source,id:'followup',text:'没有收到语音',timestamp:now}],Date.now()+1)!;
+  assert.match(context,/平台投递状态未知，尚未确认送达/);assert.match(context,/可能已经送达，不要自行重复发送/);assert.match(context,/long-audio/);
+  assert.doesNotMatch(context,/消息尚未提交|未送达|队列继续处理|自动重试/);assert.equal(store.deliveries()[0].state,'unknown');
+});
+
+test('failed delivery context asks for explicit recovery instead of promising a background retry',async t=>{
+  const root=await mkdtemp(path.resolve('.codex/process-failure-')),store=new Store(root);t.after(async()=>{store.close();await rm(root,{recursive:true,force:true});});
+  store.saveBot(botSchema.parse({id:'one',name:'One',channel:'qq',accountId:'one',enabled:true}));
+  const scope:CallerScope={botId:'one',platform:'qq',accountId:'one',kind:'private',channelId:'alice',senderId:'alice'},binding=store.binding(scope),now=Date.now();
+  const source:InboundMessage={id:'original',scope,text:'发送音频',attachments:[],reply:{},timestamp:now-100};store.accept(source);
+  store.enqueue(binding,source.id,'voice-turn',[{type:'asset',assetId:'audio'}],{});store.deliveryState(store.deliveries()[0],'failed',undefined,'DELIVERY_PREPARATION_FAILED');
+  const context=recentFailureContext(store,binding,[{...source,id:'followup',timestamp:now}],Date.now()+1)!;
+  assert.match(context,/平台投递失败，未送达/);assert.match(context,/等待用户明确要求重试/);assert.doesNotMatch(context,/队列继续处理|自动重试/);
 });
 
 

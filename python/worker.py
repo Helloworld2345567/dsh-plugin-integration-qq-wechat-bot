@@ -297,14 +297,22 @@ def _validate_protocol(job):
         if endpoint.get("protocol") == "gpt_sovits":
             required = {"gptWeightsPath": 4096, "sovitsWeightsPath": 4096, "refAudioPath": 4096,
                         "promptText": 32768, "promptLang": 16, "textLang": 16, "voice": 100}
-            if job["operation"] not in ("voice_speak", "voice_chant") or any(
+            if job["operation"] != "voice_speak" or any(
                     not isinstance(endpoint.get(key), str) or not endpoint[key].strip() or len(endpoint[key]) > limit
                     for key, limit in required.items()) or endpoint.get("modelVersion") not in (
                         "v1", "v2", "v2Pro", "v2ProPlus", "v3", "v4", "v5dev", "v5turbo"):
                 raise JobError("MEDIA_WORKER_ENDPOINT_INVALID")
+        elif endpoint.get("protocol") == "rvc_http_v1":
+            from singing_common import SingingError, validate_parameters
+            try:
+                if job["operation"] != "singing_convert":
+                    raise SingingError("SINGING_CONFIG_INVALID")
+                validate_parameters(endpoint)
+            except SingingError:
+                raise JobError("MEDIA_WORKER_ENDPOINT_INVALID") from None
         elif endpoint.get("protocol") == "edge_tts":
             voice = endpoint.get("voice")
-            if job["operation"] not in ("voice_speak", "voice_chant") or not isinstance(voice, str) or not voice.strip() or len(voice.encode("utf-8")) > 128:
+            if job["operation"] != "voice_speak" or not isinstance(voice, str) or not voice.strip() or len(voice.encode("utf-8")) > 128:
                 raise JobError("MEDIA_WORKER_ENDPOINT_INVALID")
         elif (not isinstance(endpoint.get("model"), str) or not endpoint["model"] or len(endpoint["model"]) > 256
               or not isinstance(endpoint.get("keyEnv"), str) or not endpoint["keyEnv"]

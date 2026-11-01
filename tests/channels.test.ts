@@ -19,6 +19,16 @@ test('QQ group @ and private identities normalize without combining senders',()=
  const a=qqInbound(qq,{t:'GROUP_AT_MESSAGE_CREATE',d:{id:'m',content:'<@123> hello',group_openid:'room',author:{member_openid:'alice'},attachments:[{filename:'a.jpg',content_type:'image/jpeg',url:'//cdn.example/a'}]}})!;
  assert.equal(a.scope.kind,'group');assert.equal(a.scope.channelId,'room');assert.equal(a.scope.senderId,'alice');assert.equal(a.text,'hello');assert.equal(a.attachments[0].url,'https://cdn.example/a');assert.equal(qqInbound(qq,{t:'MESSAGE_CREATE',d:{}}),undefined);
 });
+test('QQ microphone messages normalize the platform voice type and retain platform ASR',()=>{
+ const input=qqInbound(qq,{t:'C2C_MESSAGE_CREATE',d:{id:'voice-only',content:'',author:{user_openid:'alice'},attachments:[{content_type:'voice',filename:'dc86e7940b9d33f718f09537ad2942f2.amr',url:'//multimedia.nt.qq.com.cn/voice',asr_refer_text:'  今天的天气怎么样？  '}]}})!;
+ assert.equal(input.text,'');assert.equal(input.attachments.length,1);assert.equal(input.attachments[0].kind,'audio');assert.equal(input.attachments[0].mime,'audio/amr');assert.equal(input.attachments[0].transcript,'今天的天气怎么样？');assert.equal(input.attachments[0].url,'https://multimedia.nt.qq.com.cn/voice');
+});
+test('QQ native voice filenames normalize generic attachment MIME without inventing a transcript',()=>{
+ for(const extension of ['amr','silk','slk','slac']){
+   const input=qqInbound(qq,{t:'GROUP_AT_MESSAGE_CREATE',d:{id:'voice',group_openid:'room',author:{member_openid:'alice'},attachments:[{content_type:'application/octet-stream',filename:`voice.${extension}`,url:'https://multimedia.nt.qq.com.cn/voice'}]}})!;
+   assert.equal(input.attachments[0].kind,'audio');assert.equal(input.attachments[0].mime,extension==='amr'?'audio/amr':'audio/silk');assert.equal(input.attachments[0].transcript,undefined);
+ }
+});
 test('QQ QR poll errors cannot confirm an account and platform expiry is explicit',async()=>{
   let response:any={retcode:1,data:{status:2,bot_appid:'spoofed'}};
   const adapter=new QQAdapter((async(url:string)=>url.endsWith('create_bind_task')?{data:{task_id:'ticket'}}:response) as any);
@@ -46,7 +56,7 @@ test('iLink preserves uint64 receipt and recognizes explicit accepted ack withou
 
 test('QQ sends audio assets through the file upload path',async()=>{
  const dir=await mkdtemp(join(process.cwd(),'.codex','channel-audio-'));const path=join(dir,'voice.mp3');await writeFile(path,Buffer.from('ID3fixture'));
- const calls:any[]=[];const request:any=async(url:string,init:any)=>{calls.push({url,init});if(url.endsWith('getAppAccessToken'))return{access_token:'token',expires_in:7200};if(url.endsWith('/files'))return{file_info:'uploaded-audio'};if(url.endsWith('/messages'))return{id:'qq-receipt'};throw new Error(`unexpected ${url}`);};
+ const calls:any[]=[];const request:any=async(url:string,init:any)=>{calls.push({url,init});if(url.endsWith('getAppAccessToken'))return{access_token:'token',expires_in:7200};if(url.endsWith('/files'))return{file_info:'uploaded-audio',ttl:300};if(url.endsWith('/messages'))return{id:'qq-receipt'};throw new Error(`unexpected ${url}`);};
  const delivery:any={id:'delivery-audio',output:{text:''},reply:{target:'alice',kind:'private',msgId:'inbound'},index:0,attempt:{number:1,phase:'prepare',assetId:'asset'}};const asset:any={id:'asset',scopeKey:'scope',name:'voice.mp3',mime:'audio/mpeg',path,size:9,kind:'audio',createdAt:Date.now()};
  try{const adapter=new QQAdapter(request);const receipt=await adapter.send(qq,{accountId:'app',appSecret:'secret'},delivery,asset,AbortSignal.timeout(1000));assert.equal(receipt,'qq-receipt');await adapter.send(qq,{accountId:'app',appSecret:'secret'},delivery,asset,AbortSignal.timeout(1000));const uploads=calls.filter(call=>call.url.endsWith('/files'));assert.equal(uploads.length,1);assert.equal(JSON.parse(uploads[0].init.body).file_type,3);const messages=calls.filter(call=>call.url.endsWith('/messages'));assert.equal(JSON.parse(messages[0].init.body).media.file_info,'uploaded-audio');assert.equal(JSON.parse(messages[1].init.body).media.file_info,'uploaded-audio');}finally{await rm(dir,{recursive:true,force:true});}
 });

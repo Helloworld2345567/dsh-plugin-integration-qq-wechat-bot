@@ -6,7 +6,7 @@ import { assertRemoteUrl, backoff, download, jsonRequest, RemoteError } from '..
 import type { ChannelAdapter, LoginState, Credential, BotInstance, InboundMessage, MediaInput, Delivery, Asset } from '../core/types.js';
 import type {ChannelDefinition} from '../core/channel-registry.js';
 import type {CursorStore} from '../core/channel-ports.js';
-import {VIDEO_LIMITS} from '../core/limits.js';
+import {AUDIO_LIMITS,isAudioInput,VIDEO_LIMITS} from '../core/limits.js';
 const BASE='https://ilinkai.weixin.qq.com';const CDN='https://novac2c.cdn.weixin.qq.com/c2c';
 const lossless=JSONbigFactory({storeAsString:true,protoAction:'error',constructorAction:'error'});
 function ilinkUrl(base:string,endpoint:string):string{const url=new URL(endpoint,base+'/');if(url.protocol!=='https:'||!(url.hostname==='ilinkai.weixin.qq.com'||url.hostname.endsWith('.ilinkai.weixin.qq.com')))throw new Error('INVALID_ILINK_HOST');return url.href;}
@@ -46,12 +46,12 @@ export class WeixinAdapter implements ChannelAdapter{
   async materialize(input:MediaInput,signal:AbortSignal):Promise<Buffer>{
     if(!input.remote)throw new Error('ILINK_MEDIA_MISSING');
     const url=cdnUrl(input.remote.fullUrl??`${CDN}/download?encrypted_query_param=${encodeURIComponent(input.remote.query??'')}`);
-    const video=input.kind==='video',limit=video?VIDEO_LIMITS.attachmentBytes:50*1024*1024;
+    const video=input.kind==='video',limit=video?VIDEO_LIMITS.attachmentBytes:isAudioInput(input)?AUDIO_LIMITS.inputBytes:50*1024*1024;
     // PKCS#7 adds a full AES block when the plaintext is block-aligned.
     const bytes=await download(url,signal,limit+(video&&input.remote.key?16:0),0,{hosts:WEIXIN_CDN_HOSTS,allowQuery:true,allowPorts:new Set([''])});
     if(!input.remote.key)return bytes;
     const decipher=createDecipheriv('aes-128-ecb',decodeMediaKey(input.remote.key),null);const decoded=Buffer.concat([decipher.update(bytes),decipher.final()]);
-    if(video&&decoded.length>limit)throw new Error('MEDIA_TOO_LARGE');
+    if(decoded.length>limit)throw new Error('MEDIA_TOO_LARGE');
     return decoded;
   }
   async send(_bot:BotInstance,credential:Credential,delivery:Delivery,asset:Asset|undefined,signal:AbortSignal):Promise<string>{

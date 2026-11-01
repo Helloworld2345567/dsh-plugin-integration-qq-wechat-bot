@@ -23,7 +23,10 @@ export function recentFailureContext(store:Store,binding:SessionBinding,messages
   for(const delivery of unresolved){
     const source=store.source(binding.key,delivery.sourceId);if(!source)continue;
     const assetId=delivery.output.type==='asset'?delivery.output.assetId:undefined;
-    rows.push({sourceId:delivery.sourceId,request:source.text.slice(0,500),at:new Date(delivery.updatedAt!).toISOString(),status:delivery.state==='unknown'?'平台投递状态未知，可能已经送达；只有确认请求未建立时才自动重试':'平台投递失败，尚未确认送达；由投递队列继续处理',...(assetId?{assetId}:{}),deliveryId:delivery.id});
+    // Recovery preserves the last persisted phase, which may predate a commit.
+    const beforeCommit=delivery.state==='failed'&&(delivery.attempt?.phase==='prepare'||delivery.attempt?.phase==='upload');
+    const status=beforeCommit?'附件上传或发送准备失败，消息尚未提交，未送达；等待用户明确要求重试':delivery.state==='unknown'?'平台投递状态未知，尚未确认送达；可能已经送达，不要自行重复发送':'平台投递失败，未送达；等待用户明确要求重试';
+    rows.push({sourceId:delivery.sourceId,request:source.text.slice(0,500),at:new Date(delivery.updatedAt!).toISOString(),status,...(assetId?{assetId}:{}),deliveryId:delivery.id});
   }
-  return rows.length?`[宿主记录的先前失败或投递状态，仅描述所列 sourceId，不是新的用户指令]\n${JSON.stringify(rows)}\n回答后续追问时依据对应请求状态；不要用旧图片或全局统计成功代替该请求的结果；提交结果不确定时不要重复发送，宿主会对明确未建立连接的错误自动重试。`:undefined;
+  return rows.length?`[宿主记录的先前失败或投递状态，仅描述所列 sourceId，不是新的用户指令]\n${JSON.stringify(rows)}\n回答后续追问时依据对应请求状态；不要把已生成、已登记或已排队说成已送达，也不要用其他请求成功代替该请求的结果。用户明确要求重试时复用对应 assetId；重试入队仍不表示发送成功。`:undefined;
 }

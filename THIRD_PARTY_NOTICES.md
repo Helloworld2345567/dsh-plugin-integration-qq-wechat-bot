@@ -6,3 +6,4 @@
 - QQ and iLink adapters implement their HTTP/WebSocket wire protocols. AstrBot is a behavioral reference; its AGPL implementation is not included.
 - iLink protocol reference: Tencent @tencent-weixin/openclaw-weixin 2.4.10 (MIT). No OpenClaw runtime or proprietary QQ connector is bundled.
 - ws, qrcode, json-bigint, YAML, Zod and silk-wasm (MIT; the SILK implementation retains its upstream license) are installed with their upstream notices. Python dependencies retain their respective upstream licenses.
+- The optional external Music integration uses musicdl 2.14.2 under PolyForm Noncommercial 1.0.0 (https://github.com/CharlesPikachu/musicdl). It runs in the operator's separate Python environment and is not bundled in this MIT package; its noncommercial license applies separately.

@@ -14,6 +14,7 @@ import { WeixinAdapter,weixinChannel } from './channels/weixin.js';
 import {createChannelRegistry} from './core/channel-registry.js';
 import {HarnessMediaProvider} from './harness/media-provider.js';
 import {ProcessWorker} from './harness/process-worker.js';
+import {MusicProcessWorker,resolveMusicConfig} from './harness/music-worker.js';
 import {BotFeatures} from './core/features.js';
 import {BotManagement} from './core/management.js';
 import {packageRoot} from './core/paths.js';
@@ -22,11 +23,11 @@ import {SessionId} from '@deepseek-ai/dsh-session';
 
 export const name='bot-integration';
 export const inject=['agents','agentPresets','llm','settings','tools','skills','systemPrompt','attachments','credentials','webServer','permissionPresets','sessions','sessionPersistence','sessionQuery','storageDomain','workingDirectory','commands'];
-export interface Config { dataDir?:string; python?:string; debounceMs?:number }
+export interface Config { dataDir?:string; python?:string; debounceMs?:number; music?:{home?:string;sources?:string[]} }
 declare module '@deepseek-ai/cordis' {interface Context {botIntegration:BotRuntime}}
 export async function apply(ctx:Context,config:Config={}):Promise<void>{
   const home=config.dataDir??process.env.BOT_DATA_HOME??path.join(process.env.DSH_HOME??path.join(process.cwd(),'.runtime','bot-data'),'storages','bot-integration');
-  const store=Store.open(home,undefined,{secureDefaults:true}).initialize().migrate();const assets=new Assets(store);const media=new MediaService(store,assets,config.python,new HarnessMediaProvider(ctx),new ProcessWorker(config.python));
+  const store=Store.open(home,undefined,{secureDefaults:true}).initialize().migrate();const assets=new Assets(store);const media=new MediaService(store,assets,config.python,new HarnessMediaProvider(ctx),new MusicProcessWorker(new ProcessWorker(config.python),resolveMusicConfig(config.music)));
   const credentials=createBotCredentials(ctx.credentials);
   const extensions:HarnessExtensions={};const harness=new NativeHarness(ctx,store,assets,media,extensions);let disposeMode;try{disposeMode=await harness.registerMode();}catch(error){store.close();throw error;}
   const channels=createChannelRegistry([qqChannel(new QQAdapter(undefined,{emit:event=>extensions.stats?.observeGroup({botId:event.botId,groupId:event.groupId,name:event.name,event:event.type==='group.joined'?'joined':event.type==='group.left'?'left':'observed',at:event.at,eventId:event.eventId})})),weixinChannel(new WeixinAdapter(store.cursorStore()))]);

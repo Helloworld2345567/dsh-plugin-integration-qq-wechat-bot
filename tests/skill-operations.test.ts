@@ -21,18 +21,32 @@ test('shipped skill declarations route tools and preserve provider and delivery 
   assert.throws(()=>resolveSkillOperation(manifest,{kind:'audio',action:'download'}),/ARGUMENTS_INVALID/);
 });
 
-test('voice generation routes speak and chant to tts operations', () => {
+test('voice generation keeps speak and rejects the removed chant route', () => {
   const manifest = skillToolManifests.find(item => item.skill === 'voice-generation')!;
   assert.ok(manifest);
   assert.equal(manifest.permissionTool, 'bot_voice');
   assert.equal(resolveSkillOperation(manifest, {}), 'voice_speak');
-  assert.equal(resolveSkillOperation(manifest, {mode:'chant'}), 'voice_chant');
-  for (const id of ['voice_speak', 'voice_chant']) {
-    const operation = mediaOperationRegistry.get(id);
-    assert.equal(operation.role, 'tts');
-    assert.equal(operation.deliver, true);
-    assert.equal(operation.permissionTool, 'bot_voice');
+  assert.throws(()=>resolveSkillOperation(manifest, {mode:'chant'}),/ARGUMENTS_INVALID/);
+  assert.equal(mediaOperationRegistry.has('voice_chant'),false);
+  const operation = mediaOperationRegistry.get('voice_speak');
+  assert.equal(operation.role, 'tts');
+  assert.equal(operation.deliver, true);
+  assert.equal(operation.permissionTool, 'bot_voice');
+});
+
+test('music catalog and delivery stay behind the dedicated tool',()=>{
+  const manifest=skillToolManifests.find(item=>item.skill==='music-download')!;
+  assert.equal(manifest.permissionTool,'bot_music');
+  assert.equal(resolveSkillOperation(manifest,{action:'search'}),'music_search');
+  assert.equal(resolveSkillOperation(manifest,{action:'download'}),'music_acquire');
+  assert.deepEqual(manifest.tool.parameters.action.enum,['search','download']);
+  for(const id of ['music_search','music_acquire','music_delivery']){
+    const operation=mediaOperationRegistry.get(id);
+    assert.equal(operation.deliver,false);
+    assert.equal(operation.permissionTool,'bot_music');
   }
+  const singing=skillToolManifests.find(item=>item.skill==='singing-conversion')!;
+  assert.equal(resolveSkillOperation(singing,{action:'sing',song:'泡沫'}),'singing_convert');
 });
 
 test('a new packaged skill declares its own operation without host routing edits', async () => {

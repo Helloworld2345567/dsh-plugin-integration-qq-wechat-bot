@@ -202,7 +202,7 @@ class GptSovitsVoiceTests(unittest.TestCase):
         job = self.job(mode="chant")
         job["operation"] = "voice_chant"
         with patch("requests.Session") as session:
-            with self.assertRaisesRegex(voice_api.VoiceError, "GPT_SOVITS_CHANT_UNSUPPORTED"):
+            with self.assertRaisesRegex(voice_api.VoiceError, "UNKNOWN_VOICE_OPERATION"):
                 voice_api.execute(job)
             session.assert_not_called()
 

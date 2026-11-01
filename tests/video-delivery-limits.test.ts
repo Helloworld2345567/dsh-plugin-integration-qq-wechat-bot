@@ -22,7 +22,7 @@ async function fixture(run:(file:string,folder:string)=>Promise<void>):Promise<v
   try{await writeFile(file,'small-video-fixture');await run(file,folder);}finally{await rm(folder,{recursive:true,force:true});}
 }
 
-test('QQ uploads videos up to 200 MiB metadata and retains 20 MiB for other attachments',async()=>{
+test('QQ accepts every media kind up to its 200 MiB hard metadata limit',async()=>{
   await fixture(async file=>{
     const uploads:any[]=[];const messages:any[]=[];
     const request:any=async(url:string,init:any)=>{
@@ -32,12 +32,15 @@ test('QQ uploads videos up to 200 MiB metadata and retains 20 MiB for other atta
       throw Error(`Unexpected request: ${url}`);
     };
     const adapter=new QQAdapter(request);const signal=new AbortController().signal;
-    for(const size of [20*MiB+1,200*MiB])assert.equal(await adapter.send(bot,{accountId:'app',appSecret:'fixture'},delivery(),asset(size,file),signal),'video-receipt');
-    assert.equal(uploads.length,2);assert.ok(uploads.every(item=>item.file_type===2));
+    // Real multipart byte coverage is in qq-upload.test.ts. This fixture tests
+    // the cheap metadata guard before any file read or network upload.
+    for(const kind of ['image','video','audio','file'] as const){
+      assert.equal(await adapter.send(bot,{accountId:'app',appSecret:'fixture'},delivery(),asset(200*MiB,file,kind),signal),'video-receipt');
+      await assert.rejects(adapter.send(bot,{accountId:'app',appSecret:'fixture'},delivery(),asset(200*MiB+1,'missing-media',kind),signal),/QQ_OUTPUT_TOO_LARGE/);
+    }
+    assert.deepEqual(uploads.map(item=>item.file_type),[1,2,3,4]);
     assert.ok(messages.every(item=>item.msg_type===7&&item.media.file_info==='uploaded-video'));
-    await assert.rejects(adapter.send(bot,{accountId:'app',appSecret:'fixture'},delivery(),asset(200*MiB+1,'missing-video.mp4'),signal),/QQ_OUTPUT_TOO_LARGE/);
-    for(const kind of ['image','audio','file'] as const)await assert.rejects(adapter.send(bot,{accountId:'app',appSecret:'fixture'},delivery(),asset(20*MiB+1,file,kind),signal),/QQ_OUTPUT_TOO_LARGE/);
-    assert.equal(uploads.length,2);assert.equal(messages.length,2);
+    assert.equal(uploads.length,4);assert.equal(messages.length,4);
   });
 });
 
@@ -78,7 +81,7 @@ test('WeChat accepts actual video bytes above 20 MiB while rejecting those bytes
   });
 });
 
-test('platform downloads allow 500 MiB video metadata and retain 50 MiB for other attachments',async t=>{
+test('platform downloads allow 500 MiB video and 100 MiB audio metadata',async t=>{
   let declaredSize=50*MiB+1;
   const lookup=mock.method(dns,'lookup',(async()=>[{address:'1.1.1.1',family:4}]) as any);syncBuiltinESMExports();
   const get=mock.method(https,'get',((_url:URL,_options:any,receive:(response:any)=>void)=>{
@@ -97,7 +100,10 @@ test('platform downloads allow 500 MiB video metadata and retain 50 MiB for othe
     for(const size of [50*MiB+1,500*MiB]){declaredSize=size;assert.equal((await adapter.materialize(input,signal)).toString(),'video-fixture');}
     declaredSize=500*MiB+1;await assert.rejects(adapter.materialize(input,signal),/MEDIA_TOO_LARGE/);
     declaredSize=50*MiB+1;
-    for(const kind of ['image','audio','file'] as const)await assert.rejects(adapter.materialize({...input,kind},signal),/MEDIA_TOO_LARGE/);
+    for(const kind of ['image','file'] as const)await assert.rejects(adapter.materialize({...input,kind},signal),/MEDIA_TOO_LARGE/);
+    assert.equal((await adapter.materialize({...input,kind:'audio'},signal)).toString(),'video-fixture');
+    declaredSize=100*MiB+1;
+    await assert.rejects(adapter.materialize({...input,kind:'audio'},signal),/MEDIA_TOO_LARGE/);
   }
 });
 

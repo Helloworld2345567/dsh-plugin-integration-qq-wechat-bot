@@ -6,6 +6,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { BotRuntime } from '../core/runtime.js';
 import { ConflictError } from '../core/store.js';
 import type { Delivery } from '../core/types.js';
+import {sanitizeRemoteMessage} from '../core/network.js';
 import type {} from '@deepseek-ai/dsh-session-query';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import {resolveImageSkill,imageSkillEnabled} from '../core/image-skill.js';
@@ -14,9 +15,9 @@ import {openDirectory} from './open-directory.js';
 import type {BotFeatures} from '../core/features.js';
 import {adminCommandRequestSchema,adminQueryRequestSchema,type AdminSummaryData,versioned,ADMIN_CONTRACT_VERSION} from './admin-contract.js';
 
-function publicDelivery(delivery:Delivery):Omit<Delivery,'reply'|'replyEnvelope'> & {attempt?:Pick<NonNullable<Delivery['attempt']>,'number'|'phase'|'assetId'|'startedAt'|'lastError'|'causeCode'|'causeMessage'|'autoRetryCount'>} {
+function publicDelivery(delivery:Delivery):Omit<Delivery,'reply'|'replyEnvelope'|'attempt'> & {attempt?:Pick<NonNullable<Delivery['attempt']>,'number'|'phase'|'assetId'|'startedAt'|'lastError'|'causeCode'|'causeMessage'|'httpStatus'|'platformCode'|'platformMessage'|'platformTraceId'|'autoRetryCount'>} {
   const {reply:_reply,replyEnvelope:_replyEnvelope,attempt,...rest}=delivery;
-  return {...rest,...attempt?{attempt:{number:attempt.number,phase:attempt.phase,assetId:attempt.assetId,startedAt:attempt.startedAt,lastError:attempt.lastError,causeCode:attempt.causeCode,causeMessage:attempt.causeMessage,autoRetryCount:attempt.autoRetryCount}}:{}};
+  return {...rest,error:sanitizeRemoteMessage(rest.error),...attempt?{attempt:{number:attempt.number,phase:attempt.phase,assetId:attempt.assetId,startedAt:attempt.startedAt,lastError:sanitizeRemoteMessage(attempt.lastError),causeCode:sanitizeRemoteMessage(attempt.causeCode),causeMessage:sanitizeRemoteMessage(attempt.causeMessage),httpStatus:attempt.httpStatus,platformCode:sanitizeRemoteMessage(attempt.platformCode),platformMessage:sanitizeRemoteMessage(attempt.platformMessage),platformTraceId:sanitizeRemoteMessage(attempt.platformTraceId),autoRetryCount:attempt.autoRetryCount}}:{}};
 }
 
 export class Admin {
@@ -60,7 +61,36 @@ export class Admin {
         return [config.id,{...(await this.runtime.media.analysisStatus(config,'tts')),revision:config.revision,protocol:options?.protocol??'edge_tts',replyMode:options?.replyMode??'on_demand',provider,model,voice:options?.voice??(gpt?config.id:'zh-CN-XiaoxiaoNeural'),format:options?.format??(gpt?'wav':'mp3'),synthesisValidation:validation?{status:validation.status,evidence:validation.evidence,updatedAt:validation.updatedAt,source:validation.source}:{status:'NOT_RUN'}}];
       })));
       case 'capability.list':return store.capabilityStatuses();
-      case 'capability.record':{const value=z.object({configId:z.string(),revision:z.number().int(),role:z.enum(['image','asr','video','voice']),status:z.enum(['PASS','FAIL','BLOCKED','NOT_RUN']),evidence:z.string().min(1).max(2000)}).parse(input);const config=store.config(value.configId);if(config.revision!==value.revision)throw new ConflictError('配置已变化，请针对当前版本重新验收');const record={...value,updatedAt:Date.now(),source:'operator'};store.saveCapabilityStatus(`${value.configId}:${value.revision}:${value.role}`,record);return record;}
+      case 'skill.music.status':return Object.fromEntries(store.configs().map(config=>{
+        const environment=store.get<{configured:boolean;ready:boolean;protocol:string;sources:{id:string;available:boolean}[];error?:string;checkedAt:number}>('music-health','current');
+        const validation=(role:string)=>{const record=store.capabilityStatuses().find((record:any)=>record.configId===config.id&&record.revision===config.revision&&record.role===role) as {status:string;evidence:string;updatedAt:number;source:string}|undefined;return record?{status:record.status,evidence:record.evidence,updatedAt:record.updatedAt,source:record.source}:{status:'NOT_RUN'};};
+        return [config.id,{enabled:config.media.music?.enabled===true,includeLyrics:config.media.music?.includeLyrics===true,revision:config.revision,permitted:config.skills.includes('music-download')&&config.tools.includes('bot_music'),environment:environment??null,protocolValidation:validation('music_protocol'),downloadValidation:validation('music')}];
+      }));
+      case 'skill.music.probe':{
+        const value=z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive()}).strict().parse(input);if(store.config(value.configId).revision!==value.revision)throw new ConflictError('配置已变化，请针对当前版本重新验收');
+        let environment:{configured:boolean;ready:boolean;protocol:string;sources:{id:string;available:boolean}[];error?:string};
+        try{environment=z.object({configured:z.boolean(),ready:z.boolean(),protocol:z.literal('musicdl_json_v1'),sources:z.array(z.object({id:z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/),available:z.boolean()})).max(20),error:z.string().regex(/^MUSIC_[A-Z_]+$/).optional()}).parse(await this.runtime.media.musicHealth(AbortSignal.timeout(15_000)));}
+        catch{environment={configured:false,ready:false,protocol:'musicdl_json_v1',sources:[],error:'MUSIC_ENVIRONMENT_UNAVAILABLE'};}
+        if(store.config(value.configId).revision!==value.revision)throw new ConflictError('配置已变化，请针对当前版本重新验收');
+        const checkedAt=Date.now();store.put('music-health','current',{...environment,checkedAt});
+        const record={...value,role:'music_protocol',status:environment.ready?'PASS':'FAIL',evidence:environment.ready?'音乐下载环境和协议检查正确；来源的真实搜索、下载结果需单独验收。':'音乐下载环境未就绪，请检查全局音乐目录与运行依赖。',updatedAt:checkedAt,source:'probe'};
+        store.saveCapabilityStatus(`${value.configId}:${value.revision}:music_protocol`,record);return record;
+      }
+      case 'skill.singing.status':return Object.fromEntries(store.configs().map(config=>{
+        const options=config.media.singing;const validation=(role:string)=>{const record=store.capabilityStatuses().find((record:any)=>record.configId===config.id&&record.revision===config.revision&&record.role===role) as {status:string;evidence:string;updatedAt:number;source:string}|undefined;return record?{status:record.status,evidence:record.evidence,updatedAt:record.updatedAt,source:record.source}:{status:'NOT_RUN'};};
+        const separation=options?.separation??{enabled:false,modelId:undefined,modelPath:undefined,instrumentalMix:false,volume:1,status:'unconfigured'};
+        const separationComplete=separation.enabled===true&&!!separation.modelId&&!!separation.modelPath;
+        return [config.id,{enabled:options?.enabled===true,configured:!!(options?.serviceUrl&&options.modelVersion&&options.singingModelId&&options.singingWeightsPath),revision:config.revision,protocol:'rvc_http_v1',modelVersion:options?.modelVersion,model:options?.singingModelId,format:options?.defaultOutput??'mp3',permitted:config.skills.includes('singing-conversion')&&config.tools.includes('bot_sing'),separation:{enabled:separation.enabled===true,protocol:'rvc_separate_cli',modelId:separation.modelId,modelComplete:separationComplete,configured:separationComplete,instrumentalMix:separation.instrumentalMix===true,volume:separation.volume??1,status:separationComplete?'configured':'unconfigured'},protocolValidation:validation('singing_protocol'),conversionValidation:validation('singing')}];
+      }));
+      case 'skill.singing.probe':{
+        const value=z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive()}).strict().parse(input);const config=store.config(value.configId);if(config.revision!==value.revision)throw new ConflictError('配置已变化，请针对当前版本重新验收');
+        const service=config.media.singing?.serviceUrl;if(!service)throw Error('请先保存 RVC 服务地址');
+        let passed=false;try{const response=await fetch(`${service}/health`,{signal:AbortSignal.timeout(5000),redirect:'error'});const body=response.ok?await response.json():undefined;passed=body?.protocol==='rvc_http_v1'&&body?.status==='ready';}catch{/* Transport details are not configuration status. */}
+        if(store.config(value.configId).revision!==value.revision)throw new ConflictError('配置已变化，请针对当前版本重新验收');
+        const record={...value,role:'singing_protocol',status:passed?'PASS':'FAIL',evidence:passed?'RVC HTTP v1 健康接口响应正确；真实角色转换需单独验收。':'RVC 服务不可达或协议响应不匹配。',updatedAt:Date.now(),source:'probe'};
+        store.saveCapabilityStatus(`${value.configId}:${value.revision}:singing_protocol`,record);return record;
+      }
+      case 'capability.record':{const value=z.object({configId:z.string(),revision:z.number().int(),role:z.enum(['image','asr','video','voice','singing','singing_protocol','music','music_protocol']),status:z.enum(['PASS','FAIL','BLOCKED','NOT_RUN']),evidence:z.string().min(1).max(2000)}).parse(input);const config=store.config(value.configId);if(config.revision!==value.revision)throw new ConflictError('配置已变化，请针对当前版本重新验收');const record={...value,updatedAt:Date.now(),source:'operator'};store.saveCapabilityStatus(`${value.configId}:${value.revision}:${value.role}`,record);return record;}
       case 'config.save':return this.runtime.saveConfig(input.config,input.expectedRevision);
       case 'config.files.apply':return this.runtime.applyPersonaFiles(z.object({id:z.string()}).strict().parse(input).id);
       case 'config.copy':{const original=store.config(z.string().parse(input.id));const newId=z.string().parse(input.newId);this.features?.skills.copy(original,newId);return this.runtime.saveConfig({...original,id:newId,name:z.string().parse(input.name),revision:1});}

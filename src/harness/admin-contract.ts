@@ -28,7 +28,7 @@ const configSaveInput=z.object({config:configSchema,expectedRevision:z.number().
 const configFilesInput=z.object({id:z.string().min(1).max(80)}).strict();
 const configCopyInput=z.object({id:z.string().min(1).max(80),newId:z.string().min(1).max(80),name:z.string().trim().min(1).max(100)}).strict();
 const botCredentialsInput=z.object({id:z.string().min(1).max(80),credential:z.object({accountId:z.string().min(1).max(200),appSecret:z.string().min(1).max(500)}).strict()}).strict();
-const capabilityInput=z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive(),role:z.enum(['image','asr','video','voice']),status:z.enum(['PASS','FAIL','BLOCKED','NOT_RUN']),evidence:z.string().trim().min(1).max(2000)}).strict();
+const capabilityInput=z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive(),role:z.enum(['image','asr','video','voice','singing','singing_protocol','music','music_protocol']),status:z.enum(['PASS','FAIL','BLOCKED','NOT_RUN']),evidence:z.string().trim().min(1).max(2000)}).strict();
 const memoryForgetInput=z.object({scope:z.string().min(1).max(128),key:z.string().min(1).max(100)}).strict();
 const memoryCorrectInput=z.object({scope:z.string().min(1).max(128),key:z.string().min(1).max(100),value:z.string().min(1).max(500),version:z.number().int().positive()}).strict();
 const sessionCancelInput=z.object({id:z.string().min(1).max(200)}).strict();
@@ -42,6 +42,8 @@ export const adminCommandRequestSchema=z.discriminatedUnion('name',[
   commandRequest('bot.credentials',botCredentialsInput),commandRequest('login.begin',loginBeginInput),commandRequest('login.poll',loginPollInput),
   commandRequest('config.directory.open',z.object({botId:z.string().min(1).max(80).optional(),configId:z.string().min(1).max(80).optional()}).strict()),
   commandRequest('capability.record',capabilityInput),commandRequest('memory.forget',memoryForgetInput),commandRequest('memory.correct',memoryCorrectInput),commandRequest('session.cancel',sessionCancelInput),
+  commandRequest('skill.singing.probe',z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive()}).strict()),
+  commandRequest('skill.music.probe',z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive()}).strict()),
   commandRequest('delivery.retry',deliveryRetryInput),
   commandRequest('automation.proactive',z.object({scopeKey:z.string().min(1).max(128),action:z.enum(['on','off','status','now','set']),args:z.string().max(1000).default('')}).strict()),
   commandRequest('automation.schedule',z.object({scopeKey:z.string().min(1).max(128),action:z.enum(['list','create','pause','resume','run','delete']),args:z.string().max(1000).default('')}).strict()),

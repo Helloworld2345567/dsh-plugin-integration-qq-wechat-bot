@@ -46,8 +46,8 @@ class VoiceApiTests(unittest.TestCase):
         self.assertEqual(asset["mime"], "audio/mpeg")
         self.assertEqual(Path(asset["path"]).read_bytes(), b"ID3fixture-audio")
 
-    def test_chant_and_style_are_explicitly_degraded(self):
-        job = self.job("voice_chant", mode="chant", text="小星星", style="轻快", format="mp3")
+    def test_style_is_explicitly_degraded(self):
+        job = self.job(mode="speak", text="你好", style="轻快", format="mp3")
 
         async def fake_save(text, voice, target, rate):
             Path(target).write_bytes(b"ID3" + b"fixture-audio")
@@ -56,7 +56,13 @@ class VoiceApiTests(unittest.TestCase):
             result = voice_api.execute(job)
         self.assertEqual(result["assets"][0]["kind"], "audio")
         self.assertEqual(result["coverage"], "VOICE_SYNTHESIS_DEGRADED")
-        self.assertIn("降级", result["text"])
+        self.assertIn("普通朗读", result["text"])
+
+    def test_removed_chant_operation_never_requests_audio(self):
+        with patch.object(voice_api, "_request_edge_audio") as request:
+            with self.assertRaisesRegex(voice_api.VoiceError, "UNKNOWN_VOICE_OPERATION"):
+                voice_api.execute(self.job("voice_chant", mode="chant", text="小星星"))
+            request.assert_not_called()
 
     def test_invalid_parameters_fail_closed(self):
         with self.assertRaisesRegex(voice_api.VoiceError, "VOICE_SPEED_INVALID"):
@@ -78,7 +84,7 @@ class VoiceApiTests(unittest.TestCase):
 
     def test_operation_cannot_be_used_to_change_voice_mode(self):
         job = self.job("voice_speak", mode="chant", text="hello", format="mp3")
-        with self.assertRaisesRegex(voice_api.VoiceError, "VOICE_MODE_OPERATION_MISMATCH"):
+        with self.assertRaisesRegex(voice_api.VoiceError, "VOICE_MODE_UNSUPPORTED"):
             voice_api.execute(job)
 
 

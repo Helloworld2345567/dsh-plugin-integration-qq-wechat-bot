@@ -24,7 +24,7 @@ from model_usage import journal
 MAX_TEXT_BYTES = 32 * 1024
 MAX_STYLE_BYTES = 8 * 1024
 MAX_VOICE_BYTES = 128
-MAX_AUDIO_BYTES = 20 * 1024 * 1024
+MAX_AUDIO_BYTES = 200 * 1024 * 1024
 FORMATS = {
     "mp3": ("audio/mpeg", ".mp3"),
     "wav": ("audio/wav", ".wav"),
@@ -182,8 +182,6 @@ def _validate_gpt_wav(data: bytes) -> None:
 
 def _execute_gpt(job: dict, endpoint: dict, mode: str, text: str, voice: str,
                  style: str | None, speed: float | None, output_format: str) -> dict:
-    if mode != "speak":
-        raise VoiceError("GPT_SOVITS_CHANT_UNSUPPORTED")
     if output_format != "wav":
         raise VoiceError("GPT_SOVITS_FORMAT_UNSUPPORTED")
     if voice != endpoint["voice"]:
@@ -269,13 +267,9 @@ def _parameter(job: dict) -> tuple[str, str, str, str | None, float | None, str]
     params = job.get("parameters")
     if not isinstance(params, dict):
         raise VoiceError("VOICE_PARAMETERS_INVALID")
-    operation = str(job.get("operation") or "")
-    expected_mode = "chant" if operation == "voice_chant" else "speak"
-    mode = params.get("mode") or expected_mode
-    if params.get("mode") is not None and mode != expected_mode:
-        raise VoiceError("VOICE_MODE_OPERATION_MISMATCH")
-    if mode not in ("speak", "chant"):
-        raise VoiceError("VOICE_MODE_INVALID")
+    mode = params.get("mode") or "speak"
+    if mode != "speak":
+        raise VoiceError("VOICE_MODE_UNSUPPORTED")
     text = params.get("text")
     if not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > MAX_TEXT_BYTES:
         raise VoiceError("VOICE_TEXT_INVALID")
@@ -298,7 +292,7 @@ def _parameter(job: dict) -> tuple[str, str, str, str | None, float | None, str]
 
 def execute(job: dict) -> dict:
     remaining(job)
-    if job.get("operation") not in ("voice_speak", "voice_chant"):
+    if job.get("operation") != "voice_speak":
         raise VoiceError("UNKNOWN_VOICE_OPERATION")
     if job.get("inputs"):
         raise VoiceError("VOICE_INPUTS_NOT_ALLOWED")
@@ -317,9 +311,9 @@ def execute(job: dict) -> dict:
     output.mkdir(parents=True, exist_ok=True)
     target = output / "voice.mp3"
     target.write_bytes(data)
-    degraded = bool((style and style.strip()) or mode == "chant")
+    degraded = bool(style and style.strip())
     return {
-        "text": "已生成 AI 语音；Edge TTS 不支持 style 或旋律化指令，已降级为普通朗读。" if degraded else "已生成 AI 语音。",
+        "text": "已生成 AI 语音；Edge TTS 不支持 style，已使用普通朗读。" if degraded else "已生成 AI 语音。",
         "assets": [{"path": str(target), "name": target.name, "mime": "audio/mpeg", "kind": "audio"}],
         "coverage": "VOICE_SYNTHESIS_DEGRADED" if degraded else "VOICE_SYNTHESIS",
         "incomplete": False,

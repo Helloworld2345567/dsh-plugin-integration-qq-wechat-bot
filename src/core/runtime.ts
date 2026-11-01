@@ -2,7 +2,7 @@ import { Store, scopeKey } from './store.js';
 import { Assets, MediaService } from './media.js';
 import type { BotConfig, BotInstance, InboundMessage, SessionBinding, Output, TurnSnapshot, CallerScope } from './types.js';
 import {randomUUID} from 'node:crypto';
-import {freezeTurn,permissionsRevoked,trusted,allowedNow} from './policy.js';
+import {freezeTurn,permissionsRevoked,trusted,allowedNow,permitted} from './policy.js';
 import {TaskProgress,progressFallback} from './progress.js';
 import {analysisEnabled} from './analysis.js';
 import {botSchema,modelSchema,skillNameSchema} from './types.js';
@@ -19,6 +19,8 @@ import type {ProcessingFailure} from './failure-context.js';
 import {AutomationScheduler,type AutomationKind} from './automation.js';
 import {botScheduleArgumentsSchema} from './automation-contract.js';
 import {spokenReplyText,replyNotice,ReplyContextChangedError} from './voice-reply.js';
+import {hasPendingSingingUpload,clearSingingCandidates,clearPendingSingingUpload,consumeSingingUpload,explicitSingingRequest} from './singing-state.js';
+import {clearMusicState} from './music-state.js';
 
 function modelFailureCode(error:unknown):string {
   const message=error instanceof Error?error.message:typeof error==='string'?error:'MODEL_REQUEST_FAILED';
@@ -127,11 +129,15 @@ export class BotRuntime {
     if(command){this.store.mark(key,[message.id],'control');if(!this.quiescing||(command.name==='stop'&&(this.busy(key)||this.store.sessionActions<SessionActionRecord>().some(action=>action.scopeKey===key&&['queued','running'].includes(action.state)))))await this.dispatchCommand(message,command);return;}
     const escaped=unescapeChat(message.text);if(escaped!==message.text){message={...message,text:escaped};this.store.updateMessage(key,message);}
     const stripped=message.text.trim();const onlyUrl=/^https?:\/\/\S+$/.test(stripped);const hold=/(?:先别|不要|暂不|等我).*(?:分析|处理|指令)/.test(stripped);
-    if(hold||onlyUrl||(!stripped&&message.attachments.length>0&&message.attachments.every(a=>a.kind==='video'||a.kind==='file'))){this.store.mark(key,[message.id],'deferred');return;}
+    const uploadBinding=this.store.binding(message.scope);
+    if(!message.attachments.some(input=>input.kind==='audio'||input.kind==='file')||!permitted('bot_sing',this.effectiveConfig(uploadBinding),bot,message.scope))clearPendingSingingUpload(this.store,uploadBinding);
+    const awaitingSinging=hasPendingSingingUpload(this.store,uploadBinding);
+    if(hold||onlyUrl||(!awaitingSinging&&!stripped&&message.attachments.length>0&&message.attachments.every(a=>a.kind==='video'||a.kind==='file'))){this.store.mark(key,[message.id],'deferred');return;}
     this.schedule(key);
   }
   private interrupt(scope:CallerScope,preserveActionId?:string):void {
     const key=scopeKey(scope);const timer=this.timers.get(key);if(timer)clearTimeout(timer);this.timers.delete(key);
+    clearSingingCandidates(this.store,key);clearMusicState(this.store,key);
     this.cancelSessionActions(key,'会话操作已取消。',preserveActionId);
     const binding=this.store.binding(scope);this.processing.get(key)?.controller.abort();this.maintenance.get(key)?.controller.abort();this.harness.cancel(binding.sessionId);this.media.cancelScope(key);
     this.deliveryWorker.cancelScope(key);
@@ -150,7 +156,7 @@ export class BotRuntime {
     if(!this.harness.inspectSession)throw new Error('当前 Harness 不支持会话可读性检查');
     await this.harness.inspectSession(id);const next={...binding,sessionId:id,personaId:target.personaId,modelOverride:target.modelOverride};await this.harness.validateModel(this.effectiveConfig(next));
     if(this.busy(binding.key)||this.store.binding(scope).sessionId!==binding.sessionId)throw new Error('会话状态已变化，请重试');
-    authorize?.();await this.harness.dispose(binding.sessionId);authorize?.();return this.store.activateSession(scope,id);
+    authorize?.();await this.harness.dispose(binding.sessionId);authorize?.();clearSingingCandidates(this.store,binding.key);clearMusicState(this.store,binding.key);return this.store.activateSession(scope,id);
   }
   async switchPersona(scope:CallerScope,id:string,authorize?:()=>void):Promise<SessionBinding>{
     const binding=this.store.binding(scope);const config=this.store.config(id);await this.harness.validateModel(config);
@@ -285,7 +291,14 @@ export class BotRuntime {
     const deferred=this.store.messages(key,['deferred']).filter(m=>m.timestamp>Date.now()-600000).slice(-INPUT_LIMITS.batchMessages);
     const messages=[...deferred,...pending].slice(-INPUT_LIMITS.batchMessages);
     const binding=this.store.binding(pending[0].scope);
-    try{validateBatch(messages,id=>this.store.asset(key,id).size);}catch(error){
+    const audioSourceMessageIds=new Set<string>();
+    let waitingForSinging=hasPendingSingingUpload(this.store,binding);
+    if(permitted('bot_sing',this.effectiveConfig(binding),bot,binding.scope))for(const message of messages){
+      if((explicitSingingRequest(message.text)||waitingForSinging)&&message.attachments.some(input=>input.kind==='audio'||input.kind==='file')){
+        audioSourceMessageIds.add(message.id);waitingForSinging=false;
+      }
+    }
+    try{validateBatch(messages,id=>this.store.asset(key,id).size,{audioSourceMessageIds});}catch(error){
       const sourceIds=messages.map(m=>m.id);const at=Date.now();this.store.mark(key,sourceIds,'failed');
       this.store.saveFailure(`${key}:${at}`,{sessionId:binding.sessionId,scope:key,code:error instanceof Error?error.message:'BATCH_INPUT_TOO_LARGE',state:'failed',stage:'attachments',sourceIds,at} satisfies ProcessingFailure);
       this.store.enqueue(binding,pending.at(-1)!.id,`failure:${pending.at(-1)!.id}`,[{type:'text',text:'这批消息超过单轮处理上限，未送入模型。请减少消息或附件后重试。'}],pending.at(-1)!.reply,this.replyEnvelope(pending.at(-1)!));
@@ -337,12 +350,17 @@ export class BotRuntime {
           transcripts.set(assetId,transcript);input.transcript=transcript;autoAsrFailure=false;progress?.update('attachments');
         };
         for(const message of messages){
+          // Only this user's own text or an explicit upload request may bypass ASR.
+          const singingUpload=allowedNow('bot_sing',snapshot,this.effectiveConfig(binding),bot,binding.scope)
+            &&audioSourceMessageIds.has(message.id);
           if(message.quoted?.id){const quoted=this.store.source(key,message.quoted.id);if(quoted)message.quoted={id:quoted.id,text:quoted.text,attachments:quoted.attachments};}
           for(const input of [...message.attachments,...(message.quoted?.attachments??[])]){
-            if(input.handle){this.store.asset(key,input.handle);await ensureTranscript(input,input.handle);continue;}
+            const skipAsr=singingUpload&&message.attachments.includes(input);
+            if(input.handle){this.store.asset(key,input.handle);if(!skipAsr)await ensureTranscript(input,input.handle);continue;}
             const bytes=input.bytes?Buffer.from(input.bytes,'base64'):await this.channels.require(bot.channel).adapter.materialize(input,signal);
-            const asset=await this.assets.save(key,input,bytes);input.handle=asset.id;delete input.bytes;await ensureTranscript(input,asset.id);
+            const asset=await this.assets.save(key,input,bytes);input.handle=asset.id;delete input.bytes;if(!skipAsr)await ensureTranscript(input,asset.id);
           }
+          if(singingUpload)consumeSingingUpload(this.store,binding);
           this.store.updateMessage(key,message);
         }
         this.store.markTurnStage(key,messages.map(m=>m.id),'attachmentsCompletedAt');
@@ -382,7 +400,7 @@ export class BotRuntime {
   private async prepareReplyOutputs(binding:SessionBinding,result:HarnessResult,signal:AbortSignal,onVoice?:()=>void):Promise<Output[]> {
     const snapshot=result.snapshot,config=snapshot.config as BotConfig;
     this.assertReplyContext(binding,snapshot,signal);
-    if(config.media.voice?.replyMode!=='auto'||!analysisEnabled(config,'tts')||result.voiceAttempted)return result.outputs;
+    if(config.media.voice?.replyMode!=='auto'||!analysisEnabled(config,'tts')||result.voiceAttempted||result.singingAttempted)return result.outputs;
     const text=spokenReplyText(result.outputs);if(!text)return result.outputs;
     const authorize=()=>{
       this.assertReplyContext(binding,snapshot,signal);

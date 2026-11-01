@@ -20,7 +20,7 @@ async function fixture(t:any){
   return{store,assets:new Assets(store)};
 }
 
-test('asset registration accepts video bytes through 500 MiB and preserves other media at 50 MiB',async t=>{
+test('asset registration accepts video bytes through 500 MiB and preserves image/file inputs at 50 MiB',async t=>{
   const {store,assets}=await fixture(t);const originalWrite=fs.writeFile;let writes=0;
   // Exercise the real guards and database with logical sizes while writing only a tiny fixture.
   const writing=t.mock.method(fs,'writeFile',(async(file:any,_data:any,options:any)=>{writes++;await originalWrite(file,'fixture',options);}) as typeof fs.writeFile);
@@ -33,11 +33,25 @@ test('asset registration accepts video bytes through 500 MiB and preserves other
       assert.equal(asset.size,size);assert.equal(store.asset(binding.key,asset.id).size,size);
     }
     await assert.rejects(assets.save(store.binding(scope).key,video(),bytes(500*MiB+1)),/MEDIA_TOO_LARGE/);
-    for(const kind of ['image','audio','file'] as const){
+    for(const kind of ['image','file'] as const){
       await assert.rejects(assets.save(store.binding(scope).key,{kind,name:'fixture',mime:'application/octet-stream'},bytes(50*MiB+1)),/MEDIA_TOO_LARGE/);
     }
     assert.equal(writes,2,'oversized inputs must fail before filesystem writes');
   }finally{writing.mock.restore();syncBuiltinESMExports();}
+});
+
+test('audio input retains its 100 MiB budget and generated audio reaches 200 MiB',async t=>{
+  const {store,assets}=await fixture(t);
+  const bytes=(size:number)=>Object.defineProperty(Buffer.from('fixture'),'length',{value:size});
+  const binding=store.binding({...scope,channelId:'generated-audio',senderId:'generated-audio'});
+  const received=await assets.save(binding.key,{kind:'audio',name:'upload.mp3',mime:'audio/mpeg'},bytes(100*MiB),'job-input','received');
+  assert.equal(received.size,100*MiB);
+  const receivedFile=await assets.save(binding.key,{kind:'file',name:'upload.mp3',mime:'application/octet-stream'},bytes(100*MiB),'job-input-file','received');
+  assert.equal(receivedFile.size,100*MiB);
+  await assert.rejects(assets.save(binding.key,{kind:'audio',name:'upload.mp3',mime:'audio/mpeg'},bytes(100*MiB+1),'job-input-2','received'),/MEDIA_TOO_LARGE/);
+  const generated=await assets.save(binding.key,{kind:'audio',name:'song.mp3',mime:'audio/mpeg'},bytes(200*MiB),'job','generated');
+  assert.equal(generated.size,200*MiB);
+  await assert.rejects(assets.save(binding.key,{kind:'audio',name:'song.mp3',mime:'audio/mpeg'},bytes(200*MiB+1),'job-2','generated'),/MEDIA_TOO_LARGE/);
 });
 
 test('worker video output reaches registration at 500 MiB and rejects larger output before reading it',async t=>{
@@ -65,7 +79,17 @@ test('inbound video byte budgets include quoted videos while preserving other me
   size=500*MiB+1;assert.equal(validateInboundMessage(message({attachments:[input]})),'MEDIA_TOO_LARGE');
   size=250*MiB;assert.equal(validateInboundMessage(message({attachments:[input],quoted:{attachments:[input]}})),undefined);
   size=250*MiB+1;assert.equal(validateInboundMessage(message({attachments:[input],quoted:{attachments:[input]}})),'ATTACHMENT_BYTES_LIMIT');
-  size=50*MiB+1;assert.equal(validateInboundMessage(message({attachments:[{...input,kind:'file'}]})),'MEDIA_TOO_LARGE');
+});
+
+test('inbound audio byte budget reaches 100 MiB while non-audio image/file stays at 50 MiB',t=>{
+  const encoded=Buffer.from('fixture').toString('base64');let size=100*MiB;const originalFrom=Buffer.from;
+  const logical=Object.defineProperties(originalFrom('fixture'),{length:{get:()=>size},toString:{value:()=>encoded}});
+  t.mock.method(Buffer,'from',((value:any,encoding:any)=>value===encoded&&encoding==='base64'?logical:originalFrom(value,encoding)) as typeof Buffer.from);
+  const input={kind:'audio' as const,name:'song.mp3',mime:'audio/mpeg',handle:undefined,bytes:encoded};
+  assert.equal(validateInboundMessage(message({attachments:[input]})),undefined);
+  size=100*MiB+1;assert.equal(validateInboundMessage(message({attachments:[input]})),'MEDIA_TOO_LARGE');
+  size=100*MiB;assert.equal(validateInboundMessage(message({attachments:[{...input,kind:'file',mime:'application/octet-stream'}]})),undefined);
+  size=100*MiB+1;assert.equal(validateInboundMessage(message({attachments:[{...input,kind:'file',mime:'application/octet-stream'}]})),'MEDIA_TOO_LARGE');
 });
 
 test('materialized and quoted videos use the 1000 MiB batch budget instead of the text budget',()=>{

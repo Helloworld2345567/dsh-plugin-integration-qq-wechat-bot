@@ -1,0 +1,30 @@
+{
+  "skill":"music-download",
+  "worker":"scripts/entry.py",
+  "operations":[
+    {"id":"music_search","quotaUnits":50,"inputKinds":[],"deliver":false},
+    {"id":"music_acquire","quotaUnits":10,"inputKinds":[],"deliver":false},
+    {"id":"music_delivery","quotaUnits":50,"inputKinds":["audio"],"deliver":false,"localTransform":true,"requiredInputError":"MUSIC_AUDIO_REQUIRED"}
+  ],
+  "tools":[{
+    "permissionTool":"bot_music",
+    "tool":{
+      "name":"bot_music",
+      "description":"搜索或下载音乐曲库中的真实歌曲。download 按歌名自动选择最高匹配，也可下载此前 search 的候选编号；成功自动登记可发送的完整音频。仅使用宿主启用且验证过的来源，模型不能提供下载URL或路径。",
+      "parameters":{
+        "action":{"type":"string","enum":["search","download"],"required":true},
+        "song":{"type":"string"},
+        "artist":{"type":"string"},
+        "candidateSet":{"type":"string"},
+        "candidate":{"type":"number"},
+        "includeLyrics":{"type":"boolean"}
+      }
+    },
+    "defaults":{"action":"search"},
+    "routes":[
+      {"match":{"action":"search"},"operation":"music_search"},
+      {"match":{"action":"download"},"operation":"music_acquire"},
+      {"match":{"action":"delivery"},"operation":"music_delivery"}
+    ]
+  }]
+}

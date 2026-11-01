@@ -65,7 +65,7 @@ test('cancelling progress during credential lookup releases the lane for the fin
 });
 
 test('a stalled progress send times out at ten seconds and does not block or retry before the final answer',async t=>{
-  let attempts=0,aborted=false;const f=await fixture(t,async(_b,_c,d,_a,signal)=>{if(d.purpose==='progress'){attempts++;signal.addEventListener('abort',()=>aborted=true);return new Promise(()=>{});}return 'final receipt';});
+  let attempts=0,aborted=false;const f=await fixture(t,async(_b,_c,d,_a,signal)=>{if(d.purpose==='progress'){attempts++;d.attempt!.phase='commit';signal.addEventListener('abort',()=>aborted=true);return new Promise(()=>{});}return 'final receipt';});
   t.mock.timers.enable({apis:['Date','setTimeout'],now:Date.now()});f.progress(1);const flushing=f.worker.flush();await settle();f.final();
   t.mock.timers.tick(9999);await settle();assert.equal(f.store.deliveries(['sent']).length,0);t.mock.timers.tick(1);await flushing;
   assert.ok(aborted);assert.equal(attempts,1);assert.equal(f.store.deliveries()[0].state,'unknown');assert.equal(f.store.deliveries(['sent'])[0].output.text,'final');

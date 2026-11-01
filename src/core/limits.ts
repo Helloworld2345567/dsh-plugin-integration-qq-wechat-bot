@@ -2,6 +2,11 @@ import {skillOperationManifests, validateSkillSource} from './skill-operations.j
 import {Buffer} from 'node:buffer';
 import type {InboundMessage} from './types.js';
 
+const AUDIO_EXTENSIONS=/\.(?:aac|flac|m4a|mp3|ogg|opus|silk|wav|wma)$/i;
+export function isAudioInput(input:{kind?:unknown;mime?:unknown;name?:unknown}):boolean{
+  return input.kind==='audio'||typeof input.mime==='string'&&input.mime.toLowerCase().startsWith('audio/')||typeof input.name==='string'&&AUDIO_EXTENSIONS.test(input.name);
+}
+
 /** Hard caps are deliberately centralized so channel adapters, tools and workers share one contract. */
 export const INPUT_LIMITS = Object.freeze({
   messageTextBytes: 32 * 1024,
@@ -24,6 +29,13 @@ export const VIDEO_LIMITS = Object.freeze({
   attachmentBytes: 500 * 1024 * 1024,
   deliveryBytes: 200 * 1024 * 1024,
   batchAttachmentBytes: 1000 * 1024 * 1024,
+});
+
+/** Input is a local processing budget; output reaches the channel's 200 MiB hard cap. */
+export const AUDIO_LIMITS = Object.freeze({
+  inputBytes: 100 * 1024 * 1024,
+  outputBytes: 200 * 1024 * 1024,
+  deliveryBytes: 200 * 1024 * 1024,
 });
 
 const byteLength = (value: string): number => Buffer.byteLength(value, 'utf8');
@@ -53,7 +65,8 @@ function validateMediaInput(input: unknown): string | undefined {
     if (typeof input.bytes !== 'string') return 'INVALID_MEDIA_BYTES';
     const size = decodedBytes(input.bytes);
     if (size === undefined) return 'INVALID_MEDIA_BYTES';
-    if (size > (input.kind === 'video' ? VIDEO_LIMITS.attachmentBytes : INPUT_LIMITS.attachmentBytes)) return 'MEDIA_TOO_LARGE';
+    const maxBytes=input.kind==='video'?VIDEO_LIMITS.attachmentBytes:isAudioInput(input)?AUDIO_LIMITS.inputBytes:INPUT_LIMITS.attachmentBytes;
+    if (size > maxBytes) return 'MEDIA_TOO_LARGE';
   }
   if (input.transcript !== undefined && !stringWithin(input.transcript, INPUT_LIMITS.textParameterBytes)) return 'MEDIA_TRANSCRIPT_TOO_LARGE';
   if (input.remote !== undefined) {
@@ -80,16 +93,16 @@ export function validateInboundMessage(message: InboundMessage): string | undefi
   if (!Number.isSafeInteger(message.timestamp) || message.timestamp < 0) return 'INVALID_MESSAGE_TIMESTAMP';
   if (!stringWithin(message.text, INPUT_LIMITS.messageTextBytes)) return 'MESSAGE_TOO_LARGE';
   if (!Array.isArray(message.attachments) || message.attachments.length > INPUT_LIMITS.attachmentCount) return 'ATTACHMENT_COUNT_LIMIT';
-  let attachmentBytes = 0, videoBytes = 0;
+  let attachmentBytes = 0, audioBytes = 0, videoBytes = 0;
   for (const attachment of message.attachments) {
     const error = validateMediaInput(attachment);
     if (error) return error;
     if (attachment.bytes) {
       const size = decodedBytes(attachment.bytes) ?? 0;
-      if (attachment.kind === 'video') videoBytes += size; else attachmentBytes += size;
+      if (attachment.kind === 'video') videoBytes += size; else if (isAudioInput(attachment)) audioBytes += size; else attachmentBytes += size;
     }
   }
-  if (attachmentBytes > INPUT_LIMITS.attachmentBytes || videoBytes > VIDEO_LIMITS.attachmentBytes) return 'ATTACHMENT_BYTES_LIMIT';
+  if (attachmentBytes > INPUT_LIMITS.attachmentBytes || audioBytes > AUDIO_LIMITS.inputBytes || videoBytes > VIDEO_LIMITS.attachmentBytes) return 'ATTACHMENT_BYTES_LIMIT';
   if (message.quoted !== undefined) {
     if (!isRecord(message.quoted)) return 'INVALID_QUOTED_MESSAGE';
     if (message.quoted.id !== undefined && !stringWithin(message.quoted.id, INPUT_LIMITS.identifierBytes)) return 'INVALID_QUOTED_MESSAGE';
@@ -101,10 +114,10 @@ export function validateInboundMessage(message: InboundMessage): string | undefi
         if (error) return error;
         if (attachment.bytes) {
           const size = decodedBytes(attachment.bytes) ?? 0;
-          if (attachment.kind === 'video') videoBytes += size; else attachmentBytes += size;
+        if (attachment.kind === 'video') videoBytes += size; else if (isAudioInput(attachment)) audioBytes += size; else attachmentBytes += size;
         }
       }
-      if (attachmentBytes > INPUT_LIMITS.attachmentBytes || videoBytes > VIDEO_LIMITS.attachmentBytes) return 'ATTACHMENT_BYTES_LIMIT';
+      if (attachmentBytes > INPUT_LIMITS.attachmentBytes || audioBytes > AUDIO_LIMITS.inputBytes || videoBytes > VIDEO_LIMITS.attachmentBytes) return 'ATTACHMENT_BYTES_LIMIT';
     }
   }
   const replyError=validateReply(message.reply);if(replyError)return replyError;
@@ -112,14 +125,16 @@ export function validateInboundMessage(message: InboundMessage): string | undefi
   return;
 }
 
-export function messageInputBytes(message: InboundMessage, assetSize?: (handle: string) => number): number {
+export function messageInputBytes(message: InboundMessage, assetSize?: (handle: string) => number, audioSource=false): number {
   const text = byteLength(message.text) + (message.quoted?.text ? byteLength(message.quoted.text) : 0);
   const attachments = [...message.attachments, ...(message.quoted?.attachments ?? [])];
-  // Video bytes use their own budget below.
-  return text + attachments.filter(input => input.kind !== 'video').reduce((total, input) => total + (input.bytes ? decodedBytes(input.bytes) ?? 0 : input.handle ? assetSize?.(input.handle) ?? 0 : 0), 0);
+  // Selected source audio goes to a media worker, not the language-model input.
+  // Quoted files and unrelated attachments retain their normal text-input budget.
+  return text + attachments.filter((input,index) => input.kind !== 'video'&&!(audioSource&&index<message.attachments.length&&(input.kind==='audio'||input.kind==='file'))).reduce((total, input) => total + (input.bytes ? decodedBytes(input.bytes) ?? 0 : input.handle ? assetSize?.(input.handle) ?? 0 : 0), 0);
 }
 
-export function validateBatch(messages: readonly InboundMessage[], assetSize?: (handle: string) => number): void {
+export interface BatchValidationOptions {audioSourceMessageIds?:ReadonlySet<string>}
+export function validateBatch(messages: readonly InboundMessage[], assetSize?: (handle: string) => number, options:BatchValidationOptions={}): void {
   if (messages.length > INPUT_LIMITS.batchMessages) throw new Error('BATCH_MESSAGE_LIMIT');
   const attachments = messages.flatMap(message => [...message.attachments, ...(message.quoted?.attachments ?? [])]);
   let attachmentBytes = 0, videoBytes = 0;
@@ -127,8 +142,13 @@ export function validateBatch(messages: readonly InboundMessage[], assetSize?: (
     const size = input.bytes ? decodedBytes(input.bytes) ?? 0 : input.handle ? assetSize?.(input.handle) ?? 0 : 0;
     if (input.kind === 'video') videoBytes += size; else attachmentBytes += size;
   }
+  for(const message of messages)if(options.audioSourceMessageIds?.has(message.id))for(const input of message.attachments){
+    if(!isAudioInput(input))continue;
+    const size=input.bytes?decodedBytes(input.bytes)??0:input.handle?assetSize?.(input.handle)??0:0;
+    if(size>(isAudioInput(input)?AUDIO_LIMITS.inputBytes:INPUT_LIMITS.attachmentBytes))throw new Error('MEDIA_TOO_LARGE');
+  }
   if (attachmentBytes > INPUT_LIMITS.batchAttachmentBytes || videoBytes > VIDEO_LIMITS.batchAttachmentBytes) throw new Error('BATCH_ATTACHMENT_BYTES_LIMIT');
-  if (messages.reduce((total, message) => total + messageInputBytes(message, assetSize), 0) > INPUT_LIMITS.batchInputBytes) throw new Error('BATCH_INPUT_TOO_LARGE');
+  if (messages.reduce((total, message) => total + messageInputBytes(message, assetSize, options.audioSourceMessageIds?.has(message.id)), 0) > INPUT_LIMITS.batchInputBytes) throw new Error('BATCH_INPUT_TOO_LARGE');
 }
 
 /** Validate parameters crossing the model-to-media seam before a worker is spawned. */

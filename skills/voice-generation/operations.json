@@ -8,26 +8,18 @@
       "inputKinds": [],
       "role": "tts",
       "deliver": true
-    },
-    {
-      "id": "voice_chant",
-      "quotaUnits": 20,
-      "inputKinds": [],
-      "role": "tts",
-      "deliver": true
     }
   ],
   "tools": [
     {
       "tool": {
         "name": "bot_voice",
-        "description": "按用户明确要求生成并发送 AI 语音。mode=speak 为普通朗读，mode=chant 为轻量旋律化表达；不承诺完整歌曲、伴奏、翻唱或稳定音准。",
+        "description": "按用户明确要求生成 AI 朗读语音并登记待发送附件。成功仅表示生成和登记完成，平台在本轮结束后尝试投递，不能提前声称已送达。歌曲下载用 bot_music，按人格音色翻唱歌曲用 bot_sing。",
         "parameters": {
           "mode": {
             "type": "string",
             "enum": [
-              "speak",
-              "chant"
+              "speak"
             ]
           },
           "text": {
@@ -61,12 +53,6 @@
             "mode": "speak"
           },
           "operation": "voice_speak"
-        },
-        {
-          "match": {
-            "mode": "chant"
-          },
-          "operation": "voice_chant"
         }
       ],
       "enabledRoles": [

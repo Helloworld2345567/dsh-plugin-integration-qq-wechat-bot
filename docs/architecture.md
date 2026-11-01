@@ -73,7 +73,7 @@ bot 可以共享人格，但身份、会话、附件、记忆和投递始终按�
 
 入站音频优先使用渠道提供的转写；没有转写时，BotRuntime 在送入模型前自动调用 ASR，并把真实转写写回当前消息。自动转写失败会停止本轮模型调用，避免根据未识别音频猜测内容。语音输出由 `voice-generation` skill 生成 `audio` Asset，再沿现有投递队列发送；QQ 使用音频文件消息，微信首期使用可播放的普通音频文件，不宣称原生语音气泡。
 
-语音配置 `media.voice.protocol` 支持 `speech` 和 `gpt_sovits`，`replyMode` 支持 `on_demand` 与 `auto`；默认关闭语音并采用按需模式。GPT-SoVITS 的 `gptSovits` 配置持有服务地址、模型版本、权重路径、参考音频和转写/语言，只有运营者配置可以提供这些字段。工具参数仅描述朗读文本、语速等业务输入；参数按工具显式值、冻结的人格配置、协议默认值依次解析。GPT-SoVITS 使用独立免密 HTTP/HTTPS 连接，其他媒体提供商保留原有凭据与 HTTPS 限制。
+语音配置 `media.voice.protocol` 支持 `edge_tts` 和 `gpt_sovits`，历史 `speech` 配置迁移为 Edge TTS；`replyMode` 支持 `on_demand` 与 `auto`，默认关闭语音并采用按需模式。GPT-SoVITS 的 `gptSovits` 配置持有服务地址、模型版本、权重路径、参考音频和转写/语言，只有运营者配置可以提供这些字段。工具参数仅描述朗读文本、语速等业务输入；参数按工具显式值、冻结的人格配置、协议默认值依次解析。Edge TTS 不需要 API key，GPT-SoVITS 使用独立免密 HTTP/HTTPS 连接，其他媒体提供商保留原有凭据与 HTTPS 限制。
 
 同一 GPT-SoVITS 服务地址规范化后共享串行队列，每个请求完整执行 `set_sovits_weights → set_gpt_weights → set_refer_audio → tts`，不复用本地推测的已加载模型状态。请求固定非流式 WAV、单批次和空附加参考列表，产物需通过完整帧与非静音检查。当前服务仅按参考文本缓存文本特征；Store 保存时以服务相同的换行裁剪、句末标点规则比较缓存键，同一服务的相同键必须具有相同参考语言和 v1/非 v1 前端家族。运行中新增权限下一轮生效，撤销立即阻止调用；排队和合成都受取消与会话身份校验约束。
 
@@ -86,6 +86,18 @@ bot 可以共享人格，但身份、会话、附件、记忆和投递始终按�
 ### GPT-SoVITS Limitations / Known Issues
 
 服务需要由一个机器人进程独占，首次使用及变更旧参考文本的语言/前端含义前须重新启动服务清空缓存。每次加载模型有额外耗时；取消本地 worker 不证明服务端推理立即停止。服务端模型资源和版本能力须单独配置与验收。
+
+### RVC 音色转换
+
+`media.singing` 是独立、默认关闭的 STS 配置，与 `media.voice` 不共享目标权重或参考音频。`bot_sing` 同时要求人格开启 STS、允许该工具并启用 `singing-conversion`。专用工具维护 `prepare/list/convert` 候选和单轮 attempt；兼容工具 `bot_media` 禁止调用 `singing_convert`。服务地址、角色路径和 job ID 由宿主提供，工具参数不能覆盖。
+
+候选保存于 Store records，绑定 scope、session、generation 和候选集 ID。宿主解析当前会话的 audio/file 附件，或保留真实搜索结果的公开 URL、标题及可得许可信息。worker 复用公开链接下载与音轨提取；已知混音且无分离配置在下载前拒绝，类型未知要求用户确认。`media.singing.separation` 可保存分离协议、模型 ID、运营者专用权重路径、伴奏混音开关和音量；默认关闭，配置完整后才允许 `mixed`，并先提取人声再转换和按偏好混音。明确的用户转换请求及待上传状态可绕过前置 ASR，普通语音仍自动转写。
+
+宿主按规范化服务地址串行执行；`rvc_http_v1` 服务另有单槽 FIFO，每个作业创建专用 RVC 子进程。runner 使用已安装 RVC 包的 `VoiceConverter`，校验 checkpoint 版本、F0、speaker 和索引维度，再执行 RMVPE 转换。提交使用宿主生成的唯一 job ID；重复 ID 复用已有状态，提交响应丢失只查状态，不重放推理。取消由仍存活的宿主发往服务，确认子进程树结束才释放队列；状态未知时封锁该服务，确认空闲后恢复。
+
+服务返回 WAV 字节，机器人媒体 worker 编码 MP3/WAV，检查完整解码、有效帧、非静音、源/结果时长和大小。单次成功只登记一个当前会话 audio Asset，沿已有持久投递队列发送。失败、取消和未知状态不会自动换源或重跑；已有 STS 尝试令 `HarnessResult.singingAttempted` 为真，停止该轮额外的自动 TTS。实时权限与会话身份在排队、执行、结果登记前复核。
+
+管理状态分别报告配置完整性、RVC 协议验证、分离协议/模型完整性和 `singing` 真实转换验收，后两者绑定人格 ID 和 revision。`skill.singing.probe` 只访问 `/health` 检查协议，不启动推理；真实音色验收由运营者根据完整输出与试听登记。模型可见的配置投影剥离 RVC 服务地址、RVC/分离模型路径。
 
 ## 面板
 
