@@ -47,7 +47,7 @@ export class MediaOperationRegistry {
   }
 }
 
-const SERVICE_OPERATION_BY_LEGACY:Readonly<Record<string,string>>=Object.freeze({music_search:'music.search',music_acquire:'music.acquire',voice_speak:'voice.speak',singing_convert:'rvc.convert'});
+export const SERVICE_OPERATION_BY_LEGACY:Readonly<Record<string,string>>=Object.freeze({music_search:'music.search',music_acquire:'music.acquire',voice_speak:'gpt-sovits.speak',singing_convert:'rvc.convert'});
 export const DEFAULT_MEDIA_OPERATIONS: readonly MediaOperationDescriptor[] = Object.freeze([
   ...skillToolManifests.flatMap(manifest => manifest.operations.map(operation => ({...operation, serviceOperation:SERVICE_OPERATION_BY_LEGACY[operation.id], source: operation, skill: manifest.skill, tool: manifest.tool.name, permissionTool: manifest.permissionTool ?? manifest.tool.name, handler: 'skill', timeoutMs: 0}))),
   {id: 'image_generate', handler: 'image', timeoutMs: 0, quotaUnits: 10000, inputKinds: []},

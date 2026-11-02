@@ -20,20 +20,21 @@ import {BotManagement} from './core/management.js';
 import {packageRoot} from './core/paths.js';
 import {registerLifecycleRuntime,handleLifecycleShutdown,createLifecyclePort,packageIdentity} from './lifecycle/protocol.js';
 import {SessionId} from '@deepseek-ai/dsh-session';
-import {ServicePluginHost,type ServicePluginRegistration} from './core/service-plugin-host.js';
+import {ServicePluginHost} from './core/service-plugin-host.js';
 import {ProfileStore,StoreProfileRepository} from './core/profile-store.js';
 import {OutputValidatorRegistry} from './core/output-validator.js';
 import {ServiceRuntime,type ApprovedServicePolicy} from './core/service-runtime.js';
 import {mediaOperationRegistry} from './core/media-operation-registry.js';
 import {StoreServiceStateRepository} from './core/service-state-store.js';
+import {builtinServiceAdapters,BUILTIN_SERVICE_POLICIES} from './core/builtin-service-adapters.js';
+import {ServiceProfileMigration} from './core/service-migration.js';
 
 export const name='bot-integration';
 export const inject=['agents','agentPresets','llm','settings','tools','skills','systemPrompt','attachments','credentials','webServer','permissionPresets','sessions','sessionPersistence','sessionQuery','storageDomain','workingDirectory','commands'];
 export interface Config { dataDir?:string; python?:string; debounceMs?:number; music?:{home?:string;sources?:string[]} }
 declare module '@deepseek-ai/cordis' {interface Context {botIntegration:BotRuntime}}
-/** First release: only code-reviewed registrations compiled into this package may load. */
-const TRUSTED_SERVICE_PLUGINS:readonly ServicePluginRegistration[]=Object.freeze([]);
-const HOST_SERVICE_POLICIES:ReadonlyMap<string,ApprovedServicePolicy>=new Map();
+/** First release: only code-reviewed adapters compiled into this package may load. */
+const HOST_SERVICE_POLICIES:ReadonlyMap<string,ApprovedServicePolicy>=BUILTIN_SERVICE_POLICIES;
 export async function apply(ctx:Context,config:Config={}):Promise<void>{
   const home=config.dataDir??process.env.BOT_DATA_HOME??path.join(process.env.DSH_HOME??path.join(process.cwd(),'.runtime','bot-data'),'storages','bot-integration');
   const store=Store.open(home,undefined,{secureDefaults:true}).initialize().migrate();
@@ -41,14 +42,17 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
   try{
     // Validate every fixed source and create the immutable catalog before any
     // executable operation or Harness tool is exposed.
-    serviceHost=await ServicePluginHost.create(TRUSTED_SERVICE_PLUGINS,undefined,{operations:new Set(mediaOperationRegistry.ids()),tools:new Set(mediaOperationRegistry.list().map(descriptor=>descriptor.tool).filter((value):value is string=>!!value)),permissions:new Set(mediaOperationRegistry.list().map(descriptor=>descriptor.permissionTool).filter((value):value is string=>!!value))});
+    serviceHost=await ServicePluginHost.createBuiltin(builtinServiceAdapters);
     const validators=new OutputValidatorRegistry();
-    serviceRuntime=new ServiceRuntime(serviceHost,profiles,validators,HOST_SERVICE_POLICIES,new StoreServiceStateRepository(store));
+    serviceRuntime=new ServiceRuntime(serviceHost,profiles,validators,HOST_SERVICE_POLICIES,new StoreServiceStateRepository(store),path.join(store.home,'.tmp','service-health'));
     serviceRuntime.assertApprovedMediaOperations(mediaOperationRegistry);
+    // Startup recovery is reconciliation-only. It never copies resources or
+    // invokes health/acceptance ports without an explicit migration command.
+    new ServiceProfileMigration(store,profiles,{health:async()=>{throw Error('MIGRATION_HEALTH_CONFIRMATION_REQUIRED');}},{accept:async()=>{throw Error('MIGRATION_ACCEPTANCE_CONFIRMATION_REQUIRED');}}).recoverPending();
   }catch(error){await serviceHost?.dispose().catch(()=>{});store.close();throw error;}
-  const assets=new Assets(store);const media=new MediaService(store,assets,config.python,new HarnessMediaProvider(ctx),new MusicProcessWorker(new ProcessWorker(config.python),resolveMusicConfig(config.music)));
+  const assets=new Assets(store);const media=new MediaService(store,assets,config.python,new HarnessMediaProvider(ctx),new MusicProcessWorker(new ProcessWorker(config.python),resolveMusicConfig(config.music)),mediaOperationRegistry,undefined,serviceRuntime);
   const credentials=createBotCredentials(ctx.credentials);
-  const extensions:HarnessExtensions={};const harness=new NativeHarness(ctx,store,assets,media,extensions);serviceRuntime.registerCapabilities(harness.capabilities);let disposeMode;try{disposeMode=await harness.registerMode();}catch(error){await serviceHost.dispose().catch(()=>{});store.close();throw error;}
+  const extensions:HarnessExtensions={};const harness=new NativeHarness(ctx,store,assets,media,extensions);let disposeMode;try{disposeMode=await harness.registerMode();}catch(error){await serviceHost.dispose().catch(()=>{});store.close();throw error;}
   const channels=createChannelRegistry([qqChannel(new QQAdapter(undefined,{emit:event=>extensions.stats?.observeGroup({botId:event.botId,groupId:event.groupId,name:event.name,event:event.type==='group.joined'?'joined':event.type==='group.left'?'left':'observed',at:event.at,eventId:event.eventId})})),weixinChannel(new WeixinAdapter(store.cursorStore()))]);
   const runtime=new BotRuntime(store,assets,media,harness,channels,credentials,config.debounceMs,0,profiles);
   const features=new BotFeatures(runtime,createLifecyclePort());extensions.stats=features.stats;extensions.model=(binding,snapshot,args,signal)=>features.model(binding,snapshot,args,signal);extensions.evolve=(binding,snapshot,args,signal)=>features.execute(binding,snapshot,args,signal);

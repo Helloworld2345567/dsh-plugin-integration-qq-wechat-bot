@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, open, readFile, realpath, rm, stat, writeFile,rename,cp } from 'node:fs/promises';
 import path from 'node:path';
 import {resolveImageSkill} from './image-skill.js';
@@ -8,13 +8,15 @@ import type { Asset, BotConfig, MediaInput, TurnSnapshot } from './types.js';
 import {trusted} from './policy.js';
 import {normalizeProviderUsage,type MediaUsageCall} from './usage.js';
 import {validateMediaParameters,INPUT_LIMITS,VIDEO_LIMITS,AUDIO_LIMITS,isAudioInput} from './limits.js';
-import {mediaOperationRegistry,MediaOperationRegistry, type MediaOperation} from './media-operation-registry.js';
+import {mediaOperationRegistry,MediaOperationRegistry,SERVICE_OPERATION_BY_LEGACY,type MediaOperation} from './media-operation-registry.js';
 import {MEDIA_WORKER_PROTOCOL,MEDIA_WORKER_PROTOCOL_VERSION,validateMediaWorkerJob,type MediaWorkerJob,type WorkerPort} from './worker-port.js';
 import {TransformSlots,transformSlots} from './transform-slots.js';
 import {voiceServiceQueue} from './voice-service-queue.js';
 import {acquireSingingService,confirmSingingStopped,normalizeSingingServiceUrl,markSingingServiceStarted,markSingingServiceFinished} from './singing-service.js';
 import {assetFolder,scopeWorkspace,moveFile,exists,type AssetOrigin} from './workspace-files.js';
 import {MUSIC_PROTOCOL,type MusicData,type MusicHealth} from './music-state.js';
+import type {ServiceRuntime} from './service-runtime.js';
+import {ServiceContractError} from './service-errors.js';
 
 export const MEDIA_OPERATIONS=mediaOperationRegistry.ids();
 export type {MediaOperation} from './media-operation-registry.js';
@@ -65,7 +67,7 @@ export class MediaService {
   readonly active=new Map<string,{scope:string;controller:AbortController;localTransform?:boolean}>();
   readonly operations:MediaOperationRegistry;
   readonly worker:WorkerPort;
-  constructor(readonly store:Store,readonly assets:Assets,readonly python=process.env.BOT_PYTHON||'python',readonly analysisProvider?:AnalysisProvider,worker?:WorkerPort,operations:MediaOperationRegistry=mediaOperationRegistry,readonly slots:TransformSlots=transformSlots){this.worker=worker??{run:async()=>{throw new Error('MEDIA_WORKER_NOT_CONFIGURED');}};this.operations=operations;}
+  constructor(readonly store:Store,readonly assets:Assets,readonly python=process.env.BOT_PYTHON||'python',readonly analysisProvider?:AnalysisProvider,worker?:WorkerPort,operations:MediaOperationRegistry=mediaOperationRegistry,readonly slots:TransformSlots=transformSlots,readonly serviceRuntime?:ServiceRuntime){this.worker=worker??{run:async()=>{throw new Error('MEDIA_WORKER_NOT_CONFIGURED');}};this.operations=operations;}
   async analysisStatus(config:BotConfig,role:AnalysisRole){try{if(!this.analysisProvider)throw new Error('MEDIA_PROVIDER_SETTINGS_UNAVAILABLE');const value=await this.analysisProvider.resolve(config,role);const model=value.endpoint.protocol==='gpt_sovits'?value.endpoint.modelVersion:value.endpoint.protocol==='edge_tts'?value.endpoint.voice:value.endpoint.model;return{enabled:true,configured:true,provider:value.provider,model,keyConfigured:!!value.apiKey,protocol:value.endpoint.protocol};}catch(error){return{enabled:analysisEnabled(config,role),configured:false,error:error instanceof Error?error.message:'MEDIA_CONFIGURATION_INVALID',keyConfigured:false};}}
   async musicHealth(signal:AbortSignal=new AbortController().signal):Promise<MusicHealth>{
     if(!this.worker.musicHealth)return {configured:false,ready:false,protocol:MUSIC_PROTOCOL,sources:[],error:'MUSIC_NOT_CONFIGURED'};
@@ -83,14 +85,16 @@ export class MediaService {
   async run(scope:string,operation:MediaOperation,config:BotConfig,inputs:string[],parameters:Record<string,unknown>,signal:AbortSignal,authorize?:()=>void,snapshot?:TurnSnapshot):Promise<{text?:string;coverage?:string;assetIds:string[];contextAssetIds?:string[];incomplete?:boolean;music?:MusicData}>{
     const descriptor=this.operations.get(operation);
     const serviceRole=operation==='voice_speak'?'voice':operation==='singing_convert'?'singing':operation.startsWith('music_')?'music':undefined;
-    if(config.schemaVersion===4&&serviceRole&&!(serviceRole==='voice'&&config.media.voice?.protocol==='edge_tts'))throw Error('PROFILE_ADAPTER_REQUIRED');
-    const singing=operation==='singing_convert'?config.media.singing:undefined;
+    const useService=config.schemaVersion===4&&!!serviceRole&&operation!=='music_delivery'&&!(serviceRole==='voice'&&config.media.voice?.protocol==='edge_tts');
+    if(useService&&(!this.serviceRuntime||!snapshot?.services[serviceRole!]?.snapshot))throw Error('PROFILE_ADAPTER_REQUIRED');
+    const singing=!useService&&operation==='singing_convert'?config.media.singing:undefined;
     const sessionBound=operation==='singing_convert'||operation.startsWith('music_');
     const expectedBinding=sessionBound?this.store.findBinding(scope):undefined;
+    if(useService&&operation==='music_acquire')parameters={...parameters,includeLyrics:snapshot!.config.media.music?.includeLyrics===true};
     const singingSession=expectedBinding?.sessionId;
     const assertSession=()=>{if(!sessionBound)return;const current=this.store.findBinding(scope);if(!expectedBinding||current?.sessionId!==expectedBinding.sessionId||current.generation!==expectedBinding.generation)throw Error(operation==='singing_convert'?'SINGING_SESSION_CHANGED':'MUSIC_SESSION_CHANGED');};
     assertSession();
-    if(operation==='singing_convert'){
+    if(operation==='singing_convert'&&!useService){
       if(!singing?.enabled||!singing.serviceUrl||!singing.modelVersion||!singing.singingModelId||!singing.singingWeightsPath)throw Error('SINGING_CONFIGURATION_INVALID');
       if(inputs.length>1||inputs.length===0&&!parameters.url||inputs.length&&parameters.url)throw Error('SINGING_SOURCE_INVALID');
       if(parameters.sourceType==='mixed'&&singing.separation.status!=='configured')throw Error('SINGING_SEPARATION_UNCONFIGURED');
@@ -127,8 +131,8 @@ export class MediaService {
     if(descriptor.inputKinds?.length&&source.some(item=>!descriptor.inputKinds!.includes(item.kind)))throw new Error('MEDIA_INPUT_KIND_INVALID');
     await mkdir(directory,{recursive:true});
     const role=descriptor.role;
-    if(role&&!this.analysisProvider)throw new Error('MEDIA_PROVIDER_SETTINGS_UNAVAILABLE');
-    const connection=role?await this.analysisProvider!.resolve(config,role):undefined;
+    if(role&&!useService&&!this.analysisProvider)throw new Error('MEDIA_PROVIDER_SETTINGS_UNAVAILABLE');
+    const connection=role&&!useService?await this.analysisProvider!.resolve(config,role):undefined;
     const endpoint=singing?{...singing,baseUrl:normalizeSingingServiceUrl(singing.serviceUrl!),jobId:id}:connection?.endpoint??((operation==='image_generate'||operation==='image_edit')?resolveImageSkill(config):undefined);
     const gptEndpoint=connection?.endpoint.protocol==='gpt_sovits'?connection.endpoint:undefined;
     const edgeEndpoint=connection?.endpoint.protocol==='edge_tts'?connection.endpoint:undefined;
@@ -161,7 +165,14 @@ export class MediaService {
       // worker-backed operations cross the versioned process boundary.
       singingDispatched=!!singing;
       if(singing)markSingingServiceStarted(this.store,singing.serviceUrl!,id);
-      const result=descriptor.execute
+      let result:MediaResult;
+      if(useService){
+        const frozen=snapshot!.services[serviceRole!]!.snapshot!,serviceOperation=SERVICE_OPERATION_BY_LEGACY[operation];if(!serviceOperation)throw Error('SERVICE_OPERATION_MAPPING_MISSING');
+        const selectedParameters:Record<string,unknown>=operation==='voice_speak'?Object.fromEntries(['text','style','speed','format'].filter(key=>parameters[key]!==undefined).map(key=>[key,parameters[key]])):operation==='singing_convert'?Object.fromEntries(['sourceType','format'].filter(key=>parameters[key]!==undefined).map(key=>[key,parameters[key]])):operation==='music_search'?Object.fromEntries(['song','artist'].filter(key=>parameters[key]!==undefined).map(key=>[key,parameters[key]])):operation==='music_acquire'?Object.fromEntries(['song','artist','selection','includeLyrics'].filter(key=>parameters[key]!==undefined).map(key=>[key,parameters[key]])):{};
+        const serviceResult=await this.serviceRuntime!.execute({operation:serviceOperation,profile:{serviceId:frozen.serviceId,profileId:frozen.profileId},profileRevision:frozen.profileRevision,profileContentHash:frozen.profileContentHash,inputHandles:source.map(item=>item.id),resolvedInputs:source.map(item=>({handle:item.id,kind:item.kind,path:item.path,name:item.name,mime:item.mime})),parameters:selectedParameters,outputDirectory:directory,idempotencyKey:createHash('sha256').update(JSON.stringify([scope,snapshot!.personaId,snapshot!.personaRevision,snapshot!.sourceIds,serviceOperation,selectedParameters,source.map(item=>item.id)])).digest('hex'),deadline:descriptor.timeoutMs>0?Date.now()+descriptor.timeoutMs:Date.now()+15*60*1000,scopeKey:scope,signal:combined,authorize});
+        result={text:serviceResult.text,assets:serviceResult.outputs.map(output=>({path:output.path,name:path.basename(output.relativePath),mime:output.mime,kind:output.kind})),observations:serviceResult.observations};
+        const music=(serviceResult.observations as any)?.music;if(music)result.music=music;
+      }else result=descriptor.execute
         ? await this.operations.dispatch<MediaResult>(operation,job,combined)
         : await this.worker.run(job,combined,credentials);
       combined.throwIfAborted();
@@ -172,7 +183,7 @@ export class MediaService {
       persist({state:'complete',assetIds,contextAssetIds,finishedAt:Date.now()});
       if(singing)markSingingServiceFinished(this.store,singing.serviceUrl!);
       assertSession();return {text:result.text,coverage:result.coverage,incomplete:result.incomplete,assetIds,contextAssetIds,...(result.music?{music:result.music}:{})};
-    }catch(error){if(singing&&singingDispatched)try{await confirmSingingStopped(this.store,singing.serviceUrl!,id);}catch(unknown){error=unknown;}persist({state:error instanceof Error&&error.message==='SINGING_SERVICE_STATE_UNKNOWN'?'unknown':combined.aborted?'cancelled':'failed',finishedAt:Date.now(),error:error instanceof Error?error.message:'MEDIA_FAILED'});throw error;}finally{
+    }catch(error){if(singing&&singingDispatched)try{await confirmSingingStopped(this.store,singing.serviceUrl!,id);}catch(unknown){error=unknown;}const serviceError=error instanceof ServiceContractError?error.serviceError:undefined;persist({state:serviceError?.category==='UNKNOWN_STATE'||error instanceof Error&&error.message==='SINGING_SERVICE_STATE_UNKNOWN'?'unknown':combined.aborted||serviceError?.category==='CANCELLED'?'cancelled':'failed',finishedAt:Date.now(),error:serviceError?.category??(error instanceof Error?error.message:'MEDIA_FAILED')});throw error;}finally{
       try{if(!descriptor.localTransform)await captureUsage();try{await rm(directory,{recursive:true,force:true,maxRetries:3,retryDelay:100});}catch(error){persist({cleanupError:error instanceof Error?error.message:'JOB_CLEANUP_FAILED'});}}
       finally{this.active.delete(id);lease?.release();releaseVoice?.();releaseSinging?.();}
     }

@@ -28,6 +28,7 @@ export async function acquireMusicSource(live:MusicContext,args:Record<string,an
     if(!Number.isInteger(args.candidate)||args.candidate<1||args.candidate>candidates.candidates.length)throw Error('MUSIC_CANDIDATE_INVALID');
     parameters={selection:candidates.candidates[args.candidate-1]};
   }else parameters=query(args);
+  parameters={...parameters,includeLyrics:live.snapshot.config.media.music?.includeLyrics===true};
   const selectionKey=JSON.stringify(parameters),request=musicRequestKey(binding,live.snapshot,'acquire');
   const previous=deps.store.get<MusicAcquisition>('music-acquisition',binding.key);
   const selected=parameters.selection as MusicCandidate|undefined;
@@ -61,7 +62,7 @@ export async function executeMusicTool(live:MusicContext,args:Record<string,any>
     return JSON.stringify({...publicMusicCandidates(saveMusicCandidates(deps.store,live.binding,result.music?.candidates??[])),sources:result.music?.diagnostics??[]});
   }
   if(args.action!=='download')throw Error('MUSIC_ACTION_INVALID');
-  if(args.includeLyrics!==undefined&&typeof args.includeLyrics!=='boolean')throw Error('MUSIC_QUERY_INVALID');
+  // Lyrics are a frozen persona preference, never a model/tool override.
   const record=await acquireMusicSource(live,args,signal,deps),scope=live.binding.key;
   if(record.deliveryState==='running')throw Error('MUSIC_ALREADY_RUNNING');
   if(record.deliveryState==='failed')throw Error(record.deliveryCode??'MUSIC_ALREADY_ATTEMPTED');
@@ -76,7 +77,7 @@ export async function executeMusicTool(live:MusicContext,args:Record<string,any>
       deps.store.put('music-acquisition',scope,{...record,deliveryState:'succeeded',deliveryAssetIds:ids});
     }catch(error){const code=safeError(error);deps.store.put('music-acquisition',scope,{...record,deliveryState:'failed',deliveryCode:code});throw Error(code);}
   }
-  authorize();const deliver=[...ids];if((args.includeLyrics??live.snapshot.config.media.music?.includeLyrics??false)&&record.lyricAssetId)deliver.push(record.lyricAssetId);
+  authorize();const deliver=[...ids];if(live.snapshot.config.media.music?.includeLyrics===true&&record.lyricAssetId)deliver.push(record.lyricAssetId);
   for(const assetId of deliver){const asset=deps.store.asset(scope,assetId);if(asset.sessionId!==live.binding.sessionId)throw Error('MUSIC_ATTACHMENT_INVALID');if(!live.assets.some(item=>item.assetId===assetId))live.assets.push({type:'asset',assetId});}
   const audio=deps.store.asset(scope,ids[0]);
   return JSON.stringify({status:'succeeded',reused,registeredForDelivery:true,track:publicMusicTrack(record.track!),delivery:{format:'mp3',bytes:audio.size,transcoded:audio.id!==record.sourceAssetId},files:deliver.map(id=>deps.store.asset(scope,id).name)});

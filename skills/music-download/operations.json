@@ -16,8 +16,7 @@
         "song":{"type":"string"},
         "artist":{"type":"string"},
         "candidateSet":{"type":"string"},
-        "candidate":{"type":"number"},
-        "includeLyrics":{"type":"boolean"}
+        "candidate":{"type":"number"}
       }
     },
     "defaults":{"action":"search"},

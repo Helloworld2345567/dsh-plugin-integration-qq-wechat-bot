@@ -40,12 +40,13 @@ export class MusicProcessWorker implements WorkerPort {
   async run(job:MediaWorkerJob,signal:AbortSignal,credentials:WorkerCredentials={}):Promise<MediaResult>{
     if(!['music_search','music_acquire'].includes(job.operation))return this.fallback.run(job,signal,credentials);
     validateMediaWorkerJob(job);
-    const result=await this.exchange({action:job.operation==='music_search'?'search':'acquire',song:job.parameters.song,artist:job.parameters.artist,selection:job.parameters.selection,purpose:'source',includeLyrics:true},job.output,signal,job.timeoutMs||240_000);
+    const includeLyrics=job.operation==='music_acquire'&&job.parameters.includeLyrics===true;
+    const result=await this.exchange({action:job.operation==='music_search'?'search':'acquire',song:job.parameters.song,artist:job.parameters.artist,selection:job.parameters.selection,purpose:'source',includeLyrics},job.output,signal,job.timeoutMs||240_000);
     const diagnostics=Array.isArray(result.diagnostics)?result.diagnostics.slice(0,4).map((value:any)=>({source:String(value.source).slice(0,100),status:String(value.status).slice(0,100)})):[];
     if(job.operation==='music_search')return {music:{candidates:(Array.isArray(result.candidates)?result.candidates:[]).slice(0,10).map(candidate),diagnostics}};
     const track=candidate(result.track),audio=result.audio;
     if(!audio||audio.kind!=='audio'||typeof audio.path!=='string'||typeof audio.name!=='string'||typeof audio.mime!=='string')throw Error('MUSIC_OUTPUT_INVALID');
-    const assets=[audio];if(result.lyric){if(result.lyric.kind!=='file'||typeof result.lyric.path!=='string'||typeof result.lyric.name!=='string'||typeof result.lyric.mime!=='string')throw Error('MUSIC_OUTPUT_INVALID');assets.push(result.lyric);}
+    const assets=[audio];if(includeLyrics&&result.lyric){if(result.lyric.kind!=='file'||typeof result.lyric.path!=='string'||typeof result.lyric.name!=='string'||typeof result.lyric.mime!=='string')throw Error('MUSIC_OUTPUT_INVALID');assets.push(result.lyric);}
     return {assets,music:{track,diagnostics}};
   }
 }

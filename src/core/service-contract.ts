@@ -131,11 +131,24 @@ export const serviceOutputSchema=z.object({kind:z.enum(['image','audio','video',
 export const serviceResultSchema=z.object({text:z.string().max(64*1024).optional(),outputs:z.array(serviceOutputSchema).max(100).default([]).readonly(),observations:z.unknown().optional()}).strict();
 export type ServiceResult=z.infer<typeof serviceResultSchema>;
 
+export interface ServiceInputHandle {
+  readonly handle:string;
+  readonly kind:'image'|'audio'|'video'|'file';
+  readonly path:string;
+  readonly name:string;
+  readonly mime:string;
+}
+/** Private adapter request assembled only after host ownership and profile checks. */
+export interface ServiceAdapterJob extends Omit<ServiceJob,'profile'> {
+  readonly profile:ResolvedServiceProfileRevision;
+  readonly inputs:readonly ServiceInputHandle[];
+}
+export interface ServiceHealthContext {readonly outputDirectory:string}
 export interface ServiceAdapter {
   readonly serviceId:string;
   listProfiles(signal:AbortSignal):Promise<readonly ServiceProfileRevision[]>;
-  health(profile:ServiceProfileRef,signal:AbortSignal):Promise<HealthResult>;
-  execute(request:ServiceJob,signal:AbortSignal):Promise<ServiceResult>;
+  health(profile:ResolvedServiceProfileRevision,signal:AbortSignal,context?:ServiceHealthContext):Promise<HealthResult>;
+  execute(request:ServiceAdapterJob,signal:AbortSignal):Promise<ServiceResult>;
   cancel(jobId:string,signal?:AbortSignal):Promise<CancelResult>;
   dispose():Promise<void>;
 }

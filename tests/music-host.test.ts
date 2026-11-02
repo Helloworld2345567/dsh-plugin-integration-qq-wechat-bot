@@ -48,11 +48,11 @@ test('small native MP3 is downloaded once and directly registered without anothe
   const f=await fixture(t),args={action:'download',song:'晴天',artist:'周杰伦'};
   const first=JSON.parse(await f.call(args));assert.equal(first.track.title,'晴天');assert.deepEqual(first.files,['source.mp3']);assert.equal(f.live.assets.length,1);
   const source=f.store.get<any>('music-acquisition',f.binding.key);assert.deepEqual(source.deliveryAssetIds,[source.sourceAssetId]);
-  const again=JSON.parse(await f.call({...args,includeLyrics:true}));assert.equal(again.reused,true);assert.equal(f.live.assets.length,2);assert.deepEqual(f.calls,['music_acquire']);
+  const again=JSON.parse(await f.call({...args,includeLyrics:true}));assert.equal(again.reused,true);assert.equal(f.live.assets.length,1,'tool arguments cannot override the frozen includeLyrics=false preference');assert.deepEqual(f.calls,['music_acquire']);
   assert.equal(f.store.jobs().length,1);assert.equal((f.store.capabilityStatuses().find((row:any)=>row.role==='music') as any)?.status,'PASS');
   assert.doesNotMatch(JSON.stringify(again),/assetId|locator|provider.invalid|sourceAsset/);
 });
-test('non-MP3 is acquired once and encoded once, with lyrics opt-in',async t=>{
+test('non-MP3 is acquired once and encoded once, with frozen lyrics disabled',async t=>{
   const f=await fixture(t);f.setFormat('flac');const args={action:'download',song:'晴天'};
   const response=JSON.parse(await f.call(args));await f.call(args);assert.deepEqual(f.calls,['music_acquire','music_delivery']);assert.equal(f.live.assets.length,1);
   assert.equal(response.track.format,'flac');assert.equal(response.delivery.format,'mp3');assert.equal(response.delivery.transcoded,true);
