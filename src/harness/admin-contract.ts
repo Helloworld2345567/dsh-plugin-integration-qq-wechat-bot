@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {botSchema,configSchema} from '../core/types.js';
+import {acceptanceQueryInputSchema,acceptanceRecordInputSchema,catalogModelsInputSchema,catalogProfileInputSchema,catalogProfilesInputSchema,serviceHealthInputSchema,serviceRefreshInputSchema} from '../core/service-management.js';
 
 export const ADMIN_CONTRACT_VERSION=1 as const;
 const revisionSchema=z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -16,6 +17,11 @@ export const adminQueryRequestSchema=z.discriminatedUnion('name',[
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('overview.sessions'),input:pageInput}).strict(),
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('overview.deliveries'),input:z.object({...pageFields,scopeKey:z.string().min(1).max(128).optional()}).strict().default({limit:50})}).strict(),
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('automation.list'),input:emptyInput}).strict(),
+  z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('catalog.profiles'),input:catalogProfilesInputSchema}).strict(),
+  z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('catalog.profile'),input:catalogProfileInputSchema}).strict(),
+  z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('catalog.models'),input:catalogModelsInputSchema}).strict(),
+  z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('service.health'),input:serviceHealthInputSchema}).strict(),
+  z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('capability.acceptance'),input:acceptanceQueryInputSchema}).strict(),
 ]);
 export type AdminQueryRequest=z.infer<typeof adminQueryRequestSchema>;
 export interface PageDto<T>{items:T[];nextCursor:string|null;hasMore:boolean;revision:string;contractVersion:typeof ADMIN_CONTRACT_VERSION}
@@ -44,6 +50,7 @@ export const adminCommandRequestSchema=z.discriminatedUnion('name',[
   commandRequest('capability.record',capabilityInput),commandRequest('memory.forget',memoryForgetInput),commandRequest('memory.correct',memoryCorrectInput),commandRequest('session.cancel',sessionCancelInput),
   commandRequest('skill.singing.probe',z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive()}).strict()),
   commandRequest('skill.music.probe',z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive()}).strict()),
+  commandRequest('service.refresh',serviceRefreshInputSchema),commandRequest('capability.acceptance',acceptanceRecordInputSchema),
   commandRequest('delivery.retry',deliveryRetryInput),
   commandRequest('automation.proactive',z.object({scopeKey:z.string().min(1).max(128),action:z.enum(['on','off','status','now','set']),args:z.string().max(1000).default('')}).strict()),
   commandRequest('automation.schedule',z.object({scopeKey:z.string().min(1).max(128),action:z.enum(['list','create','pause','resume','run','delete']),args:z.string().max(1000).default('')}).strict()),
@@ -51,7 +58,7 @@ export const adminCommandRequestSchema=z.discriminatedUnion('name',[
 export type AdminCommandRequest=z.infer<typeof adminCommandRequestSchema>;
 
 export interface AdminSummaryBot {id:string;name:string;channel:string;accountId:string;configId:string;enabled:boolean;archived:boolean;status:string;activeSessions:number;credentialConfigured:boolean;trustedUserCount:number;workspaceConfigured:boolean}
-export interface AdminSummaryConfig {id:string;name:string;revision:number;archived:boolean;model:{provider:string;model:string}|null;toolCount:number;skillCount:number;allowHostTools:boolean;voice:{enabled:boolean;protocol?:'edge_tts'|'gpt_sovits';replyMode?:'on_demand'|'auto';voice?:string;format:'mp3'|'wav'}|null}
+export interface AdminSummaryConfig {id:string;name:string;revision:number;archived:boolean;sourceSchemaVersion:3|4;migrationRequired:boolean;model:{provider:string;model:string}|null;toolCount:number;skillCount:number;allowHostTools:boolean;voice:{enabled:boolean;protocol?:'edge_tts'|'gpt_sovits';replyMode?:'on_demand'|'auto';voice?:string;format:'mp3'|'wav'}|null}
 export interface AdminSummaryData {
   channels:Array<{id:string;displayName:string;capabilities:{conversations:readonly ('private'|'group')[];login:readonly ('qr'|'credentials')[];groupSupport:'unsupported'|'observed_only'}}>;
   bots:AdminSummaryBot[];

@@ -4,14 +4,16 @@ import {mkdir,mkdtemp,rm,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {createServer} from 'node:http';
 import {Store} from '../src/core/store.js';
+import {ProfileStore} from '../src/core/profile-store.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {botSchema,configSchema,type CallerScope} from '../src/core/types.js';
 import {freezeTurn} from '../src/core/policy.js';
 import {executeSingingTool,type SingingContext} from '../src/harness/singing-tool.js';
-import {hasPendingSingingUpload,consumeSingingUpload,explicitSingingRequest,singingCandidates} from '../src/core/singing-state.js';
+import {hasPendingSingingUpload,consumeSingingUpload,explicitSingingRequest,singingCandidates,saveSingingCandidates} from '../src/core/singing-state.js';
 import {acquireSingingService,confirmSingingStopped} from '../src/core/singing-service.js';
 import {validateMediaWorkerJob,type MediaWorkerJob} from '../src/core/worker-port.js';
 import {NativeHarness} from '../src/harness/bridge.js';
+import {ServiceContractError} from '../src/core/service-errors.js';
 
 const singing={enabled:true,protocol:'rvc_http_v1',serviceUrl:'http://127.0.0.1:9881',modelVersion:'v2',singingModelId:'test',singingWeightsPath:'models/test.pth',speakerId:0,pitchShift:0,indexRate:0,defaultOutput:'mp3'};
 async function fixture(t:TestContext){
@@ -57,6 +59,17 @@ test('conversion attempts survive prepare and redact worker internals without re
   assert.equal(calls,1);assert.equal(f.live.singing.attempted,true);
 });
 
+test('v4 conversion preserves only safe singing provider codes and hides service diagnostics',async t=>{
+  for(const providerCode of ['SINGING_MODEL_INCOMPATIBLE',undefined,'RVC_PROVIDER_FAILED','SINGING_FAILED:private-token'])await t.test(providerCode??'no provider code',async t=>{
+    const f=await fixture(t),profiles=new ProfileStore();profiles.create({serviceId:'rvc',profileId:'managed',state:'ready',capabilities:['rvc.convert'],displayName:'RVC',managedConfig:{protocol:'rvc_cli_v1'}});
+    const v4=configSchema.parse({schemaVersion:4,id:'managed',name:'Managed',personaPrompt:'A',tools:['bot_sing'],skills:['singing-conversion'],media:{singing:{enabled:true,profileRef:{serviceId:'rvc',profileId:'managed'}}}});f.store.put('config',v4.id,v4);f.live.snapshot=freezeTurn(v4,f.bot,f.binding.scope,['v4-error'],profiles);f.deps.current=()=>v4;
+    const prepared=await prepare(f);let calls=0;f.deps.media={run:async()=>{calls++;throw new ServiceContractError({category:'PROVIDER_ERROR',providerCode,safeDiagnostic:'SINGING_PRIVATE_DIAGNOSTIC',retryable:false,blocksService:false},Error('https://provider.invalid/private token=secret'));}} as any;
+    const expected=providerCode==='SINGING_MODEL_INCOMPATIBLE'?providerCode:'SINGING_CONVERSION_FAILED',convert=()=>f.call({action:'convert',candidateSet:prepared.candidateSet,candidate:1,sourceType:'vocals'});
+    await assert.rejects(convert(),new RegExp(`^Error: ${expected}$`));await assert.rejects(convert(),new RegExp(`^Error: ${expected}$`));
+    assert.equal(f.store.get<any>('singing-attempt',f.binding.key)?.code,expected);assert.equal(calls,1);assert.equal(f.live.assets.length,0);
+  });
+});
+
 test('success returns safe names, reuses one audio asset and forwards only business parameters',async t=>{
   const f=await fixture(t),p=await prepare(f);let calls=0;
   f.deps.media={run:async(_scope:string,_operation:string,config:unknown,inputs:string[],parameters:unknown,_signal:AbortSignal,authorize:()=>void)=>{
@@ -96,6 +109,8 @@ test('revocation and session switching are rechecked during execution before res
   f.deps.media={run:async(_s:any,_o:any,_c:any,_i:any,_p:any,_signal:any,authorize:()=>void)=>{f.deps.current=()=>({...f.config,media:{...f.config.media,singing:{...f.config.media.singing!,enabled:false}}});authorize();return{assetIds:[]};}} as any;
   await assert.rejects(f.call({action:'convert',candidateSet:p.candidateSet,candidate:1,sourceType:'vocals'}),/SINGING_DISABLED/);assert.equal(f.live.assets.length,0);
 });
+
+test('v4 named singing uses the frozen RVC profile and delegates private separation checks to the adapter',async t=>{const f=await fixture(t),profiles=new ProfileStore(),profile=profiles.create({serviceId:'rvc',profileId:'managed',state:'ready',capabilities:['rvc.convert'],displayName:'Managed RVC',managedConfig:{protocol:'rvc_cli_v1',separation:{enabled:true,status:'configured'}}}),v4=configSchema.parse({schemaVersion:4,id:'managed',name:'Managed',personaPrompt:'A',tools:['bot_sing','bot_music'],skills:['singing-conversion','music-download'],media:{singing:{enabled:true,profileRef:{serviceId:'rvc',profileId:'managed'}},music:{enabled:true,profileRef:{serviceId:'music',profileId:'managed'},includeLyrics:false}}});f.store.put('config',v4.id,v4);f.live.snapshot=freezeTurn(v4,f.bot,f.binding.scope,['v4'],profiles);f.deps.current=()=>v4;f.deps.media={run:async(_scope:string,operation:string,_config:any,_inputs:any,parameters:any)=>{assert.equal(operation,'singing_convert');assert.equal(parameters.sourceType,'mixed');const out=await f.assets.save(f.binding.key,{kind:'audio',mime:'audio/mpeg',name:'managed.mp3'},Buffer.from('audio'),'managed-job');return{assetIds:[out.id]};}} as any;const source=await f.assets.save(f.binding.key,{kind:'audio',mime:'audio/mpeg',name:'song.mp3'},Buffer.from('song'),'music-job');(f.deps as any).store.put('music-acquisition',f.binding.key,{scope:f.binding.key,sessionId:f.binding.sessionId,generation:f.binding.generation,request:'other',selectionKey:JSON.stringify({song:'Song',includeLyrics:false}),state:'succeeded',sourceAssetId:source.id,track:{source:'MiguMusicClient',id:'id',title:'Song',artist:'Artist'}});const prepared=saveSingingCandidates(f.store,f.binding,[{title:'Song',assetId:source.id}]);const result=JSON.parse(await f.call({action:'convert',candidateSet:prepared.id,candidate:1,sourceType:'mixed',format:'mp3'}));assert.equal(result.status,'succeeded');assert.equal(profile.state,'ready');});
 
 test('explicit singing intent excludes quoted and webpage content',()=>{
   assert.equal(explicitSingingRequest('请把这段歌声换成你的音色，帮我翻唱'),true);

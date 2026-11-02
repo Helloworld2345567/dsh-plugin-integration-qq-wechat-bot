@@ -9,7 +9,7 @@ import {ServiceContractError} from './service-errors.js';
 import type {CancelResult,HealthResult,ResolvedServiceProfileRevision,ServiceAdapterJob,ServiceProfileRevision,ServiceResult} from './service-contract.js';
 import type {ServiceShadowComparator} from './service-shadow.js';
 
-const profileSchema=gptSovitsSchema.extend({protocol:z.literal('gpt_sovits'),voice:z.string().trim().min(1).max(100),healthPath:z.string().regex(/^\/[A-Za-z0-9/_-]*$/).max(200).optional()}).strict();
+const profileSchema=gptSovitsSchema.extend({protocol:z.literal('gpt_sovits'),voice:z.string().trim().min(1).max(100),healthPath:z.string().regex(/^\/[A-Za-z0-9._/-]*$/).max(200).refine(value=>!value.split('/').includes('..'),'managed health path required').optional()}).strict();
 const parametersSchema=z.object({text:z.string().trim().min(1).max(32_000),style:z.string().max(8000).optional(),speed:z.number().min(.25).max(4).optional(),format:z.literal('wav').optional(),mode:z.literal('speak').optional()}).strict();
 export interface GptSovitsHealthPort {check(config:z.infer<typeof profileSchema>,signal:AbortSignal):Promise<boolean>}
 export class FetchGptSovitsHealth implements GptSovitsHealthPort {async check(config:z.infer<typeof profileSchema>,signal:AbortSignal):Promise<boolean>{const response=await fetch(`${config.baseUrl}${config.healthPath??'/'}`,{signal:AbortSignal.any([signal,AbortSignal.timeout(5000)]),redirect:'error'});return response.ok;}}

@@ -58,7 +58,9 @@ def convert(parameters, source, output, rvc_root, device, *, source_duration=Non
     from rvc.vc.engine import VoiceConverter
 
     config = VoiceConversionConfig.create(device, resource_base=Path(rvc_root))
-    config = replace(config, cuda_graph=False)
+    # Bound attention memory while other local model services remain loaded.
+    # The pipeline still joins every segment into the complete source timeline.
+    config = replace(config, cuda_graph=False, x_pad=1, x_query=3, x_center=15, x_max=20)
     with VoiceConverter(model, config, checkpoint=checkpoint) as converter:
         result = converter.convert(decoded, speaker_id=parameters["speakerId"], pitch=parameters["pitchShift"],
                                    f0_method="rmvpe", index_path=parameters.get("singingIndexPath"),

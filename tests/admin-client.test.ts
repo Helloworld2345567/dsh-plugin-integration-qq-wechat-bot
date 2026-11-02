@@ -23,7 +23,7 @@ test('late responses cannot overwrite a newer sequence and cancel aborts the req
   const first=client.query('overview.summary',{x:1});client.invalidate('overview.summary',{x:1});assert.equal(calls[0].signal.aborted,true);const second=client.query('overview.summary',{x:1});calls[0].resolve(response({revision:'sha256:'+'1'.repeat(64),data:{value:'old'}}));calls[1].resolve(response({revision:'sha256:'+'2'.repeat(64),data:{value:'new'}}));assert.equal(await first,undefined);assert.deepEqual(await second,{value:'new'});
 });
 
-for(const name of ['overview.sessions','overview.deliveries'])test(`AdminClient preserves ${name} pages on repeated visits`,async()=>{
+for(const name of ['overview.sessions','overview.deliveries','catalog.profiles'])test(`AdminClient preserves ${name} pages on repeated visits`,async()=>{
   const {adminQueryRequestSchema}=await import('../src/harness/admin-contract.js');
   const page={items:[{id:'one'}],nextCursor:null,hasMore:false,revision:`${name}:1`,contractVersion:1};
   const requests:any[]=[];

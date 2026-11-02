@@ -65,6 +65,31 @@ class SingingRunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(SingingError, "SINGING_INDEX_INVALID"):
                 validate_model(parameters)
 
+    def test_separation_model_accepts_exact_catalog_and_migration_names_only(self):
+        filename = "model_bs_roformer_ep_368_sdr_12.9628.ckpt"
+        spec = SimpleNamespace(name="vocals", filename=filename)
+        catalog = ModuleType("rvc.separation.catalog")
+        catalog.get_model = lambda model_id: spec
+        separation = {"status": "configured", "enabled": True, "modelId": "vocals",
+                      "instrumentalMix": True, "volume": 1.0}
+        with patch.dict(sys.modules, {"rvc.separation.catalog": catalog}):
+            for name in (filename, "modelPath-" + filename):
+                with self.subTest(accepted=name):
+                    model = self.root / name
+                    model.write_bytes(b"fixture")
+                    _, selected_spec, selected = _model_config({**separation, "modelPath": str(model)}, self.root)
+                    self.assertIs(selected_spec, spec)
+                    self.assertEqual(selected, model.resolve())
+                    model.unlink()
+            for name in ("arbitrary-" + filename, "modelPath-modelPath-" + filename,
+                         "modelPath-wrong.ckpt", filename + ".bak", filename):
+                with self.subTest(rejected=name):
+                    model = self.root / name
+                    if name != filename:
+                        model.write_bytes(b"fixture")
+                    with self.assertRaisesRegex(SingingError, "SINGING_MODEL_INCOMPATIBLE"):
+                        _model_config({**separation, "modelPath": str(model)}, self.root)
+
     def test_separation_model_is_catalog_bound_and_mixing_is_duration_aligned(self):
         configured_root = os.environ.get("RVC_ROOT")
         if not configured_root or not Path(configured_root).is_dir():
@@ -124,13 +149,17 @@ class SingingRunnerTests(unittest.TestCase):
         self.assertEqual(calls, ["separate", "convert"])
         self.assertAlmostEqual(validate_wav(output, expected_duration=1), 1, places=2)
 
-    def test_runner_disables_global_cuda_graph_before_configuration(self):
+    def test_runner_bounds_attention_memory_and_disables_global_cuda_graph(self):
         import rvc_runner
         source = self.root / "vocals.wav"
         source.write_bytes(b"source")
         @dataclass
         class Config:
             cuda_graph: bool = True
+            x_pad: int = 3
+            x_query: int = 10
+            x_center: int = 60
+            x_max: int = 65
             @classmethod
             def create(cls, device, resource_base):
                 self.assertEqual(os.environ.get("RVC_CUDA_GRAPH"), "0")
@@ -139,6 +168,8 @@ class SingingRunnerTests(unittest.TestCase):
             def __init__(self, model, config, checkpoint=None):
                 self_config = config
                 assert self_config.cuda_graph is False
+                assert 0 < self_config.x_pad <= 1
+                assert 0 < self_config.x_query < self_config.x_center < self_config.x_max <= 20
             def __enter__(self):
                 return self
             def __exit__(self, *args):

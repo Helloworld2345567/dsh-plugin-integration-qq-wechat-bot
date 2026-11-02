@@ -27,6 +27,13 @@ export function sanitizeServiceDiagnostic(value:unknown,fallback='SERVICE_OPERAT
   return (sanitized||fallback).slice(0,1000);
 }
 
+const PUBLIC_PRIVATE_PATTERN=/(?:\b(?:endpoint|base\s*url|port|credential|password|secret|token|api[_-]?key|locator|traceback)\b\s*[=:]?|\b(?:localhost|127\.0\.0\.1|\[?::1\]?):\d{1,5}\b|:\d{2,5}\b|\b[^\s/\\]+\.(?:ckpt|pth|pt|safetensors|index|onnx)\b)/i;
+/** Public catalog labels and diagnostics fail closed when they resemble private configuration. */
+export function sanitizePublicServiceText(value:unknown,fallback='Service information unavailable'):string {
+  const sanitized=sanitizeServiceDiagnostic(value,fallback);
+  return PUBLIC_PRIVATE_PATTERN.test(sanitized)||/\[(?:path|locator|credential|trace) redacted\]/i.test(sanitized)?fallback:sanitized;
+}
+
 export class ServiceContractError extends Error {
   readonly serviceError:ServiceError;
   constructor(error:ServiceError,cause?:unknown){

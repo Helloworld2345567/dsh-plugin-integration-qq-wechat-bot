@@ -6,6 +6,7 @@ import path from 'node:path';
 import {QQAdapter} from '../src/channels/qq.js';
 import {QQ_MEDIA_LIMITS} from '../src/channels/qq-limits.js';
 import {botSchema,type Asset,type Delivery} from '../src/core/types.js';
+import {RemoteError} from '../src/core/network.js';
 
 const bot=botSchema.parse({id:'qq-upload',name:'QQ upload',channel:'qq',accountId:'app'});
 const credential={accountId:'app',appSecret:'fixture'};
@@ -49,6 +50,52 @@ test('QQ direct upload includes filename and applies its threshold to actual byt
   });
 });
 
+test('QQ preserves a full MP3 as a file only when audio upload rejects its duration',async()=>{
+  await fixture(async file=>{
+    const bytes=Buffer.from('complete MP3 bytes including the ending');await writeFile(file,bytes);const song={...asset(file,bytes.length),name:'完整歌曲.mp3',mime:'audio/mpeg'},uploads:any[]=[];
+    const mock=fakeUpload(bytes.length),request:any=async(url:string,init:RequestInit)=>{if(url.endsWith('/files')){const body=JSON.parse(String(init.body));uploads.push(body);if(body.file_type===3)return{code:40093013,message:'上传音频时长超过限制'};}return mock.request(url,init);};
+    const intent=delivery(),adapter=new QQAdapter(request,undefined,undefined,mock.fetcher);
+    assert.equal(await adapter.send(bot,credential,intent,song,new AbortController().signal),'receipt');
+    assert.deepEqual(uploads.map(body=>body.file_type),[3,4]);for(const body of uploads){assert.equal(body.file_name,song.name);assert.equal(body.srv_send_msg,false);assert.deepEqual(Buffer.from(body.file_data,'base64'),bytes);}
+    assert.equal(song.kind,'audio');const committed=mock.calls.at(-1)!.body;assert.equal(committed.msg_type,7);assert.equal(committed.media.file_info,'uploaded-file');assert.equal(intent.attempt?.phase,'commit');
+  });
+});
+
+test('QQ duration fallback restarts multipart upload with the complete original file',async()=>{
+  await fixture(async file=>{
+    const bytes=Buffer.alloc(QQ_MEDIA_LIMITS.directUploadBytes+1,0x41);bytes.write('END',bytes.length-3);await writeFile(file,bytes);
+    for(const rejectedAt of ['upload_prepare','files']){
+      const mock=fakeUpload(bytes.length),typedRequests:Array<{endpoint:string;body:any}>=[],song={...asset(file,bytes.length),name:'song.mp3',mime:'audio/mpeg'};
+      const request:any=async(url:string,init:RequestInit)=>{const endpoint=url.split('/').at(-1)!,body=JSON.parse(String(init.body));if(['upload_prepare','files'].includes(endpoint)){typedRequests.push({endpoint,body});if(endpoint===rejectedAt&&body.file_type===3)throw new RemoteError('REMOTE_REQUEST_FAILED',400,undefined,undefined,{platformCode:'40093013'});}return mock.request(url,init);};
+      const adapter=new QQAdapter(request,undefined,undefined,mock.fetcher);assert.equal(await adapter.send(bot,credential,delivery(),song,new AbortController().signal),'receipt');
+      assert.deepEqual(typedRequests.filter(row=>row.endpoint==='upload_prepare').map(row=>row.body.file_type),[3,4]);for(const row of typedRequests)assert.equal(row.body.file_name,'song.mp3');
+      assert.deepEqual(Buffer.concat(mock.uploaded.map(part=>part.bytes)),rejectedAt==='files'?Buffer.concat([bytes,bytes]):bytes);for(const part of mock.uploaded)assert.equal(part.headers.get('authorization'),null);
+      assert.equal(typedRequests.at(-1)!.body.file_type,4);assert.equal(mock.calls.at(-1)!.body.msg_type,7);
+    }
+  });
+});
+
+test('QQ does not downgrade other upload errors or retry a failed file fallback',async()=>{
+  await fixture(async file=>{
+    await writeFile(file,'complete audio');
+    for(const scenario of [{kind:'audio',code:850031,types:[3]},{kind:'file',code:40093013,types:[4]},{kind:'audio',code:40093013,types:[3,4]}] as const){
+      const mock=fakeUpload(14),types:number[]=[],request:any=async(url:string,init:RequestInit)=>{if(url.endsWith('/files')){types.push(JSON.parse(String(init.body)).file_type);return{code:scenario.code,message:'token=fixture-token file_info=private-upload'};}return mock.request(url,init);};
+      await assert.rejects(new QQAdapter(request,undefined,undefined,mock.fetcher).send(bot,credential,delivery(),asset(file,14,scenario.kind),new AbortController().signal),error=>{assert.ok(error instanceof RemoteError);assert.equal(error.platformCode,String(scenario.code));assert.doesNotMatch(JSON.stringify(error),/fixture-token|private-upload/);return true;});
+      assert.deepEqual(types,scenario.types);assert.equal(mock.calls.some(call=>call.url.endsWith('/messages')),false);
+    }
+    const mock=fakeUpload(14);let uploads=0;const request:any=async(url:string,init:RequestInit)=>{if(url.endsWith('/files')){uploads++;throw Error('40093013');}return mock.request(url,init);};
+    await assert.rejects(new QQAdapter(request).send(bot,credential,delivery(),asset(file,14),new AbortController().signal),/^Error: 40093013$/);assert.equal(uploads,1);
+  });
+});
+
+test('QQ duration rejection at message commit never triggers upload fallback',async()=>{
+  await fixture(async file=>{
+    await writeFile(file,'audio');const mock=fakeUpload(5),request:any=async(url:string,init:RequestInit)=>url.endsWith('/messages')?{code:40093013,message:'rejected at commit'}:mock.request(url,init);
+    const intent=delivery();await assert.rejects(new QQAdapter(request).send(bot,credential,intent,asset(file,5),new AbortController().signal),error=>error instanceof RemoteError&&error.platformCode==='40093013');
+    assert.deepEqual(mock.calls.filter(call=>call.url.endsWith('/files')).map(call=>call.body.file_type),[3]);assert.equal(intent.attempt?.phase,'commit');
+  });
+});
+
 test('QQ private and group large WAVs use exact official hashes and complete ordered parts before commit',async()=>{
   await fixture(async file=>{
     const bytes=Buffer.alloc(15_160_364);for(let i=0;i<bytes.length;i++)bytes[i]=i%251;
@@ -77,6 +124,22 @@ test('QQ private and group large WAVs use exact official hashes and complete ord
       // A retry with confirmed file_info no longer needs the original local file.
       await adapter.send(bot,credential,intent,asset(`${file}.missing`,bytes.length),new AbortController().signal);
       assert.equal(mock.calls.length,priorCount+1);assert.ok(mock.calls.at(-1)!.url.endsWith('/messages'));
+    }
+  });
+});
+
+test('QQ one-based multipart indices preserve complete bytes and server finish numbers',async()=>{
+  await fixture(async file=>{
+    const bytes=Buffer.alloc(6_000_007);for(let index=0;index<bytes.length;index++)bytes[index]=index%251;await writeFile(file,bytes);
+    for(const blockSize of [4_000_000,10_485_760]){
+      const mock=fakeUpload(bytes.length,blockSize),request:any=async(url:string,init:RequestInit)=>{const result=await mock.request(url,init);return url.endsWith('/upload_prepare')?{...result,parts:result.parts.map((part:any)=>({...part,index:part.index+1})).reverse()}:result;};
+      assert.equal(await new QQAdapter(request,undefined,undefined,mock.fetcher).send(bot,credential,delivery(),asset(file,bytes.length),new AbortController().signal),'receipt');
+      assert.deepEqual(Buffer.concat(mock.uploaded.map(part=>part.bytes)),bytes);
+      const finished=mock.calls.filter(call=>call.url.endsWith('/upload_part_finish'));assert.equal(finished.length,Math.ceil(bytes.length/blockSize));
+      for(const [ordinal,part] of mock.uploaded.entries()){
+        assert.deepEqual(part.bytes,bytes.subarray(ordinal*blockSize,Math.min((ordinal+1)*blockSize,bytes.length)));
+        assert.deepEqual(finished[ordinal].body,{upload_id:'upload-1',part_index:ordinal+1,block_size:String(part.bytes.length),md5:hash('md5',part.bytes)});
+      }
     }
   });
 });
@@ -133,7 +196,7 @@ test('QQ rejects invalid part descriptions and 200 business errors without uploa
     const size=QQ_MEDIA_LIMITS.directUploadBytes+1;await writeFile(file,Buffer.alloc(size));
     for(const response of [
       {upload_id:'bad',block_size:'5000000',parts:[{index:0,block_size:'5000000',presigned_url:'https://cos.example/0'}]},
-      {upload_id:'bad',block_size:String(size),parts:[{index:1,block_size:String(size),presigned_url:'https://cos.example/0'}]},
+      {upload_id:'bad',block_size:String(size),parts:[{index:2,block_size:String(size),presigned_url:'https://cos.example/0'}]},
       {upload_id:'bad',block_size:String(size),parts:[{index:0,block_size:String(size),presigned_url:'http://cos.example/0'}]},
       {code:850031,message:'file too large'},
     ]){
@@ -145,6 +208,17 @@ test('QQ rejects invalid part descriptions and 200 business errors without uploa
   });
 });
 function urlIsCommit(url:string):boolean{return /\/(?:files|messages)$/.test(url);}
+
+test('QQ rejects mixed, missing, duplicate and nonnumeric multipart indices before PUT',async()=>{
+  await fixture(async file=>{
+    const size=QQ_MEDIA_LIMITS.directUploadBytes+1,blockSize=3_000_000;await writeFile(file,Buffer.alloc(size));
+    for(const indices of [[0,2],[1,3],[1,1],[-1,0],['1',2],[1,2.5]]){
+      const mock=fakeUpload(size,blockSize),request:any=async(url:string,init:RequestInit)=>{const result=await mock.request(url,init);return url.endsWith('/upload_prepare')?{...result,parts:result.parts.map((part:any,ordinal:number)=>({...part,index:indices[ordinal]}))}:result;};
+      await assert.rejects(new QQAdapter(request,undefined,undefined,mock.fetcher).send(bot,credential,delivery(),asset(file,size),new AbortController().signal),/QQ_UPLOAD_PARTS_INVALID/);
+      assert.equal(mock.uploaded.length,0);assert.equal(mock.calls.some(call=>/\/(?:upload_part_finish|files|messages)$/.test(call.url)),false);
+    }
+  });
+});
 
 test('QQ retries reuse live upload receipts and reupload expired or legacy receipts',async()=>{
   await fixture(async file=>{
@@ -160,5 +234,18 @@ test('QQ retries reuse live upload receipts and reupload expired or legacy recei
       assert.equal(commit.body.media.file_info,shouldUpload?'uploaded-file':'previous-file');
       if(shouldUpload)assert.ok(intent.attempt!.fileInfoExpiresAt!>Date.now());
     }
+  });
+});
+
+test('QQ preserves audio asset identity while an explicit file output uses file_type 4',async()=>{
+  await fixture(async file=>{
+    const bytes=Buffer.from('audio fixture');await writeFile(file,bytes);
+    const mock=fakeUpload(bytes.length),intent=delivery(),source=asset(file,bytes.length);
+    intent.output.asFile=true;
+    await new QQAdapter(mock.request,undefined,undefined,mock.fetcher).send(bot,credential,intent,source,new AbortController().signal);
+    const uploaded=mock.calls.find(call=>call.url.endsWith('/files'))!;
+    assert.equal(uploaded.body.file_type,4);assert.deepEqual(Buffer.from(uploaded.body.file_data,'base64'),bytes);
+    assert.equal(source.kind,'audio');assert.equal(intent.output.assetId,source.id);
+    assert.ok(mock.calls.some(call=>call.url.endsWith('/messages')));
   });
 });

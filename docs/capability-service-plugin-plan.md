@@ -706,7 +706,7 @@ SourceDir（可选）
 规则：
 
 - 只允许明确的 GitHub host；
-- `Ref` 必须是固定 release tag 或 commit，不接受浮动分支；
+- `Ref` 必须是固定 semver release tag，不接受浮动分支或 commit SHA；必须同时提供预期 SHA-256 以固定下载产物内容；
 - 优先下载固定名称的 release tgz 和 hash/signature 文件；
 - 下载必须有大小上限、无不受控重定向和明确超时；
 - 独立校验 hash/signature 后才能调用现有安装器；
@@ -979,7 +979,7 @@ README、面板说明和技能说明必须同时提供：
 
 ### 安装和用户上手
 
-- 固定 tag/commit；
+- 固定 semver release tag、必填 SHA-256，以及拒绝分支或 commit SHA；
 - 错误 hash/signature；
 - 损坏 tgz；
 - 浮动 ref；

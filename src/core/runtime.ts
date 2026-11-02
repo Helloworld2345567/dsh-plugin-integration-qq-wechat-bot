@@ -400,6 +400,21 @@ export class BotRuntime {
     }catch{throw new ReplyContextChangedError();}
   }
   private async prepareReplyOutputs(binding:SessionBinding,result:HarnessResult,signal:AbortSignal,onVoice?:()=>void):Promise<Output[]> {
+    const outputs=await this.prepareVoiceReplyOutputs(binding,result,signal,onVoice);
+    const authorize=()=>this.assertReplyContext(binding,result.snapshot,signal);
+    authorize();
+    const adapter=this.channels.require(this.store.bot(binding.scope.botId).channel).adapter;
+    if(!adapter.prepareOutbound)return outputs;
+    try{
+      const prepared=await adapter.prepareOutbound({binding,outputs:outputs.map(output=>({...output})),signal,authorize});
+      authorize();return prepared;
+    }catch(error){
+      authorize();if(error instanceof ReplyContextChangedError)throw error;
+      const files=outputs.map(output=>output.type==='asset'&&this.store.asset(binding.key,output.assetId!).kind==='audio'?{...output,asFile:true}:output);
+      return replyNotice(files,'本次语音发送准备失败，已保留音频文件。');
+    }
+  }
+  private async prepareVoiceReplyOutputs(binding:SessionBinding,result:HarnessResult,signal:AbortSignal,onVoice?:()=>void):Promise<Output[]> {
     const snapshot=result.snapshot,config=snapshot.config as BotConfig;
     this.assertReplyContext(binding,snapshot,signal);
     if(config.media.voice?.replyMode!=='auto'||!analysisEnabled(config,'tts')||result.voiceAttempted||result.singingAttempted)return result.outputs;

@@ -2,7 +2,7 @@ import { randomBytes, createDecipheriv } from 'node:crypto';
 import {z} from 'zod';
 import WebSocket from 'ws';
 import { backoff, download, jsonRequest, RemoteError } from '../core/network.js';
-import type { ChannelAdapter, LoginState, Credential, BotInstance, InboundMessage, MediaInput, Delivery, Asset } from '../core/types.js';
+import type { ChannelAdapter, ChannelOutboundContext, Output, LoginState, Credential, BotInstance, InboundMessage, MediaInput, Delivery, Asset } from '../core/types.js';
 import type {ChannelDefinition} from '../core/channel-registry.js';
 import type {ChannelEvent,ChannelEventSink} from '../core/channel-ports.js';
 import {AUDIO_LIMITS,isAudioInput,VIDEO_LIMITS} from '../core/limits.js';
@@ -38,7 +38,7 @@ export function qqGroupObservation(bot:BotInstance,event:any):ChannelEvent|undef
 export class QQAdapter implements ChannelAdapter {
   private readonly logins=new Map<string,{key:string;expires:number}>();
   private readonly tokens=new Map<string,{value:string;expires:number}>();
-  constructor(readonly request:typeof jsonRequest=jsonRequest,readonly events?:ChannelEventSink,readonly socketFactory:(url:string)=>WebSocket=url=>new WebSocket(url),readonly uploadFetch:typeof fetch=fetch){}
+  constructor(readonly request:typeof jsonRequest=jsonRequest,readonly events?:ChannelEventSink,readonly socketFactory:(url:string)=>WebSocket=url=>new WebSocket(url),readonly uploadFetch:typeof fetch=fetch,readonly prepareOutbound?:(context:ChannelOutboundContext)=>Promise<Output[]>){}
   async beginLogin(signal?:AbortSignal):Promise<LoginState>{
     for(const [ticket,pending] of this.logins)if(pending.expires<Date.now())this.logins.delete(ticket);
     const key=randomBytes(32).toString('base64');const result:any=await this.request('https://q.qq.com/lite/create_bind_task',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key}),signal});
@@ -91,7 +91,7 @@ export class QQAdapter implements ChannelAdapter {
       let fileInfo=attempt?.assetId===asset.id&&validReceipt?attempt.fileInfo:undefined;
       if(!fileInfo){
         if(attempt)attempt.phase='upload';
-        const uploaded=await uploadQQAsset({baseUrl:`${API}/v2/${base}`,token,asset,signal,request:this.request,fetcher:this.uploadFetch});
+        const uploaded=await uploadQQAsset({baseUrl:`${API}/v2/${base}`,token,asset:delivery.output.asFile?{...asset,kind:'file'}:asset,signal,request:this.request,fetcher:this.uploadFetch});
         fileInfo=uploaded.fileInfo;if(attempt){attempt.fileInfo=fileInfo;attempt.fileInfoExpiresAt=uploaded.expiresAt;}
       }
       if(attempt)attempt.phase='commit';payload={...payload,msg_type:7,media:{file_info:fileInfo}};

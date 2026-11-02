@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {generateKeyPairSync,sign} from 'node:crypto';
 import {mkdir,mkdtemp,rm,symlink,writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {parseServicePluginManifest,serviceJobSchema,type ServiceAdapter,type ServicePluginManifest} from '../src/core/service-contract.js';
+import {parseServicePluginManifest,serviceJobSchema,serviceOutputSchema,type ServiceAdapter,type ServicePluginManifest} from '../src/core/service-contract.js';
 import {sanitizeServiceDiagnostic,serviceErrorSchema} from '../src/core/service-errors.js';
 import {ServiceCatalog} from '../src/core/service-catalog.js';
 import {ProfileStore,profileContentHash} from '../src/core/profile-store.js';
@@ -34,6 +34,8 @@ test('profile revisions are immutable, content-addressed and privately projected
   assert.equal(first.revision,1);assert.equal(same.revision,1);assert.equal(second.revision,2);assert.equal(first.contentHash,profileContentHash({sources:['a'],root:'private'}));assert.equal('managedConfig' in store.publicProjection(first),false);
   assert.throws(()=>store.import({...first,revision:3,contentHash:'0'.repeat(64)}),/HASH_MISMATCH/);
 });
+
+test('service output handles allow safe Unicode filenames but never paths or traversal',()=>{assert.equal(serviceOutputSchema.parse({kind:'audio',handle:'孙燕姿 - 我怀念的.mp3',name:'我怀念的.mp3'}).handle,'孙燕姿 - 我怀念的.mp3');for(const handle of ['../evil.mp3','folder/evil.mp3','folder\\evil.mp3','C:\\evil.mp3','..','.','bad\u0000.mp3'])assert.throws(()=>serviceOutputSchema.parse({kind:'audio',handle,name:'safe.mp3'}));});
 
 test('job freezes profile revision, content hash, inputs, output and idempotency',()=>{
   const profile={serviceId:'music',profileId:'default',revision:2,contentHash:'a'.repeat(64),state:'ready' as const,capabilities:['music.search'],displayName:'Music',updatedAt:1};

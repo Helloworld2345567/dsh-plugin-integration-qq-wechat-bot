@@ -2,6 +2,7 @@ export interface AdminTransport {
   fetch(input:RequestInfo|URL,init?:RequestInit):Promise<Response>;
 }
 export interface AdminClientOptions {endpoint:string;token:string;transport?:AdminTransport}
+const CONDITIONAL_QUERIES=new Set(['overview.summary','catalog.config','bots.list','automation.list']);
 export interface VersionedResponse<T>{version:number;contractVersion:number;revision:string;changedSince?:string;unchanged?:boolean;data?:T}
 export class AdminClient {
   private readonly transport:AdminTransport;
@@ -21,7 +22,7 @@ export class AdminClient {
     const controller=new AbortController();const sequence=(this.sequences.get(key)??0)+1;this.sequences.set(key,sequence);
     const combined=signal?AbortSignal.any([signal,controller.signal]):controller.signal;
     const request=(async():Promise<T|undefined>=>{
-      const revision=this.revisions.get(key);const body={version:1,kind:'query',name,input:revision&&!('changedSince'in input)?{...input,changedSince:revision}:input};
+      const revision=this.revisions.get(key);const body={version:1,kind:'query',name,input:revision&&CONDITIONAL_QUERIES.has(name)&&!('changedSince'in input)?{...input,changedSince:revision}:input};
       const response=await this.transport.fetch(this.options.endpoint,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${this.options.token}`},body:JSON.stringify(body),signal:combined});
       const responseBody=await response.json() as {result?:VersionedResponse<T>;error?:unknown}|VersionedResponse<T>;if(!response.ok)throw new Error(typeof (responseBody as any).error==='string'?(responseBody as any).error:'ADMIN_QUERY_FAILED');const payload=('result'in responseBody&&responseBody.result?responseBody.result:responseBody) as VersionedResponse<T>;
       if(this.sequences.get(key)!==sequence)return undefined;

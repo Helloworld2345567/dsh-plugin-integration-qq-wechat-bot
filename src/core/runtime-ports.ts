@@ -29,7 +29,7 @@ export interface HarnessPort {
   validateModel(config:BotConfig):Promise<void>;
   recheckPermissions?():void;
   compact?(binding:SessionBinding,signal:AbortSignal):Promise<string>;
-  models?():Promise<Array<{provider:string;model:string;inputModalities?:string[]}>>;
+  models?():Promise<Array<{provider:string;model:string;inputModalities?:string[];reasoning?:{supported:boolean;efforts:string[]}}>>;
   inspectSession?(sessionId:string):Promise<void>;
   drain?():Promise<void>;
 }

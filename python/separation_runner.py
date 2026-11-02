@@ -17,10 +17,11 @@ def _model_config(value, rvc_root):
     except Exception:
         raise SingingError("SINGING_MODEL_INCOMPATIBLE") from None
     path = Path(separation["modelPath"]).expanduser().resolve()
-    # The path is operator-owned, but must identify the selected catalog
-    # checkpoint exactly. This prevents a tool supplied path from changing the
-    # separation model or loading a similarly named arbitrary checkpoint.
-    if path.name.casefold() != spec.filename.casefold() or not path.is_file():
+    # Migration copies this catalog checkpoint with the exact modelPath- field
+    # prefix. Accept that managed filename and the original catalog filename;
+    # similarly named arbitrary checkpoints still do not identify this model.
+    filenames = {spec.filename.casefold(), ("modelPath-" + spec.filename).casefold()}
+    if path.name.casefold() not in filenames or not path.is_file():
         raise SingingError("SINGING_MODEL_INCOMPATIBLE")
     return separation, spec, path
 

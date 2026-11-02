@@ -31,9 +31,19 @@ npm ci
 npm run build
 ```
 
-将构建产物安装到 Harness 后启动 `bots` profile。打开 Harness 设置页，在“机器人面板”中完成渠道、账号和人格配置。
+本地目录和本地 `.tgz` 均可交给 `scripts/install.mjs`；两者都会在安装前经过同一 archive 安全校验。默认最小层为 `core,basic-media`，可在没有 GPT-SoVITS、Music、RVC、CUDA 或模型权重时安装并启动；Catalog 会将未登记能力显示为 `missing`/`blocked`，不会静默选择其他服务。
 
-媒体脚本依赖见 `requirements.txt`。如果已有可用的 Python 环境，可通过 `BOT_PYTHON` 指定解释器。
+固定 GitHub release 安装使用 `scripts/bootstrap-github.mjs`，必须同时提供严格的 `owner/repo`、固定 semver release tag、固定 `.tgz` asset 名称和预期 SHA-256。`--ref` 不接受分支名或 commit SHA；摘要用于校验下载产物的固定内容。例如：
+
+```bash
+node scripts/bootstrap-github.mjs --repository=OWNER/REPO --ref=v1.2.3 --asset=PACKAGE.tgz --sha256=64位小写十六进制摘要 --home=/absolute/product/home
+```
+
+Bootstrap 只接受 HTTPS GitHub allowlist，逐跳检查重定向与 DNS，限制下载大小和时间；hash 和 tar 安全校验通过后才调用现有 installer。失败会使用安装前已有且 hash 仍匹配的 archive 回滚。下载内容位于一次性空目录，成功或失败都会清理，且不会从下载目录运行解释器或构建工具。脚本不会执行真实服务 health 或能力验收；安装后的 `health-verified` 只表示 package archive 与已安装 package identity 一致。
+
+将构建产物安装到 Harness 后启动 `bots` profile。打开 Harness 设置页，在“机器人面板”中完成渠道、账号和人格配置。面板的 Profile health 只表示当前可探测；真实 TTS、完整音乐下载和 RVC 转换须由运营者另行执行并登记 acceptance，记录绑定人格和 Profile revision。
+
+基础媒体脚本依赖见 `requirements.txt`；Edge TTS 可选层见 `requirements-voice-generation.txt`。如果已有可用的 Python 环境，可通过 `BOT_PYTHON` 指定解释器。安装器不会安装 CUDA、RVC、Music 外部项目或模型权重。
 
 ## 配置
 
@@ -99,7 +109,7 @@ QQ 图片、视频、音频和普通文件的投递硬上限均为 200 MiB。直
 
 在人格“媒体 → 音乐搜索与下载”中开启能力，会同时加入 `bot_music` 工具和 `music-download` 技能；旧人格默认关闭。用户可以按歌名、歌手直接下载最高匹配的歌曲，也可先搜索再选择候选；当前会话歌曲可用于音色转换。歌词默认不附带，可在卡片中开启。
 
-全局 `music.sources` 可指定来源顺序，支持 `MiguMusicClient`（咪咕）、`KuwoMusicClient`（酷我）、`QQMusicClient`（QQ 音乐）、`NeteaseMusicClient`（网易云音乐）；默认依次使用已通过完整下载验证的咪咕、酷我，新增来源须先做真实搜索与完整下载验证。下载交付和按歌名翻唱均输出完整且严格小于 20 MB 的音频，合规 MP3 直接复用，其他格式按时长完整转码。面板“检查音乐环境”只检查适配协议、依赖及配置来源，实际下载验收单独记录并绑定人格版本。操作和验收细节见 [音乐接入说明](docs/music-integration.md)。
+受管 Music Profile 可声明来源顺序，支持 `MiguMusicClient`（咪咕）、`KuwoMusicClient`（酷我）、`QQMusicClient`（QQ 音乐）、`NeteaseMusicClient`（网易云音乐）；默认只使用已通过完整下载验证的来源，新增来源须先做真实搜索与完整下载验证。下载交付和按歌名翻唱均输出完整且严格小于 20 MB 的音频，合规 MP3 直接复用，其他格式按时长完整转码。面板“检查 health”只检查当前 Profile 是否可探测，实际下载验收单独记录并同时绑定人格 revision、Profile revision/content hash 与 operation。操作和验收细节见 [音乐接入说明](docs/music-integration.md)。
 
 ### Limitations / Known Issues
 

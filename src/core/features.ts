@@ -17,7 +17,7 @@ export const botModelArgumentsSchema=z.object({action:z.enum(['list','set','rese
   if(value.action!=='set'&&(value.provider!==undefined||value.model!==undefined))ctx.addIssue({code:'custom',message:'list/reset 不接受 provider 或 model'});
 });
 export type BotModelArguments=z.infer<typeof botModelArgumentsSchema>;
-export interface BotModelResult {action:BotModelArguments['action'];sessionId:string;personaId:string;currentTurnModel:BotConfig['model'];nextTurnModel:BotConfig['model'];override:boolean;effective:'current'|'next_turn';models?:Array<{provider:string;model:string;inputModalities?:string[]}>}
+export interface BotModelResult {action:BotModelArguments['action'];sessionId:string;personaId:string;currentTurnModel:BotConfig['model'];nextTurnModel:BotConfig['model'];override:boolean;effective:'current'|'next_turn';models?:Array<{provider:string;model:string;inputModalities?:string[];reasoning?:{supported:boolean;efforts:string[]}}>}
 
 interface ContentChange {id:string;kind:'persona'|'skill'|'reload';scopeKey:string;configId:string;goal:string;before:BotConfig;after?:BotConfig;phase:'preparing'|'succeeded'|'failed'|'rolled-back';createdAt:number;updatedAt:number;error?:string}
 export function parseStatsArguments(args:string):StatsQueryInput {

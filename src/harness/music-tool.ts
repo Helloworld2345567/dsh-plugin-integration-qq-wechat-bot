@@ -3,10 +3,11 @@ import type {Store} from '../core/store.js';
 import type {BotConfig,BotInstance,SessionBinding,TurnSnapshot,Output} from '../core/types.js';
 import {allowedNow,mediaConfigNow} from '../core/policy.js';
 import {assertMediaSession,musicCandidates,musicRequestKey,saveMusicCandidates,publicMusicCandidates,publicMusicTrack,MUSIC_DELIVERY_BYTES,type MusicAcquisition,type MusicCandidate} from '../core/music-state.js';
+import {ServiceContractError} from '../core/service-errors.js';
 
 export interface MusicContext {binding:SessionBinding;snapshot:TurnSnapshot;assets:Output[]}
 export interface MusicDependencies {store:Store;assets:Assets;media:MediaService;current:()=>BotConfig;bot:()=>BotInstance}
-function safeError(error:unknown):string {const code=error instanceof Error?error.message:'';if(code==='SINGING_SESSION_CHANGED')return 'MUSIC_SESSION_CHANGED';return /^MUSIC_[A-Z_]+$/.test(code)?code:'MUSIC_OPERATION_FAILED';}
+function safeError(error:unknown):string {const code=error instanceof ServiceContractError?error.serviceError.providerCode??'':error instanceof Error?error.message:'';if(code==='SINGING_SESSION_CHANGED')return 'MUSIC_SESSION_CHANGED';return /^MUSIC_[A-Z_]+$/.test(code)?code:'MUSIC_OPERATION_FAILED';}
 function query(args:Record<string,any>):{song:string;artist?:string}{
   if(typeof args.song!=='string'||!args.song.trim()||args.song.length>300||args.artist!==undefined&&(typeof args.artist!=='string'||args.artist.length>200))throw Error('MUSIC_QUERY_INVALID');
   return {song:args.song.trim(),...(args.artist?.trim()?{artist:args.artist.trim()}:{})};

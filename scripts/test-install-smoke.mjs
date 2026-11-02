@@ -21,7 +21,7 @@ await run('scripts/build.mjs');
 const sourceIdentity=await identity(root);
 await run('scripts/install.mjs',[root]);
 const installation=JSON.parse(await readFile(path.join(home,'installation.json'),'utf8'));
-assert.equal(installation.current.identity,sourceIdentity);assert.equal(installation.sourceRoot,root);
+assert.equal(installation.current.identity,sourceIdentity);assert.equal(installation.sourceRoot,root);assert.deepEqual(installation.layers,['core','basic-media']);
 const profile=JSON.parse(await readFile(path.join(home,'profiles','bots','package.json'),'utf8'));
 assert.ok(profile.dsh.profile.bundles.includes('dsh-bot-lifecycle'));assert.ok(profile.dsh.profile.bundles.includes(bundleName));
 assert.equal(await identity(path.join(home,'profiles','bots','node_modules',bundleName)),sourceIdentity);
@@ -37,11 +37,11 @@ const api=async()=>{
   const page=ticket.status===303?await fetch(new URL(ticket.headers.get('location'),url),{headers:{cookie},signal:AbortSignal.timeout(5000)}):ticket;const html=await page.text();
   const match=html.match(/globalThis\["__BOT_INTEGRATION__"\]\s*=\s*(\{[^<]+\})<\/script>/);if(!match){await writeFile(path.join(folder,'bootstrap-response.html'),html);throw Error(`Bot bootstrap not found in HTTP ${page.status} response`);}
   const bootstrap=JSON.parse(match[1]);const response=await fetch(new URL(bootstrap.endpoint,url),{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${bootstrap.token}`,cookie},body:JSON.stringify({action:'state',input:{}}),signal:AbortSignal.timeout(5000)});
-  if(!response.ok)throw Error(`Admin health request returned ${response.status}`);return{state:(await response.json()).result,url};
+  if(!response.ok)throw Error(`Admin health request returned ${response.status}`);const state=(await response.json()).result;const profiles=await fetch(new URL(bootstrap.endpoint,url),{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${bootstrap.token}`,cookie},body:JSON.stringify({version:1,kind:'query',name:'catalog.profiles',input:{limit:100}}),signal:AbortSignal.timeout(5000)});if(!profiles.ok)throw Error(`Profile catalog returned ${profiles.status}`);return{state,profiles:(await profiles.json()).result,url};
 };
 let first,second,task,result;
 try{
-  first=await wait(async()=>{const admin=await api();const current=runtimeState();return admin&&current.owner?{...current,configs:admin.state.configs.length,port:new URL(admin.url).port}:undefined;});assert.equal(first.bots,0);
+  first=await wait(async()=>{const admin=await api();const current=runtimeState();return admin&&current.owner?{...current,configs:admin.state.configs.length,profiles:admin.profiles.items,port:new URL(admin.url).port}:undefined;});assert.equal(first.bots,0);assert.deepEqual(first.profiles,[]);
   task={id:'install-smoke-restart',kind:'restart',scopeKey:'local-smoke',configId:'sakura',goal:'Verify supervised restart of the actual installed root package with zero bots',phase:'queued',createdAt:Date.now(),updatedAt:Date.now(),events:[]};await atomicJson(path.join(home,'evolution',`${task.id}.json`),task);
   second=await wait(async()=>{const journal=JSON.parse(await readFile(path.join(home,'evolution',`${task.id}.json`),'utf8'));if(journal.phase==='failed')throw Error(journal.error);if(journal.phase!=='succeeded')return;const admin=await api();const current=runtimeState();return admin&&current.owner&&current.owner.pid!==first.owner.pid?{...current,configs:admin.state.configs.length,port:new URL(admin.url).port,phase:journal.phase}:undefined;},120000);
   assert.equal(second.bots,0);assert.notEqual(second.owner.pid,first.owner.pid);assert.equal(second.phase,'succeeded');

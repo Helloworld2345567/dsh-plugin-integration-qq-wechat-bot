@@ -7,6 +7,8 @@ import {configureWorkspaceStorage} from './workspace-storage.mjs';
 import YAML from 'yaml';
 import {archivePackage,recordInstallation,bundleName} from './installation.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const layerArgument=process.argv.find(value=>value.startsWith('--layers='))?.slice('--layers='.length)??process.env.BOT_INSTALL_LAYERS??'core,basic-media';
+const layers=new Set(layerArgument.split(',').map(value=>value.trim()).filter(Boolean)),allowedLayers=new Set(['core','basic-media','voice-generation','music','singing-rvc']);if(!layers.has('core')||!layers.has('basic-media')||[...layers].some(layer=>!allowedLayers.has(layer)))throw Error('INSTALL_LAYERS_INVALID');
 await mkdir(productHome,{recursive:true});
 try{await writeFile(path.join(productHome,'workspace.json'),JSON.stringify({root:workspaceRoot},null,2)+'\n',{flag:'wx'});}catch(error){if(error.code!=='EEXIST')throw error;}
 await mkdir(workspaceRoot,{recursive:true});
@@ -16,7 +18,8 @@ const python=process.env.BOT_PYTHON||path.join(mediaEnv,process.platform==='win3
 if(!process.env.BOT_PYTHON){
   try{await access(python);}catch{try{await command('uv',['venv','--python','3.12',mediaEnv]);}catch(error){if(error.code!=='ENOENT')throw error;await command(process.platform==='win32'?'python':'python3',['-m','venv',mediaEnv]);}}
 }
-try{await command('uv',['pip','install','--python',python,'-r',path.join(root,'requirements.txt')]);}catch(error){if(error.code!=='ENOENT')throw error;await command(python,['-m','pip','install','-r',path.join(root,'requirements.txt')]);}
+const requirementFiles=[path.join(root,'requirements.txt'),...(layers.has('voice-generation')?[path.join(root,'requirements-voice-generation.txt')]:[])];
+for(const requirements of requirementFiles)try{await command('uv',['pip','install','--python',python,'-r',requirements]);}catch(error){if(error.code!=='ENOENT')throw error;await command(python,['-m','pip','install','-r',requirements]);}
 const profile=path.join(productHome,'profiles','bots');await mkdir(profile,{recursive:true});await mkdir(path.join(productHome,'agents'),{recursive:true});
 const manifest=path.join(profile,'package.json');
 let profilePackage;
@@ -46,7 +49,8 @@ await mkdir(runtimeEnv.TEMP,{recursive:true});
 // pnpm requires a reinstall when an existing profile changes its store location.
 let oldStore;try{oldStore=YAML.parse(await readFile(path.join(profile,'node_modules','.modules.yaml'),'utf8')).storeDir;}catch(error){if(error.code!=='ENOENT')throw error;}
 if(oldStore){const relative=path.relative(runtimeEnv.npm_config_store_dir,oldStore);if(relative.startsWith('..')||path.isAbsolute(relative))await command(process.platform==='win32'?'pnpm.cmd':'pnpm',['install','--force','--frozen-lockfile'],{cwd:profile,env:{...runtimeEnv,CI:'1'},shell:process.platform==='win32'});}
-const source=path.resolve(process.argv[2]||root);await access(source);
+const sourceArgument=process.argv.slice(2).find(value=>!value.startsWith('--'));
+const source=path.resolve(sourceArgument||root);await access(source);
 const archive=await archivePackage(source,productHome);
 const lifecycleArchive=await archivePackage(path.join(root,'packages','bot-lifecycle'),productHome);
 await run(['plugin','--profile','bots','add',lifecycleArchive.path]);
@@ -56,5 +60,6 @@ const installedProfile=JSON.parse(await readFile(manifest,'utf8'));
 installedProfile.dsh??={};installedProfile.dsh.profile??={};
 installedProfile.dsh.profile.bundles=[...new Set([...(installedProfile.dsh.profile.bundles??[]),'dsh-bot-lifecycle',bundleName])];
 await writeFile(manifest,JSON.stringify(installedProfile,null,2)+'\n');
-await recordInstallation({home:productHome,sourceRoot:path.resolve(process.env.BOT_SOURCE_ROOT||((await stat(source)).isDirectory()?source:root)),installedFrom:source,archive,installedRoot:path.join(profile,'node_modules',bundleName)});
+const installedRoot=path.join(profile,'node_modules',bundleName),sourceIsDirectory=(await stat(source)).isDirectory(),sourceRoot=process.env.BOT_SOURCE_ROOT?path.resolve(process.env.BOT_SOURCE_ROOT):sourceIsDirectory?source:installedRoot;
+await recordInstallation({home:productHome,sourceRoot,installedFrom:sourceIsDirectory?source:'verified-archive',archive,installedRoot,layers:[...layers],verifySource:sourceIsDirectory||!!process.env.BOT_SOURCE_ROOT});
 console.log(`Installed. Runtime home: ${productHome}. Start with node scripts/start.mjs`);

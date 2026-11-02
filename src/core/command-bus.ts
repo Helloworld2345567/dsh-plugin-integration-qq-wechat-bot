@@ -48,7 +48,7 @@ export interface CommandHost {
   switchPersona(scope:CallerScope,id:string,authorize?:()=>void):Promise<SessionBinding>;
   setModel(scope:CallerScope,model:BotConfig['model'],authorize?:()=>void):Promise<SessionBinding>;
   applyPersonaFiles(id:string):Promise<BotConfig>;
-  models():Promise<Array<{provider:string;model:string;inputModalities?:string[]}>>;
+  models():Promise<Array<{provider:string;model:string;inputModalities?:string[];reasoning?:{supported:boolean;efforts:string[]}}>>;
   commandServices:CommandServices;
 }
 

@@ -10,6 +10,7 @@ import {createBotCredentials} from './harness/credentials.js';
 import { NativeHarness,type HarnessExtensions } from './harness/bridge.js';
 import { Admin } from './harness/admin.js';
 import { QQAdapter,qqChannel } from './channels/qq.js';
+import {createQQAudioPreparer} from './channels/qq-audio.js';
 import { WeixinAdapter,weixinChannel } from './channels/weixin.js';
 import {createChannelRegistry} from './core/channel-registry.js';
 import {HarnessMediaProvider} from './harness/media-provider.js';
@@ -28,6 +29,7 @@ import {mediaOperationRegistry} from './core/media-operation-registry.js';
 import {StoreServiceStateRepository} from './core/service-state-store.js';
 import {builtinServiceAdapters,BUILTIN_SERVICE_POLICIES} from './core/builtin-service-adapters.js';
 import {ServiceProfileMigration} from './core/service-migration.js';
+import {ServiceManagement} from './core/service-management.js';
 
 export const name='bot-integration';
 export const inject=['agents','agentPresets','llm','settings','tools','skills','systemPrompt','attachments','credentials','webServer','permissionPresets','sessions','sessionPersistence','sessionQuery','storageDomain','workingDirectory','commands'];
@@ -53,11 +55,12 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
   const assets=new Assets(store);const media=new MediaService(store,assets,config.python,new HarnessMediaProvider(ctx),new MusicProcessWorker(new ProcessWorker(config.python),resolveMusicConfig(config.music)),mediaOperationRegistry,undefined,serviceRuntime);
   const credentials=createBotCredentials(ctx.credentials);
   const extensions:HarnessExtensions={};const harness=new NativeHarness(ctx,store,assets,media,extensions);let disposeMode;try{disposeMode=await harness.registerMode();}catch(error){await serviceHost.dispose().catch(()=>{});store.close();throw error;}
-  const channels=createChannelRegistry([qqChannel(new QQAdapter(undefined,{emit:event=>extensions.stats?.observeGroup({botId:event.botId,groupId:event.groupId,name:event.name,event:event.type==='group.joined'?'joined':event.type==='group.left'?'left':'observed',at:event.at,eventId:event.eventId})})),weixinChannel(new WeixinAdapter(store.cursorStore()))]);
+  const channels=createChannelRegistry([qqChannel(new QQAdapter(undefined,{emit:event=>extensions.stats?.observeGroup({botId:event.botId,groupId:event.groupId,name:event.name,event:event.type==='group.joined'?'joined':event.type==='group.left'?'left':'observed',at:event.at,eventId:event.eventId})},undefined,undefined,createQQAudioPreparer(store,assets))),weixinChannel(new WeixinAdapter(store.cursorStore()))]);
   const runtime=new BotRuntime(store,assets,media,harness,channels,credentials,config.debounceMs,0,profiles);
   const features=new BotFeatures(runtime,createLifecyclePort());extensions.stats=features.stats;extensions.model=(binding,snapshot,args,signal)=>features.model(binding,snapshot,args,signal);extensions.evolve=(binding,snapshot,args,signal)=>features.execute(binding,snapshot,args,signal);
   extensions.management=new BotManagement(runtime,features);
-  const token=randomBytes(32).toString('base64url');const admin=new Admin(ctx,runtime,token,undefined,features);
+  const services=new ServiceManagement(store,profiles,serviceRuntime,{models:()=>harness.models()});
+  const token=randomBytes(32).toString('base64url');const admin=new Admin(ctx,runtime,token,undefined,features,services);
   ctx.on('webserver/index-inject',rows=>{rows.push({kind:'global',name:'__BOT_INTEGRATION__',value:{endpoint:'/api/bot-integration',token}});});
   ctx.effect(()=>ctx.webServer.register({kind:'exact',path:'/api/bot-integration',handler:(req,res)=>admin.http(req,res)}));
   let detachLifecycle:(()=>void)|undefined;

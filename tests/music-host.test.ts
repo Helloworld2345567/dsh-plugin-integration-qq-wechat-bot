@@ -13,6 +13,7 @@ import type {MediaWorkerJob} from '../src/core/worker-port.js';
 import {NativeHarness} from '../src/harness/bridge.js';
 import {runJsonProcess} from '../src/harness/json-process.js';
 import {resolveMusicConfig} from '../src/harness/music-worker.js';
+import {ServiceContractError} from '../src/core/service-errors.js';
 
 const track={source:'MiguMusicClient',id:'song-1',title:'晴天',artist:'周杰伦',format:'mp3',duration:269,size:100,locator:{privateDownloadUrl:'https://provider.invalid/private'}};
 async function fixture(t:TestContext){
@@ -64,6 +65,23 @@ test('failed acquisition and failed delivery are not automatically repeated in o
   f.live.snapshot=freezeTurn(f.config,f.bot,f.binding.scope,['new-request']);f.setFormat('flac');f.setHook(async job=>{if(job.operation==='music_delivery')throw Error('bad encode');});
   await assert.rejects(f.call({action:'download',song:'晴天'}),/MUSIC_OPERATION_FAILED/);await assert.rejects(f.call({action:'download',song:'晴天'}),/MUSIC_OPERATION_FAILED/);
   assert.deepEqual(f.calls,['music_acquire','music_acquire','music_delivery']);assert.equal(f.live.assets.length,0);
+});
+
+test('download and named singing preserve safe music provider codes from service errors',async t=>{
+  for(const action of ['download','sing'])await t.test(action,async t=>{
+    const f=await fixture(t);f.setHook(async()=>{throw new ServiceContractError({category:'PROVIDER_ERROR',providerCode:'MUSIC_NO_RESULTS',safeDiagnostic:'Private provider detail',retryable:false,blocksService:false},Error('https://provider.invalid/private token=secret'));});
+    const call=()=>action==='download'?f.call({action,song:'晴天'}):executeSingingTool(f.live,{action,song:'晴天'},new AbortController().signal,f.deps);
+    await assert.rejects(call(),/^Error: MUSIC_NO_RESULTS$/);await assert.rejects(call(),/^Error: MUSIC_NO_RESULTS$/);
+    assert.equal(f.store.get<any>('music-acquisition',f.binding.key)?.code,'MUSIC_NO_RESULTS');assert.deepEqual(f.calls,['music_acquire']);assert.equal(f.live.assets.length,0);
+  });
+});
+
+test('service diagnostics and non-music provider codes remain private',async t=>{
+  for(const providerCode of [undefined,'PROVIDER_CONNECT_FAILED','MUSIC_TIMEOUT:private-token'])await t.test(providerCode??'no provider code',async t=>{
+    const f=await fixture(t);f.setHook(async()=>{throw new ServiceContractError({category:'PROVIDER_ERROR',providerCode,safeDiagnostic:'MUSIC_PRIVATE_DIAGNOSTIC',retryable:false,blocksService:false},Error('https://provider.invalid/private token=secret'));});
+    await assert.rejects(f.call({action:'download',song:'晴天'}),/^Error: MUSIC_OPERATION_FAILED$/);
+    assert.equal(f.store.get<any>('music-acquisition',f.binding.key)?.code,'MUSIC_OPERATION_FAILED');
+  });
 });
 test('revocation or session reset after worker execution prevents assets and delivery',async t=>{
   const f=await fixture(t);f.setHook(async()=>{f.deps.current=()=>({...f.config,media:{...f.config.media,music:{enabled:false,includeLyrics:false}}});});

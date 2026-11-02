@@ -127,7 +127,8 @@ export const cancelResultSchema=z.discriminatedUnion('state',[
   z.object({state:z.literal('not_supported')}).strict(),
 ]);
 export type CancelResult=z.infer<typeof cancelResultSchema>;
-export const serviceOutputSchema=z.object({kind:z.enum(['image','audio','video','file']),handle:z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/).max(256),name:z.string().min(1).max(512)}).strict();
+const serviceOutputHandleSchema=z.string().trim().min(1).max(256).refine(value=>!/[\\/\x00-\x1f]/.test(value)&&value!=='.'&&value!=='..'&&!path.isAbsolute(value)&&!path.win32.isAbsolute(value),'output handle must be one safe job-local filename');
+export const serviceOutputSchema=z.object({kind:z.enum(['image','audio','video','file']),handle:serviceOutputHandleSchema,name:z.string().min(1).max(512)}).strict();
 export const serviceResultSchema=z.object({text:z.string().max(64*1024).optional(),outputs:z.array(serviceOutputSchema).max(100).default([]).readonly(),observations:z.unknown().optional()}).strict();
 export type ServiceResult=z.infer<typeof serviceResultSchema>;
 

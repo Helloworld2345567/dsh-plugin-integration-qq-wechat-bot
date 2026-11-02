@@ -5,12 +5,13 @@ import {allowedNow,mediaConfigNow} from '../core/policy.js';
 import {assertSingingSession,singingCandidates,saveSingingCandidates,publicSingingCandidates,singingRequestKey,type SingingCandidate,type SingingAttempt,type SingingTurn} from '../core/singing-state.js';
 import {acquireMusicSource,musicAuthorization} from './music-tool.js';
 import {publicMusicTrack} from '../core/music-state.js';
+import {ServiceContractError} from '../core/service-errors.js';
 
 export interface SingingContext {binding:SessionBinding;snapshot:TurnSnapshot;singing:SingingTurn;assets:Output[]}
 interface Dependencies {store:Store;assets:Assets;media:MediaService;current:()=>BotConfig;bot:()=>BotInstance;authorizeMusic?:()=>void;music?:SingingAttempt['music']}
 function text(value:unknown,max=300):string|undefined {return typeof value==='string'&&value.trim()&&value.length<=max?value.trim():undefined;}
 function url(value:unknown):string {try{const parsed=new URL(String(value));if(parsed.protocol!=='https:'||parsed.username||parsed.password||parsed.port&&parsed.port!=='443')throw Error();return parsed.toString();}catch{throw Error('SINGING_SOURCE_INVALID');}}
-function publicError(error:unknown):string {const code=error instanceof Error?error.message:'';return /^SINGING_[A-Z_]+$/.test(code)?code:'SINGING_CONVERSION_FAILED';}
+function publicError(error:unknown):string {const code=error instanceof ServiceContractError?error.serviceError.providerCode??'':error instanceof Error?error.message:'';return /^SINGING_[A-Z_]+$/.test(code)?code:'SINGING_CONVERSION_FAILED';}
 
 export async function executeSingingTool(live:SingingContext,args:Record<string,any>,signal:AbortSignal,deps:Dependencies):Promise<string>{
   const {store,assets,media}=deps,binding=live.binding;
@@ -30,9 +31,9 @@ export async function executeSingingTool(live:SingingContext,args:Record<string,
       const files=(previous.assetIds??[]).map(id=>{const asset=store.asset(binding.key,id);if(asset.sessionId!==binding.sessionId||asset.kind!=='audio')throw Error('SINGING_OUTPUT_INVALID');if(!live.assets.some(item=>item.assetId===id))live.assets.push({type:'asset',assetId:id});return asset.name;});
       return JSON.stringify({status:'succeeded',reused:true,registeredForDelivery:true,format:previous.format,files,track:publicMusicTrack(previous.music.track),delivery:{format:previous.format,bytes:store.asset(binding.key,previous.assetIds![0]).size}});
     }
-    const options=mediaConfigNow(live.snapshot,deps.current()).media.singing;
-    if(!options?.enabled||!options.serviceUrl||!options.modelVersion||!options.singingModelId||!options.singingWeightsPath)throw Error('SINGING_CONFIGURATION_INVALID');
-    if(options.separation.status!=='configured')throw Error('SINGING_SEPARATION_UNCONFIGURED');
+    const currentConfig=mediaConfigNow(live.snapshot,deps.current()),options=currentConfig.media.singing;
+    if(currentConfig.schemaVersion===4){const selection=live.snapshot.services.singing;if(!options?.enabled||!selection?.snapshot||!['ready','partial'].includes(selection.state))throw Error('SINGING_CONFIGURATION_INVALID');}
+    else {if(!options?.enabled||!options.serviceUrl||!options.modelVersion||!options.singingModelId||!options.singingWeightsPath)throw Error('SINGING_CONFIGURATION_INVALID');if(options.separation.status!=='configured')throw Error('SINGING_SEPARATION_UNCONFIGURED');}
     const authorizeMusic=musicAuthorization(live,signal,deps);authorizeMusic();
     const acquired=await acquireMusicSource(live,args.candidateSet!==undefined||args.candidate!==undefined?{candidateSet:args.candidateSet,candidate:args.candidate}:{song:args.song,artist:args.artist},signal,deps,authorize);
     authorize();authorizeMusic();
@@ -73,7 +74,8 @@ export async function executeSingingTool(live:SingingContext,args:Record<string,
   if(!candidate)throw Error('SINGING_CANDIDATE_INVALID');
   const candidateUrl=candidate.url?url(candidate.url):undefined;
   const config=mediaConfigNow(live.snapshot,deps.current()),format=args.format??config.media.singing?.defaultOutput??'mp3';
-  if(args.sourceType==='mixed'&&config.media.singing?.separation.status!=='configured')throw Error('SINGING_SEPARATION_UNCONFIGURED');
+  if(config.schemaVersion===3&&args.sourceType==='mixed'&&config.media.singing?.separation.status!=='configured')throw Error('SINGING_SEPARATION_UNCONFIGURED');
+  if(config.schemaVersion===4&&(!live.snapshot.services.singing?.snapshot||!['ready','partial'].includes(live.snapshot.services.singing.state)))throw Error('SINGING_CONFIGURATION_INVALID');
   if(args.sourceType!=='vocals'&&args.sourceType!=='mixed')throw Error('SINGING_SOURCE_TYPE_REQUIRED');
   if(!['wav','mp3'].includes(format))throw Error('SINGING_FORMAT_INVALID');
   if(candidateUrl&&!allowedNow('web_fetch',live.snapshot,deps.current(),deps.bot(),binding.scope))throw Error('SINGING_NETWORK_DISABLED');

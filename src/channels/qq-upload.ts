@@ -45,9 +45,11 @@ function uploadParts(prepared:any,size:number):{uploadId:string;blockSize:number
   if(typeof prepared?.upload_id!=='string'||!prepared.upload_id||!Number.isSafeInteger(blockSize)||blockSize<=0||!Array.isArray(prepared.parts))throw new Error('QQ_UPLOAD_PREPARE_INVALID');
   const parts=[...prepared.parts].sort((a,b)=>Number(a?.index)-Number(b?.index));
   if(parts.length!==Math.ceil(size/blockSize))throw new Error('QQ_UPLOAD_PARTS_INVALID');
-  for(const [index,part] of parts.entries()){
-    const expected=Math.min(blockSize,size-index*blockSize);
-    if(part?.index!==index||Number(part.block_size)!==expected||typeof part.presigned_url!=='string')throw new Error('QQ_UPLOAD_PARTS_INVALID');
+  const firstIndex=parts[0]?.index;
+  if(firstIndex!==0&&firstIndex!==1)throw new Error('QQ_UPLOAD_PARTS_INVALID');
+  for(const [ordinal,part] of parts.entries()){
+    const expected=Math.min(blockSize,size-ordinal*blockSize);
+    if(part?.index!==ordinal+firstIndex||Number(part.block_size)!==expected||typeof part.presigned_url!=='string')throw new Error('QQ_UPLOAD_PARTS_INVALID');
     assertRemoteUrl(part.presigned_url);
   }
   return{uploadId:prepared.upload_id,blockSize,parts};
@@ -79,22 +81,30 @@ export async function uploadQQAsset(options:{baseUrl:string;token:string;asset:A
       signal.throwIfAborted();const result=await request(`${baseUrl}/${endpoint}`,{method:'POST',headers,body:JSON.stringify(body),signal},REQUEST_TIMEOUT);
       signal.throwIfAborted();assertQQResponse(result,token);return result;
     };
-    let result:any;
-    if(size<=QQ_MEDIA_LIMITS.directUploadBytes){
-      const bytes=await readBlock(file,0,size,signal);
-      result=await post('files',{file_type:fileType,file_name:fileName,file_data:bytes.toString('base64'),srv_send_msg:false});
-    }else{
-      const digest=await hashes(file,size,signal);
-      const prepared=await post('upload_prepare',{file_type:fileType,file_size:String(size),file_name:fileName,...digest});
-      const {uploadId,blockSize,parts}=uploadParts(prepared,size);
-      // One in-flight part stays within the server's concurrency allowance and
-      // limits memory to one block. DeliveryWorker owns bounded safe retries.
-      for(const part of parts){
-        const bytes=await readBlock(file,part.index*blockSize,Number(part.block_size),signal);
-        await putPart(part.presigned_url,bytes,signal,fetcher);
-        await post('upload_part_finish',{upload_id:uploadId,part_index:part.index,block_size:String(bytes.length),md5:createHash('md5').update(bytes).digest('hex')});
+    let digest:Awaited<ReturnType<typeof hashes>>|undefined;
+    const uploadAs=async(type:number):Promise<any>=>{
+      if(size<=QQ_MEDIA_LIMITS.directUploadBytes){
+        const bytes=await readBlock(file,0,size,signal);
+        return post('files',{file_type:type,file_name:fileName,file_data:bytes.toString('base64'),srv_send_msg:false});
+      }else{
+        digest??=await hashes(file,size,signal);
+        const prepared=await post('upload_prepare',{file_type:type,file_size:String(size),file_name:fileName,...digest});
+        const {uploadId,blockSize,parts}=uploadParts(prepared,size);
+        // One in-flight part stays within the server's concurrency allowance and
+        // limits memory to one block. DeliveryWorker owns bounded safe retries.
+        for(const [ordinal,part] of parts.entries()){
+          const bytes=await readBlock(file,ordinal*blockSize,Number(part.block_size),signal);
+          await putPart(part.presigned_url,bytes,signal,fetcher);
+          await post('upload_part_finish',{upload_id:uploadId,part_index:part.index,block_size:String(bytes.length),md5:createHash('md5').update(bytes).digest('hex')});
+        }
+        return post('files',{file_type:type,file_name:fileName,upload_id:uploadId,srv_send_msg:false});
       }
-      result=await post('files',{file_type:fileType,file_name:fileName,upload_id:uploadId,srv_send_msg:false});
+    };
+    let result:any;
+    try{result=await uploadAs(fileType);}catch(error){
+      // QQ rejects full songs as voice messages; preserve them as complete files.
+      if(fileType!==3||!(error instanceof RemoteError)||error.platformCode!=='40093013')throw error;
+      result=await uploadAs(4);
     }
     if(typeof result?.file_info!=='string'||!result.file_info)throw new Error('QQ_UPLOAD_FAILED');
     const ttl=Number(result.ttl);
