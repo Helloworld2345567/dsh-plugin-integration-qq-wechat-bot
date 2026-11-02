@@ -5,14 +5,14 @@ import path from 'node:path';
 import {Store,scopeKey} from '../src/core/store.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {BotRuntime,type HarnessPort} from '../src/core/runtime.js';
-import {botSchema,type CallerScope,type InboundMessage,type ChannelAdapter} from '../src/core/types.js';
+import {botSchema,configSchema,type CallerScope,type InboundMessage,type ChannelAdapter} from '../src/core/types.js';
 import {saveSingingCandidates,hasPendingSingingUpload,singingCandidates} from '../src/core/singing-state.js';
 import {fixtureChannels} from './test-channel.js';
 
 const scope:CallerScope={botId:'bot',platform:'weixin',accountId:'account',kind:'private',channelId:'owner',senderId:'owner'};
 async function fixture(t:any){
   const directory=await mkdtemp(path.resolve('.codex/singing-runtime-'));const store=new Store(directory),assets=new Assets(store);
-  const config=store.config('sakura');store.saveConfig({...config,tools:[...config.tools,'bot_sing'],skills:[...config.skills,'singing-conversion'],media:{singing:{enabled:true,protocol:'rvc_http_v1',serviceUrl:'http://127.0.0.1:9881',modelVersion:'v2',singingModelId:'voice',singingWeightsPath:'/models/voice.pth',speakerId:0,pitchShift:0,indexRate:0,defaultOutput:'mp3',separation:{status:'unconfigured'}}}},config.revision);
+  const current=store.config('sakura'),config=configSchema.parse({...current,schemaVersion:3,tools:[...current.tools,'bot_sing'],skills:[...current.skills,'singing-conversion'],media:{singing:{enabled:true,protocol:'rvc_http_v1',serviceUrl:'http://127.0.0.1:9881',modelVersion:'v2',singingModelId:'voice',singingWeightsPath:'/models/voice.pth',speakerId:0,pitchShift:0,indexRate:0,defaultOutput:'mp3',separation:{status:'unconfigured'}}}});store.put('config','sakura',config);store.put('config-version',`sakura:${config.revision}`,config);
   store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'weixin',accountId:'account',configId:'sakura',enabled:true}));
   const binding=store.binding(scope),calls:string[]=[],seen:InboundMessage[]=[];
   const harness:HarnessPort={run:async(_b,m,_s,o)=>{seen.push(...m);return{turnId:'turn',outputs:[{type:'text',text:'收到'}],snapshot:o!.snapshot!};},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async()=>{},inspectSession:async()=>{}};

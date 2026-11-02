@@ -46,7 +46,7 @@ test('bot_sing requires current and frozen skill, tool and STS permissions',()=>
 test('STS administration keeps protocol and real-model acceptance separate and revision-bound',async t=>{
   const home=await mkdtemp(path.resolve('.codex/singing-config-'));const store=new Store(home);const admin=new Admin({} as any,{store} as any,'token',async()=>{});
   const previousFetch=globalThis.fetch;t.after(async()=>{globalThis.fetch=previousFetch;store.close();await rm(home,{recursive:true,force:true});});
-  const config=store.saveConfig(persona());let status:any=(await admin.invoke('skill.singing.status',{}) as any).singer;
+  const config=persona();store.put('config',config.id,config);store.put('config-version',`${config.id}:${config.revision}`,config);let status:any=(await admin.invoke('skill.singing.status',{}) as any).singer;
   assert.equal(status.configured,true);assert.equal(status.protocolValidation.status,'NOT_RUN');assert.equal(status.conversionValidation.status,'NOT_RUN');
   assert.equal(status.separation.protocol,'rvc_separate_cli');assert.equal(status.separation.modelComplete,false);assert.equal(status.separation.status,'unconfigured');
   assert.doesNotMatch(JSON.stringify(status),/rvc\.invalid|voice\.pth|serviceUrl|WeightsPath/);
@@ -58,8 +58,8 @@ test('STS administration keeps protocol and real-model acceptance separate and r
   const next=store.saveConfig({...config,name:'Changed'},config.revision);status=(await admin.invoke('skill.singing.status',{}) as any).singer;
   assert.equal(status.protocolValidation.status,'NOT_RUN');assert.equal(status.conversionValidation.status,'NOT_RUN');
   await assert.rejects(admin.invoke('capability.record',{configId:config.id,revision:config.revision,role:'singing',status:'PASS',evidence:'Old evidence'}),/配置已变化/);
-  globalThis.fetch=async()=>{throw Error('private service path');};await admin.invoke('skill.singing.probe',{configId:config.id,revision:next.revision});
-  status=(await admin.invoke('skill.singing.status',{}) as any).singer;assert.equal(status.protocolValidation.status,'FAIL');assert.doesNotMatch(JSON.stringify(status),/private service/);
+  globalThis.fetch=async()=>{throw Error('private service path');};await assert.rejects(admin.invoke('skill.singing.probe',{configId:config.id,revision:next.revision}),/已登记 Profile/);
+  status=(await admin.invoke('skill.singing.status',{}) as any).singer;assert.equal(status.state,'missing');assert.equal(status.protocolValidation.status,'NOT_RUN');assert.doesNotMatch(JSON.stringify(status),/private service|rvc\.invalid|voice\.pth/);
 });
 
 test('STS card supports disabled drafts and enabling supplies dedicated permissions',async()=>{

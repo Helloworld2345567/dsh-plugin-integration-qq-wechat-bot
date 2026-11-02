@@ -1,6 +1,8 @@
 import type {Store} from './store.js';
 import type {Credentials} from './runtime-ports.js';
-import type {Delivery} from './types.js';
+import type {BotConfig,Delivery,TurnSnapshot} from './types.js';
+import type {ProfileStore} from './profile-store.js';
+import {permissionsRevoked} from './policy.js';
 import type {ChannelRegistry} from './channel-registry.js';
 import {errorCauseCode,errorCauseMessage,RemoteError,sanitizeRemoteMessage} from './network.js';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -61,7 +63,7 @@ export class DurableDeliveryWorker implements DeliveryWorker {
   private readonly outbound=new Map<string,{botId:string;scopeKey:string;runId?:string;controller:AbortController}>();
   private readonly progressRuns=new Map<string,()=>boolean>();
   private closed=false;
-  constructor(readonly store:Store,readonly channels:ChannelRegistry,readonly credentials:Credentials,readonly wait:(milliseconds:number,signal:AbortSignal)=>Promise<void>=async(milliseconds,signal)=>{await delay(milliseconds,undefined,{signal});}){}
+  constructor(readonly store:Store,readonly channels:ChannelRegistry,readonly credentials:Credentials,readonly wait:(milliseconds:number,signal:AbortSignal)=>Promise<void>=async(milliseconds,signal)=>{await delay(milliseconds,undefined,{signal});},readonly profiles?:ProfileStore){}
   async flush(filter?:{botId?:string}):Promise<void>{
     if(this.closed)return;
     const ids=filter?.botId?[filter.botId]:this.store.deliveryRepository().pendingBotIds();
@@ -85,6 +87,12 @@ export class DurableDeliveryWorker implements DeliveryWorker {
     const progress=delivery.progress,binding=this.store.findBinding(delivery.scopeKey);
     return !!progress&&progress.expiresAt>Date.now()&&binding?.sessionId===delivery.sessionId&&binding.generation===progress.generation&&this.progressRuns.get(progress.runId)?.()===true;
   }
+  private contextActive(delivery:Delivery):boolean {
+    const binding=this.store.findBinding(delivery.scopeKey);if(!binding||binding.sessionId!==delivery.sessionId||delivery.sessionGeneration!==undefined&&binding.generation!==delivery.sessionGeneration)return false;
+    if(delivery.turnContext){const frozen=this.store.get<BotConfig>('config-version',`${delivery.turnContext.personaId}:${delivery.turnContext.personaRevision}`);let current:BotConfig|undefined;try{current=this.store.effectiveConfig(binding);}catch{}if(!frozen||!current||permissionsRevoked({config:frozen,personaId:delivery.turnContext.personaId,personaRevision:delivery.turnContext.personaRevision,services:{},botId:delivery.botId,trusted:delivery.turnContext.trusted,sourceIds:[delivery.sourceId],startedAt:delivery.createdAt??0} satisfies TurnSnapshot,current,this.store.bot(delivery.botId),binding.scope,this.profiles))return false;}
+    const snapshots=[...(delivery.turnContext?.serviceSnapshots??[])];if(delivery.output.type==='asset'){const asset=this.store.asset(delivery.scopeKey,delivery.output.assetId!);if(asset.serviceSnapshot&&!snapshots.some(item=>item.serviceId===asset.serviceSnapshot!.serviceId&&item.profileId===asset.serviceSnapshot!.profileId&&item.profileRevision===asset.serviceSnapshot!.profileRevision&&item.profileContentHash===asset.serviceSnapshot!.profileContentHash))snapshots.push(asset.serviceSnapshot);}
+    return !this.profiles||snapshots.every(snapshot=>['ready','partial'].includes(this.profiles!.snapshotStatus(snapshot).state));
+  }
   activity():DeliveryWorkerActivity{return{activeLanes:this.lanes.size,inFlight:this.outbound.size};}
   private startLane(botId:string):Promise<void>{const active=this.lanes.get(botId);if(active)return active;const task=this.flushBot(botId).finally(()=>{if(this.lanes.get(botId)===task)this.lanes.delete(botId);});this.lanes.set(botId,task);return task;}
   private async flushBot(botId:string):Promise<void>{
@@ -99,15 +107,15 @@ export class DurableDeliveryWorker implements DeliveryWorker {
         const progressTimer=delivery.purpose==='progress'?setTimeout(()=>controller.abort(new Error('PROGRESS_SEND_TIMEOUT')),Math.min(PROGRESS_SEND_MS,delivery.progress!.expiresAt-Date.now())):undefined;
         this.outbound.set(delivery.id,{botId,scopeKey:delivery.scopeKey,runId:delivery.progress?.runId,controller});
         try{
-          const bot=this.store.bot(delivery.botId);if(!bot.enabled||bot.archived)return;
-          const binding=this.store.findBinding(delivery.scopeKey);if(!binding||binding.sessionId!==delivery.sessionId){this.store.deliveryState(delivery,'cancelled');continue;}
+          const bot=this.store.bot(delivery.botId);if(!bot.enabled||bot.archived){for(const item of batch){const pending=repository.find(item.id,'pending');if(pending)this.store.deliveryState(pending,'cancelled');}return;}
+          if(!this.contextActive(delivery)){this.store.deliveryState(delivery,'cancelled');continue;}
           const credentialRead=this.credentials.read(bot.id);
           const rawCredential=await (delivery.purpose==='progress'?abortable(credentialRead,controller.signal):credentialRead);if(!rawCredential)return;
           const definition=this.channels.require(bot.channel);const normalized=definition.normalizeCredential?.(rawCredential);const credential=normalized?.credential as any??rawCredential;
           if((normalized?.accountId??credential.accountId)!==bot.accountId)throw Error('CHANNEL_CREDENTIAL_ACCOUNT_MISMATCH');
           if(this.closed||!repository.find(delivery.id,'pending'))continue;
-          const currentBot=this.store.bot(delivery.botId);if(!currentBot.enabled||currentBot.archived)return;
-          if(this.store.findBinding(delivery.scopeKey)?.sessionId!==delivery.sessionId){this.store.deliveryState(delivery,'cancelled');continue;}
+          const currentBot=this.store.bot(delivery.botId);if(!currentBot.enabled||currentBot.archived){this.store.deliveryState(delivery,'cancelled');for(const item of batch){const pending=repository.find(item.id,'pending');if(pending)this.store.deliveryState(pending,'cancelled');}return;}
+          if(!this.contextActive(delivery)){this.store.deliveryState(delivery,'cancelled');continue;}
           if(!this.progressActive(delivery)||controller.signal.aborted){this.store.deliveryState(delivery,'cancelled');continue;}
           const asset=delivery.output.type==='asset'?this.store.asset(delivery.scopeKey,delivery.output.assetId!):undefined;
           const envelope=definition.normalizeReply?.(delivery.replyEnvelope??delivery.reply);
@@ -122,6 +130,7 @@ export class DurableDeliveryWorker implements DeliveryWorker {
               // Each adapter request still has its own shorter network timeout.
               const sendTimeout=asset?15*60_000:90_000;
               const sendSignal=resultDelivery?AbortSignal.any([controller.signal,AbortSignal.timeout(sendTimeout)]):controller.signal;
+              if(!this.contextActive(delivery))throw Error('DELIVERY_CONTEXT_REVOKED');
               const send=definition.adapter.send(bot,credential,sending,asset,sendSignal);
               const receipt=await (resultDelivery?send:abortable(send,sendSignal));
               this.store.deliveryState(sending,'sent',receipt);if(resultDelivery){if(this.store.findTurnMetric(metricId))this.store.updateTurnMetric(metricId,{sentAt:Date.now()});this.store.updateTurnMetricsByTurn(delivery.scopeKey,delivery.turnId,{sentAt:Date.now()});}break;

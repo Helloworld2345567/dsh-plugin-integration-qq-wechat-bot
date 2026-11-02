@@ -19,7 +19,8 @@ async function fixture(t:TestContext){
   const home=await mkdtemp(path.resolve('.codex/singing-host-')),store=new Store(home,path.join(home,'personas'));
   t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
   const config=configSchema.parse({id:'singing',name:'Singing',personaPrompt:'Hello',skills:['singing-conversion'],tools:['bot_sing','web_search','web_fetch'],media:{singing}});
-  store.saveConfig(config);const bot=store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'bot',configId:config.id,enabled:true}));
+  // Upgrade fixture: exercise the read-only v3 compatibility path.
+  store.put('config',config.id,config);store.put('config-version',`${config.id}:${config.revision}`,config);const bot=store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'bot',configId:config.id,enabled:true}));
   const scope:CallerScope={botId:bot.id,platform:'qq',accountId:'bot',channelId:'alice',senderId:'alice',kind:'private'},binding=store.binding(scope);
   const assets=new Assets(store);assets.workspace=async scope=>path.join(home,'workspaces',scope);
   const snapshot=freezeTurn(config,bot,scope,['request']);const live:SingingContext={binding,snapshot,singing:{attempted:false},assets:[]};

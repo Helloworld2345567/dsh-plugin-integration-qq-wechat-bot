@@ -39,7 +39,7 @@ test('music status is read-only and environment checks do not claim real downloa
   const home=await mkdtemp(path.resolve('.codex/music-config-')),store=new Store(home);let calls=0;
   t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
   const admin=new Admin({} as any,{store,media:{musicHealth:async()=>{calls++;return{...ready,home:'private-machine-path',sources:[{id:'MiguMusicClient',available:true,path:'private-provider-path'}]};}}} as any,'token');
-  const config=store.saveConfig(persona());let status:any=(await admin.invoke('skill.music.status',{}) as any).music;
+  const config=persona();store.put('config',config.id,config);store.put('config-version',`${config.id}:${config.revision}`,config);let status:any=(await admin.invoke('skill.music.status',{}) as any).music;
   assert.equal(status.environment,null);assert.equal(calls,0);assert.equal(status.downloadValidation.status,'NOT_RUN');
   await admin.command({version:1,kind:'command',name:'skill.music.probe',input:{configId:config.id,revision:config.revision}});
   status=(await admin.invoke('skill.music.status',{}) as any).music;
@@ -55,7 +55,7 @@ test('music status is read-only and environment checks do not claim real downloa
 test('music environment failures are redacted and an edited persona cannot accept an old probe',async t=>{
   const home=await mkdtemp(path.resolve('.codex/music-config-')),store=new Store(home);t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
   let probe:()=>Promise<unknown>=async()=>{throw Error('private-machine-path with a credential');};
-  const admin=new Admin({} as any,{store,media:{musicHealth:()=>probe()}} as any,'token');const config=store.saveConfig(persona());
+  const admin=new Admin({} as any,{store,media:{musicHealth:()=>probe()}} as any,'token');const config=persona();store.put('config',config.id,config);store.put('config-version',`${config.id}:${config.revision}`,config);
   await admin.invoke('skill.music.probe',{configId:config.id,revision:config.revision});
   let status:any=(await admin.invoke('skill.music.status',{}) as any).music;
   assert.equal(status.protocolValidation.status,'FAIL');assert.equal(status.environment.error,'MUSIC_ENVIRONMENT_UNAVAILABLE');assert.doesNotMatch(JSON.stringify(status),/private-machine|credential/);

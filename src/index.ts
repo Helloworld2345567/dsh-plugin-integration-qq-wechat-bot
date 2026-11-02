@@ -21,7 +21,7 @@ import {packageRoot} from './core/paths.js';
 import {registerLifecycleRuntime,handleLifecycleShutdown,createLifecyclePort,packageIdentity} from './lifecycle/protocol.js';
 import {SessionId} from '@deepseek-ai/dsh-session';
 import {ServicePluginHost,type ServicePluginRegistration} from './core/service-plugin-host.js';
-import {ProfileStore} from './core/profile-store.js';
+import {ProfileStore,StoreProfileRepository} from './core/profile-store.js';
 import {OutputValidatorRegistry} from './core/output-validator.js';
 import {ServiceRuntime,type ApprovedServicePolicy} from './core/service-runtime.js';
 import {mediaOperationRegistry} from './core/media-operation-registry.js';
@@ -37,12 +37,12 @@ const HOST_SERVICE_POLICIES:ReadonlyMap<string,ApprovedServicePolicy>=new Map();
 export async function apply(ctx:Context,config:Config={}):Promise<void>{
   const home=config.dataDir??process.env.BOT_DATA_HOME??path.join(process.env.DSH_HOME??path.join(process.cwd(),'.runtime','bot-data'),'storages','bot-integration');
   const store=Store.open(home,undefined,{secureDefaults:true}).initialize().migrate();
-  let serviceHost:ServicePluginHost|undefined,serviceRuntime:ServiceRuntime|undefined;
+  let serviceHost:ServicePluginHost|undefined,serviceRuntime:ServiceRuntime|undefined;const profiles=new ProfileStore(new StoreProfileRepository(store));
   try{
     // Validate every fixed source and create the immutable catalog before any
     // executable operation or Harness tool is exposed.
     serviceHost=await ServicePluginHost.create(TRUSTED_SERVICE_PLUGINS,undefined,{operations:new Set(mediaOperationRegistry.ids()),tools:new Set(mediaOperationRegistry.list().map(descriptor=>descriptor.tool).filter((value):value is string=>!!value)),permissions:new Set(mediaOperationRegistry.list().map(descriptor=>descriptor.permissionTool).filter((value):value is string=>!!value))});
-    const profiles=new ProfileStore(),validators=new OutputValidatorRegistry();
+    const validators=new OutputValidatorRegistry();
     serviceRuntime=new ServiceRuntime(serviceHost,profiles,validators,HOST_SERVICE_POLICIES,new StoreServiceStateRepository(store));
     serviceRuntime.assertApprovedMediaOperations(mediaOperationRegistry);
   }catch(error){await serviceHost?.dispose().catch(()=>{});store.close();throw error;}
@@ -50,7 +50,7 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
   const credentials=createBotCredentials(ctx.credentials);
   const extensions:HarnessExtensions={};const harness=new NativeHarness(ctx,store,assets,media,extensions);serviceRuntime.registerCapabilities(harness.capabilities);let disposeMode;try{disposeMode=await harness.registerMode();}catch(error){await serviceHost.dispose().catch(()=>{});store.close();throw error;}
   const channels=createChannelRegistry([qqChannel(new QQAdapter(undefined,{emit:event=>extensions.stats?.observeGroup({botId:event.botId,groupId:event.groupId,name:event.name,event:event.type==='group.joined'?'joined':event.type==='group.left'?'left':'observed',at:event.at,eventId:event.eventId})})),weixinChannel(new WeixinAdapter(store.cursorStore()))]);
-  const runtime=new BotRuntime(store,assets,media,harness,channels,credentials,config.debounceMs);
+  const runtime=new BotRuntime(store,assets,media,harness,channels,credentials,config.debounceMs,0,profiles);
   const features=new BotFeatures(runtime,createLifecyclePort());extensions.stats=features.stats;extensions.model=(binding,snapshot,args,signal)=>features.model(binding,snapshot,args,signal);extensions.evolve=(binding,snapshot,args,signal)=>features.execute(binding,snapshot,args,signal);
   extensions.management=new BotManagement(runtime,features);
   const token=randomBytes(32).toString('base64url');const admin=new Admin(ctx,runtime,token,undefined,features);

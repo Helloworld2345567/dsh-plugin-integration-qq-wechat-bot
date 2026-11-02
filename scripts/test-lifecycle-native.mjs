@@ -26,7 +26,11 @@ await atomicJson(path.join(home,'installation.json'),{schemaVersion:1,sourceRoot
 await atomicJson(path.join(home,'evolution','native-upgrade.json'),{id:'native-upgrade',kind:'upgrade',scopeKey:'fixture',configId:'fixture',goal:'Real isolated native upgrade',phase:'queued',createdAt:Date.now(),updatedAt:Date.now(),artifact:next.artifact,previous:old.artifact,events:[]});
 await atomicJson(path.join(folder,'fixture.json'),{home,old:old.artifact,next:next.artifact,broken:broken.artifact});
 const env={};for(const [key,value] of Object.entries(process.env))if(/^(?:PATH|PATHEXT|SystemRoot|WINDIR|COMSPEC|TEMP|TMP|HOME|USERPROFILE|LOCALAPPDATA|APPDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROCESSOR_ARCHITECTURE)$/i.test(key))env[key]=value;
-Object.assign(env,{BOT_HOME:home,DSH_HOME:home,DSH_AGENTS_HOME:path.join(home,'agents'),BOT_DATA_HOME:path.join(home,'storages','bot-integration'),BOT_WORKSPACE_ROOT:path.join(folder,'workspaces'),LIFECYCLE_NATIVE_FOLDER:folder,npm_config_userconfig:path.join(home,'empty.npmrc')});await writeFile(env.npm_config_userconfig,'');
+const workspaceRoot=path.join(folder,'workspaces'),processHome=path.join(workspaceRoot,'.runtime','home');
+Object.assign(env,{BOT_HOME:home,DSH_HOME:home,DSH_AGENTS_HOME:path.join(home,'agents'),BOT_DATA_HOME:path.join(home,'storages','bot-integration'),BOT_WORKSPACE_ROOT:workspaceRoot,LIFECYCLE_NATIVE_FOLDER:folder,npm_config_store_dir:path.join(processHome,'localappdata','pnpm','store'),npm_config_userconfig:path.join(home,'empty.npmrc')});await writeFile(env.npm_config_userconfig,'');
+// The plugin manager may invoke pnpm through a sanitized subprocess environment.
+// Pin the same isolated store in the profile so install, runtime upgrade and rollback agree.
+await writeFile(path.join(profile,'pnpm-workspace.yaml'),`storeDir: ${JSON.stringify(env.npm_config_store_dir)}\n`);
 const cli=path.join(path.dirname(createRequire(import.meta.url).resolve('@deepseek-ai/dsh/package.json')),'lib','bin.js');
 const run=args=>new Promise((resolve,reject)=>{const child=spawn(process.execPath,[cli,...args],{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']});let logs='';child.stdout.on('data',data=>logs+=data);child.stderr.on('data',data=>logs+=data);child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error(logs)));});
 await run(['plugin','--profile','bots','add',path.join(root,'packages','bot-lifecycle')]);await run(['plugin','--profile','bots','add',old.artifact.path]);await run(['plugin','--profile','bots','add',observer]);

@@ -11,7 +11,7 @@ import {freezeTurn} from '../src/core/policy.js';
 async function fixture(t:TestContext){
   const home=await mkdtemp(path.resolve('.codex/delivery-tool-')),store=new Store(home,path.join(home,'personas'));
   t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
-  const config=store.saveConfig(configSchema.parse({id:'voice-test',name:'Voice',personaPrompt:'Test',tools:['bot_media','bot_voice','bot_sing','bot_music','bot_send_file'],skills:['voice-generation','singing-conversion','music-download'],media:{voice:{enabled:true,protocol:'edge_tts'},music:{enabled:true},singing:{enabled:true,serviceUrl:'http://rvc.invalid',modelVersion:'v2',singingModelId:'test',singingWeightsPath:'test.pth'}}}));
+  const config=configSchema.parse({schemaVersion:3,id:'voice-test',name:'Voice',personaPrompt:'Test',tools:['bot_media','bot_voice','bot_sing','bot_music','bot_send_file'],skills:['voice-generation','singing-conversion','music-download'],media:{voice:{enabled:true,protocol:'edge_tts'},music:{enabled:true},singing:{enabled:true,serviceUrl:'http://rvc.invalid',modelVersion:'v2',singingModelId:'test',singingWeightsPath:'test.pth'}}});store.put('config',config.id,config);store.put('config-version',`${config.id}:${config.revision}`,config);
   const bot=store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',configId:config.id,enabled:true}));
   const scope:CallerScope={botId:bot.id,platform:'qq',accountId:'fixture',kind:'private',channelId:'fixture',senderId:'fixture'};
   const binding=store.binding(scope),assets=new Assets(store);assets.workspace=async()=>path.join(home,'workspace');

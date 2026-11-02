@@ -1,6 +1,8 @@
 import { Store, scopeKey } from './store.js';
 import { Assets, MediaService } from './media.js';
 import type { BotConfig, BotInstance, InboundMessage, SessionBinding, Output, TurnSnapshot, CallerScope } from './types.js';
+import {configForWrite} from './types.js';
+import type {ProfileStore} from './profile-store.js';
 import {randomUUID} from 'node:crypto';
 import {freezeTurn,permissionsRevoked,trusted,allowedNow,permitted} from './policy.js';
 import {TaskProgress,progressFallback} from './progress.js';
@@ -59,8 +61,8 @@ export class BotRuntime {
   models(){return this.harness.models?this.harness.models():Promise.resolve([]);}
   sessionStatus(scope:CallerScope):'waiting_upgrade'|'compacting'|'running'|'idle'{const key=scopeKey(scope);return this.quiescing?'waiting_upgrade':this.maintenance.has(key)?'compacting':this.processing.has(key)||this.store.sessionActions<SessionActionRecord>().some(r=>r.scopeKey===key&&r.state==='running')?'running':'idle';}
   health():{ready:true;quiescing:boolean;activeTasks:number;pendingDeliveries:number;pendingSessionActions:number;connections:Record<string,string>;latency:{inboxToModel:{count:number;p50:number|null;p95:number|null;max:number|null};inboxToSent:{count:number;p50:number|null;p95:number|null;max:number|null}}}{return{ready:true,quiescing:this.quiescing,activeTasks:this.processing.size+this.maintenance.size+this.controls.size,pendingDeliveries:this.store.deliveries(['pending','sending']).length,pendingSessionActions:this.store.sessionActions<SessionActionRecord>().filter(r=>r.state==='queued').length,connections:Object.fromEntries(this.states),latency:{inboxToModel:this.store.metricPercentiles('modelStartedAt'),inboxToSent:this.store.metricPercentiles('sentAt')}};}
-  constructor(readonly store:Store,readonly assets:Assets,readonly media:MediaService,readonly harness:HarnessPort,readonly channels:ChannelRegistry,readonly credentials:Credentials,readonly debounceMs=2000,readonly turnTimeoutMs=0){
-    this.connectionSupervisor=new DurableConnectionSupervisor(store,this.channels,credentials,this.states,message=>this.receive(message));this.deliveryWorker=new DurableDeliveryWorker(store,this.channels,credentials);this.commandBus=new CommandBus(this);this.automation=new AutomationScheduler(store,{runPrompt:(binding,prompt,kind,signal)=>this.runAutomationPrompt(binding,prompt,kind,signal),flush:()=>this.flushDeliveries(),available:key=>!this.closed&&!this.quiescing&&!this.busy(key)&&!this.controls.has(key)&&!this.store.messages(key).length});this.commandServices.automation={proactive:(binding,action,args)=>this.automationCommand(binding,action,args),schedule:(binding,action,args)=>this.scheduleCommand(binding,action,args)};
+  constructor(readonly store:Store,readonly assets:Assets,readonly media:MediaService,readonly harness:HarnessPort,readonly channels:ChannelRegistry,readonly credentials:Credentials,readonly debounceMs=2000,readonly turnTimeoutMs=0,readonly profiles?:ProfileStore){
+    this.connectionSupervisor=new DurableConnectionSupervisor(store,this.channels,credentials,this.states,message=>this.receive(message));this.deliveryWorker=new DurableDeliveryWorker(store,this.channels,credentials,undefined,this.profiles);this.commandBus=new CommandBus(this);this.automation=new AutomationScheduler(store,{runPrompt:(binding,prompt,kind,signal)=>this.runAutomationPrompt(binding,prompt,kind,signal),flush:()=>this.flushDeliveries(),available:key=>!this.closed&&!this.quiescing&&!this.busy(key)&&!this.controls.has(key)&&!this.store.messages(key).length});this.commandServices.automation={proactive:(binding,action,args)=>this.automationCommand(binding,action,args),schedule:(binding,action,args)=>this.scheduleCommand(binding,action,args)};
   }
   async initialize():Promise<void>{
     this.store.claimRuntime(this.owner);this.claimed=true;this.store.recover();
@@ -72,7 +74,7 @@ export class BotRuntime {
     if(!this.quiescing)this.automation.start();
   }
   async saveConfig(input:unknown,expectedRevision?:number):Promise<BotConfig>{
-    const {configSchema}=await import('./types.js');const parsed=configSchema.parse(input);if(!parsed.archived)await this.harness.validateModel(parsed);
+    const parsed=configForWrite(input);if(!parsed.archived)await this.harness.validateModel(parsed);
     const saved=this.store.saveConfig(parsed,expectedRevision);this.recheckPermissions();return saved;
   }
   async applyPersonaFiles(id:string):Promise<BotConfig>{
@@ -85,7 +87,7 @@ export class BotRuntime {
   private recheckPermissions():void{
     this.harness.recheckPermissions?.();
     // A changed policy cancels in-flight work; new privileges still wait for the next frozen turn.
-    for(const [key,task] of this.processing){const binding=this.store.findBinding(key);if(!binding)continue;const before=this.store.findTurnSnapshot(task.sessionId);if(!before)continue;const bot=this.store.bot(binding.scope.botId);let current:BotConfig|undefined;try{current=this.effectiveConfig(binding);}catch{}if(!current||permissionsRevoked(before,current,bot,binding.scope)){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}}
+    for(const [key,task] of this.processing){const binding=this.store.findBinding(key);if(!binding)continue;const before=this.store.findTurnSnapshot(task.sessionId);if(!before)continue;const bot=this.store.bot(binding.scope.botId);let current:BotConfig|undefined;try{current=this.effectiveConfig(binding);}catch{}if(!current||permissionsRevoked(before,current,bot,binding.scope,this.profiles)){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}}
     for(const [key,task] of this.maintenance){const binding=this.store.findBinding(key);if(!binding)continue;const bot=this.store.bot(binding.scope.botId);if(!bot.enabled||bot.archived){task.controller.abort();this.harness.cancel(task.sessionId);}}
   }
   async start(botId:string):Promise<void>{await this.connectionSupervisor.start(botId);}
@@ -313,12 +315,12 @@ export class BotRuntime {
       try{
       let stage:ProcessingFailure['stage']='attachments';
       try{
-        const snapshot=freezeTurn(this.effectiveConfig(binding),bot,binding.scope,messages.map(m=>m.id));
+        const snapshot=freezeTurn(this.effectiveConfig(binding),bot,binding.scope,messages.map(m=>m.id),this.profiles);
         this.store.saveTurnSnapshot(binding.sessionId,snapshot);
         const config=snapshot.config as BotConfig;
         const active=()=>{
           const current=this.store.findBinding(key);
-          return !this.closed&&!signal.aborted&&this.processing.get(key)?.controller===controller&&current?.sessionId===binding.sessionId&&current.generation===binding.generation&&!permissionsRevoked(snapshot,this.effectiveConfig(current),this.store.bot(bot.id),binding.scope);
+          return !this.closed&&!signal.aborted&&this.processing.get(key)?.controller===controller&&current?.sessionId===binding.sessionId&&current.generation===binding.generation&&!permissionsRevoked(snapshot,this.effectiveConfig(current),this.store.bot(bot.id),binding.scope,this.profiles);
         };
         signal.throwIfAborted();
         if(binding.scope.kind==='private'){
@@ -328,7 +330,7 @@ export class BotRuntime {
               if(!active())return;
               for(const delivery of this.store.deliveries(['pending']))if(delivery.purpose==='progress'&&delivery.progress?.runId===runId)this.store.deliveryState(delivery,'cancelled');
               const source=pending.at(-1)!;
-              this.store.enqueue(binding,source.id,`progress:${runId}:${sequence}`,[{type:'text',text}],source.reply,this.replyEnvelope(source),{runId,generation:binding.generation,expiresAt});
+              this.store.enqueue(binding,source.id,`progress:${runId}:${sequence}`,[{type:'text',text}],source.reply,this.replyEnvelope(source),{runId,generation:binding.generation,expiresAt},snapshot);
               await this.deliveryWorker.flush({botId:bot.id});
             },
             cancel:runId=>this.deliveryWorker.cancelProgress(runId),
@@ -370,7 +372,7 @@ export class BotRuntime {
         stage='delivery';const prepared=await this.prepareReplyOutputs(binding,result,signal,()=>progress?.update('media'));progress?.stop();
         const outputs:Output[]=[];for(const output of prepared){if(output.type==='text'&&output.text){for(let index=0;index<output.text.length;index+=1800)outputs.push({type:'text',text:output.text.slice(index,index+1800)});}else if(output.type==='asset'){this.store.asset(key,output.assetId!);outputs.push(output);}}
         if(!outputs.length)throw new Error('NO_DELIVERABLE_OUTPUT');
-        this.store.updateTurnMetrics(key,messages.map(m=>m.id),{turnId:result.turnId,deliveryStartedAt:Date.now()});this.store.transaction(()=>{this.store.enqueue(binding,pending.at(-1)!.id,result.turnId,outputs,pending.at(-1)!.reply,this.replyEnvelope(pending.at(-1)!));this.store.mark(key,messages.map(m=>m.id),'complete');});
+        this.store.updateTurnMetrics(key,messages.map(m=>m.id),{turnId:result.turnId,deliveryStartedAt:Date.now()});this.store.transaction(()=>{this.store.enqueue(binding,pending.at(-1)!.id,result.turnId,outputs,pending.at(-1)!.reply,this.replyEnvelope(pending.at(-1)!),undefined,snapshot);this.store.mark(key,messages.map(m=>m.id),'complete');});
       }catch(error){
         progress?.stop();
         const timedOut=deadline.aborted&&!controller.signal.aborted;const state=timedOut?'failed':controller.signal.aborted||signal.aborted||error instanceof ReplyContextChangedError?'cancelled':'failed';const at=Date.now();
@@ -394,13 +396,14 @@ export class BotRuntime {
     const current=this.store.findBinding(binding.key);
     if(this.closed||!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation)throw new ReplyContextChangedError();
     try{
-      if(permissionsRevoked(snapshot,this.effectiveConfig(current),this.store.bot(binding.scope.botId),binding.scope))throw new ReplyContextChangedError();
+      if(permissionsRevoked(snapshot,this.effectiveConfig(current),this.store.bot(binding.scope.botId),binding.scope,this.profiles))throw new ReplyContextChangedError();
     }catch{throw new ReplyContextChangedError();}
   }
   private async prepareReplyOutputs(binding:SessionBinding,result:HarnessResult,signal:AbortSignal,onVoice?:()=>void):Promise<Output[]> {
     const snapshot=result.snapshot,config=snapshot.config as BotConfig;
     this.assertReplyContext(binding,snapshot,signal);
     if(config.media.voice?.replyMode!=='auto'||!analysisEnabled(config,'tts')||result.voiceAttempted||result.singingAttempted)return result.outputs;
+    if(config.schemaVersion===4&&config.media.voice?.protocol!=='edge_tts'&&!snapshot.services.voice?.snapshot)return replyNotice(result.outputs,'本次语音 Profile 未就绪，已用文字回复。');
     const text=spokenReplyText(result.outputs);if(!text)return result.outputs;
     const authorize=()=>{
       this.assertReplyContext(binding,snapshot,signal);
@@ -420,7 +423,7 @@ export class BotRuntime {
       return replyNotice(result.outputs,'本次语音生成失败，已用文字回复。');
     }
   }
-  private async runAutomationPrompt(binding:SessionBinding,prompt:string,kind:AutomationKind,signal:AbortSignal):Promise<{turnId:string;outputs:Output[]}>{
+  private async runAutomationPrompt(binding:SessionBinding,prompt:string,kind:AutomationKind,signal:AbortSignal):Promise<{turnId:string;outputs:Output[];snapshot:TurnSnapshot}>{
     const key=binding.key;
     if(this.closed||this.quiescing||this.busy(key)||this.controls.has(key))throw Error('AUTOMATION_BUSY');
     this.assertTrusted(binding);
@@ -431,16 +434,16 @@ export class BotRuntime {
     const runSignal=AbortSignal.any([signal,controller.signal,deadline]);
     let config=this.effectiveConfig(binding);
     if(kind==='proactive'&&!this.automation.listProactive().find(item=>item.scopeKey===key)?.allowWeb)config={...config,tools:config.tools.filter(name=>!['web_search','web_fetch','bot_read_social'].includes(name))};
-    const snapshot=freezeTurn(config,this.store.bot(binding.scope.botId),binding.scope,[sourceId]);
+    const snapshot=freezeTurn(config,this.store.bot(binding.scope.botId),binding.scope,[sourceId],this.profiles);
     this.store.saveTurnSnapshot(binding.sessionId,snapshot);
     const synthetic:InboundMessage={id:sourceId,scope:binding.scope,text:prompt,attachments:[],reply:latest.reply,replyEnvelope:latest.replyEnvelope,timestamp:Date.now()};
-    let answer:{turnId:string;outputs:Output[]}|undefined;
+    let answer:{turnId:string;outputs:Output[];snapshot:TurnSnapshot}|undefined;
     const done=Promise.resolve().then(async()=>{
       runSignal.throwIfAborted();
       const result=await this.harness.run(binding,[synthetic],runSignal,{snapshot});
       runSignal.throwIfAborted();const current=this.store.findBinding(key);
-      if(!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation||permissionsRevoked(snapshot,this.effectiveConfig(current),this.store.bot(binding.scope.botId),binding.scope))throw Error('AUTOMATION_CONTEXT_CHANGED');
-      answer={turnId:result.turnId,outputs:await this.prepareReplyOutputs(binding,result,runSignal)};
+      if(!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation||permissionsRevoked(snapshot,this.effectiveConfig(current),this.store.bot(binding.scope.botId),binding.scope,this.profiles))throw Error('AUTOMATION_CONTEXT_CHANGED');
+      answer={turnId:result.turnId,outputs:await this.prepareReplyOutputs(binding,result,runSignal),snapshot};
     }).finally(()=>{this.processing.delete(key);this.resumeSessionActions(key);if(this.store.messages(key).length)this.schedule(key);});
     this.processing.set(key,{controller,sessionId:binding.sessionId,sourceIds:[],done});
     await done;return answer!;

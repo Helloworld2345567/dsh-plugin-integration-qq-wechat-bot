@@ -82,7 +82,8 @@ export type ServicePluginManifest=z.infer<typeof servicePluginManifestSchema>;
 
 export const serviceProfileRefSchema=z.object({serviceId:serviceIdSchema,profileId:profileIdSchema}).strict();
 export type ServiceProfileRef=z.infer<typeof serviceProfileRefSchema>;
-export const profileStateSchema=z.enum(['ready','partial','blocked','missing','disabled']);
+export const profileStateSchema=z.enum(['ready','partial','blocked','missing','disabled','revoked']);
+export type ProfileState=z.infer<typeof profileStateSchema>;
 export const serviceProfileRevisionSchema=z.object({
   serviceId:serviceIdSchema,
   profileId:profileIdSchema,

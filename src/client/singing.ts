@@ -1,20 +1,28 @@
 import type {createUI} from './ui.js';
 
 export function singingCard(h:any,ui:ReturnType<typeof createUI>,config:any,dirty:boolean,status:any,update:(patch:any)=>void,mutate:(action:string,input:any,message?:string)=>Promise<any>,ask:(title:string,value?:string)=>Promise<string|null>){
-  const options=config.media.singing??{};
+  const options=config.media.singing??{},v4=config.schemaVersion===4;
   const separation={enabled:false,modelId:'',modelPath:'',instrumentalMix:false,volume:1,...(options.separation??{})};
-  const set=(patch:any)=>update({media:{...config.media,singing:{enabled:false,protocol:'rvc_http_v1',modelVersion:'v2',speakerId:0,pitchShift:0,defaultOutput:'mp3',separation:{enabled:false,modelId:'',modelPath:'',instrumentalMix:false,volume:1},...options,...patch}}});
+  const defaults=v4?{enabled:false,speakerId:0,pitchShift:0,indexRate:0,defaultOutput:'mp3',separation:{enabled:false,instrumentalMix:false,volume:1,status:'unconfigured'}}:{enabled:false,protocol:'rvc_http_v1',modelVersion:'v2',speakerId:0,pitchShift:0,defaultOutput:'mp3',separation:{enabled:false,modelId:'',modelPath:'',instrumentalMix:false,volume:1}};
+  const set=(patch:any)=>update({media:{...config.media,singing:{...defaults,...options,...patch}}});
   const current=!dirty&&status?.revision===config.revision;
+  const setProfile=(value:string)=>{const [serviceId,profileId]=value.split('/',2);set({profileRef:serviceId&&profileId?{serviceId,profileId}:undefined});};
   const label=(value?:string)=>({PASS:'已通过',FAIL:'失败',BLOCKED:'受阻',NOT_RUN:'尚未验收'} as Record<string,string>)[value??'NOT_RUN']??'尚未验收';
   const record=async(passed:boolean)=>{const evidence=await ask(passed?'填写真实转换及试听验收依据':'填写实际转换失败的现象');if(evidence?.trim())await mutate('capability.record',{configId:config.id,revision:config.revision,role:'singing',status:passed?'PASS':'FAIL',evidence:evidence.trim()},'已记录当前配置版本的验收结果');};
   return h('section',{key:'singing',className:'item'},ui.toggle('音色转换 STS',options.enabled===true,()=>{
     if(options.enabled)set({enabled:false});
-    else update({media:{...config.media,singing:{protocol:'rvc_http_v1',modelVersion:'v2',speakerId:0,pitchShift:0,defaultOutput:'mp3',separation:{enabled:false,modelId:'',modelPath:'',instrumentalMix:false,volume:1},...options,enabled:true}},tools:[...new Set([...config.tools,'bot_sing'])],skills:[...new Set([...config.skills,'singing-conversion'])]});
-  }),h('p',{className:'muted'},dirty?'未保存，保存后检查配置':!current?'状态未加载':`${options.enabled?'已开启':'已关闭'} · ${status.configured?'配置完整':'待配置'}`),
+    else update({media:{...config.media,singing:{...defaults,...options,enabled:true}},tools:[...new Set([...config.tools,'bot_sing'])],skills:[...new Set([...config.skills,'singing-conversion'])]});
+  }),h('p',{className:'muted'},dirty?'未保存，保存后检查配置':!current?'状态未加载':v4?`${options.enabled?'已开启':'已关闭'} · Profile ${options.profileRef?`${options.profileRef.serviceId}/${options.profileRef.profileId}`:'未选择'} · ${status.state??'missing'}`:`${options.enabled?'已开启':'已关闭'} · ${status.configured?'配置完整':'待配置'}`),
     h('p',{className:'muted'},`协议验证：${current?label(status.protocolValidation?.status):'待保存或刷新'} · 真实音色转换：${current?label(status.conversionValidation?.status):'待保存或刷新'}`),
     h('p',{className:'muted'},separation.enabled?`人声分离：${separation.modelId&&separation.modelPath?'模型已配置':'模型待配置'} · 协议 rvc_separate_cli · ${separation.instrumentalMix?'输出伴奏混音':'仅输出转换人声'}`:'人声分离未启用，混音输入仍会阻断，请提供纯人声音频。'),
     current&&options.enabled&&!status.permitted?h('p',{className:'error'},'请在工具配置中允许 bot_sing 和 singing-conversion。'):null,
-    ui.details('配置',
+    v4?ui.details('Profile',
+      ui.field('Profile 引用',options.profileRef?`${options.profileRef.serviceId}/${options.profileRef.profileId}`:'',setProfile,'text',{placeholder:'rvc/default'}),
+      ui.field('说话人编号',String(options.speakerId??0),value=>set({speakerId:Number(value)}),'number',{min:0,max:65535,step:1}),
+      ui.field('音高调整（半音）',String(options.pitchShift??0),value=>set({pitchShift:Number(value)}),'number',{min:-24,max:24,step:1}),
+      ui.select('转换输出',options.defaultOutput??'mp3',[{id:'mp3',name:'MP3 · 192 kbps'},{id:'wav',name:'WAV'}],value=>set({defaultOutput:value})),
+      h('small',null,'Profile 缺失、禁用、撤销或受阻时不会自动回退；服务配置和模型路径不保存在人格中。')
+    ):ui.details('配置',
       ui.field('RVC 服务地址',options.serviceUrl??'',value=>set({serviceUrl:value||undefined})),
       ui.select('RVC 模型版本',options.modelVersion??'v2',[{id:'v1',name:'v1'},{id:'v2',name:'v2'}],value=>set({modelVersion:value})),
       ui.field('RVC 音色名称',options.singingModelId??'',value=>set({singingModelId:value||undefined})),

@@ -30,21 +30,17 @@ test('service and prompt identities match the inference service cache convention
   assert.equal(normalizeGptSovitsPromptText('你好:','ja'),'你好:');
 });
 
-test('persona saves reject incompatible reference cache keys on the same service',async t=>{
+test('legacy GPT-SoVITS personas remain readable and the next save removes private service identity',async t=>{
   const home=await mkdtemp(path.resolve('.codex/voice-config-'));const store=new Store(home);t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
-  store.saveConfig(persona('first'));
-  assert.throws(()=>store.saveConfig(persona('second',{baseUrl:'http://TTS.invalid:9880',promptText:'\n参考语音。\n',promptLang:'all_ja'})),/GPT_SOVITS_REFERENCE_CONFLICT.*first/);
-  assert.throws(()=>store.saveConfig(persona('second',{modelVersion:'v1'})),/GPT_SOVITS_REFERENCE_CONFLICT.*first/);
-  assert.equal(store.configs().some(config=>config.id==='second'),false);
-  assert.equal(store.saveConfig(persona('compatible',{modelVersion:'v5turbo'})).id,'compatible');
-  assert.equal(store.saveConfig(persona('another-service',{baseUrl:'http://other.invalid',modelVersion:'v1'})).id,'another-service');
-  assert.equal(store.saveConfig(persona('another-transcript',{promptText:'另一段实际参考文本',promptLang:'all_ja'})).id,'another-transcript');
+  const first=persona('first');store.put('config',first.id,first);store.put('config-version',`${first.id}:${first.revision}`,first);
+  assert.equal(store.config('first').media.voice?.gptSovits?.modelVersion,'v4');
+  const saved=store.saveConfig({...first,name:'Saved'},first.revision);assert.equal(saved.schemaVersion,4);assert.equal(saved.media.voice?.gptSovits,undefined);assert.doesNotMatch(JSON.stringify(saved),/tts\.invalid|voice\.ckpt|voice\.pth|refAudioPath/);
+  const second=store.saveConfig(persona('second',{modelVersion:'v1'}));assert.equal(second.schemaVersion,4);assert.equal(second.media.voice?.gptSovits,undefined);
 });
 
-test('archived references do not block saves and edits cannot introduce conflicts',async t=>{
+test('v4 edits cannot reintroduce GPT-SoVITS endpoint or weight fields',async t=>{
   const home=await mkdtemp(path.resolve('.codex/voice-config-'));const store=new Store(home);t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
-  const first=store.saveConfig(persona('first'));const second=store.saveConfig(persona('second',{promptText:'另一段'}));
-  assert.throws(()=>store.saveConfig({...second,media:{voice:{...second.media.voice,gptSovits:{...reference,modelVersion:'v1'}}}},second.revision),/GPT_SOVITS_REFERENCE_CONFLICT/);
-  store.saveConfig({...first,archived:true},first.revision);
-  assert.equal(store.saveConfig({...second,media:{voice:{...second.media.voice,gptSovits:{...reference,modelVersion:'v1'}}}},second.revision).media.voice?.gptSovits?.modelVersion,'v1');
+  const saved=store.saveConfig(persona('voice'));
+  assert.throws(()=>store.saveConfig({...saved,media:{voice:{...saved.media.voice,gptSovits:{...reference,modelVersion:'v1'}}}},saved.revision),/expected never|v4 人格不得保存/);
+  const archived=store.saveConfig({...saved,archived:true},saved.revision);assert.equal(archived.schemaVersion,4);assert.equal(archived.media.voice?.gptSovits,undefined);
 });

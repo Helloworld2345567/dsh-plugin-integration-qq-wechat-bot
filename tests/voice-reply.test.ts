@@ -5,7 +5,7 @@ import path from 'node:path';
 import {Store,scopeKey} from '../src/core/store.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {BotRuntime,type HarnessPort} from '../src/core/runtime.js';
-import {botSchema,type CallerScope,type Delivery,type Output} from '../src/core/types.js';
+import {botSchema,configSchema,type CallerScope,type Delivery,type Output} from '../src/core/types.js';
 import {spokenReplyText} from '../src/core/voice-reply.js';
 import {fixtureChannels} from './test-channel.js';
 
@@ -14,7 +14,7 @@ function deferred(){let resolve!:()=>void;const promise=new Promise<void>(done=>
 
 async function fixture(t:any){
   const directory=await mkdtemp(path.resolve('.codex/voice-reply-')),store=new Store(directory),assets=new Assets(store);
-  const initial=store.config('sakura');store.saveConfig({...initial,media:{voice:{enabled:true,protocol:'edge_tts',replyMode:'auto',voice:'first',format:'mp3'}}},initial.revision);
+  const initial=store.config('sakura'),legacy=configSchema.parse({...initial,schemaVersion:3,media:{voice:{enabled:true,protocol:'edge_tts',replyMode:'auto',voice:'first',format:'mp3'}}});store.put('config','sakura',legacy);store.put('config-version',`sakura:${legacy.revision}`,legacy);
   store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',configId:'sakura',enabled:true,trustedUsers:['owner']}));
   const binding=store.binding(scope);
   store.accept({id:'context',scope,text:'已有上下文',attachments:[],timestamp:Date.now()-3600000,reply:{target:'owner',kind:'private',msgId:'old'}});store.mark(binding.key,['context'],'complete');

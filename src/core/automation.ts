@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { CallerScope, InboundMessage, Output, SessionBinding } from './types.js';
+import type { CallerScope, InboundMessage, Output, SessionBinding, TurnSnapshot } from './types.js';
 import type { Store } from './store.js';
 import { scopeKey } from './store.js';
 import {trusted} from './policy.js';
@@ -35,7 +35,7 @@ export function chunkText(text:string,max=1800):string[] {
 function chunkOutputs(outputs:Output[]):Output[] { const result:Output[]=[]; for(const output of outputs){ if(output.type==='text'&&output.text)for(const text of chunkText(output.text))result.push({type:'text',text}); else result.push(output); } return result; }
 
 export interface AutomationServices {
-  runPrompt(binding:SessionBinding,prompt:string,kind:AutomationKind,signal:AbortSignal):Promise<{turnId:string;outputs:Output[]}>;
+  runPrompt(binding:SessionBinding,prompt:string,kind:AutomationKind,signal:AbortSignal):Promise<{turnId:string;outputs:Output[];snapshot?:TurnSnapshot}>;
   flush():Promise<void>;
   available?(scopeKey:string):boolean;
 }
@@ -193,7 +193,7 @@ export class AutomationScheduler {
       if(item.scope.platform==='qq')delete reply.msgId;
       const envelope=latest.replyEnvelope?{...latest.replyEnvelope,payload:reply}:undefined;
       const outputs=chunkOutputs(result.outputs);if(!outputs.length)throw Error('AUTOMATION_EMPTY_OUTPUT');
-      this.store.enqueue(binding,`automation:${run.id}`,`${item.kind}:${run.id}`,outputs,reply,envelope);
+      this.store.enqueue(binding,`automation:${run.id}`,`${item.kind}:${run.id}`,outputs,reply,envelope,undefined,result.snapshot);
       run.turnId=result.turnId;await this.services.flush();return this.finish(run,'succeeded');
     }catch(error){return this.finish(run,'failed',error instanceof Error?error.message:'AUTOMATION_FAILED');}
     finally{this.running.delete(item.id);}

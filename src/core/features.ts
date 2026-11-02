@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import type {BotRuntime} from './runtime.js';
 import {configSchema,type BotConfig,type SessionBinding,type TurnSnapshot} from './types.js';
-import {allowedNow} from './policy.js';
+import {allowedNow,freezeTurn} from './policy.js';
 import {DynamicSkills} from './skills.js';
 import {EvolutionService} from './evolution.js';
 import {StatsService,statsQuerySchema,type StatsQueryInput,type StatsResult} from './stats.js';
@@ -64,7 +64,7 @@ export class BotFeatures {
   }
   private config(binding:SessionBinding):BotConfig {return this.runtime.store.config(this.runtime.store.effectiveConfig(this.runtime.store.findBinding(binding.key)??binding).id);}
   private authorize(binding:SessionBinding,snapshot?:TurnSnapshot,host=false):void {
-    const bot=this.runtime.store.bot(binding.scope.botId);const config=this.config(binding);const before=snapshot??{config,botId:bot.id,trusted:binding.scope.kind==='private'&&bot.trustedUsers.includes(binding.scope.senderId),sourceIds:[],startedAt:Date.now()};
+    const bot=this.runtime.store.bot(binding.scope.botId);const config=this.config(binding);const before=snapshot??freezeTurn(config,bot,binding.scope,[],this.runtime.profiles);
     // Persona and skill maintenance only changes the configured bot data. Shell,
     // candidate activation and lifecycle operations remain host-authorized.
     const permission=host?'bot_evolve':'bot_stats';

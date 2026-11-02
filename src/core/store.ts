@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { botSchema, configSchema, idSchema, type BotConfig, type BotInstance, type CallerScope, type InboundMessage, type SessionBinding, type SessionRecord, type Delivery, type Output, type Asset, type TurnMetric, type TurnSnapshot } from './types.js';
+import { botSchema, configSchema, configForWrite, idSchema, type BotConfig, type BotInstance, type CallerScope, type InboundMessage, type SessionBinding, type SessionRecord, type Delivery, type Output, type Asset, type TurnMetric, type TurnSnapshot } from './types.js';
 import {validateInboundMessage} from './limits.js';
 import type {CursorStore,JsonValue} from './channel-ports.js';
 import {SqliteStatsProjection} from './stats-projection.js';
@@ -55,12 +55,13 @@ export class Store {
     if (!this.get('config','default')) {
       const hostTools=secureDefaults?false:undefined;
       const voiceDefaults={enabled:false,protocol:'edge_tts' as const,format:'mp3' as const};
-      this.put('config', 'default', configSchema.parse({ id:'default', name:'默认', personaPrompt:'你是自然、真诚、具体的中文聊天伙伴。回应用户实际意图，默认简洁，任务结果按需要展开。不编造记忆、工具执行或媒体内容。保留工具、skills和运行环境信息。',media:{voice:voiceDefaults},...(hostTools===undefined?{}:{allowHostTools:hostTools}) }));
-      this.put('config', 'sakura', configSchema.parse({ id:'sakura', name:'小樱', personaPrompt:'你是成年猫娘小樱：银白长发、翠绿色眼睛、白色猫耳和尾巴、黑白女仆装。自然简短地交流，日常文字尽量不超过100字，任务结果可以展开。按用户意图决定是否调用图片工具，每轮最多一张生成图。参考图编辑必须使用真实原图。不输出配图描述，不编造工具或媒体观察。',media:{voice:voiceDefaults},...(hostTools===undefined?{}:{allowHostTools:hostTools}) }));
+      this.put('config', 'default', configForWrite({ id:'default', name:'默认', personaPrompt:'你是自然、真诚、具体的中文聊天伙伴。回应用户实际意图，默认简洁，任务结果按需要展开。不编造记忆、工具执行或媒体内容。保留工具、skills和运行环境信息。',media:{voice:voiceDefaults},...(hostTools===undefined?{}:{allowHostTools:hostTools}) }));
+      this.put('config', 'sakura', configForWrite({ id:'sakura', name:'小樱', personaPrompt:'你是成年猫娘小樱：银白长发、翠绿色眼睛、白色猫耳和尾巴、黑白女仆装。自然简短地交流，日常文字尽量不超过100字，任务结果可以展开。按用户意图决定是否调用图片工具，每轮最多一张生成图。参考图编辑必须使用真实原图。不输出配图描述，不编造工具或媒体观察。',media:{voice:voiceDefaults},...(hostTools===undefined?{}:{allowHostTools:hostTools}) }));
     }
     for(const raw of this.list<BotConfig>('config')){
       const legacySpeech=(raw as any).media?.voice?.protocol==='speech';
-      if(raw.schemaVersion!==3||legacySpeech){
+      if(raw.schemaVersion===4||raw.schemaVersion===3&&!legacySpeech)continue;
+      {
         // Keep historical revisions intact; publish one migrated effective configuration.
         if(!this.get('config-version',`${raw.id}:${raw.revision}`))this.put('config-version',`${raw.id}:${raw.revision}`,raw);
         const media={...raw.media};for(const role of ['asr','video'] as const){if(media[role]&&('baseUrl' in media[role]||'keyEnv' in media[role]))media[role]={enabled:true,protocol:'chat_completions'};}
@@ -70,7 +71,7 @@ export class Store {
         // keyless Edge TTS protocol while keeping voice disabled until the
         // operator explicitly enables it.
         media.voice={enabled:false,protocol:'edge_tts',replyMode:'on_demand',format:'mp3'};
-        const next=configSchema.parse({...raw,schemaVersion:3,media,tools:[...new Set([...(raw.tools??[]),'bot_voice'])],skills:[...new Set([...(raw.skills??[]),'media-analysis','voice-generation'])],revision:raw.revision+1});
+        const next=configForWrite({...raw,schemaVersion:3,media,tools:[...new Set([...(raw.tools??[]),'bot_voice'])],skills:[...new Set([...(raw.skills??[]),'media-analysis','voice-generation'])],revision:raw.revision+1});
         this.transaction(()=>{this.put('config-version',`${next.id}:${next.revision}`,next);this.put('config',next.id,next);});
       }
     }
@@ -170,7 +171,7 @@ export class Store {
     }catch(error){return{id,directory:path.join(this.personas.root,id),state:'error',error:error instanceof Error?error.message:'PERSONA_FILES_INVALID'};}
   }
   saveConfig(input:unknown,expectedRevision?:number,fileDigest?:string):BotConfig {
-    const value=configSchema.parse(input);
+    const value=configForWrite(input);
     const check=()=>{
       const previous=this.get<BotConfig>('config',value.id);
       if(previous && previous.revision!==expectedRevision) throw new ConflictError();
@@ -251,7 +252,7 @@ export class Store {
   sessionRecentSince(key:string):number{return this.recentSince(key);}
   reset(scope:CallerScope):SessionBinding {const old=this.binding(scope);const next={...old,sessionId:randomUUID(),generation:old.generation+1,persisted:false,recentSince:Date.now()};return this.updateSession(next);}
   activateSession(scope:CallerScope,id:string):SessionBinding {const old=this.binding(scope);const record=this.session(scope,id);return this.updateSession({key:old.key,scope,sessionId:id,generation:old.generation+1,persisted:record.persisted,personaId:record.personaId,modelOverride:record.modelOverride,recentSince:record.recentSince});}
-  enqueue(binding:SessionBinding,sourceId:string,turnId:string,outputs:Output[],reply:Record<string,string>,replyEnvelope?:Delivery['replyEnvelope'],progress?:NonNullable<Delivery['progress']>):void {
+  enqueue(binding:SessionBinding,sourceId:string,turnId:string,outputs:Output[],reply:Record<string,string>,replyEnvelope?:Delivery['replyEnvelope'],progress?:NonNullable<Delivery['progress']>,snapshot?:TurnSnapshot):void {
     // SAVEPOINT also works inside the foreground completion transaction.
     this.db.exec('SAVEPOINT enqueue_delivery');
     try{
@@ -269,7 +270,7 @@ export class Store {
       const id=createHash('sha256').update(JSON.stringify([binding.key,binding.sessionId,sourceId,turnId,index])).digest('hex');
       if(this.deliveryRepository().find(id))return;
       const replySequence=binding.scope.platform==='qq'?this.nextReplySequence(binding.scope.botId,replyEnvelope?.payload??reply):undefined;
-      const now=Date.now();const d:Delivery={...(progress?{purpose:'progress' as const,progress}:{}),...(replySequence===undefined?{}:{replySequence}),id,scopeKey:binding.key,botId:binding.scope.botId,sessionId:binding.sessionId,sourceId,turnId,index,output,reply,...replyEnvelope?{replyEnvelope}:{},state:'pending',createdAt:now,updatedAt:now};
+      const now=Date.now();const referencedAsset=output.type==='asset'&&output.assetId?this.get<Asset>('asset',output.assetId):undefined,assetServiceSnapshot=referencedAsset?.scopeKey===binding.key?referencedAsset.serviceSnapshot:undefined;const serviceSnapshots=assetServiceSnapshot?[assetServiceSnapshot]:[];const d:Delivery={...(progress?{purpose:'progress' as const,progress}:{}),...(replySequence===undefined?{}:{replySequence}),id,scopeKey:binding.key,botId:binding.scope.botId,sessionId:binding.sessionId,sessionGeneration:binding.generation,sourceId,turnId,index,output,reply,...replyEnvelope?{replyEnvelope}:{},...snapshot?{turnContext:{personaId:snapshot.personaId,personaRevision:snapshot.personaRevision,trusted:snapshot.trusted,serviceSnapshots:serviceSnapshots!}}:{},state:'pending',createdAt:now,updatedAt:now};
       const inserted=this.db.prepare('INSERT OR IGNORE INTO deliveries(id,scope,json,state,created_at,bot_id,turn_id,output_index) VALUES(?,?,?,?,?,?,?,?)').run(id,binding.key,JSON.stringify(d),'pending',now,d.botId,d.turnId,d.index).changes===1;if(inserted){this.stats.observeDelivery(d);this.bump('deliveries');}
     });
     this.db.exec('RELEASE enqueue_delivery');

@@ -24,7 +24,7 @@ export class Assets {
   constructor(readonly store:Store,readonly root=path.join(store.home,'assets')){}
   workspace(scope:string):Promise<string>{return scopeWorkspace(this.store,scope);}
   private currentSession(scope:string):string|undefined {const binding=this.store.findBinding(scope);return binding?.key===scope&&typeof binding.sessionId==='string'&&this.store.findSession(binding.sessionId)?.scopeKey===scope?binding.sessionId:undefined;}
-  async save(scope:string,input:MediaInput,bytes:Buffer,jobId?:string,origin:AssetOrigin=jobId?'generated':'received',expectedSession?:string,expectedGeneration?:number,authorize?:()=>void):Promise<Asset>{
+  async save(scope:string,input:MediaInput,bytes:Buffer,jobId?:string,origin:AssetOrigin=jobId?'generated':'received',expectedSession?:string,expectedGeneration?:number,authorize?:()=>void,serviceSnapshot?:import('./service-contract.js').TurnServiceSnapshot):Promise<Asset>{
     // Capture ownership before any I/O: a concurrent /new must not reassign an older upload.
     const sessionId=this.currentSession(scope);
     if(expectedSession!==undefined&&(sessionId!==expectedSession||expectedGeneration!==undefined&&this.store.findBinding(scope)?.generation!==expectedGeneration))throw Error('SINGING_SESSION_CHANGED');
@@ -39,7 +39,7 @@ export class Assets {
     const workspace=await this.workspace(scope),createdAt=Date.now();
     const folder=assetFolder(workspace,{id,scopeKey:scope,kind:input.kind,createdAt,jobId,origin});await mkdir(folder,{recursive:true});const file=path.join(folder,name);await writeFile(file,bytes,{flag:'wx'});
     try{if(expectedSession!==undefined&&(this.currentSession(scope)!==expectedSession||expectedGeneration!==undefined&&this.store.findBinding(scope)?.generation!==expectedGeneration))throw Error('SINGING_SESSION_CHANGED');authorize?.();}catch(error){await rm(folder,{recursive:true,force:true});throw error;}
-    const asset:Asset={id,scopeKey:scope,name,mime:input.mime,path:file,size:bytes.length,kind:input.kind,createdAt,jobId,sessionId,workspace,origin};
+    const asset:Asset={id,scopeKey:scope,name,mime:input.mime,path:file,size:bytes.length,kind:input.kind,createdAt,jobId,sessionId,workspace,origin,...serviceSnapshot?{serviceSnapshot}:{}};
     this.store.saveAsset(asset);return asset;
   }
   async read(scope:string,id:string):Promise<Buffer>{return readFile((await this.resolve(scope,id)).path);}
@@ -82,6 +82,8 @@ export class MediaService {
   }
   async run(scope:string,operation:MediaOperation,config:BotConfig,inputs:string[],parameters:Record<string,unknown>,signal:AbortSignal,authorize?:()=>void,snapshot?:TurnSnapshot):Promise<{text?:string;coverage?:string;assetIds:string[];contextAssetIds?:string[];incomplete?:boolean;music?:MusicData}>{
     const descriptor=this.operations.get(operation);
+    const serviceRole=operation==='voice_speak'?'voice':operation==='singing_convert'?'singing':operation.startsWith('music_')?'music':undefined;
+    if(config.schemaVersion===4&&serviceRole&&!(serviceRole==='voice'&&config.media.voice?.protocol==='edge_tts'))throw Error('PROFILE_ADAPTER_REQUIRED');
     const singing=operation==='singing_convert'?config.media.singing:undefined;
     const sessionBound=operation==='singing_convert'||operation.startsWith('music_');
     const expectedBinding=sessionBound?this.store.findBinding(scope):undefined;
@@ -114,7 +116,8 @@ export class MediaService {
     let releaseVoice:(()=>void)|undefined;
     let releaseSinging:(()=>void)|undefined, singingDispatched=false;
     const captureUsage=async()=>{try{const raw=JSON.parse(await readFile(path.join(directory,'model-usage.json'),'utf8'));if(!Array.isArray(raw))return;const modelCalls:MediaUsageCall[]=raw.filter(c=>c?.attempted===true&&typeof c.id==='string'&&Number.isSafeInteger(c.at)).map(c=>({id:c.id,attempted:true,at:c.at,provider,model:typeof c.model==='string'?c.model:requestedModel,usage:normalizeProviderUsage(c.usage)}));persist({modelCalls});const binding=this.store.findBinding(scope);if(binding)this.store.stats.upsertMediaCalls(id,binding.scope.botId,modelCalls);}catch{/* No dispatched model call is claimed without a journal entry. */}};
-    persist({id,scope,operation,directory,workspace,state:descriptor.localTransform?'queued':'running',startedAt});
+    const serviceSnapshot=operation==='voice_speak'?snapshot?.services.voice?.snapshot:operation==='singing_convert'?snapshot?.services.singing?.snapshot:operation.startsWith('music_')?snapshot?.services.music?.snapshot:undefined;
+    persist({id,scope,operation,directory,workspace,state:descriptor.localTransform?'queued':'running',startedAt,...serviceSnapshot?{serviceId:serviceSnapshot.serviceId,profileId:serviceSnapshot.profileId,profileRevision:serviceSnapshot.profileRevision,profileContentHash:serviceSnapshot.profileContentHash}:{}});
     try{
     combined.throwIfAborted();
     if(descriptor.localTransform){lease=await this.slots.acquire(operation==='convert_gif'?2:1,combined);combined.throwIfAborted();authorize?.();persist({state:'running'});}
@@ -164,7 +167,7 @@ export class MediaService {
       combined.throwIfAborted();
       authorize?.();
       if(singing&&((result.assets?.length??0)!==1||result.assets![0].kind!=='audio'||result.contextAssets?.length))throw Error('SINGING_OUTPUT_INVALID');
-      const save=async(files:MediaFile[])=>{const ids:string[]=[];for(const file of files){const resolved=await realpath(file.path);const root=await realpath(directory);if(!resolved.startsWith(root+path.sep))throw new Error('WORKER_OUTPUT_OUTSIDE_JOB');const size=(await stat(resolved)).size;const maxBytes=file.kind==='video'?VIDEO_LIMITS.attachmentBytes:file.kind==='audio'?AUDIO_LIMITS.outputBytes:20*1024*1024;if(size>maxBytes||operation==='convert_gif'&&size>=10_000_000)throw new Error('OUTPUT_TOO_LARGE');const bytes=await readFile(resolved);combined.throwIfAborted();authorize?.();assertSession();const asset=await this.assets.save(scope,{name:file.name,mime:file.mime,kind:file.kind},bytes,id,'generated',sessionBound?singingSession:undefined,expectedBinding?.generation,sessionBound?()=>{combined.throwIfAborted();authorize?.();assertSession();}:undefined);assertSession();ids.push(asset.id);}return ids;};
+      const save=async(files:MediaFile[])=>{const ids:string[]=[];for(const file of files){const resolved=await realpath(file.path);const root=await realpath(directory);if(!resolved.startsWith(root+path.sep))throw new Error('WORKER_OUTPUT_OUTSIDE_JOB');const size=(await stat(resolved)).size;const maxBytes=file.kind==='video'?VIDEO_LIMITS.attachmentBytes:file.kind==='audio'?AUDIO_LIMITS.outputBytes:20*1024*1024;if(size>maxBytes||operation==='convert_gif'&&size>=10_000_000)throw new Error('OUTPUT_TOO_LARGE');const bytes=await readFile(resolved);combined.throwIfAborted();authorize?.();assertSession();const asset=await this.assets.save(scope,{name:file.name,mime:file.mime,kind:file.kind},bytes,id,'generated',sessionBound?singingSession:undefined,expectedBinding?.generation,sessionBound?()=>{combined.throwIfAborted();authorize?.();assertSession();}:undefined,serviceSnapshot);assertSession();ids.push(asset.id);}return ids;};
       const assetIds=await save(result.assets??[]);const contextAssetIds=await save(result.contextAssets??[]);
       persist({state:'complete',assetIds,contextAssetIds,finishedAt:Date.now()});
       if(singing)markSingingServiceFinished(this.store,singing.serviceUrl!);

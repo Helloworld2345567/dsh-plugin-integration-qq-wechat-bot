@@ -55,7 +55,7 @@ function registeredMediaResult(value:string):string {const result=JSON.parse(val
 /** Only the model-facing evolution result is projected; stored rollback data stays complete. */
 export function projectEvolutionToolResult(value:unknown):unknown {
   const record=(item:unknown):item is Record<string,any>=>!!item&&typeof item==='object'&&!Array.isArray(item);
-  const config=(item:unknown):item is BotConfig=>record(item)&&item.schemaVersion===3&&typeof item.id==='string'&&typeof item.name==='string'&&typeof item.personaPrompt==='string'&&Number.isSafeInteger(item.revision)&&Array.isArray(item.tools)&&Array.isArray(item.skills)&&record(item.media);
+  const config=(item:unknown):item is BotConfig=>record(item)&&(item.schemaVersion===3||item.schemaVersion===4)&&typeof item.id==='string'&&typeof item.name==='string'&&typeof item.personaPrompt==='string'&&Number.isSafeInteger(item.revision)&&Array.isArray(item.tools)&&Array.isArray(item.skills)&&record(item.media);
   const projectConfig=(item:BotConfig)=>{
     if((!item.media.voice||!Object.hasOwn(item.media.voice,'gptSovits'))&&!item.media.singing)return item;
     const media={...item.media};

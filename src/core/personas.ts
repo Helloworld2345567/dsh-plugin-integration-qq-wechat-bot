@@ -1,10 +1,9 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {existsSync,lstatSync,mkdirSync,readFileSync,readdirSync,renameSync,unlinkSync,writeFileSync} from 'node:fs';
 import path from 'node:path';
-import {configSchema,idSchema,type BotConfig} from './types.js';
+import {configSchema,idSchema,parsePersonaSettings,type BotConfig} from './types.js';
 
 type Pair={config:string|null;persona:string|null};
-const fileSchema=configSchema.omit({personaPrompt:true}).strict();
 const digest=(pair:Pair)=>createHash('sha256').update(JSON.stringify(pair)).digest('hex');
 export function defaultPersonasRoot(home:string):string {
   if(process.env.BOT_PERSONAS_ROOT)return path.resolve(process.env.BOT_PERSONAS_ROOT);
@@ -48,9 +47,10 @@ export class PersonaFiles {
     if(this.text(id,'.pending.json')!==null)throw new Error('人格文件有未完成的保存，请重新打开实例后核对');
     const pair=this.pair(id);
     if(pair.config===null||pair.persona===null)throw new Error('人格目录必须同时包含 config.json 和 persona.md');
-    const settings=fileSchema.parse(JSON.parse(pair.config.replace(/^\uFEFF/,'')));
-    if(settings.id!==id)throw new Error('config.json 的 ID 必须与人格目录名一致');
-    return{config:configSchema.parse({...settings,personaPrompt:pair.persona.replace(/^\uFEFF/,'')}),digest:digest(pair)};
+    const settings=JSON.parse(pair.config.replace(/^\uFEFF/,''));
+    const config=parsePersonaSettings(settings,pair.persona.replace(/^﻿/,''));
+    if(config.id!==id)throw new Error('config.json 的 ID 必须与人格目录名一致');
+    return{config,digest:digest(pair)};
   }
   currentDigest(id:string):string {return digest(this.pair(id));}
   /** A durable journal bridges file replacement and the SQLite commit, including process crashes. */

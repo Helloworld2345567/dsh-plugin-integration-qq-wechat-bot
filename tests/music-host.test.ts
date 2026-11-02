@@ -18,7 +18,8 @@ const track={source:'MiguMusicClient',id:'song-1',title:'晴天',artist:'周杰�
 async function fixture(t:TestContext){
   await mkdir(path.resolve('.codex'),{recursive:true});const home=await mkdtemp(path.resolve('.codex/music-host-')),store=new Store(home,path.join(home,'personas'));
   t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
-  const config=store.saveConfig(configSchema.parse({id:'music',name:'Music',personaPrompt:'Hello',skills:['music-download','singing-conversion'],tools:['bot_music','bot_sing'],media:{music:{enabled:true},singing:{enabled:true,serviceUrl:'http://127.0.0.1:9881',modelVersion:'v2',singingModelId:'test',singingWeightsPath:'models/test.pth',separation:{enabled:true,modelId:'vocals',modelPath:'models/separator.ckpt'}}}}));
+  // Upgrade fixture: v3 remains readable, but no new save path writes it.
+  const config=configSchema.parse({schemaVersion:3,id:'music',name:'Music',personaPrompt:'Hello',skills:['music-download','singing-conversion'],tools:['bot_music','bot_sing'],media:{music:{enabled:true},singing:{enabled:true,serviceUrl:'http://127.0.0.1:9881',modelVersion:'v2',singingModelId:'test',singingWeightsPath:'models/test.pth',separation:{enabled:true,modelId:'vocals',modelPath:'models/separator.ckpt'}}}});store.put('config',config.id,config);store.put('config-version',`${config.id}:${config.revision}`,config);
   const bot=store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',enabled:true,configId:config.id})),scope:CallerScope={botId:'bot',platform:'qq',accountId:'bot',kind:'private',channelId:'alice',senderId:'alice'},binding=store.binding(scope);
   const assets=new Assets(store);assets.workspace=async key=>path.join(home,'workspaces',key);
   const live:MusicContext&{singing:{attempted:boolean}}={binding,snapshot:freezeTurn(config,bot,scope,['request']),assets:[],singing:{attempted:false}};
