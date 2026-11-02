@@ -24,6 +24,8 @@
     "skills/**/*.py",
     "skills/**/operations.json",
     "scripts/install.mjs",
+    "scripts/release-safety.mjs",
+    "scripts/release-safety.d.mts",
     "scripts/start.mjs",
     "scripts/stop.mjs",
     "scripts/runtime.mjs",

@@ -1,11 +1,20 @@
-import { spawnSync } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
-const result=spawnSync(process.platform==='win32'?'npm.cmd':'npm',['pack','--dry-run','--json','--ignore-scripts'],{encoding:'utf8',shell:process.platform==='win32'});
-if(result.status)throw new Error(result.stderr);
-const files=JSON.parse(result.stdout)[0].files.map(f=>f.path);
-const forbidden=files.filter(p=>/(?:^|\/)(?:\.codex|node_modules|\.git|data|artifacts|__pycache__)(?:\/|$)|(?:\.db|\.sqlite|\.log|\.pyc|\.env)(?:$|-)/i.test(p));
-if(forbidden.length)throw new Error(`Private/runtime files in package: ${forbidden.join(', ')}`);
-for(const file of files){if(/\.(?:ts|js|mjs|py|json|ya?ml|md)$/.test(file)&&!file.endsWith('.map')){const text=await readFile(file,'utf8');if(/[CD]:[\\/](?:Users|yangming)[\\/]/i.test(text)||/sk-[A-Za-z0-9_-]{24,}/.test(text))throw new Error(`Personal path or credential in ${file}`);}}
+import {spawnSync} from 'node:child_process';
+import {readFile} from 'node:fs/promises';
+import {isReleaseTextFile,scanReleaseText,validateReleaseEntry} from './release-safety.mjs';
+
+const npmCli=process.env.npm_execpath;
+const executable=process.platform==='win32'&&npmCli?process.execPath:'npm';
+const args=[...(process.platform==='win32'&&npmCli?[npmCli]:[]),'pack','--dry-run','--json','--ignore-scripts'];
+const result=spawnSync(executable,args,{encoding:'utf8'});
+if(result.error)throw result.error;
+if(result.status!==0)throw new Error(result.stderr||`npm pack exited ${result.status}`);
+let packed;try{packed=JSON.parse(result.stdout);}catch{throw new Error('npm pack did not return valid JSON');}
+if(!Array.isArray(packed)||packed.length!==1||!Array.isArray(packed[0]?.files))throw new Error('npm pack returned an unexpected manifest');
+const files=packed[0].files.map(file=>file?.path);
+if(files.some(file=>typeof file!=='string'))throw new Error('npm pack returned an invalid file entry');
+const invalid=files.flatMap(file=>{const reason=validateReleaseEntry(file);return reason?[`${file}: ${reason}`]:[];});
+if(invalid.length)throw new Error(`Unsafe package entries: ${invalid.join(', ')}`);
+for(const file of files)if(isReleaseTextFile(file)){const text=await readFile(file,'utf8');const findings=scanReleaseText(file,text);if(findings.length)throw new Error(`Sensitive release content in ${file}: ${findings.join(', ')}`);}
 for(const expected of ['dist/index.js','dist/client.js','python/worker.py','skills/image-generation/scripts/image_api.py','skills/media-analysis/SKILL.md','skills/media-analysis/operations.json','skills/media-analysis/scripts/media_api.py','skills/voice-generation/SKILL.md','skills/voice-generation/operations.json','skills/voice-generation/scripts/voice_api.py'])if(!files.includes(expected))throw new Error(`Missing ${expected}`);
 for(const script of ['image_transform.py','video_transform.py','transform_common.py'])if(!files.includes(`skills/media-analysis/scripts/${script}`))throw new Error(`Missing media transform script: ${script}`);
 for(const expected of ['python/rvc_service.py','python/rvc_runner.py','python/separation_runner.py','python/singing_common.py','python/singing_worker.py','skills/singing-conversion/SKILL.md','skills/singing-conversion/operations.json','skills/singing-conversion/scripts/entry.py'])if(!files.includes(expected))throw new Error(`Missing STS runtime file: ${expected}`);

@@ -1,5 +1,5 @@
 import {skillToolManifests, resolveSkillOperation} from '../core/skill-operations.js';
-import {mediaOperationRegistry} from '../core/media-operation-registry.js';
+import {mediaOperationRegistry,type MediaOperationRegistry} from '../core/media-operation-registry.js';
 import type { Context } from '@deepseek-ai/cordis';
 import { installModelSelection, type Agent, type AgentHandle, type ModelSelectionRef } from '@deepseek-ai/dsh-agent';
 import { MessageId, ToolCallId, ReasoningEffortId, type ContentBlock } from '@deepseek-ai/dsh-llm';
@@ -21,7 +21,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { freezeTurn, allowedNow, permitted, mediaConfigNow, permissionsRevoked, BUSINESS_TOOLS } from '../core/policy.js';
 import { Store } from '../core/store.js';
-import { Assets, MediaService, MEDIA_OPERATIONS, type MediaOperation } from '../core/media.js';
+import { Assets, MediaService, type MediaOperation } from '../core/media.js';
 import {resolveImageSkill} from '../core/image-skill.js';
 import {analysisEnabled} from '../core/analysis.js';
 import {prepareWorkingDirectory} from '../core/workspaces.js';
@@ -75,6 +75,7 @@ export class NativeHarness implements HarnessPort {
   readonly prompts=new PromptAssembler();
   readonly statsAdapter:StatsEventAdapter;
   readonly capabilities=new CapabilityRegistry();
+  readonly operationRegistry:MediaOperationRegistry;
   private readonly scoped=new WeakMap<Agent,LiveSession>();
   private readonly closedTerminals=new WeakMap<Agent,Set<string>>();
   readonly skillFiles:DynamicSkills;
@@ -114,6 +115,7 @@ export class NativeHarness implements HarnessPort {
     live.shellDirectory=live.cwd;
   }
   constructor(readonly ctx:Context,readonly store:Store,readonly assets:Assets,readonly media:MediaService,readonly extensions:HarnessExtensions={}){
+    this.operationRegistry=media.operations??mediaOperationRegistry;
     this.statsAdapter=new StatsEventAdapter(()=>this.extensions.stats);
     this.skillFiles=extensions.skills??new DynamicSkills(store);
     const compactions=new Map<string,string>();
@@ -280,7 +282,7 @@ export class NativeHarness implements HarnessPort {
     if(operation.startsWith('music_'))throw Error('MUSIC_USE_BOT_MUSIC');
     const live=this.turn(ownerLive,agent);if(operation==='voice_speak')live.voice.attempted=true;
     const scope=live.binding.key;const bot=this.store.bot(live.binding.scope.botId);const current=this.current(live);
-    const descriptor=mediaOperationRegistry.get(operation);
+    const descriptor=this.operationRegistry.get(operation);
     const permissionTool=descriptor.permissionTool??'bot_media';
     if(!allowedNow(permissionTool,live.snapshot,current,bot,live.binding.scope))throw new Error(permissionTool==='bot_voice'?'VOICE_OUTPUT_DISABLED':'MEDIA_TOOL_DISABLED');
     if(operation==='social_read'&&!allowedNow('bot_read_social',live.snapshot,current,bot,live.binding.scope))throw new Error('SOCIAL_READ_DISABLED');
@@ -341,7 +343,8 @@ export class NativeHarness implements HarnessPort {
     ownerLive.refreshTools();
     for(const manifest of skillToolManifests) register(defineTool({...manifest.tool,output:{schema:{type:'string'},render:renderMedia},execute:async(args:any,exec:any)=>{const live=this.turn(ownerLive,exec.agent);const dependencies={store:this.store,assets:this.assets,media:this.media,current:()=>this.current(live),bot:()=>this.store.bot(live.binding.scope.botId)};if(manifest.tool.name==='bot_sing')return registeredMediaResult(await executeSingingTool(live,args,exec.signal,dependencies));if(manifest.tool.name==='bot_music')return registeredMediaResult(await executeMusicTool(live,args,exec.signal,dependencies));if(manifest.tool.name==='bot_voice')live.voice.attempted=true;return this.mediaTool(ownerLive,exec.agent,resolveSkillOperation(manifest,args),args.inputs??[],args,exec.signal);}}));
     register(defineTool({name:'image_generation',description:'执行image-generation技能，生成或编辑一张图片。默认继承已配置的环境变量，无需单独配置密钥；编辑inputs填写本会话参考图ID。成功自动登记图片回传。',parameters:{prompt:{type:'string',required:true},operation:{type:'string',enum:['generate','edit']},inputs:{type:'array',items:{type:'string'}}},output:{schema:{type:'string'},render:renderMedia},execute:async(args,exec)=>this.mediaTool(ownerLive,exec.agent,args.operation==='edit'||(!args.operation&&args.inputs?.length)?'image_edit':'image_generate',args.inputs??[],args,exec.signal)}));
-    register(defineTool({name:'bot_media',description:'读取图片像素、提取文档/扫描页供当前聊天模型理解，或处理语音、视频和固定转码。下载链接原图用image_download并填url（支持图片直链或公开网页，自动登记图片附件，保留原始字节）。图片生成请用image_generation。',parameters:{operation:{type:'string',enum:MEDIA_OPERATIONS.filter(id=>id!=='singing_convert'&&!id.startsWith('music_')),required:true},inputs:{type:'array',items:{type:'string'}},prompt:{type:'string'},question:{type:'string'},text:{type:'string'},url:{type:'string'},startSeconds:{type:'number'},durationSeconds:{type:'number'}},output:{schema:{type:'string'},render:renderMedia},execute:async(args,exec)=>this.mediaTool(ownerLive,exec.agent,args.operation as MediaOperation,args.inputs??[],args,exec.signal)}));
+    const approvedMediaOperations=this.operationRegistry.ids();
+    register(defineTool({name:'bot_media',description:'读取图片像素、提取文档/扫描页供当前聊天模型理解，或处理语音、视频和固定转码。下载链接原图用image_download并填url（支持图片直链或公开网页，自动登记图片附件，保留原始字节）。图片生成请用image_generation。',parameters:{operation:{type:'string',enum:approvedMediaOperations.filter(id=>id!=='singing_convert'&&!id.startsWith('music_')),required:true},inputs:{type:'array',items:{type:'string'}},prompt:{type:'string'},question:{type:'string'},text:{type:'string'},url:{type:'string'},startSeconds:{type:'number'},durationSeconds:{type:'number'}},output:{schema:{type:'string'},render:renderMedia},execute:async(args,exec)=>this.mediaTool(ownerLive,exec.agent,args.operation as MediaOperation,args.inputs??[],args,exec.signal)}));
     register(defineTool({name:'bot_send_file',description:'将产物ID登记为本轮最终回复附件；可信私聊也可登记工作目录下真实产生的文件。相同作用域的历史投递默认复用并返回状态；只有用户明确要求重新发送时才传 resend=true，此时可能重复。registered/queued/pending 均不表示发送成功；本轮结束后才尝试平台投递，仅 platformSent=true 表示已有平台回执。',parameters:{assetId:{type:'string'},path:{type:'string'},mime:{type:'string'},resend:{type:'boolean'}},output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},execute:async(args,exec)=>{const live=this.turn(ownerLive,exec.agent);
       let id=args.assetId;
       if(!id&&args.path){

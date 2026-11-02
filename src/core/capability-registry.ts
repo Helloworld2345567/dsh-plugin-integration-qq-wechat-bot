@@ -9,6 +9,10 @@ export interface CapabilityContext {
 
 export interface CapabilityDescriptor<Arguments = unknown, Result = unknown> {
   name: string;
+  /** Approved service operation. Runtime capabilities may be tools or service operations. */
+  operation?: string;
+  /** Host-owned permission ID after policy tightening. */
+  permission?: string;
   /** JSON-schema-compatible input description consumed by tool adapters. */
   schema?: unknown;
   /** Optional authorization hook. False or a thrown error rejects the call. */
@@ -18,7 +22,7 @@ export interface CapabilityDescriptor<Arguments = unknown, Result = unknown> {
   execute: (arguments_: Arguments, context: CapabilityContext) => Result | Promise<Result>;
 }
 
-type Pending = {run: () => Promise<unknown>; resolve: (value: unknown) => void; reject: (error: unknown) => void};
+type Pending = {run: () => Promise<unknown>; resolve: (value: unknown) => void; reject: (error: unknown) => void; cleanup:()=>void};
 
 /**
  * A small, dependency-free registry. Core owns the policy and queue semantics;
@@ -31,7 +35,10 @@ export class CapabilityRegistry {
 
   register<Arguments, Result>(descriptor: CapabilityDescriptor<Arguments, Result>): () => void {
     if (!/^[a-z][a-z0-9_.-]{0,100}$/i.test(descriptor.name)) throw new Error('CAPABILITY_NAME_INVALID');
+    if(descriptor.operation!==undefined&&!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/.test(descriptor.operation))throw new Error('CAPABILITY_OPERATION_INVALID');
+    if(descriptor.permission!==undefined&&!/^[a-z][a-z0-9_.-]{0,159}$/.test(descriptor.permission))throw new Error('CAPABILITY_PERMISSION_INVALID');
     if (this.descriptors.has(descriptor.name)) throw new Error(`CAPABILITY_ALREADY_REGISTERED: ${descriptor.name}`);
+    if(descriptor.operation&&[...this.descriptors.values()].some(value=>value.operation===descriptor.operation))throw new Error(`CAPABILITY_OPERATION_ALREADY_REGISTERED: ${descriptor.operation}`);
     this.descriptors.set(descriptor.name, descriptor as CapabilityDescriptor<any, any>);
     return () => {
       if (this.descriptors.get(descriptor.name) === descriptor) this.descriptors.delete(descriptor.name);
@@ -54,14 +61,14 @@ export class CapabilityRegistry {
     if (active < limit) return this.runLimited(key, limit, descriptor, arguments_, context) as Promise<Result>;
     return new Promise<Result>((resolve, reject) => {
       const queue = this.queues.get(key) ?? [];
-      const pending: Pending = {run: () => this.runLimited(key, limit, descriptor, arguments_, context), resolve: value => resolve(value as Result), reject};
-      queue.push(pending);
-      this.queues.set(key, queue);
       const cancel = () => {
         const current = this.queues.get(key); if (!current) return;
         const index = current.indexOf(pending);
-        if (index >= 0) { current.splice(index, 1); reject(context.signal.reason ?? new Error('ABORT_ERR')); }
+        if (index >= 0) { current.splice(index, 1);if(!current.length)this.queues.delete(key);pending.cleanup();reject(context.signal.reason ?? new Error('ABORT_ERR')); }
       };
+      const pending: Pending = {run: () => this.runLimited(key, limit, descriptor, arguments_, context), resolve: value => resolve(value as Result), reject,cleanup:()=>context.signal.removeEventListener('abort',cancel)};
+      queue.push(pending);
+      this.queues.set(key, queue);
       context.signal.addEventListener('abort', cancel, {once: true});
     });
   }
@@ -73,7 +80,7 @@ export class CapabilityRegistry {
       const next = (this.active.get(key) ?? 1) - 1;
       if (next <= 0) this.active.delete(key); else this.active.set(key, next);
       const queue = this.queues.get(key); const item = queue?.shift();
-      if (item) { if (!queue?.length) this.queues.delete(key); void item.run().then(item.resolve, item.reject); }
+      if (item) { item.cleanup();if (!queue?.length) this.queues.delete(key); void item.run().then(item.resolve, item.reject); }
     }
   }
 }

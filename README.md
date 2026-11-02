@@ -58,7 +58,7 @@ npm run build
 
 ## Edge TTS / GPT-SoVITS 语音回复
 
-在人格的“媒体 → 语音输出”中开启语音，选择 `Edge TTS` 并选择或填写本机保存的音色名称（例如 `zh-CN-XiaoxiaoNeural`）。Edge TTS 不需要 API key，输出 MP3。需要参考音频和本地模型时可选择 `GPT-SoVITS`，填写推理服务地址、模型版本、配套 GPT/SoVITS 权重路径、参考音频路径、参考文本及语言和合成语言。路径由推理服务读取；参考文本填写音频实际说出的内容，主参考音频须为 3～10 秒。
+在人格的“媒体 → 语音输出”中开启语音。Edge TTS 不需要 API key，输出 MP3。GPT-SoVITS 通过运营者登记的受管 Service Profile 接入：服务地址、模型权重和参考音频位于 profile 私有配置，人格只保存 profile 选择、启用状态和回复模式。v3 人格在兼容观察期仍可只读运行；新配置迁移后不再要求在人格中填写服务地址或本机路径。参考文本须与 3～10 秒主参考音频的实际内容一致。
 
 “按需语音”通过现有 `bot_voice` 工具响应朗读请求；“文字加自动语音”会为聊天、定时任务和主动会话的最终正文追加音频，保留文字。本轮已尝试显式语音时不再次自动合成。自动朗读跳过代码块和裸链接，保留链接文字；正文过长或没有可读文字时保留文字，普通合成失败会提示并返回文字。
 
@@ -72,7 +72,7 @@ GPT-SoVITS 服务按队列依次执行加载 SoVITS、加载 GPT、设置参考�
 
 ## RVC 音色转换（STS）
 
-在人格的“媒体 → 音色转换 STS”中填写 RVC 服务地址、模型版本、音色名称和独立 `.pth` 角色权重；可选匹配的 `.index` 索引。支持 RVC v1/v2 的 F0 模型，默认说话人 `0`、音高偏移 `0`，无索引时检索比例为 `0`。启用该卡片会同时加入 `bot_sing` 工具和 `singing-conversion` 技能。旧人格保持关闭，尚未准备模型时可以保存关闭状态的部分配置。
+RVC 音色转换通过运营者登记的受管 Service Profile 选择模型/角色。服务地址、`.pth` 权重和可选 `.index` 索引只保存在 profile 私有配置；人格只保存 profile 引用、启用状态和音高、输出格式等白名单业务偏好。支持 RVC v1/v2 的 F0 模型，无索引时检索比例为 `0`。启用能力会同时加入 `bot_sing` 工具和 `singing-conversion` 技能；缺失或 blocked 的 profile 会明确显示且不会静默换模型。v3 详细配置在兼容观察期继续只读。
 
 RVC 适配服务使用安装了 `rvc` 包的 Python 环境，复用 RVC 项目的 `VoiceConverter` 推理接口。服务与 GPT-SoVITS 分别运行，使用不同端口；可以共享已兼容的 Python 环境。安装 FFmpeg、HuBERT/ContentVec、RMVPE 和目标角色模型后，启动随插件提供的适配器：
 
@@ -95,7 +95,7 @@ QQ 图片、视频、音频和普通文件的投递硬上限均为 200 MiB。直
 
 ## 音乐搜索与下载
 
-音乐下载复用独立 Music 项目的 Python 环境，通过受管 JSON 子进程接口调用。为插件全局设置 `music.home`，或在启动环境设置 `BOT_MUSIC_HOME`，指向 Music 项目根目录；人格只保存 `media.music.enabled` 与 `media.music.includeLyrics`。本机路径、运行依赖和来源配置不随人格复制，也不提供给聊天模型。
+音乐下载复用独立 Music 项目的 Python 环境，通过受管 JSON 子进程接口调用。运营者只在已登记的 `<BOT_MUSIC_HOME>` 根目录创建 Music Service Profile；人格只保存 profile 引用、`enabled` 与 `includeLyrics`。本机路径、运行依赖和来源配置不随人格复制，也不提供给聊天模型。v3 全局 `music.home`/`BOT_MUSIC_HOME` 在兼容观察期继续作为只读输入。
 
 在人格“媒体 → 音乐搜索与下载”中开启能力，会同时加入 `bot_music` 工具和 `music-download` 技能；旧人格默认关闭。用户可以按歌名、歌手直接下载最高匹配的歌曲，也可先搜索再选择候选；当前会话歌曲可用于音色转换。歌词默认不附带，可在卡片中开启。
 
