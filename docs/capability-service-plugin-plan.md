@@ -14,7 +14,7 @@
 
 - DSH 插件负责渠道、身份、会话、人格快照、权限、任务、附件、Asset、投递、统计、管理 API 和生命周期。
 - 外部服务项目保持独立环境、独立测试和独立升级；插件不复制外部服务源码或模型权重。
-- 人格只保存业务选择和少量偏好，不保存端口、服务地址、模型路径、权重路径、凭据、下载 locator 或内部句柄。
+- 人格保存业务选择和少量偏好；图片生成可保存 HTTPS 服务地址、模型名和密钥环境变量名，实际密钥留在后台环境。其他服务型能力不保存端口、服务地址、模型路径、权重路径、凭据、下载 locator 或内部句柄。
 - 服务通过版本化 manifest、profile、health、execute 和 cancel 契约接入。
 - 宿主最终决定权限、配额、并发、取消、输出校验和自动投递；插件 manifest 只能声明需求和默认值，不能扩大宿主权限。
 - 每个 profile 使用不可变 revision。人格 revision、profile revision 和 job 都要在轮次开始时冻结；运行中的任务不能因为 profile 原地修改而改变行为。
@@ -361,7 +361,7 @@ manifest 中的权限、配额、并发和交付字段只是能力声明。宿�
 
 ### 7.1 v4 人格结构
 
-v4 人格只保存业务偏好。服务型能力使用 `profileRef`；图片、ASR、视频等继续由 Harness 原生模型连接或宿主已有 provider 处理，只有明确接入 service plugin 时才使用 profile。
+v4 人格保存业务偏好，服务型能力使用 `profileRef`。图片生成保留独立连接设置：`media.image` 可保存 HTTPS `baseUrl`、模型名 `model` 和密钥环境变量名 `keyEnv`，实际密钥值来自后台环境，迁移时保留这些设置。ASR、视频等继续由 Harness 原生模型连接或宿主已有 provider 处理，只有明确接入 service plugin 时才使用 profile。
 
 推荐结构：
 

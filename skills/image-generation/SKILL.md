@@ -5,7 +5,7 @@ description: Generate images or edit user-selected reference images through a co
 
 # Image generation and reference editing
 
-In this Harness plugin, call `image_generation` with an English `prompt`, `operation=generate` or `edit`, and `inputs` containing current-session reference attachment IDs. The tool directly runs this skill's bundled [Python client](scripts/image_api.py) in the managed worker and automatically registers the resulting image for delivery. No separate image-provider setup is required. Do not run scripts or supply local paths from a chat. `bot_media(image_generate/image_edit)` remains an equivalent compatibility entry point.
+In this Harness plugin, call `image_generation` with an English `prompt`, `operation=generate` or `edit`, and `inputs` containing current-session reference attachment IDs. The tool directly runs this skill's bundled [Python client](scripts/image_api.py) in the managed worker and automatically registers the resulting image for delivery. It inherits the persona's image connection settings and host defaults. Do not run scripts or supply local paths from a chat. `bot_media(image_generate/image_edit)` remains an equivalent compatibility entry point.
 
 ## Decide whether to run
 
@@ -16,6 +16,8 @@ In this Harness plugin, call `image_generation` with an English `prompt`, `opera
 - If the user requests a reference edit, use their actual selected image(s), including their selected ordinal. If a specified image is missing, ask them to resend it; never substitute a text-only generation.
 
 ## Configure
+
+Operators can set the HTTPS service address and credential environment variable name in the persona's image configuration. `media.image.baseUrl`, `media.image.model` and `media.image.keyEnv` override the host defaults and are preserved when migrating v3 personas to v4. The persona stores the variable name only; the backend reads its secret value from the environment.
 
 Credentials come from `IMAGE_ACCESS_KEY` by default; existing `SAKURA_IMAGE_API_KEY` is supported as a fallback. Operators can set `BOT_IMAGE_KEY_ENV` to another variable's name, `BOT_IMAGE_BASE_URL` for the provider and `BOT_IMAGE_MODEL` for the model. Existing `SAKURA_IMAGE_BASE_URL`, `SAKURA_IMAGE_MODEL` and `OPENAI_BASE_URL` aliases are also supported. Never put the secret itself in a prompt, command argument, example, log or committed file. Generic defaults remain `https://api.openai.com/v1` and `gpt-image-2`; HTTPS is required.
 

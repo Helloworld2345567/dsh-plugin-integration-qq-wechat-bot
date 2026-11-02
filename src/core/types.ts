@@ -110,7 +110,7 @@ export const legacyConfigSchema=z.object({
   media:z.object({image:imageSkillOverrideSchema.optional(),asr:analysisSkillSchema.optional(),video:analysisSkillSchema.optional(),voice:voiceSkillSchema.optional(),singing:singingSkillSchema.optional(),music:musicSkillSchema.optional()}).default({}),
 });
 
-const v4ImageSchema=z.object({enabled:z.boolean().default(true),baseUrl:z.never().optional(),model:z.never().optional(),keyEnv:z.never().optional()}).strict();
+const v4ImageSchema=imageSkillOverrideSchema.strict();
 const v4AnalysisSchema=z.object({enabled:z.boolean().default(true),protocol:z.enum(['chat_completions','transcriptions']).default('chat_completions'),provider:z.never().optional(),model:z.never().optional(),baseUrl:z.never().optional(),keyEnv:z.never().optional()}).strict();
 const v4VoiceSchema=z.object({
   enabled:z.boolean().default(false),profileRef:serviceProfileRefSchema.optional(),replyMode:z.enum(['on_demand','auto']).default('on_demand'),format:z.enum(['mp3','wav']).default('mp3'),
@@ -133,7 +133,8 @@ function forbiddenV4Path(value:unknown,segments:string[]=[]):string|undefined {
   if(!value||typeof value!=='object')return;
   if(Array.isArray(value)){for(let index=0;index<value.length;index++){const found=forbiddenV4Path(value[index],[...segments,String(index)]);if(found)return found;}return;}
   for(const [key,child] of Object.entries(value as Record<string,unknown>)){
-    if(forbiddenV4Key.test(key))return[...segments,key].join('.');
+    const imageConnection=segments.length===2&&segments[0]==='media'&&segments[1]==='image'&&(key==='baseUrl'||key==='keyEnv');
+    if(forbiddenV4Key.test(key)&&!imageConnection)return[...segments,key].join('.');
     const found=forbiddenV4Path(child,[...segments,key]);if(found)return found;
   }
 }
@@ -162,12 +163,12 @@ export type BotConfig=CommonBotConfig&{schemaVersion:3|4;media:{
 
 export const configSchema: z.ZodType<BotConfig>=parsedConfigSchema as z.ZodType<BotConfig>;
 export function isV4Config(config:BotConfig):config is V4BotConfig{return config.schemaVersion===4;}
-/** Every mutation crosses this boundary; v3 service details are deliberately not copied. */
+/** Every mutation writes v4; profile-managed service details stay outside personas. */
 export function configForWrite(input:unknown):V4BotConfig {
   const parsed=configSchema.parse(input) as BotConfig;if(parsed.schemaVersion===4)return v4ConfigSchema.parse(parsed);
   const voice=parsed.media.voice,singing=parsed.media.singing,music=parsed.media.music;
   return v4ConfigSchema.parse({...parsed,schemaVersion:4,media:{
-    ...(parsed.media.image?{image:{enabled:parsed.media.image.enabled}}:{}),
+    ...(parsed.media.image?{image:{...parsed.media.image}}:{}),
     ...(parsed.media.asr?{asr:{enabled:parsed.media.asr.enabled,protocol:parsed.media.asr.protocol}}:{}),
     ...(parsed.media.video?{video:{enabled:parsed.media.video.enabled,protocol:parsed.media.video.protocol}}:{}),
     ...(voice?{voice:voice.protocol==='edge_tts'?{enabled:voice.enabled,protocol:'edge_tts' as const,replyMode:voice.replyMode,voice:voice.voice,edgeTts:voice.edgeTts,format:voice.format}:{enabled:voice.enabled,replyMode:voice.replyMode,format:voice.format}}:{}),
@@ -175,7 +176,7 @@ export function configForWrite(input:unknown):V4BotConfig {
     ...(music?{music:{enabled:music.enabled,includeLyrics:music.includeLyrics}}:{}),
   }});
 }
-/** Management and model-facing projections never expose v3 private service fields. */
+/** Projections retain image connection metadata, never credential values or private Profile fields. */
 export function publicPersonaConfig(config:BotConfig):V4BotConfig {return config.schemaVersion===4?v4ConfigSchema.parse(structuredClone(config)):configForWrite(config);}
 /** Parse persona config.json together with persona.md without weakening either schema. */
 export function parsePersonaSettings(input:unknown,personaPrompt:string):BotConfig {return configSchema.parse({...input as Record<string,unknown>,personaPrompt}) as BotConfig;}

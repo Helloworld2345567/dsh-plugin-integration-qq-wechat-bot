@@ -50,9 +50,21 @@ test('panel retains summary options, drafts and local errors across its sections
     assert.ok(!tree.some(n=>n.type==='input'&&n.props.type==='checkbox'));
     tree.find(n=>n.props?.role==='switch'&&n.props['aria-label']==='图片').props.onClick();await new Promise(resolve=>setImmediate(resolve));
     tree=render();assert.equal(states[7].name,'未保存的人格');assert.equal(states[7].media.image.enabled,true);assert.equal(states[8],true);
+    states[7]={...states[7],media:{...states[7].media,image:{enabled:true,baseUrl:'https://old.example.invalid/v1',keyEnv:'OLD_IMAGE_KEY',model:'existing-image-model'}}};
+    tree=render();let imageSection=nodes(tree.find(n=>n.props?.key==='image'));
+    assert.equal(imageSection.find(n=>n.type==='label'&&n.children[0]==='服务地址').children[1].props.value,'https://old.example.invalid/v1');
+    imageSection.find(n=>n.type==='label'&&n.children[0]==='服务地址').children[1].props.onChange({target:{value:'  https://images.example.invalid/v1  '}});
+    tree=render();imageSection=nodes(tree.find(n=>n.props?.key==='image'));
+    imageSection.find(n=>n.type==='label'&&n.children[0]==='密钥环境变量名').children[1].props.onChange({target:{value:'  CUSTOM_IMAGE_KEY  '}});
+    const expectedImage={enabled:true,baseUrl:'https://images.example.invalid/v1',keyEnv:'CUSTOM_IMAGE_KEY',model:'existing-image-model'};
+    assert.deepEqual(states[7].media.image,expectedImage);
+    assert.ok(!imageSection.some(n=>n.type==='input'&&n.props.type==='password'));
+    assert.ok(imageSection.some(n=>n.type==='small'&&String(n.children[0]).includes('只填写变量名')));
+    assert.ok(imageSection.some(n=>n.type==='p'&&n.children[0]==='未保存，保存后检查配置'));
     assert.ok(tree.some(n=>n.type==='button'&&n.children.includes('保存')&&!n.props.disabled));
-    states[7]={...states[7],media:{voice:{enabled:true,protocol:'gpt_sovits',replyMode:'auto',format:'wav',gptSovits:{modelVersion:'v4',promptLang:'all_zh',textLang:'all_zh'}}}};states[8]=false;
+    states[7]={...states[7],media:{...states[7].media,voice:{enabled:true,protocol:'gpt_sovits',replyMode:'auto',format:'wav',gptSovits:{modelVersion:'v4',promptLang:'all_zh',textLang:'all_zh'}}}};states[8]=false;
     states[14]={default:{voice:{configured:true,revision:1,synthesisValidation:{status:'NOT_RUN'}}}};
+    states[13]={default:{keyConfigured:true}};
     tree=render();const voiceSection=nodes(tree.find(n=>n.props?.key==='voice'));
     assert.ok(voiceSection.some(n=>n.type==='label'&&n.children[0]==='语音 Profile'));
     assert.ok(voiceSection.some(n=>n.type==='option'&&n.children.includes('文字加自动语音')));
@@ -62,7 +74,8 @@ test('panel retains summary options, drafts and local errors across its sections
     const calls:string[]=[];(globalThis as any).window.__BOT_INTEGRATION__={endpoint:'http://admin.invalid',token:'fixture'};
     globalThis.fetch=async(_url,init)=>{
       const body=JSON.parse(String(init?.body));calls.push(body.action??body.name);
-      if(body.action==='config.save')return Response.json({result:{...body.input.config,revision:2}});
+      if(body.action==='config.save'){assert.deepEqual(body.input.config.media.image,expectedImage);return Response.json({result:{...body.input.config,revision:2}});}
+      if(body.action==='skill.image.status')return Response.json({result:{default:{keyConfigured:false,keyEnv:'CUSTOM_IMAGE_KEY'}}});
       if(body.action==='skill.voice.status')return Response.json({result:{default:{configured:true,revision:2,synthesisValidation:{status:'NOT_RUN'}}}});
       if(body.name==='catalog.models')return Response.json({result:{data:[],revision:'sha256:'+'3'.repeat(64)}});
       if(body.name==='catalog.profiles')return Response.json({result:{items:[],nextCursor:null,revision:'sha256:'+'4'.repeat(64)}});
@@ -70,7 +83,15 @@ test('panel retains summary options, drafts and local errors across its sections
     };
     states[8]=true;tree=render();tree.find(n=>n.type==='button'&&n.children.includes('保存')).props.onClick();await new Promise(resolve=>setImmediate(resolve));
     tree=render();assert.equal(states[7].revision,2);assert.equal(states[14].default.voice.revision,2);assert.ok(calls.includes('skill.voice.status'));
+    assert.ok(calls.includes('skill.image.status'));assert.equal(states[13].default.keyConfigured,false);
+    assert.ok(nodes(tree.find(n=>n.props?.key==='image')).some(n=>n.type==='p'&&n.children[0]==='待配置'));
     assert.ok(nodes(tree.find(n=>n.props?.key==='voice')).some(n=>n.type==='p'&&String(n.children[0]).includes('missing')));
+    imageSection=nodes(tree.find(n=>n.props?.key==='image'));
+    imageSection.find(n=>n.type==='label'&&n.children[0]==='服务地址').children[1].props.onChange({target:{value:'   '}});
+    tree=render();imageSection=nodes(tree.find(n=>n.props?.key==='image'));
+    imageSection.find(n=>n.type==='label'&&n.children[0]==='密钥环境变量名').children[1].props.onChange({target:{value:'  '}});
+    assert.equal(states[7].media.image.baseUrl,undefined);assert.equal(states[7].media.image.keyEnv,undefined);
+    assert.deepEqual(JSON.parse(JSON.stringify(states[7])).media.image,{enabled:true,model:'existing-image-model'});
     states[3]='保留本地错误';states[0]='overview';tree=render();assert.ok(tree.some(n=>n.props?.role==='alert'));
     states[0]='catalog';states[7]={...config,schemaVersion:4,revision:2,media:{music:{enabled:true,profileRef:{serviceId:'music',profileId:'managed'},includeLyrics:false}}};states[8]=false;states[23]=[{serviceId:'music',profileId:'managed',revision:1,contentHash:'a'.repeat(64),state:'ready',capabilities:['music.acquire'],displayName:'Managed'}];globalThis.fetch=async(_url,init)=>{const body=JSON.parse(String(init?.body));if(body.name==='capability.acceptance'){assert.equal(body.version,1);assert.equal(body.kind,'command');assert.equal(body.input.profileContentHash,'a'.repeat(64));return Response.json({result:{data:{...body.input,state:'PASS'}}});}return Response.json({result:{data:summary,revision:'sha256:'+'5'.repeat(64)}});};tree=render();const music=nodes(tree.find(n=>n.props?.key==='music'));music.find(n=>n.type==='button'&&n.children.includes('登记下载通过')).props.onClick();await new Promise(resolve=>setImmediate(resolve));tree=render();let dialog=tree.find(n=>n.props?.role==='dialog');dialog.children.find((n:any)=>n.type==='label')?.children[1].props.onChange({target:{value:'fixture acceptance'}});await new Promise(resolve=>setImmediate(resolve));tree=render();dialog=tree.find(n=>n.props?.role==='dialog');dialog.props.onSubmit({preventDefault:()=>{}});await new Promise(resolve=>setImmediate(resolve));
     states[0]='catalog';states[7]=null;tree=render();assert.ok(tree.some(n=>n.type==='option'&&n.children.includes('其他人格')));
