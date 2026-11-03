@@ -1,5 +1,5 @@
 requests>=2.32,<3
-Pillow>=10,<13
+Pillow>=13,<14
 aiohttp>=3.10,<4
 pypdf>=5,<7
 python-docx>=1.1,<2

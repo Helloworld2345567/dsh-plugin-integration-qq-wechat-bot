@@ -46,6 +46,10 @@
 
 两种方式都支持没有 GPT-SoVITS、Music、RVC、CUDA 或模型权重的最小安装。Catalog 会将未登记能力显示为 `missing` 或 `blocked`，不会静默选择其他服务。基础媒体依赖见 `requirements.txt`，Edge TTS 可选依赖见 `requirements-voice-generation.txt`；外部服务项目和模型权重始终由运营者单独部署。
 
+## 开源治理与依赖
+
+贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，安全问题请看 [SECURITY.md](SECURITY.md)，使用支持按 [SUPPORT.md](SUPPORT.md) 分流。依赖来源、审计结果、Python 3.12/3.13 支持范围和许可证边界见 [依赖审计](docs/dependency-audit.md)、[Python 依赖说明](docs/python-dependencies.md) 与 [第三方声明](THIRD_PARTY_NOTICES.md)。
+
 ## 配置
 
 本机 RVC/GPT-SoVITS 模型可在人格媒体中的“连接”设置目录并自动识别，然后在人格媒体页分别点击音色的“使用”。新增模型后刷新即可登记，详见 [模型库配置与一键选择](docs/voice-model-library.md)。

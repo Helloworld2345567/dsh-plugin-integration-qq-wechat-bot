@@ -1,0 +1,3 @@
+# Exact optional voice-generation version used by the Windows CI verification snapshot.
+# User-facing compatibility range remains in requirements-voice-generation.txt.
+edge-tts==7.3.1

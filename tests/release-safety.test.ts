@@ -28,6 +28,6 @@ test('release entries reject traversal, absolute paths and credential-like files
 test('release packaging and publishing cannot bypass the complete verification gate',()=>{
   const manifest=JSON.parse(readFileSync('package.json','utf8'));
   assert.equal(manifest.scripts['prepublishOnly'],'npm run verify:release');
-  assert.match(manifest.scripts['release:pack'],/^npm run verify:release && npm pack --ignore-scripts$/);
+  assert.match(manifest.scripts['release:pack'],/^npm run verify:release && node scripts\/release-pack\.mjs$/);
   assert.doesNotMatch(manifest.scripts['verify:release'],/npm pack(?!.*--ignore-scripts)/);
 });

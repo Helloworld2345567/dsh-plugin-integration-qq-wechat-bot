@@ -1,0 +1,4 @@
+# Pinned top-level audit tools used by CI; transitive tool dependencies are
+# resolved by pip and are not part of the runtime package.
+pip-audit==2.10.1
+pip-licenses==5.5.5

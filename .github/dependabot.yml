@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    versioning-strategy: increase-if-necessary
+    # Harness and Cordis versions are runtime-coupled; update only after a
+    # compatibility review and the native/lifecycle/install smoke checks.
+    ignore:
+      - dependency-name: "@deepseek-ai/dsh"
+      - dependency-name: "@deepseek-ai/cordis"
+      - dependency-name: "@deepseek-ai/dsh-*"
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    # requirements*.txt are user-facing ranges; review generated changes
+    # against the Python 3.12/3.13 support policy before merging.

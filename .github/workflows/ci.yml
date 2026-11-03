@@ -12,10 +12,14 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  NODE_VERSION: '24'
+  HARNESS_VERSION: '0.2.1-rc.2'
+
 jobs:
-  release-gate:
-    name: 发布门禁
-    runs-on: windows-latest
+  quality:
+    name: 纯逻辑与依赖门禁
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: 检出源码
@@ -24,8 +28,9 @@ jobs:
       - name: 安装 Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
+          registry-url: https://registry.npmjs.org
 
       - name: 安装 Python
         uses: actions/setup-python@v5
@@ -33,8 +38,60 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: |
-            requirements.txt
-            requirements-voice-generation.txt
+            requirements-ci.txt
+            requirements-voice-generation-ci.txt
+            requirements-audit-ci.txt
+
+      - name: 安装可复现依赖
+        run: |
+          npm ci --ignore-scripts --registry=https://registry.npmjs.org
+          python -m pip install -r requirements-ci.txt -r requirements-voice-generation-ci.txt
+          python -m pip install -r requirements-audit-ci.txt
+
+      - name: 运行类型、测试与构建门禁
+        run: npm run verify:release
+
+      - name: 运行依赖审计
+        run: |
+          npm run audit:dependencies
+          pip-audit -r requirements.txt -r requirements-voice-generation.txt --format json > pip-audit.json
+          pip-licenses --from=mixed --format=json > pip-licenses.json
+
+      - name: 上传审计证据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit-${{ github.run_id }}
+          path: |
+            pip-audit.json
+            pip-licenses.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  release-gate:
+    name: Windows 发布门禁
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements-ci.txt
+            requirements-voice-generation-ci.txt
+            requirements-audit-ci.txt
 
       - name: 确认 FFmpeg
         shell: pwsh
@@ -45,13 +102,25 @@ jobs:
           ffmpeg -version | Select-Object -First 1
           ffprobe -version | Select-Object -First 1
 
-      - name: 安装依赖
+      - name: 安装可复现依赖
         run: |
-          npm ci
-          python -m pip install -r requirements.txt -r requirements-voice-generation.txt
+          npm ci --ignore-scripts --registry=https://registry.npmjs.org
+          python -m pip install -r requirements-ci.txt -r requirements-voice-generation-ci.txt
 
-      - name: 执行发布门禁并生成归档
+      - name: 执行发布门禁并生成临时归档
         run: npm run release:pack
+
+      - name: 运行依赖审计
+        run: npm run audit:dependencies
+
+      - name: 上传发布证据（不发布）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-pack-windows-${{ github.run_id }}
+          path: '*.tgz'
+          if-no-files-found: ignore
+          retention-days: 7
 
   harness-integration:
     name: Harness 集成与安装验收
@@ -65,13 +134,19 @@ jobs:
       - name: 安装 Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
+          registry-url: https://registry.npmjs.org
 
       - name: 安装 Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements-ci.txt
+            requirements-voice-generation-ci.txt
+            requirements-audit-ci.txt
 
       - name: 确认 FFmpeg
         shell: pwsh
@@ -79,11 +154,13 @@ jobs:
           if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
             choco install ffmpeg -y --no-progress
           }
+          ffmpeg -version | Select-Object -First 1
+          ffprobe -version | Select-Object -First 1
 
-      - name: 安装依赖
+      - name: 安装可复现依赖
         run: |
-          npm ci
-          python -m pip install -r requirements.txt -r requirements-voice-generation.txt
+          npm ci --ignore-scripts --registry=https://registry.npmjs.org
+          python -m pip install -r requirements-ci.txt -r requirements-voice-generation-ci.txt
 
       - name: 运行 Harness 原生集成测试
         shell: pwsh
@@ -97,3 +174,27 @@ jobs:
         run: |
           $env:BOT_TEST_PYTHON = (Get-Command python).Source
           npm run test:install-smoke
+
+  python-compatibility:
+    name: Python ${{ matrix.python-version }} 依赖检查
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12', '3.13']
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements-ci.txt
+            requirements-voice-generation-ci.txt
+            requirements-audit-ci.txt
+      - name: 安装并检查 Python 依赖
+        run: |
+          python -m pip install -r requirements-ci.txt -r requirements-voice-generation-ci.txt
+          python -m pip check
