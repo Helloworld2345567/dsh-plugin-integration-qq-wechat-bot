@@ -25,3 +25,4 @@
 .mypy_cache/
 .ruff_cache/
 *.coverage
+/fix_plan.md
