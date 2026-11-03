@@ -18,7 +18,7 @@ const profiles=[
 test('v4 service cards render selectors and explicit blocked/missing states without private inputs',()=>{const ui=createUI(React,false,()=>{}),common=[()=>{},async()=>{},async()=>null,async()=>{},async()=>{}] as const;
   const music=nodes(musicCard(React.createElement,ui,config,false,{revision:4},profiles,{}, {},common[0],common[1],common[2],common[3],common[4]));
   const singing=nodes(singingCard(React.createElement,ui,config,false,{revision:4},profiles,{}, {},common[0],common[1],common[2],common[3],common[4]));
-  for(const [rows,state,label] of [[music,'blocked','音乐 Profile'],[singing,'missing','音色 Profile']] as const){assert.ok(rows.some(node=>node.type==='label'&&node.children[0]===label));assert.ok(rows.some(node=>String(node.children?.[0]??'').includes(state)));assert.ok(!rows.some(node=>node.type==='label'&&/endpoint|地址|端口|path|路径|weight|权重|credential|凭据|locator/i.test(String(node.children[0]))));}
+  for(const [rows,state,label] of [[music,'blocked','音乐 Profile'],[singing,'missing','说话人编号']] as const){assert.ok(rows.some(node=>node.type==='label'&&node.children[0]===label));assert.ok(rows.some(node=>String(node.children?.[0]??'').includes(state)));assert.ok(!rows.some(node=>node.type==='label'&&/endpoint|地址|端口|path|路径|weight|权重|credential|凭据|locator/i.test(String(node.children[0]))));}
   assert.ok(music.some(node=>node.props?.role==='switch'&&node.props['aria-label']==='下载时附带歌词'));
 });
 

@@ -47,6 +47,8 @@ Bootstrap 只接受 HTTPS GitHub allowlist，逐跳检查重定向与 DNS，限�
 
 ## 配置
 
+本机 RVC/GPT-SoVITS 模型可在“模型服务”设置目录并自动识别，然后在人格媒体页分别点击音色的“使用”。新增模型后刷新即可登记，详见 [模型库配置与一键选择](docs/voice-model-library.md)。
+
 人格配置仅支持 `schemaVersion: 4`；V3 及更早版本不再读取、迁移或回退。服务模型路径由 Profile 私有配置管理。
 
 1. 在 Harness 模型设置中配置聊天模型和凭据。

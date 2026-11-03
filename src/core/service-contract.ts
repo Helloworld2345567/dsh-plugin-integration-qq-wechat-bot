@@ -96,7 +96,10 @@ export const serviceProfileRevisionSchema=z.object({
   updatedAt:z.number().int().nonnegative(),
 }).strict().superRefine((value,ctx)=>{for(const [index,operation] of value.capabilities.entries())if(!operation.startsWith(`${value.serviceId}.`))ctx.addIssue({code:'custom',path:['capabilities',index],message:'profile capability must use the service namespace'});});
 export type ServiceProfileRevision=z.infer<typeof serviceProfileRevisionSchema>;
-export interface ResolvedServiceProfileRevision extends ServiceProfileRevision {readonly managedConfig:Readonly<Record<string,unknown>>}
+/** Private discovery provenance and the execution resources of one model. */
+export const serviceProfileDiscoverySchema=z.object({sourceId:z.string().trim().min(1).max(4096),resourceHash:sha256Schema}).strict();
+export type ServiceProfileDiscovery=z.infer<typeof serviceProfileDiscoverySchema>;
+export interface ResolvedServiceProfileRevision extends ServiceProfileRevision {readonly managedConfig:Readonly<Record<string,unknown>>;readonly discovery?:Readonly<ServiceProfileDiscovery>}
 
 export const serviceJobStateSchema=z.enum(['queued','running','cancel_requested','cancelled','succeeded','failed','unknown']);
 export type ServiceJobState=z.infer<typeof serviceJobStateSchema>;

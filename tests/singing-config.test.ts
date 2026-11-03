@@ -21,7 +21,7 @@ test('STS card supports disabled drafts and enabling supplies dedicated permissi
   const React={createElement:(type:any,props:any,...children:any[])=>({type,props,children})};const ui=createUI(React,false,()=>{});const config=configSchema.parse({id:'singer',name:'Singer',personaPrompt:'A',tools:[],skills:[]});let updated:any;
   const nodes:any[]=[];const walk=(item:any)=>{if(!item||typeof item!=='object')return;nodes.push(item);item.children?.forEach(walk);};
   walk(singingCard(React.createElement,ui,config,false,{revision:1,configured:false},[],{}, {},(patch:any)=>{updated=patch;},async()=>{},async()=>null,async()=>{},async()=>{}));
-  assert.ok(nodes.some(node=>node.type==='label'&&node.children[0]==='音色 Profile'));
+  assert.ok(nodes.some(node=>node.type==='small'&&String(node.children[0]).includes('唱歌音色列表')));
   assert.ok(nodes.some(node=>node.type==='small'&&String(node.children[0]).includes('本机路径')));
   assert.ok(!nodes.some(node=>node.type==='label'&&/权重路径|服务地址|locator|凭据/i.test(String(node.children[0]))));
   nodes.find(node=>node.props?.role==='switch').props.onClick();await new Promise(resolve=>setImmediate(resolve));

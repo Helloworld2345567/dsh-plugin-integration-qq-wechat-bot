@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {botSchema,configSchema} from '../core/types.js';
+import {voiceLibrarySettingsInputSchema} from '../core/voice-model-library.js';
 import {acceptanceQueryInputSchema,acceptanceRecordInputSchema,catalogModelsInputSchema,catalogProfileInputSchema,catalogProfilesInputSchema,serviceHealthInputSchema,serviceRefreshInputSchema} from '../core/service-management.js';
 
 export const ADMIN_CONTRACT_VERSION=1 as const;
@@ -20,6 +21,7 @@ export const adminQueryRequestSchema=z.discriminatedUnion('name',[
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('catalog.profiles'),input:catalogProfilesInputSchema}).strict(),
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('catalog.profile'),input:catalogProfileInputSchema}).strict(),
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('catalog.models'),input:catalogModelsInputSchema}).strict(),
+  z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('service.settings'),input:z.object({}).strict().default({})}).strict(),
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('service.health'),input:serviceHealthInputSchema}).strict(),
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('capability.acceptance'),input:acceptanceQueryInputSchema}).strict(),
 ]);
@@ -50,6 +52,7 @@ export const adminCommandRequestSchema=z.discriminatedUnion('name',[
   commandRequest('capability.record',capabilityInput),commandRequest('memory.forget',memoryForgetInput),commandRequest('memory.correct',memoryCorrectInput),commandRequest('session.cancel',sessionCancelInput),
   commandRequest('skill.singing.probe',z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive()}).strict()),
   commandRequest('skill.music.probe',z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive()}).strict()),
+  commandRequest('service.settings.save',voiceLibrarySettingsInputSchema),
   commandRequest('service.refresh',serviceRefreshInputSchema),commandRequest('capability.acceptance',acceptanceRecordInputSchema),
   commandRequest('delivery.retry',deliveryRetryInput),
   commandRequest('automation.proactive',z.object({scopeKey:z.string().min(1).max(128),action:z.enum(['on','off','status','now','set']),args:z.string().max(1000).default('')}).strict()),

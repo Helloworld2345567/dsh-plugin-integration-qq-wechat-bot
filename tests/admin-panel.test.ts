@@ -62,14 +62,12 @@ test('panel retains summary options, drafts and local errors across its sections
     assert.ok(imageSection.some(n=>n.type==='small'&&String(n.children[0]).includes('只填写变量名')));
     assert.ok(imageSection.some(n=>n.type==='p'&&n.children[0]==='未保存，保存后检查配置'));
     assert.ok(tree.some(n=>n.type==='button'&&n.children.includes('保存')&&!n.props.disabled));
-    states[7]={...states[7],media:{...states[7].media,voice:{enabled:true,protocol:'gpt_sovits',replyMode:'auto',format:'wav',gptSovits:{modelVersion:'v4',promptLang:'all_zh',textLang:'all_zh'}}}};states[8]=false;
+    states[7]={...states[7],schemaVersion:4,media:{...states[7].media,voice:{enabled:true,profileRef:{serviceId:'gpt-sovits',profileId:'speaker'},replyMode:'auto',format:'wav'}}};states[8]=false;
     states[14]={default:{voice:{configured:true,revision:1,synthesisValidation:{status:'NOT_RUN'}}}};
     states[13]={default:{keyConfigured:true}};
     tree=render();const voiceSection=nodes(tree.find(n=>n.props?.key==='voice'));
-    assert.ok(voiceSection.some(n=>n.type==='label'&&n.children[0]==='语音 Profile'));
     assert.ok(voiceSection.some(n=>n.type==='option'&&n.children.includes('文字加自动语音')));
     assert.ok(!voiceSection.some(n=>n.type==='label'&&/地址|端口|路径|权重|凭据|locator/i.test(String(n.children[0]))));
-    assert.ok(voiceSection.some(n=>n.type==='small'&&String(n.children[0]).includes('missing/blocked/disabled/revoked')));
     assert.ok(!voiceSection.some(n=>n.type==='label'&&n.children[0]==='提供商'));
     const calls:string[]=[];(globalThis as any).window.__BOT_INTEGRATION__={endpoint:'http://admin.invalid',token:'fixture'};
     globalThis.fetch=async(_url,init)=>{
