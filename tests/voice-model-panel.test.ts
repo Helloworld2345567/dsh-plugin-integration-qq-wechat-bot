@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {useVoiceModel,voiceModelPicker,voiceLibraryPanel,loadServiceProfiles} from '../src/client/voice-models.js';
+import {useVoiceModel,voiceModelPicker,loadServiceProfiles} from '../src/client/voice-models.js';
 import {createUI} from '../src/client/ui.js';
 import {configSchema} from '../src/core/types.js';
 import type {PublicServiceProfile} from '../src/core/service-management.js';
@@ -29,43 +29,24 @@ test('model application rejects incomplete profiles and the wrong service even i
   assert.throws(()=>useVoiceModel(persona(),'voice',profile('rvc')),/对应音色/);
 });
 
-test('pickers filter service types and disable use during unsaved edits, loading, or missing resources',async()=>{
+test('native voice selector filters service types, applies choices, and disables unavailable models',async()=>{
   const profiles=[profile(),{...profile('rvc'),displayName:'胡桃'}, {...profile('gpt-sovits','blocked'),profileId:'incomplete',displayName:'待补全'}];let selected:any;
-  const options={role:'voice' as const,config:persona(),profiles,health:{},busy:false,dirty:false,existing:true,apply:async(role:string,value:any)=>{selected={role,value};},inspect:async()=>{},openLibrary:()=>{}};
+  const options={role:'voice' as const,config:persona(),profiles,busy:false,dirty:false,existing:true,apply:async(role:string,value:any)=>{selected={role,value};}};
   const ui=createUI(React,false,error=>{throw Error(error);});
   const tree=nodes(voiceModelPicker(React.createElement,ui,options));assert.ok(!JSON.stringify(tree).includes('胡桃'));
-  const use=tree.find(node=>node.props?.['aria-label']==='说话使用可莉');assert.equal(use.props.disabled,false);use.props.onClick();await new Promise(resolve=>setImmediate(resolve));assert.equal(selected.role,'voice');assert.equal(selected.value.profileId,'klee');
-  assert.equal(tree.find(node=>node.props?.['aria-label']==='说话使用待补全').props.disabled,true);
-  for(const patch of [{dirty:true},{existing:false},{busy:true}])assert.equal(nodes(voiceModelPicker(React.createElement,ui,{...options,...patch})).find(node=>node.props?.['aria-label']==='说话使用可莉').props.disabled,true);
+  const select=tree.find(node=>node.type==='select');assert.equal(select.props.disabled,false);select.props.onChange({target:{value:'gpt-sovits/klee'}});await new Promise(resolve=>setImmediate(resolve));assert.equal(selected.role,'voice');assert.equal(selected.value.profileId,'klee');
+  assert.equal(tree.find(node=>node.type==='option'&&node.props.value==='gpt-sovits/incomplete').props.disabled,true);
+  assert.equal(tree.find(node=>node.type==='option'&&node.props.value==='gpt-sovits/klee').children[0],'可莉 · v4');
+  assert.equal(tree.some(node=>node.type==='button'),false);
+  for(const patch of [{dirty:true},{existing:false},{busy:true}])assert.equal(nodes(voiceModelPicker(React.createElement,ui,{...options,...patch})).find(node=>node.type==='select').props.disabled,true);
 });
 
-test('model library settings expose only the root and GPT address and show incomplete model diagnostics',()=>{
-  const ui=createUI(React,false,()=>{}),value={modelsRoot:'configured-root',gptSovitsUrl:'http://localhost:9880',reports:{rvc:{profileCount:1,state:'partial',models:[{profileId:'bad',displayName:'缺少索引',state:'blocked',diagnostics:['模型权重无法读取']}],diagnostics:[]}}};
-  const rows=nodes(voiceLibraryPanel(React.createElement,ui,{value,draft:{modelsRoot:'new-root',gptSovitsUrl:value.gptSovitsUrl},busy:false,update:()=>{},save:async()=>{},refresh:async()=>{}}));
-  assert.deepEqual(rows.filter(node=>node.type==='label').map(node=>node.children[0]),['模型根目录','GPT-SoVITS 地址']);assert.ok(JSON.stringify(rows).includes('模型权重无法读取'));
-  assert.equal(rows.find(node=>node.type==='button'&&node.children[0]==='刷新模型').props.disabled,true);
-});
-
-test('an already selected voice can repair missing permissions or a non-WAV speaking format',()=>{
-  const ui=createUI(React,false,()=>{});
-  for(const role of ['voice','singing'] as const){
-    const selectedProfile=profile(role==='voice'?'gpt-sovits':'rvc'),config=useVoiceModel(persona(),role,selectedProfile);
-    const button=(value:typeof config)=>nodes(voiceModelPicker(React.createElement,ui,{role,config:value,profiles:[selectedProfile],health:{},busy:false,dirty:false,existing:true,apply:async()=>{},inspect:async()=>{},openLibrary:()=>{}})).find(node=>node.props?.['aria-label']===(role==='voice'?'说话使用可莉':'唱歌使用可莉'));
-    assert.equal(button(config).props.disabled,true);
-    for(const patch of [{tools:config.tools.filter(tool=>tool!==(role==='voice'?'bot_voice':'bot_sing'))},{skills:config.skills.filter(skill=>skill!==(role==='voice'?'voice-generation':'singing-conversion'))}]){
-      const incomplete={...config,...patch};assert.equal(button(incomplete).props.disabled,false);assert.equal(button(useVoiceModel(incomplete,role,selectedProfile)).props.disabled,true);
-    }
-    if(role==='voice')assert.equal(button({...config,media:{...config.media,voice:{...config.media.voice!,format:'mp3'}}}).props.disabled,false);
-  }
-});
-
-test('voice picker does not show expired or replaced-profile health as available',()=>{
-  const ui=createUI(React,false,()=>{}),selectedProfile=profile(),health={serviceId:'gpt-sovits',profileId:'klee',profileRevision:1,profileContentHash:'a'.repeat(64),state:'ready',checkedAt:Date.now()-1000,expiresAt:Date.now()+60_000,cached:false};
-  const render=(value:typeof health)=>JSON.stringify(voiceModelPicker(React.createElement,ui,{role:'voice',config:persona(),profiles:[selectedProfile],health:{'gpt-sovits/klee':value},busy:false,dirty:false,existing:true,apply:async()=>{},inspect:async()=>{},openLibrary:()=>{}}));
-  assert.match(render(health),/服务可用/);
-  assert.match(render({...health,expiresAt:Date.now()-1}),/服务未检查/);
-  assert.match(render({...health,profileRevision:2}),/服务未检查/);
-  assert.match(render({...health,profileContentHash:'b'.repeat(64)}),/服务未检查/);
+test('native voice selector preserves missing selections and labels built-in voices and model variants',()=>{
+  const ui=createUI(React,false,()=>{}),selectedProfile={...profile(),modelLabel:'可莉 · v4-zh'},config=useVoiceModel(persona(),'voice',selectedProfile);
+  const render=(value:typeof config,profiles:PublicServiceProfile[])=>nodes(voiceModelPicker(React.createElement,ui,{role:'voice',config:value,profiles,busy:false,dirty:false,existing:true,apply:async()=>{throw Error('must not automatically apply');}}));
+  const existing=render(config,[selectedProfile]);assert.equal(existing.find(node=>node.type==='option'&&node.props.value==='gpt-sovits/klee').children[0],'可莉 · v4-zh');
+  const missing=render(config,[]);assert.equal(missing.find(node=>node.type==='select').props.value,'gpt-sovits/klee');assert.equal(missing.find(node=>node.type==='option'&&node.props.value==='gpt-sovits/klee').children[0],'当前音色（不可用）');assert.equal(missing.find(node=>node.type==='option'&&node.props.value==='gpt-sovits/klee').props.disabled,true);
+  const builtIn=render(persona(),[selectedProfile]);assert.equal(builtIn.find(node=>node.type==='option'&&node.props.value==='').children[0],'内置语音');assert.equal(builtIn.find(node=>node.type==='select').props.disabled,false);
 });
 
 test('profile loading follows catalog pages instead of hiding models after the first hundred',async()=>{

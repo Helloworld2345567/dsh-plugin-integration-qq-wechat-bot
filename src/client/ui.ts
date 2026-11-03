@@ -14,7 +14,7 @@ export function createUI(React:any,busy:boolean,onError:(message:string)=>void){
   const field=(label:string,value:any,change:(value:string)=>void,type='text',props:any={})=>h('label',null,label,
     h('input',{type,disabled:busy,value:value??'',onChange:(event:any)=>change(event.target.value),...props}));
   const select=(label:string,value:string,options:any[],change:(value:string)=>unknown,props:any={})=>h('label',null,label,
-    h('select',{value,disabled:busy,onChange:(event:any)=>{const next=event.target.value;run(()=>change(next));},...props},...[...(value&&!options.some(o=>o.id===value)?[{id:value,name:value}]:[]),...options].map(o=>h('option',{key:o.id,value:o.id},o.name??o.id))));
+    h('select',{value,disabled:busy,onChange:(event:any)=>{const next=event.target.value;run(()=>change(next));},...props},...[...(value&&!options.some(o=>o.id===value)?[{id:value,name:value}]:[]),...options].map(o=>h('option',{key:o.id,value:o.id,disabled:o.disabled},o.name??o.id))));
   const textarea=(label:string,value:string,change:(value:string)=>void,props:any={})=>h('label',{className:'full'},label,
     h('textarea',{value:value??'',disabled:busy,rows:4,onChange:(event:any)=>change(event.target.value),...props}));
   const details=(label:string,...children:any[])=>h('details',null,h('summary',null,label),h('div',{className:'detail-body'},...children));

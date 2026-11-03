@@ -1,16 +1,12 @@
 import type {createUI} from './ui.js';
-import {currentProfileAcceptance,currentProfileHealth,currentProfileValidation} from './profile-status.js';
 
-export function singingCard(h:any,ui:ReturnType<typeof createUI>,config:any,dirty:boolean,status:any,profiles:any[],healthByProfile:any,acceptanceByProfile:any,update:(patch:any)=>void,_mutate:(action:string,input:any,message?:string)=>Promise<any>,ask:(title:string,value?:string)=>Promise<string|null>,inspectProfile:(role:string,ref:any,operation:string)=>Promise<void>,recordAcceptance:(role:string,ref:any,operation:string,state:'PASS'|'FAIL',evidence:string)=>Promise<void>){
+export function singingCard(h:any,ui:ReturnType<typeof createUI>,config:any,update:(patch:any)=>void,modelPicker:any,librarySettings?:any){
   const options=config.media.singing??{},defaults={enabled:false,speakerId:0,pitchShift:0,indexRate:0,defaultOutput:'mp3',separation:{enabled:false,instrumentalMix:false,volume:1,status:'unconfigured'}};
   const set=(patch:any)=>update({media:{...config.media,singing:{...defaults,...options,...patch}}});
-  const key=options.profileRef?`${options.profileRef.serviceId}/${options.profileRef.profileId}`:'',profile=profiles.find(item=>`${item.serviceId}/${item.profileId}`===key),health=currentProfileHealth(healthByProfile[key],profile),acceptance=currentProfileAcceptance(acceptanceByProfile[`singing:${key}`],config,profile,'rvc.convert')??currentProfileValidation(status,config,profile,'conversionValidation');
-  const label=(value?:string)=>({PASS:'已通过',FAIL:'失败',EXPIRED:'已过期',BLOCKED:'受阻',NOT_RUN:'尚未验收'} as Record<string,string>)[value??'NOT_RUN']??'尚未验收';
-  const record=async(state:'PASS'|'FAIL')=>{const evidence=await ask(state==='PASS'?'填写真实转换及试听验收依据':'填写实际转换失败的现象');if(!evidence?.trim())return;await recordAcceptance('singing',options.profileRef,'rvc.convert',state,evidence.trim());};
   return h('section',{key:'singing',className:'item'},ui.toggle('音色转换 STS',options.enabled===true,()=>{
     if(options.enabled)set({enabled:false});else update({media:{...config.media,singing:{...defaults,...options,enabled:true}},tools:[...new Set([...config.tools,'bot_sing'])],skills:[...new Set([...config.skills,'singing-conversion'])]});
-  }),h('p',{className:'muted'},`${options.enabled?'已开启':'已关闭'} · ${profile?`${profile.displayName}${profile.modelLabel?` · ${profile.modelLabel}`:''} · ${profile.state}`:'Profile 未选择或 missing'} · health ${health?.state??'未检查'} · acceptance ${label(acceptance?.state??acceptance?.status)}`),
-  ui.details('业务偏好',h('small',null,'在上方唱歌音色列表点击“使用”即可保存选择。'),ui.field('说话人编号',String(options.speakerId??0),value=>set({speakerId:Number(value)}),'number',{min:0,max:65535,step:1}),ui.field('音高调整（半音）',String(options.pitchShift??0),value=>set({pitchShift:Number(value)}),'number',{min:-24,max:24,step:1}),ui.select('转换输出',options.defaultOutput??'mp3',[{id:'mp3',name:'MP3'},{id:'wav',name:'WAV'}],value=>set({defaultOutput:value})),h('small',null,'端口、本机路径、权重、locator 与凭据只存在于受管 Profile，不在人格面板显示或保存。')),
-  h('small',null,'Profile missing/blocked/disabled/revoked 时不会自动回退。health 只确认可探测，真实转换与试听验收单独绑定双 revision。'),
-  h('div',{className:'actions'},ui.button('检查 health',()=>inspectProfile('singing',options.profileRef,'rvc.convert'),{disabled:dirty||!options.profileRef}),ui.button('登记试听通过',()=>record('PASS'),{disabled:dirty||!profile}),ui.button('登记验收失败',()=>record('FAIL'),{disabled:dirty||!profile})));
+  }),modelPicker,ui.details('配置',
+    ui.field('说话人编号',String(options.speakerId??0),value=>set({speakerId:Number(value)}),'number',{min:0,max:65535,step:1}),
+    ui.field('音高调整（半音）',String(options.pitchShift??0),value=>set({pitchShift:Number(value)}),'number',{min:-24,max:24,step:1}),
+    ui.select('转换输出',options.defaultOutput??'mp3',[{id:'mp3',name:'MP3'},{id:'wav',name:'WAV'}],value=>set({defaultOutput:value}))),librarySettings);
 }

@@ -33,8 +33,9 @@ test('music card enables dedicated permissions and retains persona media setting
   const React={createElement:(type:any,props:any,...children:any[])=>({type,props,children})},ui=createUI(React,false,()=>{});
   const config=configSchema.parse({id:'music',name:'Music',personaPrompt:'A',tools:[],skills:[],media:{voice:{enabled:false}}});let updated:any;
   const nodes:any[]=[];const walk=(item:any)=>{if(!item||typeof item!=='object')return;nodes.push(item);item.children?.forEach(walk);};
-  walk(musicCard(React.createElement,ui,config,true,{revision:1,environment:null},[],{}, {},(patch:any)=>{updated=patch;},async()=>{},async()=>null,async()=>{},async()=>{}));
-  assert.equal(nodes.find(node=>node.type==='button'&&node.children[0]==='检查 health').props.disabled,true);
+  walk(musicCard(React.createElement,ui,config,[],(patch:any)=>{updated=patch;}));
+  assert.doesNotMatch(JSON.stringify(nodes),/验收|health|acceptance|测试|权重|locator/);
+  assert.ok(nodes.some(node=>node.type==='label'&&node.children[0]==='音乐来源'));
   assert.equal(nodes.some(node=>node.type==='input'),false);
   nodes.find(node=>node.props?.['aria-label']==='音乐搜索与下载').props.onClick();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(updated.media.music.enabled,true);assert.equal(updated.media.music.includeLyrics,false);assert.deepEqual(updated.media.voice,config.media.voice);
