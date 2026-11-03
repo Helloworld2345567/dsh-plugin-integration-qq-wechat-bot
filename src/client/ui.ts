@@ -1,7 +1,9 @@
+import {chinese,type Translate} from './locale.js';
+
 export type Api = (action:string,input?:any,signal?:AbortSignal)=>Promise<any>;
 export type Mutation = (action:string,input?:any,message?:string)=>Promise<any>;
 
-export const botStatus=(status:string)=>({connected:'在线',connecting:'连接中',stopped:'已停止',error:'异常',disconnected:'离线',reconnecting:'重连中'}[status]??'未连接');
+export const botStatus=(status:string,t:Translate=chinese)=>({connected:t('online'),connecting:t('connecting'),stopped:t('stopped'),error:t('error'),disconnected:t('offline'),reconnecting:t('reconnecting')}[status]??t('notConnected'));
 export const list=(value:unknown):string[]=>Array.isArray(value)?value:[];
 
 export function createUI(React:any,busy:boolean,onError:(message:string)=>void){
@@ -28,14 +30,14 @@ export function dateInput(timestamp:number,timezone:string):string{
 }
 
 // datetime-local has no timezone. Interpret it in the selected zone, not the browser zone.
-export function scheduledTime(value:string,timezone:string):number{
-  if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value))throw Error('请选择执行时间');
+export function scheduledTime(value:string,timezone:string,t:Translate=chinese):number{
+  if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value))throw Error(t('chooseRunTime'));
   const wall=Date.parse(value+'Z');let instant=wall;
-  if(!Number.isFinite(wall))throw Error('执行时间无效');
+  if(!Number.isFinite(wall))throw Error(t('invalidRunTime'));
   for(let i=0;i<4;i++){
     const rendered=dateInput(instant,timezone);
     if(rendered===value)return instant;
     instant+=wall-Date.parse(rendered+'Z');
   }
-  throw Error('该时间在所选时区不存在，请重新选择');
+  throw Error(t('timeNotInZone'));
 }

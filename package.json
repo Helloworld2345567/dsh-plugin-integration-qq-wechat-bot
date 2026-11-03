@@ -9,16 +9,21 @@
     "url": "https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot.git"
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=24.0.0",
+    "dsh": "0.2.1-rc.2"
   },
   "exports": {
     ".": "./dist/index.js",
     "./client": "./dist/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
     "./package.json": "./package.json"
   },
   "files": [
     "dist/*.js",
     "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
     "python/**/*.py",
     "skills/**/*.md",
     "skills/**/*.py",
@@ -55,6 +60,7 @@
       "platform": "web",
       "immediately": true,
       "inject": [
+        "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-ui-layout"
       ]

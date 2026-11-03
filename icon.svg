@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="QQ／微信机器人">
+  <defs>
+    <linearGradient id="bg" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2F80ED"/>
+      <stop offset="1" stop-color="#19A974"/>
+    </linearGradient>
+  </defs>
+  <rect x="5" y="8" width="54" height="42" rx="16" fill="url(#bg)"/>
+  <path d="M20 50l-7 7 2-12" fill="#19A974"/>
+  <circle cx="24" cy="29" r="4" fill="#fff"/>
+  <circle cx="40" cy="29" r="4" fill="#fff"/>
+  <path d="M23 39c5 3 13 3 18 0" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+</svg>

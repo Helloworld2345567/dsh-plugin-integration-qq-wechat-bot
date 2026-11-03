@@ -1,6 +1,7 @@
 import {createUI,dateInput,scheduledTime,type Api,type Mutation} from './ui.js';
+import {chinese,type Translate} from './locale.js';
 
-export function AutomationPanel({React,query,mutate,configs,bots,confirm,onError,busy,active=true}:{React:any;query:Api;mutate:Mutation;configs:any[];bots:any[];confirm:(message:string)=>Promise<boolean>;onError:(message:string)=>void;busy:boolean;active?:boolean}){
+export function AutomationPanel({React,query,mutate,configs,bots,confirm,onError,busy,t=chinese,active=true}:{React:any;query:Api;mutate:Mutation;configs:any[];bots:any[];confirm:(message:string)=>Promise<boolean>;onError:(message:string)=>void;busy:boolean;t?:Translate;active?:boolean}){
   const h=React.createElement;
   const [data,setData]=React.useState(null);
   const [configId,setConfigId]=React.useState('');const [scopeKey,setScopeKey]=React.useState('');
@@ -13,7 +14,7 @@ export function AutomationPanel({React,query,mutate,configs,bots,confirm,onError
   const assignments=JSON.stringify(bots.map(b=>[b.id,b.configId]));
   const reload=async(signal?:AbortSignal)=>{
     setLoading(true);setLoadError('');
-    try{const result=await query('automation.list',{},signal);if(signal?.aborted)return;if(!result)throw Error('状态未读取，请重试');setData(result);}
+    try{const result=await query('automation.list',{},signal);if(signal?.aborted)return;if(!result)throw Error(t('automationStateFailed'));setData(result);}
     catch(error){if(!signal?.aborted){setData(null);setLoadError((error as Error).message);}throw error;}
     finally{if(!signal?.aborted)setLoading(false);}
   };
@@ -28,44 +29,44 @@ export function AutomationPanel({React,query,mutate,configs,bots,confirm,onError
   const jobs=(data?.scheduled??[]).filter((j:any)=>j.scopeKey===scope?.scopeKey);
   const scopeNames=scopes.map((s:any)=>({id:s.scopeKey,name:`${bots.find(b=>b.id===s.botId)?.name??s.botId} · ${s.senderId}`}));
   const update=async(action:string,input:any,message:string)=>{
-    if(pendingRef.current)throw Error('操作进行中，请稍候');pendingRef.current=true;setPending(true);
-    try{await mutate(action,input,message);try{await reload();}catch{onError('操作已完成，但列表刷新失败。请刷新列表确认结果。');}}
+    if(pendingRef.current)throw Error(t('operationBusy'));pendingRef.current=true;setPending(true);
+    try{await mutate(action,input,message);try{await reload();}catch{onError(t('automationRefreshFailed'));}}
     finally{pendingRef.current=false;setPending(false);}
   };
-  return h('section',{'aria-label':'自动化'},
-    h('div',{className:'fields'},ui.select('人格',selectedId,configs,id=>{setConfigId(id);setScopeKey('');setCreating(false);}),
-      ui.select('目标会话',scope?.scopeKey??'',scopeNames,key=>{setScopeKey(key);setCreating(false);},{disabled:busy||pending||loading||!scope})),
-    loading?h('p',{role:'status'},'读取中…'):loadError?h('div',null,h('p',{className:'error',role:'alert'},loadError),ui.button('刷新',()=>reload(),{className:'primary'})):!scope?h('p',{className:'empty'},'此人格暂无私聊会话，收到私聊后可设置自动化。'):h(React.Fragment,null,
-      h('section',{className:'card'},ui.toggle('主动会话',proactive.enabled,async()=>{
-        await update('automation.proactive',{scopeKey:scope.scopeKey,action:proactive.enabled?'off':'on',args:''},'已更新');
-      }),h('p',{className:'muted'},`每日最多 ${proactive.dailyLimit} 次 · ${proactive.quietFrom}–${proactive.quietTo} 静默 · ${proactive.timezone}`),
-      proactive.enabled&&proactive.nextAt?h('p',{className:'muted'},`下次主动会话：${new Intl.DateTimeFormat('zh-CN',{timeZone:proactive.timezone,dateStyle:'short',timeStyle:'short'}).format(proactive.nextAt)}`):null,
-      ui.details('设置',h('div',{className:'fields'},
-        ui.field('每日上限',value.dailyLimit,v=>patch('dailyLimit',Number(v)),'number',{min:1,max:10}),
-        ui.field('静默开始',value.quietFrom,v=>patch('quietFrom',v),'time'),ui.field('静默结束',value.quietTo,v=>patch('quietTo',v),'time')),
-        ui.toggle('网页搜索',value.allowWeb,()=>patch('allowWeb',!value.allowWeb)),
-        h('div',{className:'row spread'},h('small',null,Object.keys(draft).length?'未保存':''),ui.button('保存',async()=>{
-          if(!Number.isInteger(value.dailyLimit)||value.dailyLimit<1||value.dailyLimit>10)throw Error('每日上限应为 1–10 次');
-          await update('automation.proactive',{scopeKey:scope.scopeKey,action:'set',args:Object.entries(draft).map(([k,v])=>`${k}=${v}`).join(' ')},'已保存');
+  return h('section',{'aria-label':t('automation')},
+    h('div',{className:'fields'},ui.select(t('persona'),selectedId,configs,id=>{setConfigId(id);setScopeKey('');setCreating(false);}),
+      ui.select(t('targetSession'),scope?.scopeKey??'',scopeNames,key=>{setScopeKey(key);setCreating(false);},{disabled:busy||pending||loading||!scope})),
+    loading?h('p',{role:'status'},t('loading')):loadError?h('div',null,h('p',{className:'error',role:'alert'},loadError),ui.button(t('refresh'),()=>reload(),{className:'primary'})):!scope?h('p',{className:'empty'},t('noPrivateSession')):h(React.Fragment,null,
+      h('section',{className:'card'},ui.toggle(t('proactive'),proactive.enabled,async()=>{
+        await update('automation.proactive',{scopeKey:scope.scopeKey,action:proactive.enabled?'off':'on',args:''},t('updated'));
+      }),h('p',{className:'muted'},t('proactiveSummary',{limit:proactive.dailyLimit,from:proactive.quietFrom,to:proactive.quietTo,timezone:proactive.timezone})),
+      proactive.enabled&&proactive.nextAt?h('p',{className:'muted'},t('nextProactive',{time:new Intl.DateTimeFormat('zh-CN',{timeZone:proactive.timezone,dateStyle:'short',timeStyle:'short'}).format(proactive.nextAt)})):null,
+      ui.details(t('settings'),h('div',{className:'fields'},
+        ui.field(t('dailyLimit'),value.dailyLimit,v=>patch('dailyLimit',Number(v)),'number',{min:1,max:10}),
+        ui.field(t('quietFrom'),value.quietFrom,v=>patch('quietFrom',v),'time'),ui.field(t('quietTo'),value.quietTo,v=>patch('quietTo',v),'time')),
+        ui.toggle(t('webSearch'),value.allowWeb,()=>patch('allowWeb',!value.allowWeb)),
+        h('div',{className:'row spread'},h('small',null,Object.keys(draft).length?t('unsaved'):''),ui.button(t('save'),async()=>{
+          if(!Number.isInteger(value.dailyLimit)||value.dailyLimit<1||value.dailyLimit>10)throw Error(t('dailyLimitInvalid'));
+          await update('automation.proactive',{scopeKey:scope.scopeKey,action:'set',args:Object.entries(draft).map(([k,v])=>`${k}=${v}`).join(' ')},t('saved'));
           setDrafts((old:any)=>{const next={...old};delete next[scope.scopeKey];return next;});
         },{className:'primary',disabled:busy||!Object.keys(draft).length})))),
-      h('section',{className:'card'},h('div',{className:'row spread'},h('h3',null,'定时任务'),ui.button(creating?'取消':'新建',()=>setCreating(!creating))),
-        creating?h('div',{className:'detail-body'},ui.textarea('目标',schedule.prompt,v=>setSchedule({...schedule,prompt:v})),
-          h('div',{className:'fields'},ui.field('执行时间',schedule.runAt,v=>setSchedule({...schedule,runAt:v}),'datetime-local'),
-            ui.field('时区',schedule.timezone,v=>setSchedule({...schedule,timezone:v}))),
-          h('small',null,'按所选时区执行'),ui.button('创建',async()=>{
-            const at=scheduledTime(schedule.runAt,schedule.timezone);const delayMs=at-Date.now();
-            if(delayMs<1000)throw Error('执行时间必须晚于当前时间');
-            if(!schedule.prompt.trim())throw Error('请输入任务目标');
-            await update('automation.schedule',{scopeKey:scope.scopeKey,action:'create',args:JSON.stringify({delayMs,timezone:schedule.timezone,prompt:schedule.prompt.trim()})},'已创建');
+      h('section',{className:'card'},h('div',{className:'row spread'},h('h3',null,t('scheduledTasks')),ui.button(creating?t('cancel'):t('createNew'),()=>setCreating(!creating))),
+        creating?h('div',{className:'detail-body'},ui.textarea(t('target'),schedule.prompt,v=>setSchedule({...schedule,prompt:v})),
+          h('div',{className:'fields'},ui.field(t('runAt'),schedule.runAt,v=>setSchedule({...schedule,runAt:v}),'datetime-local'),
+            ui.field(t('timezone'),schedule.timezone,v=>setSchedule({...schedule,timezone:v}))),
+          h('small',null,t('timezoneHint')),ui.button(t('create'),async()=>{
+            const at=scheduledTime(schedule.runAt,schedule.timezone,t);const delayMs=at-Date.now();
+            if(delayMs<1000)throw Error(t('timeMustBeFuture'));
+            if(!schedule.prompt.trim())throw Error(t('targetRequired'));
+            await update('automation.schedule',{scopeKey:scope.scopeKey,action:'create',args:JSON.stringify({delayMs,timezone:schedule.timezone,prompt:schedule.prompt.trim()})},t('created'));
             setCreating(false);setSchedule({...schedule,prompt:''});
           },{className:'primary'})):null,
-        !jobs.length&&!creating?h('p',{className:'empty'},'暂无任务'):null,
+        !jobs.length&&!creating?h('p',{className:'empty'},t('noTasks')):null,
         ...jobs.map((job:any)=>h('div',{className:'item',key:job.id},
-          h('div',{className:'row spread'},h('strong',null,job.prompt.slice(0,80)),ui.button('删除',async()=>{
-            if(await confirm('删除此定时任务？'))await update('automation.schedule',{scopeKey:job.scopeKey,action:'delete',args:job.id},'已删除');
+          h('div',{className:'row spread'},h('strong',null,job.prompt.slice(0,80)),ui.button(t('delete'),async()=>{
+            if(await confirm(t('deleteScheduleConfirm')))await update('automation.schedule',{scopeKey:job.scopeKey,action:'delete',args:job.id},t('deleted'));
           },{className:'quiet danger'})),
-          h('p',{className:'muted'},`${job.timezone} · ${job.nextAt?new Intl.DateTimeFormat('zh-CN',{timeZone:job.timezone,dateStyle:'short',timeStyle:'short'}).format(job.nextAt):'暂无下次执行'}`),
-          job.state==='completed'?h('span',{className:'muted'},'已完成'):ui.toggle('启用任务',job.enabled,async()=>{await update('automation.schedule',{scopeKey:job.scopeKey,action:job.enabled?'pause':'resume',args:job.id},'已更新');}),
-          job.prompt.length>80?ui.details('详情',h('p',null,job.prompt)):null)))));
+          h('p',{className:'muted'},`${job.timezone} · ${job.nextAt?new Intl.DateTimeFormat('zh-CN',{timeZone:job.timezone,dateStyle:'short',timeStyle:'short'}).format(job.nextAt):t('noNextRun')}`),
+          job.state==='completed'?h('span',{className:'muted'},t('completed')):ui.toggle(t('enableTask'),job.enabled,async()=>{await update('automation.schedule',{scopeKey:job.scopeKey,action:job.enabled?'pause':'resume',args:job.id},t('updated'));}),
+          job.prompt.length>80?ui.details(t('details'),h('p',null,job.prompt)):null)))));
 }

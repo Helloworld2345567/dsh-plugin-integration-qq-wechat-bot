@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile,access} from 'node:fs/promises';
 import {DatabaseSync} from 'node:sqlite';
 import {spawn} from 'node:child_process';
+import {createRequire} from 'node:module';
 import path from 'node:path';
 import {atomicJson,identity,bundleName} from './installation.mjs';
 
@@ -11,11 +12,11 @@ const root=process.cwd();const folder=path.join(root,'.codex',`install-smoke-${D
 const python=process.env.BOT_TEST_PYTHON||path.join(root,'.codex','venvs','media',process.platform==='win32'?'Scripts/python.exe':'bin/python');await access(python);
 const env={};for(const [key,value] of Object.entries(process.env))if(/^(?:PATH|PATHEXT|SystemRoot|WINDIR|COMSPEC|TEMP|TMP|HOME|USERPROFILE|LOCALAPPDATA|APPDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROCESSOR_ARCHITECTURE)$/i.test(key))env[key]=value;
 Object.assign(env,{BOT_HOME:home,DSH_HOME:home,DSH_AGENTS_HOME:path.join(home,'agents'),BOT_DATA_HOME:path.join(home,'storages','bot-integration'),BOT_WORKSPACE_ROOT:path.join(folder,'workspaces'),BOT_SOURCE_ROOT:root,BOT_PYTHON:python,npm_config_userconfig:path.join(home,'empty.npmrc')});await writeFile(env.npm_config_userconfig,'');
-const run=(script,args=[],timeoutMs=300000)=>new Promise((resolve,reject)=>{
+const run=(script,args=[],timeoutMs=300000,allowFailure=false)=>new Promise((resolve,reject)=>{
   const child=spawn(process.execPath,[script,...args],{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']});let logs='';
   child.stdout.on('data',data=>logs+=data);child.stderr.on('data',data=>logs+=data);child.on('error',reject);
   const timer=setTimeout(()=>{child.kill();reject(Error(`${script} timed out`));},timeoutMs);timer.unref();
-  child.on('close',async code=>{clearTimeout(timer);await writeFile(path.join(folder,`${path.basename(script,'.mjs')}.log`),logs);code===0?resolve(logs):reject(Error(`${script} exited ${code}; evidence ${folder}`));});
+  child.on('close',async code=>{clearTimeout(timer);await writeFile(path.join(folder,`${path.basename(script,'.mjs')}.log`),logs);if(code===0||allowFailure)resolve(logs);else reject(Error(`${script} exited ${code}; evidence ${folder}`));});
 });
 await run('scripts/build.mjs');
 const sourceIdentity=await identity(root);
@@ -24,7 +25,10 @@ const installation=JSON.parse(await readFile(path.join(home,'installation.json')
 assert.equal(installation.current.identity,sourceIdentity);assert.equal(installation.sourceRoot,root);assert.deepEqual(installation.layers,['core','basic-media']);
 const profile=JSON.parse(await readFile(path.join(home,'profiles','bots','package.json'),'utf8'));
 assert.ok(profile.dsh.profile.bundles.includes('dsh-bot-lifecycle'));assert.ok(profile.dsh.profile.bundles.includes(bundleName));
-assert.equal(await identity(path.join(home,'profiles','bots','node_modules',bundleName)),sourceIdentity);
+const installedRoot=path.join(home,'profiles','bots','node_modules',bundleName),lifecycleRoot=path.join(home,'profiles','bots','node_modules','dsh-bot-lifecycle');
+assert.equal(await identity(installedRoot),sourceIdentity);
+for(const directory of [installedRoot,lifecycleRoot]){const installedManifest=JSON.parse(await readFile(path.join(directory,'package.json'),'utf8')),locale=JSON.parse(await readFile(path.join(directory,'locale','zh.json'),'utf8')),icon=await readFile(path.join(directory,'icon.svg'),'utf8');assert.equal(installedManifest.engines.dsh,'0.2.1-rc.2');assert.ok(installedManifest.exports['./locale/*.json']);assert.ok(installedManifest.exports['./icon']);assert.ok(locale.meta.title);assert.ok(locale.meta.description);assert.match(icon,/^<svg\b/);}
+const cli=path.join(path.dirname(createRequire(import.meta.url).resolve('@deepseek-ai/dsh/package.json')),'lib','bin.js');const schemaDump=await run(cli,['--profile','bots','--dump-config-schema'],300000,true);assert.match(schemaDump,/"const":\s*"bot-integration"/);for(const field of ['dataDir','python','debounceMs'])assert.match(schemaDump,new RegExp(`"${field}"\\s*:`));
 
 const database=path.join(folder,'workspaces','.runtime','storages','bot-integration','bots.sqlite');
 const runtimeState=()=>{const db=new DatabaseSync(database,{readOnly:true});try{return{owner:JSON.parse(db.prepare("SELECT json FROM records WHERE kind='runtime' AND id='owner'").get()?.json??'null'),bots:Number(db.prepare("SELECT COUNT(*) AS count FROM records WHERE kind='bot'").get().count)};}finally{db.close();}};

@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createUI,dateInput,scheduledTime} from '../src/client/ui.js';
+import {chinese} from '../src/client/locale.js';
 
 test('switches expose their state and handle failed actions',async()=>{
   const errors:string[]=[];let calls=0;
@@ -35,7 +36,8 @@ test('panel retains summary options, drafts and local errors across its sections
   let app:any,cursor=0;const states:any[]=['catalog',summary,'加载错误','操作错误','',false,[],config,false,false,'basic'];
   const React={Fragment:'fragment',createElement:(type:any,props:any,...children:any[])=>({type,props,children}),useState:(initial:any)=>{const i=cursor++;if(!(i in states))states[i]=initial;return[states[i],(value:any)=>{states[i]=typeof value==='function'?value(states[i]):value;}];},useRef:()=>({current:null}),useEffect:()=>{}};
   const previous=(globalThis as any).window;const previousFetch=globalThis.fetch;
-  (globalThis as any).window={__ModuleLoader__:{load:({factory}:any)=>factory(()=>React).apply({slots:{inject:(_slot:any,register:any)=>register(),register:(_meta:any,component:any)=>{app=component;}}})}};
+  const locale={getSnapshot:()=>({revision:1}),subscribe:()=>()=>{},register:()=>()=>{},bind:()=>chinese};
+  (globalThis as any).window={__ModuleLoader__:{load:({factory}:any)=>factory(()=>React).apply({locale,effect:(callback:any)=>callback(),slots:{inject:(_slot:any,register:any)=>register(),register:(_meta:any,component:any)=>{app=component;}}})}};
   const nodes=(tree:any)=>{const result:any[]=[];const walk=(node:any)=>{if(!node||typeof node!=='object')return;if(Array.isArray(node)){node.forEach(walk);return;}result.push(node);node.children?.forEach(walk);};walk(tree);return result;};
   const render=()=>{cursor=0;return nodes(app());};
   try{

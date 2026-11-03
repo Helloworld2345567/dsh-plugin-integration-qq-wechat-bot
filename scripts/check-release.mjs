@@ -22,6 +22,7 @@ for(const expected of ['python/rvc_service.py','python/rvc_runner.py','python/se
 for(const expected of ['docs/singing-conversion-plan.md'])if(!files.includes(expected))throw new Error(`Missing STS documentation: ${expected}`);
 for(const expected of ['python/audio_output.py','skills/music-download/SKILL.md','skills/music-download/operations.json','skills/music-download/scripts/entry.py','docs/music-integration.md'])if(!files.includes(expected))throw new Error(`Missing music runtime file: ${expected}`);
 for(const expected of ['docs/install-existing-harness.md','docs/deploy-product-profile.md','docs/adr/0001-delivery-modes.md','docs/adr/0002-trusted-adapters-and-profiles.md','docs/adr/0003-lifecycle-and-uncertain-outcomes.md'])if(!files.includes(expected))throw new Error(`Missing delivery or architecture decision document: ${expected}`);
+for(const expected of ['locale/zh.json','icon.svg','packages/bot-lifecycle/locale/zh.json','packages/bot-lifecycle/icon.svg'])if(!files.includes(expected))throw new Error(`Missing plugin display resource: ${expected}`);
 if(files.includes('docs/capability-service-plugin-plan.md'))throw new Error('Removed implementation plan returned to the package');
 if(files.some(file=>file.startsWith('packages/bot-unified-chat/')))throw new Error('Removed bot-unified-chat bundle returned to the package');
 console.log(JSON.stringify({status:'PASS',files:files.length}));
