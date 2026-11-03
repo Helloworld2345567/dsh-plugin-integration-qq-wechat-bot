@@ -23,13 +23,26 @@ def validate_url(url):
     return part
 
 
+FAKE_IP_NETWORKS = (
+    ipaddress.ip_network("198.18.0.0/15"),
+    ipaddress.ip_network("2001:2::/48"),
+)
+
+
+def is_safe_address(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if ip.is_multicast or (ip.version == 6 and ip.ipv4_mapped is not None):
+        return False
+    if ip.is_global:
+        return True
+    return any(ip in net for net in FAKE_IP_NETWORKS)
+
 def public_addresses(host, port=443):
     addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     if not addresses:
         raise VideoError("UNSAFE_ADDRESS")
     for family, _, _, _, sockaddr in addresses:
         ip = ipaddress.ip_address(sockaddr[0])
-        if not ip.is_global or ip.is_multicast or (ip.version == 6 and ip.ipv4_mapped is not None):
+        if not is_safe_address(ip):
             raise VideoError("UNSAFE_ADDRESS")
     return addresses
 
@@ -66,7 +79,7 @@ async def download(url, target: Path, budget: int, timeout: float | None, header
                 except ValueError:
                     pass
                 else:
-                    if not ip.is_global or ip.is_multicast or (ip.version == 6 and ip.ipv4_mapped):
+                    if not is_safe_address(ip):
                         raise VideoError("UNSAFE_ADDRESS")
                 # CDN signatures cover the original escaped path/query. Requoting
                 # (%2F, %3D, etc.) can invalidate otherwise working image links.
