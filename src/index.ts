@@ -15,7 +15,6 @@ import { WeixinAdapter,weixinChannel } from './channels/weixin.js';
 import {createChannelRegistry} from './core/channel-registry.js';
 import {HarnessMediaProvider} from './harness/media-provider.js';
 import {ProcessWorker} from './harness/process-worker.js';
-import {MusicProcessWorker,resolveMusicConfig} from './harness/music-worker.js';
 import {BotFeatures} from './core/features.js';
 import {BotManagement} from './core/management.js';
 import {packageRoot} from './core/paths.js';
@@ -28,12 +27,11 @@ import {ServiceRuntime,type ApprovedServicePolicy} from './core/service-runtime.
 import {mediaOperationRegistry} from './core/media-operation-registry.js';
 import {StoreServiceStateRepository} from './core/service-state-store.js';
 import {builtinServiceAdapters,BUILTIN_SERVICE_POLICIES} from './core/builtin-service-adapters.js';
-import {ServiceProfileMigration} from './core/service-migration.js';
 import {ServiceManagement} from './core/service-management.js';
 
 export const name='bot-integration';
 export const inject=['agents','agentPresets','llm','settings','tools','skills','systemPrompt','attachments','credentials','webServer','permissionPresets','sessions','sessionPersistence','sessionQuery','storageDomain','workingDirectory','commands'];
-export interface Config { dataDir?:string; python?:string; debounceMs?:number; music?:{home?:string;sources?:string[]} }
+export interface Config { dataDir?:string; python?:string; debounceMs?:number }
 declare module '@deepseek-ai/cordis' {interface Context {botIntegration:BotRuntime}}
 /** First release: only code-reviewed adapters compiled into this package may load. */
 const HOST_SERVICE_POLICIES:ReadonlyMap<string,ApprovedServicePolicy>=BUILTIN_SERVICE_POLICIES;
@@ -48,11 +46,8 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
     const validators=new OutputValidatorRegistry();
     serviceRuntime=new ServiceRuntime(serviceHost,profiles,validators,HOST_SERVICE_POLICIES,new StoreServiceStateRepository(store),path.join(store.home,'.tmp','service-health'));
     serviceRuntime.assertApprovedMediaOperations(mediaOperationRegistry);
-    // Startup recovery is reconciliation-only. It never copies resources or
-    // invokes health/acceptance ports without an explicit migration command.
-    new ServiceProfileMigration(store,profiles,{health:async()=>{throw Error('MIGRATION_HEALTH_CONFIRMATION_REQUIRED');}},{accept:async()=>{throw Error('MIGRATION_ACCEPTANCE_CONFIRMATION_REQUIRED');}}).recoverPending();
   }catch(error){await serviceHost?.dispose().catch(()=>{});store.close();throw error;}
-  const assets=new Assets(store);const media=new MediaService(store,assets,config.python,new HarnessMediaProvider(ctx),new MusicProcessWorker(new ProcessWorker(config.python),resolveMusicConfig(config.music)),mediaOperationRegistry,undefined,serviceRuntime);
+  const assets=new Assets(store);const media=new MediaService(store,assets,config.python,new HarnessMediaProvider(ctx),new ProcessWorker(config.python),mediaOperationRegistry,undefined,serviceRuntime);
   const credentials=createBotCredentials(ctx.credentials);
   const extensions:HarnessExtensions={};const harness=new NativeHarness(ctx,store,assets,media,extensions);let disposeMode;try{disposeMode=await harness.registerMode();}catch(error){await serviceHost.dispose().catch(()=>{});store.close();throw error;}
   const channels=createChannelRegistry([qqChannel(new QQAdapter(undefined,{emit:event=>extensions.stats?.observeGroup({botId:event.botId,groupId:event.groupId,name:event.name,event:event.type==='group.joined'?'joined':event.type==='group.left'?'left':'observed',at:event.at,eventId:event.eventId})},undefined,undefined,createQQAudioPreparer(store,assets))),weixinChannel(new WeixinAdapter(store.cursorStore()))]);

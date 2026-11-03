@@ -14,7 +14,7 @@ function deferred(){let resolve!:()=>void;const promise=new Promise<void>(done=>
 
 async function fixture(t:any){
   const directory=await mkdtemp(path.resolve('.codex/voice-reply-')),store=new Store(directory),assets=new Assets(store);
-  const initial=store.config('sakura'),legacy=configSchema.parse({...initial,schemaVersion:3,media:{voice:{enabled:true,protocol:'edge_tts',replyMode:'auto',voice:'first',format:'mp3'}}});store.put('config','sakura',legacy);store.put('config-version',`sakura:${legacy.revision}`,legacy);
+  const initial=store.config('sakura'),currentConfig=configSchema.parse({...initial,schemaVersion:4,media:{voice:{enabled:true,protocol:'edge_tts',replyMode:'auto',voice:'first',format:'mp3'}}});store.put('config','sakura',currentConfig);store.put('config-version',`sakura:${currentConfig.revision}`,currentConfig);
   store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',configId:'sakura',enabled:true,trustedUsers:['owner']}));
   const binding=store.binding(scope);
   store.accept({id:'context',scope,text:'已有上下文',attachments:[],timestamp:Date.now()-3600000,reply:{target:'owner',kind:'private',msgId:'old'}});store.mark(binding.key,['context'],'complete');

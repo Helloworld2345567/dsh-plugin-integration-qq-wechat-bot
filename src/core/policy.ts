@@ -1,6 +1,5 @@
 import {skillToolManifests} from './skill-operations.js';
 import type { BotConfig, BotInstance, CallerScope, ServiceProfileRole, TurnServiceSelection, TurnSnapshot } from './types.js';
-import {isV4Config} from './types.js';
 import {imageSkillEnabled} from './image-skill.js';
 import {analysisEnabled} from './analysis.js';
 import type {ProfileStore} from './profile-store.js';
@@ -25,7 +24,6 @@ export function permitted(name:string,config:BotConfig,bot:BotInstance,scope:Cal
 }
 const roleForTool=(name:string):ServiceProfileRole|undefined=>name==='bot_voice'?'voice':name==='bot_sing'?'singing':name==='bot_music'?'music':undefined;
 function frozenServiceAllowed(name:string,snapshot:TurnSnapshot):boolean {
-  if(snapshot.config.schemaVersion!==4)return true;
   const role=roleForTool(name);if(!role)return true;
   const service=snapshot.services[role];return service?.enabled===true&&['ready','partial'].includes(service.state)&&(role==='voice'&&snapshot.config.media.voice?.protocol==='edge_tts'||!!service.snapshot);
 }
@@ -44,7 +42,6 @@ export function permissionsRevoked(snapshot:TurnSnapshot,current:BotConfig,bot:B
   return !bot.enabled||bot.archived||current.archived||(snapshot.trusted&&!trusted(bot,scope))||snapshot.config.tools.some(name=>!current.tools.includes(name))||(snapshot.config.allowHostTools&&!current.allowHostTools)||snapshot.config.hostTools.some(name=>!current.hostTools.includes(name))||snapshot.config.skills.some(name=>!current.skills.includes(name))||(imageSkillEnabled(snapshot.config)&&!imageSkillEnabled(current))||(['asr','video'] as const).some(role=>analysisEnabled(snapshot.config,role)&&!analysisEnabled(current,role))||(snapshot.config.media.voice?.enabled===true&&current.media.voice?.enabled!==true)||(snapshot.config.media.singing?.enabled===true&&current.media.singing?.enabled!==true)||(snapshot.config.media.music?.enabled===true&&current.media.music?.enabled!==true)||serviceSnapshotsRevoked(snapshot,profiles);
 }
 function freezeService(role:ServiceProfileRole,config:BotConfig,profiles?:ProfileStore):Readonly<TurnServiceSelection>|undefined {
-  if(!isV4Config(config))return;
   const options=config.media[role];if(!options)return;
   if(options.enabled!==true)return Object.freeze({role,enabled:false,state:'disabled'});
   if(role==='voice'&&config.media.voice?.protocol==='edge_tts')return Object.freeze({role,enabled:true,state:'ready'});

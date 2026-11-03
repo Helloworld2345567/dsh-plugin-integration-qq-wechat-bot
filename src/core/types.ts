@@ -11,8 +11,7 @@ export const endpointSchema = z.object({
   baseUrl: z.url().refine(value=>{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&!u.search&&!u.hash&&(!u.port||u.port==='443');},'媒体 API 必须使用无凭据、查询、片段或非 443 端口的 HTTPS 地址'), model: z.string().min(1), keyEnv: z.string().regex(/^[A-Z_][A-Z0-9_]*$/),
 });
 export const imageSkillOverrideSchema=endpointSchema.pick({baseUrl:true,model:true,keyEnv:true}).partial().extend({enabled:z.boolean().default(true)});
-export const analysisSkillSchema=z.object({enabled:z.boolean().default(true),provider:z.string().min(1).max(150).optional(),model:z.string().min(1).max(200).optional(),protocol:z.enum(['chat_completions','transcriptions']).default('chat_completions')});
-/** v3-only service fields remain readable during the rollback window. */
+/** Private inference parameters used by service adapters. */
 const voicePathSchema=z.string().trim().min(1).max(4096).refine(value=>!/[\x00-\x1f]/.test(value),'服务端路径不能包含控制字符');
 export const gptSovitsModelVersions=['v1','v2','v2Pro','v2ProPlus','v3','v4','v5dev','v5turbo'] as const;
 export const gptSovitsLanguages=['auto','en','zh','ja','all_zh','all_ja','auto_yue','yue','ko','all_yue','all_ko'] as const;
@@ -36,65 +35,6 @@ export const edgeTtsSchema=z.object({protocol:z.literal('edge_tts'),voice:edgeTt
 export type EdgeTtsConfig=z.infer<typeof edgeTtsSchema>;
 export const edgeTtsFallbackSchema=z.object({enabled:z.boolean().default(false),voice:edgeTtsVoiceSchema});
 export type EdgeTtsFallbackConfig=z.infer<typeof edgeTtsFallbackSchema>;
-export const voiceSkillSchema=z.preprocess(input=>{
-  if(input&&typeof input==='object'&&!Array.isArray(input)&&(input as any).protocol==='speech')return{...(input as Record<string,unknown>),protocol:'edge_tts',provider:undefined,model:undefined,format:'mp3'};
-  return input;
-},z.object({
-  enabled:z.boolean().default(false),
-  protocol:z.enum(['edge_tts','gpt_sovits']).default('edge_tts'),
-  replyMode:z.enum(['on_demand','auto']).default('on_demand'),
-  voice:edgeTtsVoiceSchema.optional(),
-  edgeTts:edgeTtsFallbackSchema.optional(),
-  format:z.enum(['mp3','wav']).optional(),
-  gptSovits:gptSovitsSchema.optional(),
-}).superRefine((value,ctx)=>{
-  if(value.enabled&&value.protocol==='gpt_sovits'){
-    if(!value.gptSovits)ctx.addIssue({code:'custom',path:['gptSovits'],message:'请配置 GPT-SoVITS 服务、模型与参考音频'});
-    if(value.format==='mp3')ctx.addIssue({code:'custom',path:['format'],message:'GPT-SoVITS 语音输出仅支持 WAV'});
-  }
-  if(value.enabled&&value.protocol==='edge_tts'&&value.format==='wav')ctx.addIssue({code:'custom',path:['format'],message:'Edge TTS 语音输出仅支持 MP3'});
-}).transform(value=>({...value,format:value.format??(value.protocol==='gpt_sovits'?'wav' as const:'mp3' as const)})));
-const singingSeparationSchema=z.preprocess(input=>{
-  if(input&&typeof input==='object'&&!Array.isArray(input)){
-    const value=input as Record<string,unknown>;
-    if(!Object.hasOwn(value,'enabled')&&value.status==='unconfigured')return {...value,status:undefined,enabled:false};
-    if(!Object.hasOwn(value,'enabled')&&value.status==='configured')return {...value,status:undefined,enabled:true};
-  }
-  return input;
-},z.object({
-  enabled:z.boolean().default(false),
-  modelId:z.string().trim().min(1).max(120).refine(value=>['vocals','vocals-aggressive'].includes(value),'当前分离 runner 不支持此模型').optional(),
-  modelPath:voicePathSchema.optional(),
-  instrumentalMix:z.boolean().optional(),
-  volume:z.number().min(0).max(2).default(1),
-}).superRefine((value,ctx)=>{
-  if(value.enabled){
-    if(!value.modelId)ctx.addIssue({code:'custom',path:['modelId'],message:'开启人声分离前请配置分离模型'});
-    if(!value.modelPath)ctx.addIssue({code:'custom',path:['modelPath'],message:'开启人声分离前请配置分离模型权重路径'});
-  }
-}).transform(value=>({...value,instrumentalMix:value.instrumentalMix??(value.enabled?true:false),status:(value.enabled&&value.modelId&&value.modelPath?'configured':'unconfigured') as string})));
-export type SingingSeparationConfig=z.infer<typeof singingSeparationSchema>;
-export const singingSkillSchema=z.object({
-  enabled:z.boolean().default(false),
-  protocol:z.literal('rvc_http_v1').default('rvc_http_v1'),
-  serviceUrl:z.url().max(2048).refine(value=>{try{normalizeGptSovitsBaseUrl(value);return true;}catch{return false;}},'RVC 服务须使用无凭据、查询和片段的 HTTP 或 HTTPS 地址').transform(normalizeGptSovitsBaseUrl).optional(),
-  modelVersion:z.enum(['v1','v2']).optional(),
-  singingModelId:z.string().trim().min(1).max(100).optional(),
-  singingWeightsPath:voicePathSchema.optional(),
-  singingIndexPath:voicePathSchema.optional(),
-  speakerId:z.number().int().min(0).max(65535).default(0),
-  pitchShift:z.number().int().min(-24).max(24).default(0),
-  indexRate:z.number().min(0).max(1).optional(),
-  defaultOutput:z.enum(['mp3','wav']).default('mp3'),
-  separation:singingSeparationSchema.default({enabled:false,instrumentalMix:false,volume:1,status:'unconfigured'}),
-}).superRefine((value,ctx)=>{
-  if(value.enabled)for(const field of ['serviceUrl','modelVersion','singingModelId','singingWeightsPath'] as const)if(!value[field])ctx.addIssue({code:'custom',path:[field],message:'开启 STS 前请配置 RVC 服务、模型版本、名称与独立角色权重'});
-  if(!value.singingIndexPath&&value.indexRate!==undefined&&value.indexRate!==0)ctx.addIssue({code:'custom',path:['indexRate'],message:'未配置 RVC 索引时，检索比例须为 0'});
-}).transform(value=>({...value,indexRate:value.indexRate??(value.singingIndexPath?0.75:0)}));
-export type SingingConfig=z.infer<typeof singingSkillSchema>;
-export const musicSkillSchema=z.object({enabled:z.boolean().default(false),includeLyrics:z.boolean().default(false)});
-export type MusicConfig=z.infer<typeof musicSkillSchema>;
-
 const commonConfigFields={
   id:idSchema,name:z.string().trim().min(1).max(100),revision:z.number().int().positive().default(1),
   personaPrompt:z.string().min(1).max(32000),model:modelSchema.nullable().default(null),
@@ -104,11 +44,6 @@ const commonConfigFields={
   allowHostTools:z.boolean().default(true),hostTools:z.array(z.string().max(100)).max(100).default([]),
   imageStyle:z.string().max(4000).default(''),archived:z.boolean().default(false),
 };
-
-export const legacyConfigSchema=z.object({
-  schemaVersion:z.literal(3).default(3),...commonConfigFields,
-  media:z.object({image:imageSkillOverrideSchema.optional(),asr:analysisSkillSchema.optional(),video:analysisSkillSchema.optional(),voice:voiceSkillSchema.optional(),singing:singingSkillSchema.optional(),music:musicSkillSchema.optional()}).default({}),
-});
 
 const v4ImageSchema=imageSkillOverrideSchema.strict();
 const v4AnalysisSchema=z.object({enabled:z.boolean().default(true),protocol:z.enum(['chat_completions','transcriptions']).default('chat_completions'),provider:z.never().optional(),model:z.never().optional(),baseUrl:z.never().optional(),keyEnv:z.never().optional()}).strict();
@@ -139,45 +74,19 @@ function forbiddenV4Path(value:unknown,segments:string[]=[]):string|undefined {
   }
 }
 export const v4ConfigSchema=z.object({
-  schemaVersion:z.literal(4),...commonConfigFields,
+  schemaVersion:z.literal(4).default(4),...commonConfigFields,
   media:z.object({image:v4ImageSchema.optional(),asr:v4AnalysisSchema.optional(),video:v4AnalysisSchema.optional(),voice:v4VoiceSchema.optional(),singing:v4SingingSchema.optional(),music:v4MusicSchema.optional()}).strict().default({}),
 }).strict().superRefine((value,ctx)=>{const found=forbiddenV4Path(value);if(found)ctx.addIssue({code:'custom',path:found.split('.'),message:'v4 人格不得保存服务地址、端口、路径、权重、凭据或 locator'});});
 
-const configUnion=z.discriminatedUnion('schemaVersion',[legacyConfigSchema,v4ConfigSchema]);
-const parsedConfigSchema=z.preprocess(input=>input&&typeof input==='object'&&!Array.isArray(input)&&!Object.hasOwn(input,'schemaVersion')?{...(input as Record<string,unknown>),schemaVersion:3}:input,configUnion);
-export type LegacyBotConfig=z.infer<typeof legacyConfigSchema>;
-export type V4BotConfig=z.infer<typeof v4ConfigSchema>;
-type CommonBotConfig=Omit<LegacyBotConfig,'schemaVersion'|'media'>;
-interface TransitionalVoiceConfig {enabled:boolean;profileRef?:ServiceProfileRef;protocol?:'edge_tts'|'gpt_sovits';replyMode:'on_demand'|'auto';voice?:string;edgeTts?:EdgeTtsFallbackConfig;format:'mp3'|'wav';gptSovits?:GptSovitsConfig}
-interface TransitionalSeparationConfig {enabled:boolean;modelId?:string;modelPath?:string;instrumentalMix:boolean;volume:number;status:string}
-interface TransitionalSingingConfig {enabled:boolean;profileRef?:ServiceProfileRef;protocol?:'rvc_http_v1';serviceUrl?:string;modelVersion?:'v1'|'v2';singingModelId?:string;singingWeightsPath?:string;singingIndexPath?:string;speakerId:number;pitchShift:number;indexRate:number;defaultOutput:'mp3'|'wav';separation:TransitionalSeparationConfig}
-/** Structural view used by the existing runtime while strict schemas coexist. */
-export type BotConfig=CommonBotConfig&{schemaVersion:3|4;media:{
-  image?:{enabled:boolean;baseUrl?:string;model?:string;keyEnv?:string};
-  asr?:{enabled:boolean;provider?:string;model?:string;protocol:'chat_completions'|'transcriptions'};
-  video?:{enabled:boolean;provider?:string;model?:string;protocol:'chat_completions'|'transcriptions'};
-  voice?:TransitionalVoiceConfig;
-  singing?:TransitionalSingingConfig;
-  music?:{enabled:boolean;profileRef?:ServiceProfileRef;includeLyrics:boolean};
-}};
-
-export const configSchema: z.ZodType<BotConfig>=parsedConfigSchema as z.ZodType<BotConfig>;
-export function isV4Config(config:BotConfig):config is V4BotConfig{return config.schemaVersion===4;}
-/** Every mutation writes v4; profile-managed service details stay outside personas. */
-export function configForWrite(input:unknown):V4BotConfig {
-  const parsed=configSchema.parse(input) as BotConfig;if(parsed.schemaVersion===4)return v4ConfigSchema.parse(parsed);
-  const voice=parsed.media.voice,singing=parsed.media.singing,music=parsed.media.music;
-  return v4ConfigSchema.parse({...parsed,schemaVersion:4,media:{
-    ...(parsed.media.image?{image:{...parsed.media.image}}:{}),
-    ...(parsed.media.asr?{asr:{enabled:parsed.media.asr.enabled,protocol:parsed.media.asr.protocol}}:{}),
-    ...(parsed.media.video?{video:{enabled:parsed.media.video.enabled,protocol:parsed.media.video.protocol}}:{}),
-    ...(voice?{voice:voice.protocol==='edge_tts'?{enabled:voice.enabled,protocol:'edge_tts' as const,replyMode:voice.replyMode,voice:voice.voice,edgeTts:voice.edgeTts,format:voice.format}:{enabled:voice.enabled,replyMode:voice.replyMode,format:voice.format}}:{}),
-    ...(singing?{singing:{enabled:singing.enabled,speakerId:singing.speakerId,pitchShift:singing.pitchShift,indexRate:singing.indexRate,defaultOutput:singing.defaultOutput,separation:{enabled:singing.separation.enabled,instrumentalMix:singing.separation.instrumentalMix,volume:singing.separation.volume,status:'unconfigured'}}}:{}),
-    ...(music?{music:{enabled:music.enabled,includeLyrics:music.includeLyrics}}:{}),
-  }});
-}
-/** Projections retain image connection metadata, never credential values or private Profile fields. */
-export function publicPersonaConfig(config:BotConfig):V4BotConfig {return config.schemaVersion===4?v4ConfigSchema.parse(structuredClone(config)):configForWrite(config);}
+export type BotConfig=z.infer<typeof v4ConfigSchema>;
+export type V4BotConfig=BotConfig;
+export const configSchema=v4ConfigSchema;
+export const voiceSkillSchema=v4VoiceSchema;
+export const singingSkillSchema=v4SingingSchema;
+export const musicSkillSchema=v4MusicSchema;
+export function configForWrite(input:unknown):BotConfig {return configSchema.parse(input);}
+/** Persona projections contain only V4 configuration. */
+export function publicPersonaConfig(config:BotConfig):BotConfig {return configSchema.parse(structuredClone(config));}
 /** Parse persona config.json together with persona.md without weakening either schema. */
 export function parsePersonaSettings(input:unknown,personaPrompt:string):BotConfig {return configSchema.parse({...input as Record<string,unknown>,personaPrompt}) as BotConfig;}
 

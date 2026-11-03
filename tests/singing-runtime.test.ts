@@ -1,3 +1,4 @@
+import {testServiceProfiles} from './test-service-profiles.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -12,13 +13,13 @@ import {fixtureChannels} from './test-channel.js';
 const scope:CallerScope={botId:'bot',platform:'weixin',accountId:'account',kind:'private',channelId:'owner',senderId:'owner'};
 async function fixture(t:any){
   const directory=await mkdtemp(path.resolve('.codex/singing-runtime-'));const store=new Store(directory),assets=new Assets(store);
-  const current=store.config('sakura'),config=configSchema.parse({...current,schemaVersion:3,tools:[...current.tools,'bot_sing'],skills:[...current.skills,'singing-conversion'],media:{singing:{enabled:true,protocol:'rvc_http_v1',serviceUrl:'http://127.0.0.1:9881',modelVersion:'v2',singingModelId:'voice',singingWeightsPath:'/models/voice.pth',speakerId:0,pitchShift:0,indexRate:0,defaultOutput:'mp3',separation:{status:'unconfigured'}}}});store.put('config','sakura',config);store.put('config-version',`sakura:${config.revision}`,config);
+  const current=store.config('sakura'),config=configSchema.parse({...current,schemaVersion:4,tools:[...current.tools,'bot_sing'],skills:[...current.skills,'singing-conversion'],media:{singing:{enabled:true,profileRef:{serviceId:'rvc',profileId:'default'}}}});store.put('config','sakura',config);store.put('config-version',`sakura:${config.revision}`,config);
   store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'weixin',accountId:'account',configId:'sakura',enabled:true}));
   const binding=store.binding(scope),calls:string[]=[],seen:InboundMessage[]=[];
   const harness:HarnessPort={run:async(_b,m,_s,o)=>{seen.push(...m);return{turnId:'turn',outputs:[{type:'text',text:'收到'}],snapshot:o!.snapshot!};},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async()=>{},inspectSession:async()=>{}};
   const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async()=>Buffer.from('audio'),send:async()=> 'receipt'};
   const media=new MediaService(store,assets);media.run=async(_s,operation)=>{calls.push(operation);return{text:JSON.stringify({transcript:'ordinary speech'}),assetIds:[]};};
-  const runtime=new BotRuntime(store,assets,media,harness,fixtureChannels(adapter),{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}},60000);
+  const runtime=new BotRuntime(store,assets,media,harness,fixtureChannels(adapter),{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}},60000,0,testServiceProfiles());
   t.after(async()=>{await runtime.close();store.close();await rm(directory,{recursive:true,force:true});});
   let sequence=0;
   const receive=async(text:string,kind:'audio'|'file'='audio',quoted?:InboundMessage['quoted'],size=5)=>{await runtime.receive({id:`incoming-${sequence++}`,scope,text,attachments:[{kind,name:'song.wav',mime:'audio/wav',bytes:Buffer.alloc(size,1).toString('base64')}],quoted,reply:{},timestamp:Date.now()});await runtime.process(scopeKey(scope));};

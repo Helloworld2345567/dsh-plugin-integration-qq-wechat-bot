@@ -5,7 +5,7 @@ import path from 'node:path';
 import {Store} from '../src/core/store.js';
 import {Admin} from '../src/harness/admin.js';
 import {adminCommandRequestSchema,adminQueryRequestSchema} from '../src/harness/admin-contract.js';
-import {botSchema,configSchema} from '../src/core/types.js';
+import {botSchema} from '../src/core/types.js';
 import {createBotCredentials} from '../src/harness/credentials.js';
 import type {Credentials} from '../src/core/runtime-ports.js';
 
@@ -80,19 +80,6 @@ test('a QR request completing after deletion cannot create a new login attempt',
   const login=admin.invoke('login.begin',{id:'bot'});await admin.invoke('bot.delete',{id:'bot'});
   finishLogin({status:'pending',ticket:'late-ticket',qr:'data:image/png;base64,AA=='});
   await assert.rejects(login,/状态已改变/);assert.equal(admin.attempts.size,0);
-});
-
-test('GPT-SoVITS status separates complete configuration from revision-specific synthesis acceptance',async t=>{
-  const {admin,store}=await fixture(t);
-  const config=configSchema.parse({schemaVersion:3,id:'voice',name:'Voice',personaPrompt:'A',model:{provider:'chat-provider',model:'chat-model'},media:{voice:{enabled:true,protocol:'gpt_sovits',replyMode:'auto',gptSovits:{baseUrl:'http://tts.invalid:9880',modelVersion:'v4',gptWeightsPath:'models/voice.ckpt',sovitsWeightsPath:'models/voice.pth',refAudioPath:'references/voice.wav',promptText:'参考音频文字',promptLang:'all_zh',textLang:'all_zh'}}}});store.put('config',config.id,config);store.put('config-version',`${config.id}:${config.revision}`,config);
-  admin.runtime.media.analysisStatus=async()=>({enabled:true,configured:true,keyConfigured:false,provider:'gpt_sovits',protocol:'gpt_sovits',model:'v4'});
-  let status:any=(await admin.invoke('skill.voice.status',{}) as any).voice;
-  assert.equal(status.provider,'gpt_sovits');assert.equal(status.model,'v4');assert.equal(status.format,'wav');assert.equal(status.replyMode,'auto');assert.equal(status.synthesisValidation.status,'NOT_RUN');
-  assert.doesNotMatch(JSON.stringify(status),/baseUrl|weights|refAudioPath|chat-provider|chat-model/);
-  store.saveCapabilityStatus('voice:1:voice',{configId:'voice',revision:config.revision,role:'voice',status:'PASS',evidence:'Audible reference fixture verified',updatedAt:1,source:'operator'});
-  status=(await admin.invoke('skill.voice.status',{}) as any).voice;assert.equal(status.synthesisValidation.status,'PASS');
-  store.saveConfig({...config,name:'Changed'},config.revision);
-  status=(await admin.invoke('skill.voice.status',{}) as any).voice;assert.equal(status.synthesisValidation.status,'NOT_RUN');
 });
 
 test('session and delivery queries are bounded and cursor-paginated without reply metadata',async t=>{

@@ -1,20 +1,14 @@
 import type {Context} from '@deepseek-ai/cordis';
 import {credentialKey,credentialRef,isCredentialKeySegment} from '@deepseek-ai/dsh-credentials';
 import type {} from '@deepseek-ai/dsh-settings';
-import {endpointSchema,gptSovitsSchema,type BotConfig,edgeTtsSchema} from '../core/types.js';
+import {endpointSchema,type BotConfig,edgeTtsSchema} from '../core/types.js';
 import {analysisEnabled,type AnalysisProvider,type AnalysisRole,type AnalysisConnection} from '../core/analysis.js';
-import {normalizeGptSovitsBaseUrl} from '../core/voice-config.js';
 
 /** Read native provider settings and resolve credentials in memory, never into bot records or tool results. */
 export class HarnessMediaProvider implements AnalysisProvider{
   constructor(readonly ctx:Context){}
   async resolve(config:BotConfig,role:AnalysisRole):Promise<AnalysisConnection>{
     if(!analysisEnabled(config,role))throw new Error(role==='tts'?'VOICE_OUTPUT_DISABLED':'MEDIA_ANALYSIS_DISABLED');
-    if(role==='tts'&&config.media.voice?.protocol==='gpt_sovits'){
-      const parsed=gptSovitsSchema.safeParse(config.media.voice.gptSovits);
-      if(!parsed.success)throw new Error('GPT_SOVITS_CONFIGURATION_INVALID');
-      return{provider:'gpt_sovits',endpoint:{...parsed.data,baseUrl:normalizeGptSovitsBaseUrl(parsed.data.baseUrl),protocol:'gpt_sovits',voice:config.media.voice.voice??config.id}};
-    }
     if(role==='tts'){
       const options=config.media.voice;
       const parsed=edgeTtsSchema.safeParse({protocol:'edge_tts',voice:options?.voice??'zh-CN-XiaoxiaoNeural'});
@@ -23,8 +17,8 @@ export class HarnessMediaProvider implements AnalysisProvider{
     }
     const media=config.media as Record<string,any>;
     const options=media[role];
-    const provider=options?.provider??config.model?.provider;
-    const model=options?.model??config.model?.model;
+    const provider=config.model?.provider;
+    const model=config.model?.model;
     if(!provider||!model)throw new Error('请选择聊天模型或媒体分析模型');
     const directory=this.ctx.llm.listConfigurableProviders().find(p=>p.provider===provider);
     if(!directory)throw new Error('MEDIA_PROVIDER_SETTINGS_UNAVAILABLE');

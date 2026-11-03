@@ -73,9 +73,9 @@ bot 可以共享人格，但身份、会话、附件、记忆和投递始终按�
 
 入站音频优先使用渠道提供的转写；没有转写时，BotRuntime 在送入模型前自动调用 ASR，并把真实转写写回当前消息。自动转写失败会停止本轮模型调用，避免根据未识别音频猜测内容。语音输出由 `voice-generation` skill 生成 `audio` Asset，再沿现有投递队列发送。QQ 在渠道发送准备阶段派生 SILK 语音气泡，超过 300 秒时完整分段并另附整曲 MP3，各段独立保存投递状态；微信首期使用可播放的普通音频文件。
 
-语音配置 `media.voice.protocol` 支持 `edge_tts` 和 `gpt_sovits`，历史 `speech` 配置迁移为 Edge TTS；`replyMode` 支持 `on_demand` 与 `auto`，默认关闭语音并采用按需模式。GPT-SoVITS 的 `gptSovits` 配置持有服务地址、模型版本、权重路径、参考音频和转写/语言，只有运营者配置可以提供这些字段。工具参数仅描述朗读文本、语速等业务输入；参数按工具显式值、冻结的人格配置、协议默认值依次解析。Edge TTS 不需要 API key，GPT-SoVITS 使用独立免密 HTTP/HTTPS 连接，其他媒体提供商保留原有凭据与 HTTPS 限制。
+人格配置只接受 V4。`media.voice` 使用 `profileRef` 选择 GPT-SoVITS 服务，或通过 `protocol: edge_tts` 使用内置语音；`replyMode` 支持 `on_demand` 与 `auto`。服务地址、模型权重、参考音频和语言保存在 Profile 的私有配置中，工具参数只提供朗读文本、语速等业务输入。
 
-同一 GPT-SoVITS 服务地址规范化后共享串行队列，每个请求完整执行 `set_sovits_weights → set_gpt_weights → set_refer_audio → tts`，不复用本地推测的已加载模型状态。请求固定非流式 WAV、单批次和空附加参考列表，产物需通过完整帧与非静音检查。当前服务仅按参考文本缓存文本特征；Store 保存时以服务相同的换行裁剪、句末标点规则比较缓存键，同一服务的相同键必须具有相同参考语言和 v1/非 v1 前端家族。运行中新增权限下一轮生效，撤销立即阻止调用；排队和合成都受取消与会话身份校验约束。
+GPT-SoVITS 适配器按服务地址串行执行，每个请求完整执行 `set_sovits_weights → set_gpt_weights → set_refer_audio → tts`。运行任务绑定冻结的 Profile 修订版本；权限撤销、取消及会话身份检查由宿主管理。
 
 自动语音在成功取得最终回复后、分段入投递队列前生成，正常聊天和自动化使用同一处理方式。`HarnessResult.voiceAttempted` 记录本轮显式语音尝试，失败也不会自动再合成。投递队列只重发已登记资产；普通合成失败保留正文，权限撤销或上下文失效终止投递。管理状态把配置完整性与当前人格修订版本的合成验收记录分别展示。
 
@@ -91,7 +91,7 @@ bot 可以共享人格，但身份、会话、附件、记忆和投递始终按�
 
 `media.singing` 是独立、默认关闭的 STS 配置，与 `media.voice` 不共享目标权重或参考音频。`bot_sing` 同时要求人格开启 STS、允许该工具并启用 `singing-conversion`。专用工具维护 `prepare/list/convert` 候选和单轮 attempt；兼容工具 `bot_media` 禁止调用 `singing_convert`。服务地址、角色路径和 job ID 由宿主提供，工具参数不能覆盖。
 
-候选保存于 Store records，绑定 scope、session、generation 和候选集 ID。宿主解析当前会话的 audio/file 附件，或保留真实搜索结果的公开 URL、标题及可得许可信息。worker 复用公开链接下载与音轨提取；已知混音且无分离配置在下载前拒绝，类型未知要求用户确认。`media.singing.separation` 可保存分离协议、模型 ID、运营者专用权重路径、伴奏混音开关和音量；默认关闭，配置完整后才允许 `mixed`，并先提取人声再转换和按偏好混音。明确的用户转换请求及待上传状态可绕过前置 ASR，普通语音仍自动转写。
+候选保存于 Store records，绑定 scope、session、generation 和候选集 ID。宿主解析当前会话的 audio/file 附件，或保留真实搜索结果的公开 URL、标题及可得许可信息。worker 复用公开链接下载与音轨提取；已知混音且无分离配置在下载前拒绝，类型未知要求用户确认。RVC Profile 的私有 `separation` 保存分离模型 ID、权重路径、伴奏混音开关和音量；默认关闭，配置完整后才允许 `mixed`，并先提取人声再转换和按偏好混音。明确的用户转换请求及待上传状态可绕过前置 ASR，普通语音仍自动转写。
 
 宿主按规范化服务地址串行执行；`rvc_http_v1` 服务另有单槽 FIFO，每个作业创建专用 RVC 子进程。runner 使用已安装 RVC 包的 `VoiceConverter`，校验 checkpoint 版本、F0、speaker 和索引维度，再执行 RMVPE 转换。提交使用宿主生成的唯一 job ID；重复 ID 复用已有状态，提交响应丢失只查状态，不重放推理。取消由仍存活的宿主发往服务，确认子进程树结束才释放队列；状态未知时封锁该服务，确认空闲后恢复。
 

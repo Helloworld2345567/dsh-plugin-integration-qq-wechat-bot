@@ -32,8 +32,7 @@ export async function executeSingingTool(live:SingingContext,args:Record<string,
       return JSON.stringify({status:'succeeded',reused:true,registeredForDelivery:true,format:previous.format,files,track:publicMusicTrack(previous.music.track),delivery:{format:previous.format,bytes:store.asset(binding.key,previous.assetIds![0]).size}});
     }
     const currentConfig=mediaConfigNow(live.snapshot,deps.current()),options=currentConfig.media.singing;
-    if(currentConfig.schemaVersion===4){const selection=live.snapshot.services.singing;if(!options?.enabled||!selection?.snapshot||!['ready','partial'].includes(selection.state))throw Error('SINGING_CONFIGURATION_INVALID');}
-    else {if(!options?.enabled||!options.serviceUrl||!options.modelVersion||!options.singingModelId||!options.singingWeightsPath)throw Error('SINGING_CONFIGURATION_INVALID');if(options.separation.status!=='configured')throw Error('SINGING_SEPARATION_UNCONFIGURED');}
+    const selection=live.snapshot.services.singing;if(!options?.enabled||!selection?.snapshot||!['ready','partial'].includes(selection.state))throw Error('SINGING_CONFIGURATION_INVALID');
     const authorizeMusic=musicAuthorization(live,signal,deps);authorizeMusic();
     const acquired=await acquireMusicSource(live,args.candidateSet!==undefined||args.candidate!==undefined?{candidateSet:args.candidateSet,candidate:args.candidate}:{song:args.song,artist:args.artist},signal,deps,authorize);
     authorize();authorizeMusic();
@@ -74,8 +73,7 @@ export async function executeSingingTool(live:SingingContext,args:Record<string,
   if(!candidate)throw Error('SINGING_CANDIDATE_INVALID');
   const candidateUrl=candidate.url?url(candidate.url):undefined;
   const config=mediaConfigNow(live.snapshot,deps.current()),format=args.format??config.media.singing?.defaultOutput??'mp3';
-  if(config.schemaVersion===3&&args.sourceType==='mixed'&&config.media.singing?.separation.status!=='configured')throw Error('SINGING_SEPARATION_UNCONFIGURED');
-  if(config.schemaVersion===4&&(!live.snapshot.services.singing?.snapshot||!['ready','partial'].includes(live.snapshot.services.singing.state)))throw Error('SINGING_CONFIGURATION_INVALID');
+  if(!live.snapshot.services.singing?.snapshot||!['ready','partial'].includes(live.snapshot.services.singing.state))throw Error('SINGING_CONFIGURATION_INVALID');
   if(args.sourceType!=='vocals'&&args.sourceType!=='mixed')throw Error('SINGING_SOURCE_TYPE_REQUIRED');
   if(!['wav','mp3'].includes(format))throw Error('SINGING_FORMAT_INVALID');
   if(candidateUrl&&!allowedNow('web_fetch',live.snapshot,deps.current(),deps.bot(),binding.scope))throw Error('SINGING_NETWORK_DISABLED');

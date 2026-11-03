@@ -16,5 +16,3 @@ export class VoiceServiceQueue {
     }catch(error){done();throw error;}
   }
 }
-
-export const voiceServiceQueue=new VoiceServiceQueue();

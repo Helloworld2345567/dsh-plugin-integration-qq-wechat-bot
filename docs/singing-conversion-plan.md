@@ -1,6 +1,6 @@
 # RVC 音色转换（STS）接入与验收
 
-本插件通过独立 `rvc_http_v1` 适配服务，将用户选定的纯人声音频转换为当前人格配置的 RVC 目标音色。普通 TTS 继续使用 `media.voice` 和 `bot_voice`；STS 使用 `media.singing`、`singing-conversion` 和 `bot_sing`。
+本插件通过受管 RVC Profile（`rvc_cli_v1` 或 `rvc_http_v1`），将用户选定的纯人声音频转换为当前人格配置的 RVC 目标音色。普通 TTS 继续使用 `media.voice` 和 `bot_voice`；STS 使用 `media.singing`、`singing-conversion` 和 `bot_sing`。
 
 ## 运行环境与推理入口
 
@@ -15,30 +15,13 @@
 
 服务仅监听回环地址。每个任务以专用子进程执行 `python/rvc_runner.py`，通过配置父目录及显式文件路径读取资源。runner 校验模型声明版本、`f0=1`、speaker 范围和索引维度（v1 为 256，v2 为 768）；配置了损坏索引即失败，不能悄悄关闭检索。推理采用 RMVPE、`resample_sr=0`、`rms_mix_rate=1.0`、`protect=0.33`，保留 RVC 原生长音频处理。
 
-## 人格配置
+## 人格与 Profile 配置
 
-`media.singing` 可省略；旧人格不自动开启。禁用时允许保存部分配置，开启前须填写服务地址、模型版本、音色名称和角色权重。
+V4 人格的 `media.singing` 保存 `enabled`、`profileRef` 和业务偏好。默认关闭，启用后必须选择可用的 RVC Profile。
 
-| 字段 | 默认与约束 |
-| --- | --- |
-| `enabled` | `false` |
-| `protocol` | `rvc_http_v1` |
-| `serviceUrl` | 运营者配置的 HTTP/HTTPS 服务，无凭据、查询和片段 |
-| `modelVersion` | `v1` 或 `v2`，须与 F0 checkpoint 一致 |
-| `singingModelId` | 目标音色名称 |
-| `singingWeightsPath` | RVC 服务可读取的独立 `.pth` |
-| `singingIndexPath` | 可选、与角色匹配的 `.index` |
-| `speakerId` | `0`，整数，实际须在模型范围内 |
-| `pitchShift` | `0`，整数，范围 -24～24 半音 |
-| `indexRate` | 有索引默认 `0.75`；无索引固定为 `0` |
-| `defaultOutput` | `mp3`（192 kbps）或 `wav` |
-| `separation.enabled` | `false`；默认关闭，`mixed` 输入仍阻断 |
-| `separation.modelId` | `vocals` 或 `vocals-aggressive` |
-| `separation.modelPath` | 分离模型权重路径，仅运营者配置，模型不可见 |
-| `separation.instrumentalMix` | 管理页默认关闭；是否将分离出的伴奏混回 |
-| `separation.volume` | `1.0`，伴奏混音音量 0～2 |
+服务协议、服务地址、Python 解释器、RVC 项目目录、模型版本、`singingWeightsPath`、`singingIndexPath` 和 `separation.modelPath` 均保存在 Profile 私有配置中。CLI Profile 指定 `python`、`rvcRoot`、`device`；HTTP Profile 指定 `baseUrl`。这些参数不能写回人格文件。
 
-目标配置在转换所属轮次冻结，候选准备时不固定人格。关闭 STS、撤销工具/技能权限或切换会话，会阻止后续执行和产物投递。服务地址与模型路径只属于运营配置，不进入模型可见摘要或工具结果。
+目标 Profile 修订版本在转换所属轮次冻结。关闭 STS、撤销工具/技能权限或切换会话，会阻止后续执行和产物投递。模型文件与服务地址不进入模型可见摘要或工具结果。
 
 ## HTTP 协议与生命周期
 
@@ -64,13 +47,13 @@ JSON 参数包含 `jobId`、`modelVersion`、`singingModelId`、`singingWeightsP
 - `list`：列出当前候选集、编号、标题和公开来源。
 - `convert`：使用候选集 ID、候选编号、声源类型和可选输出格式转换。
 
-歌曲名称通过 `bot_sing action=sing` 的 `song/artist` 调用 Music 曲库获取最高匹配；也可使用 `bot_music search` 返回的 `candidateSet/candidate` 保留明确选择。当前会话已获取的同曲源音频直接复用，不重新下载或先压缩原曲。曲库歌曲按混音处理，分离和 RVC 配置须在下载前完整；成品从最终 WAV 直接编码为完整且严格小于 20,000,000 字节的 MP3。音乐接入配置见 [音乐接入说明](music-integration.md)。
+歌曲名称通过 `bot_sing action=sing` 的 `song/artist` 调用 Music 曲库获取最高匹配；也可使用 `bot_music search` 返回的 `candidateSet/candidate` 保留明确选择。当前会话已获取的同曲源音频直接复用，不重新下载或先压缩原曲。曲库歌曲按混音处理，RVC Profile 须可用，分离配置由适配器验证；成品从最终 WAV 直接编码为完整且严格小于 20,000,000 字节的 MP3。音乐接入配置见 [音乐接入说明](music-integration.md)。
 
 用户明确提供的公开 HTTPS 音频直链、B站和抖音链接继续走 prepare/convert，复用底层下载和音轨提取，不触发视频投递。保留公开来源和可得许可信息；普通 HTML 页面不能冒充音频。
 
 候选保存到 Store records，绑定 scope、session、generation 和独立候选集 ID；旧候选编号不能命中后来替换的来源。附件必须属于当前会话，支持 `audio` 和经 worker 实际解码确认的 `file`。用户正文的明确转换请求、或已登记等待上传状态，可以绕过前置 ASR；引用和网页内容不触发，普通语音继续自动转写。
 
-声源为 `vocals` 时执行 RVC；`unknown` 时询问是否含伴奏；`mixed` 默认于下载前拒绝并提示提供纯人声，分离配置完整后由 RVC/PyMSS runner 先提取人声，再按 `instrumentalMix` 和 `volume` 决定混回伴奏。工具同时要求 STS 开启、`bot_sing` 权限和 `singing-conversion` 技能。`bot_media` 拒绝 `singing_convert`。
+声源为 `vocals` 时执行 RVC；`unknown` 时询问是否含伴奏；`mixed` 在所选 Profile 未配置分离时拒绝并提示提供纯人声，分离配置完整后由 RVC/PyMSS runner 先提取人声，再按 `instrumentalMix` 和 `volume` 决定混回伴奏。工具同时要求 STS 开启、`bot_sing` 权限和 `singing-conversion` 技能。`bot_media` 拒绝 `singing_convert`。
 
 首次下载/推理前建立当前请求的转换 attempt；重新准备候选不能重置尝试。成功复用已有结果，失败、取消或未知不自动重试，不自动更换候选。用户下一次明确请求才能新建尝试。
 

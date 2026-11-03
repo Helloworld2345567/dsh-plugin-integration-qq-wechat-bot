@@ -16,7 +16,7 @@ function fixture(){
 const config=()=>configSchema.parse({id:'test',name:'Test',personaPrompt:'A',model:{provider:'chat',model:'chat-model'}});
 test('analysis inherits native provider URL and live credentials; model override does not duplicate connection settings',async()=>{
   const f=fixture();const first=await f.resolver.resolve(config(),'asr');assert.equal(first.endpoint.baseUrl,f.profile.baseURL);assert.equal(first.endpoint.model,'chat-model');assert.equal(first.apiKey,'stored-key');assert.deepEqual(f.reads,['CHAT_KEY']);
-  f.setSecret('rotated-key');const second=await f.resolver.resolve(configSchema.parse({...config(),media:{video:{model:'av-model'}}}),'video');assert.equal(second.apiKey,'rotated-key');assert.equal(second.endpoint.model,'av-model');assert.ok(!JSON.stringify(second.endpoint).includes('rotated-key'));
+  f.setSecret('rotated-key');const second=await f.resolver.resolve(configSchema.parse({...config(),model:{provider:'chat',model:'av-model'}}),'video');assert.equal(second.apiKey,'rotated-key');assert.equal(second.endpoint.model,'av-model');assert.ok(!JSON.stringify(second.endpoint).includes('rotated-key'));
   f.setSecret('');await assert.rejects(f.resolver.resolve(config(),'asr'),/MEDIA_PROVIDER_KEY_NOT_CONFIGURED/);
 });
 test('tts resolves Edge TTS without a native provider or credential',async()=>{
@@ -29,13 +29,13 @@ test('tts resolves Edge TTS without a native provider or credential',async()=>{
   assert.deepEqual(f.reads,[]);
 });
 test('invalid analysis model, incompatible provider and disabled skill fail before provider I/O',async()=>{
-  const f=fixture();await assert.rejects(f.resolver.resolve(configSchema.parse({...config(),media:{asr:{model:'unknown'}}}),'asr'),/UNKNOWN_MEDIA_MODEL/);assert.equal(f.reads.length,0);
+  const f=fixture();await assert.rejects(f.resolver.resolve(configSchema.parse({...config(),model:{provider:'chat',model:'unknown'}}),'asr'),/UNKNOWN_MEDIA_MODEL/);assert.equal(f.reads.length,0);
   f.setApi('anthropic-messages');await assert.rejects(f.resolver.resolve(config(),'video'),/MEDIA_REQUIRES_OPENAI_COMPATIBLE_PROVIDER/);
   await assert.rejects(f.resolver.resolve({...config(),skills:[]},'asr'),/MEDIA_ANALYSIS_DISABLED/);
 });
 test('analysis model stays frozen during turn; permission additions wait and role revocation applies immediately',()=>{
   const c=config();const owner=botSchema.parse({id:'one',name:'One',channel:'qq',enabled:true});const scope={botId:'one',accountId:'one',platform:'qq' as const,kind:'private' as const,channelId:'alice',senderId:'alice'};
-  const snapshot=freezeTurn(c,owner,scope,[]);const next=configSchema.parse({...c,media:{asr:{model:'av-model'}}});assert.equal(mediaConfigNow(snapshot,next).media.asr,undefined);
+  const snapshot=freezeTurn(c,owner,scope,[]);const next=configSchema.parse({...c,model:{provider:'chat',model:'av-model'}});assert.equal(mediaConfigNow(snapshot,next).media.asr,undefined);
   assert.equal(allowedNow('media_analysis',snapshot,next,owner,scope),true);assert.equal(allowedNow('media_analysis',snapshot,{...next,skills:['image-generation']},owner,scope),false);
   const disabled=configSchema.parse({...next,media:{asr:{enabled:false},video:{enabled:false}}});assert.equal(allowedNow('media_analysis',snapshot,disabled,owner,scope),false);assert.equal(mediaConfigNow(snapshot,disabled).media.asr?.enabled,false);
 });

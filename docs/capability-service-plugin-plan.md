@@ -18,7 +18,6 @@
 - 服务通过版本化 manifest、profile、health、execute 和 cancel 契约接入。
 - 宿主最终决定权限、配额、并发、取消、输出校验和自动投递；插件 manifest 只能声明需求和默认值，不能扩大宿主权限。
 - 每个 profile 使用不可变 revision。人格 revision、profile revision 和 job 都要在轮次开始时冻结；运行中的任务不能因为 profile 原地修改而改变行为。
-- v3 配置采用双读兼容、v4 单写；旧配置在观察期结束前不能静默删除。
 - 先建立兼容 adapter 和只读发现，再迁移人格和模型资源；未经 hash、health 和真实验收，不移动或删除旧资源。
 - 首期只允许宿主内置或随主包发布且固定 hash 的 adapter。第三方 adapter 首期不得以任意进程内 npm 代码加载；后续若开放，必须使用受控子进程协议和显式信任登记。
 
@@ -43,7 +42,6 @@
 | 媒体 operation | `MediaOperationRegistry` 从随包技能声明加载 operation，handler 仍是固定字符串 | 需要统一内置 operation 和 service plugin operation 的注册、命名空间和策略覆盖 |
 | 技能执行 | 只加载随包 `skills/*/operations.json`，人格技能目录不参与可执行入口发现 | 该安全边界继续保留；服务插件不能绕过宿主注册表 |
 | Composition root | `src/index.ts` 直接创建 `MediaService`、provider、worker 和 `NativeHarness` | 需要在创建这些对象前完成 manifest 验证、catalog 构建和 adapter 生命周期管理 |
-| 人格配置 | `src/core/types.ts` 仍是 schema v3，GPT-SoVITS/RVC 详细 endpoint 和路径仍在人格配置 | 需要 v3 双读、v4 单写和受管 profile 引用 |
 | 轮次快照 | `TurnSnapshot` 当前主要冻结 `BotConfig` | 需要同时冻结已解析的 profile revision/content hash |
 | GPT-SoVITS | 通过 TTS provider 和 worker 使用人格中的详细配置，并有服务串行队列 | 需要 profile resolver 和 adapter；保留现有协议作为兼容实现 |
 | RVC | 主要使用 `rvc_http_v1` facade，并按服务地址管理未知状态 | 目标以 CLI adapter 为主，HTTP facade 仅作迁移兼容 |
@@ -396,7 +394,6 @@ v4 人格保存业务偏好，服务型能力使用 `profileRef`。图片生成�
 }
 ```
 
-旧 v3 结构短期只读兼容；下一次保存只写 v4。Profile 缺失时不能静默选择另一个 profile，能力应进入 `blocked` 或 `missing` 并给出修复入口。
 
 ### 7.2 Profile 解析优先级
 
@@ -595,63 +592,8 @@ Profile revision、persona revision 或 operation 改变后，旧记录不能作
 - 权重文件名；
 - 原始 traceback。
 
-## 12. v3 → v4 迁移方案
+## 12. 配置版本
 
-### 12.1 迁移原则
-
-- 幂等：相同 v3 输入重复执行得到同一 profile 内容 hash；
-- 可恢复：进程中断后根据 journal 继续或回滚；
-- 可回退：profile 创建或 health 失败时旧 v3 配置仍可运行；
-- 不丢失：旧人格、会话、附件、记忆、身份、统计和历史不受影响；
-- 双 revision：persona revision 和 profile revision 都参与快照和验收；
-- 先复制后删除：物理迁移不与配置切换绑定为不可逆一步。
-
-### 12.2 迁移步骤
-
-1. 读取 v3 配置并保留原始 revision 和文件 digest；
-2. 规范化旧 endpoint、模型和路径，校验根目录、符号链接和文件 hash；
-3. 在受管 profile store 创建候选 profile revision；
-4. 复制或登记资源，记录源/目标 hash，不删除源文件；
-5. 执行 profile health；
-6. 对启用的 operation 执行真实能力验收；
-7. 在 SQLite transaction 和 persona journal 中提交 v4 配置、profile revision 和迁移记录；
-8. 让下一轮开始使用 v4；
-9. 观察期内保留 v3 兼容读取和旧资源；
-10. 所有旧引用消失且人工确认后，才允许单独执行资源清理。
-
-### 12.3 迁移 Journal
-
-迁移记录至少包含：
-
-```text
-detected
-profile-created
-copied
-hash-verified
-health-verified
-acceptance-recorded
-activated
-failed
-rolled-back
-```
-
-journal 必须记录：
-
-- migration ID；
-- persona ID 和旧 revision；
-- profile ref 和新 revision；
-- 源/目标 hash；
-- 失败 category 和安全诊断；
-- 当前阶段；
-- 可重试动作；
-- 创建时间和最后更新时间。
-
-崩溃恢复时：
-
-- 若 v4 commit 已完成，恢复 profile 和文件到 v4；
-- 若 commit 未完成，恢复到 v3 或保留候选 profile 并标记 `failed`；
-- 不覆盖用户在迁移期间产生的手工修改；
-- 有冲突时保留现场，不静默删除。
 
 ## 13. 模型目录整理和物理迁移
 
@@ -781,7 +723,6 @@ README、面板说明和技能说明必须同时提供：
 - 没有外部服务时的最小安装流程；
 - `health` 与真实验收的区别；
 - blocked/missing profile 的修复方法；
-- v3 人格升级时哪些字段自动迁移、哪些情况需要人工选择。
 
 ## 16. 实施阶段与退出门槛
 
@@ -839,31 +780,18 @@ README、面板说明和技能说明必须同时提供：
 - 先包装 Music；
 - 再包装 GPT-SoVITS；
 - RVC 同时支持 CLI adapter 和 HTTP compatibility adapter；
-- 旧 v3 配置作为兼容输入；
 - 结果、错误、取消和输出统一映射。
 
 退出门槛：
 
-- 旧 v3 人格无需手工改动仍可运行；
 - 新旧 adapter 结果可以旁路比较；
 - 失败、超时、取消和 unknown 均可恢复。
 
-### 阶段 4：Profile 与人格迁移
+### 阶段 4：V4 Profile 修订版本
 
-任务：
-
-- v3 双读、v4 单写；
-- copy + hash + health + acceptance；
-- migration journal 和 crash recovery；
-- profile revision 写入 TurnSnapshot、job 和 acceptance；
-- 迁移失败保留旧配置可运行。
-
-退出门槛：
-
-- 重复迁移幂等；
-- 进程中断可恢复或回滚；
-- 当前轮使用旧 profile revision，下一轮才使用新 revision；
-- 旧验收不能跨 profile revision 复用。
+- Profile revision 写入 TurnSnapshot、job 和 acceptance；
+- 当前轮使用冻结的 Profile revision，下一轮使用新 revision；
+- 旧验收不能跨 Profile revision 复用。
 
 ### 阶段 5：Runtime 和面板切换
 
@@ -920,7 +848,6 @@ README、面板说明和技能说明必须同时提供：
 
 ### Profile 和迁移
 
-- v3 双读、v4 单写；
 - 重复迁移幂等；
 - profile 创建失败；
 - hash 不匹配；

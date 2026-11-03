@@ -1,3 +1,4 @@
+import {testServiceProfiles} from './test-service-profiles.js';
 import {test,type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -11,7 +12,7 @@ import {freezeTurn} from '../src/core/policy.js';
 async function fixture(t:TestContext){
   const home=await mkdtemp(path.resolve('.codex/delivery-tool-')),store=new Store(home,path.join(home,'personas'));
   t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
-  const config=configSchema.parse({schemaVersion:3,id:'voice-test',name:'Voice',personaPrompt:'Test',tools:['bot_media','bot_voice','bot_sing','bot_music','bot_send_file'],skills:['voice-generation','singing-conversion','music-download'],media:{voice:{enabled:true,protocol:'edge_tts'},music:{enabled:true},singing:{enabled:true,serviceUrl:'http://rvc.invalid',modelVersion:'v2',singingModelId:'test',singingWeightsPath:'test.pth'}}});store.put('config',config.id,config);store.put('config-version',`${config.id}:${config.revision}`,config);
+  const config=configSchema.parse({schemaVersion:4,id:'voice-test',name:'Voice',personaPrompt:'Test',tools:['bot_media','bot_voice','bot_sing','bot_music','bot_send_file'],skills:['voice-generation','singing-conversion','music-download'],media:{voice:{enabled:true,protocol:'edge_tts'},music:{enabled:true,profileRef:{serviceId:'music',profileId:'default'}},singing:{enabled:true,profileRef:{serviceId:'rvc',profileId:'default'}}}});store.put('config',config.id,config);store.put('config-version',`${config.id}:${config.revision}`,config);
   const bot=store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',configId:config.id,enabled:true}));
   const scope:CallerScope={botId:bot.id,platform:'qq',accountId:'fixture',kind:'private',channelId:'fixture',senderId:'fixture'};
   const binding=store.binding(scope),assets=new Assets(store);assets.workspace=async()=>path.join(home,'workspace');
@@ -20,7 +21,7 @@ async function fixture(t:TestContext){
   const ctx:any={on:()=>{},agents:{list:()=>[agent]},tools:{guard:()=>{},register:(tool:any)=>{tools.set(tool.name,tool);return()=>tools.delete(tool.name);}}};
   const media:any={run:async()=>{generated++;return{text:'已生成 AI 语音。',assetIds:[audio.id],music:{track:{source:'MiguMusicClient',id:'test-song',title:'Test song',artist:'Test artist',format:'mp3'}}};}};
   const bridge=new NativeHarness(ctx,store,assets,media,{skills:{} as any});
-  const live:any={binding,snapshot:freezeTurn(config,bot,scope,['request']),assets:[],voice:{attempted:false},singing:{attempted:false},images:{inFlight:false,completed:false},skills:{},cwd:path.join(home,'workspace')};
+  const live:any={binding,snapshot:freezeTurn(config,bot,scope,['request'],testServiceProfiles()),assets:[],voice:{attempted:false},singing:{attempted:false},images:{inFlight:false,completed:false},skills:{},cwd:path.join(home,'workspace')};
   (bridge as any).scoped.set(agent,live);(bridge as any).tools(ctx,live);
   const call=async(name:string,args:any)=>JSON.parse(await tools.get(name).execute(args,{agent,signal:new AbortController().signal}));
   const claim=(state:Delivery['state'])=>{store.enqueue(binding,'request','original-turn',[{type:'asset',assetId:audio.id}],{});const delivery=store.deliveries()[0];store.deliveryState(delivery,state,state==='sent'?'receipt':undefined);return delivery;};

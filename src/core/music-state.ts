@@ -7,7 +7,6 @@ export const MUSIC_DELIVERY_BYTES=20_000_000;
 export const MUSIC_SOURCES=['MiguMusicClient','KuwoMusicClient','QQMusicClient','NeteaseMusicClient'] as const;
 export interface MusicCandidate {source:string;id:string;title:string;artist:string;album?:string;duration?:number;format?:string;size?:number;version?:string;locator?:unknown}
 export interface MusicData {candidates?:MusicCandidate[];track?:MusicCandidate;diagnostics?:Array<{source:string;status:string}>}
-export interface MusicHealth {configured:boolean;ready:boolean;protocol:typeof MUSIC_PROTOCOL;sources:Array<{id:string;available:boolean}>;error?:string}
 export interface MusicCandidates {id:string;scope:string;sessionId:string;generation:number;candidates:MusicCandidate[];createdAt:number}
 export interface MusicAcquisition {scope:string;sessionId:string;generation:number;request:string;selectionKey:string;state:'running'|'succeeded'|'failed';sourceAssetId?:string;lyricAssetId?:string;track?:MusicCandidate;deliveryState?:'running'|'succeeded'|'failed';deliveryAssetIds?:string[];deliveryCode?:string;code?:string}
 

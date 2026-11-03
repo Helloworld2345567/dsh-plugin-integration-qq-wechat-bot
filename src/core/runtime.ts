@@ -418,7 +418,7 @@ export class BotRuntime {
     const snapshot=result.snapshot,config=snapshot.config as BotConfig;
     this.assertReplyContext(binding,snapshot,signal);
     if(config.media.voice?.replyMode!=='auto'||!analysisEnabled(config,'tts')||result.voiceAttempted||result.singingAttempted)return result.outputs;
-    if(config.schemaVersion===4&&config.media.voice?.protocol!=='edge_tts'&&!snapshot.services.voice?.snapshot)return replyNotice(result.outputs,'本次语音 Profile 未就绪，已用文字回复。');
+    if(config.media.voice?.protocol!=='edge_tts'&&!snapshot.services.voice?.snapshot)return replyNotice(result.outputs,'本次语音 Profile 未就绪，已用文字回复。');
     const text=spokenReplyText(result.outputs);if(!text)return result.outputs;
     const authorize=()=>{
       this.assertReplyContext(binding,snapshot,signal);

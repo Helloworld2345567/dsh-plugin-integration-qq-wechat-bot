@@ -9,7 +9,6 @@ import {SqliteStatsProjection} from './stats-projection.js';
 import {decodeCursor,encodeCursor,filterHash} from './pagination.js';
 import type {Page} from './repositories.js';
 import {PersonaFiles,defaultPersonasRoot,sameConfig} from './personas.js';
-import {assertGptSovitsReferenceCompatibility} from './voice-config.js';
 
 export function scopeKey(scope: CallerScope): string { return createHash('sha256').update(JSON.stringify([scope.platform, scope.botId, scope.accountId, scope.kind, scope.channelId, scope.senderId])).digest('hex'); }
 export class ConflictError extends Error { constructor(message='配置已被其他操作修改，请刷新后重试') { super(message); } }
@@ -57,23 +56,6 @@ export class Store {
       const voiceDefaults={enabled:false,protocol:'edge_tts' as const,format:'mp3' as const};
       this.put('config', 'default', configForWrite({ id:'default', name:'默认', personaPrompt:'你是自然、真诚、具体的中文聊天伙伴。回应用户实际意图，默认简洁，任务结果按需要展开。不编造记忆、工具执行或媒体内容。保留工具、skills和运行环境信息。',media:{voice:voiceDefaults},...(hostTools===undefined?{}:{allowHostTools:hostTools}) }));
       this.put('config', 'sakura', configForWrite({ id:'sakura', name:'小樱', personaPrompt:'你是成年猫娘小樱：银白长发、翠绿色眼睛、白色猫耳和尾巴、黑白女仆装。自然简短地交流，日常文字尽量不超过100字，任务结果可以展开。按用户意图决定是否调用图片工具，每轮最多一张生成图。参考图编辑必须使用真实原图。不输出配图描述，不编造工具或媒体观察。',media:{voice:voiceDefaults},...(hostTools===undefined?{}:{allowHostTools:hostTools}) }));
-    }
-    for(const raw of this.list<BotConfig>('config')){
-      const legacySpeech=(raw as any).media?.voice?.protocol==='speech';
-      if(raw.schemaVersion===4||raw.schemaVersion===3&&!legacySpeech)continue;
-      {
-        // Keep historical revisions intact; publish one migrated effective configuration.
-        if(!this.get('config-version',`${raw.id}:${raw.revision}`))this.put('config-version',`${raw.id}:${raw.revision}`,raw);
-        const media={...raw.media};for(const role of ['asr','video'] as const){if(media[role]&&('baseUrl' in media[role]||'keyEnv' in media[role]))media[role]={enabled:true,protocol:'chat_completions'};}
-        // Voice output was not present in the previous schema.  Publish an
-        // explicit, closed declaration so an upgrade cannot incur TTS usage.
-        // A former OpenAI-compatible speech declaration is converted to the
-        // keyless Edge TTS protocol while keeping voice disabled until the
-        // operator explicitly enables it.
-        media.voice={enabled:false,protocol:'edge_tts',replyMode:'on_demand',format:'mp3'};
-        const next=configForWrite({...raw,schemaVersion:3,media,tools:[...new Set([...(raw.tools??[]),'bot_voice'])],skills:[...new Set([...(raw.skills??[]),'media-analysis','voice-generation'])],revision:raw.revision+1});
-        this.transaction(()=>{this.put('config-version',`${next.id}:${next.revision}`,next);this.put('config',next.id,next);});
-      }
     }
     for(const config of this.configs())if(!this.get('config-version',`${config.id}:${config.revision}`))this.put('config-version',`${config.id}:${config.revision}`,config);
     for(const config of this.configs()){
@@ -151,7 +133,7 @@ export class Store {
   saveContentChange(id:string,value:unknown):void{this.put('evolution-content',id,value);}
   sessionsAll():SessionRecord[]{return this.list('session');}
   bindings():SessionBinding[]{return this.list('binding');}
-  configVersions():readonly BotConfig[]{return this.list('config-version');}
+  configVersions():readonly BotConfig[]{return this.list('config-version').map(c=>configSchema.parse(c));}
   personaDirectory(id?:string):string{return this.personas.directory(id);}
   personaRoot():string{return this.personas.root;}
   readPersonaDraft(id:string){return this.personas.read(id);}
@@ -175,7 +157,6 @@ export class Store {
     const check=()=>{
       const previous=this.get<BotConfig>('config',value.id);
       if(previous && previous.revision!==expectedRevision) throw new ConflictError();
-      assertGptSovitsReferenceCompatibility(value,this.configs());
       if(value.archived && (this.bots().some(b=>!b.archived && b.configId===value.id)||this.list<SessionBinding>('binding').some(b=>b.personaId===value.id))) throw new Error('请先解除机器人或活动会话配置绑定');
       return previous;
     };

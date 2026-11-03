@@ -3,14 +3,13 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
 import {Store} from '../src/core/store.js';
-import {botSchema,configSchema,v4ConfigSchema,type CallerScope} from '../src/core/types.js';
+import {botSchema,v4ConfigSchema,type CallerScope} from '../src/core/types.js';
 import {ProfileStore,StoreProfileRepository} from '../src/core/profile-store.js';
 import {allowedNow,freezeTurn,permissionsRevoked} from '../src/core/policy.js';
 import {DurableDeliveryWorker} from '../src/core/delivery-worker.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {createChannelRegistry} from '../src/core/channel-registry.js';
 
-const legacyPrivate={baseUrl:'http://127.0.0.1:9880',modelVersion:'v4' as const,gptWeightsPath:'models/private.ckpt',sovitsWeightsPath:'models/private.pth',refAudioPath:'references/private.wav',promptText:'参考语音',promptLang:'all_zh' as const,textLang:'all_zh' as const};
 const scope:CallerScope={botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'owner',senderId:'owner'};
 
 async function fixture(t:any){const home=await mkdtemp(path.resolve('.codex/profile-turn-')),store=new Store(home),profiles=new ProfileStore(new StoreProfileRepository(store));t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});return{store,profiles};}
@@ -21,15 +20,6 @@ function addProfiles(profiles:ProfileStore){return{
   rvc:profiles.create({serviceId:'rvc',profileId:'default',state:'ready',capabilities:['rvc.convert'],displayName:'RVC',managedConfig:{weights:'private'}}),
   music:profiles.create({serviceId:'music',profileId:'default',state:'ready',capabilities:['music.search'],displayName:'Music',managedConfig:{root:'private'}}),
 };}
-
-test('v3 is read-compatible while every save writes strict v4 without service secrets or paths',async t=>{
-  const {store}=await fixture(t);const legacy=configSchema.parse({schemaVersion:3,id:'legacy',name:'Legacy',personaPrompt:'A',skills:['voice-generation'],tools:['bot_voice'],media:{voice:{enabled:true,protocol:'gpt_sovits',gptSovits:legacyPrivate}}});
-  store.put('config',legacy.id,legacy);store.put('config-version',`${legacy.id}:${legacy.revision}`,legacy);
-  assert.equal(store.config('legacy').schemaVersion,3);assert.equal(store.config('legacy').media.voice?.gptSovits?.baseUrl,'http://127.0.0.1:9880');
-  const saved=store.saveConfig({...legacy,name:'Saved'},legacy.revision);assert.equal(saved.schemaVersion,4);assert.equal(saved.revision,2);assert.equal(saved.media.voice?.enabled,true);assert.equal(saved.media.voice?.profileRef,undefined);
-  const serialized=JSON.stringify(saved);assert.doesNotMatch(serialized,/127\.0\.0\.1|private\.(?:ckpt|pth)|references|gptSovits|baseUrl|WeightsPath|refAudioPath|credentials|locator/i);
-  const file=store.readPersonaDraft('legacy').config;assert.equal(file.schemaVersion,4);assert.doesNotMatch(JSON.stringify(file),/127\.0\.0\.1|private\.pth|refAudioPath/);
-});
 
 test('strict v4 rejects endpoint, port, model path, weight path, credentials and locator fields',()=>{
   const base=serviceConfig();const candidates=[

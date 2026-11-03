@@ -126,7 +126,7 @@ test('snapshot additions wait, revocations immediately deny even indirect host c
 test('voice permission requires the packaged skill, explicit tool and opt-in setting',()=>{
   const owner=botSchema.parse({id:'one',name:'One',channel:'qq',enabled:true});
   const scopeValue=scope();
-  const base=configSchema.parse({id:'voice',name:'Voice',personaPrompt:'A',skills:['voice-generation'],tools:['bot_voice'],media:{voice:{enabled:true,protocol:'speech',format:'mp3'}}});
+  const base=configSchema.parse({id:'voice',name:'Voice',personaPrompt:'A',skills:['voice-generation'],tools:['bot_voice'],media:{voice:{enabled:true,protocol:'edge_tts',format:'mp3'}}});
   assert.equal(permitted('bot_voice',base,owner,scopeValue),true);
   assert.equal(permitted('bot_voice',configSchema.parse({...base,media:{voice:{enabled:false}}}),owner,scopeValue),false);
   assert.equal(permitted('bot_voice',configSchema.parse({...base,tools:[]}),owner,scopeValue),false);
@@ -140,21 +140,14 @@ test('explicit web access works for ordinary channel users without granting host
   assert.equal(allowedNow('web_fetch',snap,config,owner,scope('one','alice','group')),true);
 });
 test('media role removal applies immediately while provider changes wait until the next turn',()=>{
-  const config=configSchema.parse({id:'media',name:'Media',personaPrompt:'A',media:{image:{baseUrl:'https://example.com/v1',model:'old',keyEnv:'IMAGE_KEY'},asr:{model:'asr'}}});
+  const config=configSchema.parse({id:'media',name:'Media',personaPrompt:'A',media:{image:{baseUrl:'https://example.com/v1',model:'old',keyEnv:'IMAGE_KEY'},asr:{enabled:true}}});
   const owner=botSchema.parse({id:'one',name:'One',channel:'qq'});const snapshot=freezeTurn(config,owner,scope(),[]);
   const current=configSchema.parse({...config,media:{image:{...config.media.image!,model:'new'},asr:{enabled:false}}});const effective=mediaConfigNow(snapshot,current);
   assert.equal(effective.media.image?.model,'old');assert.equal(effective.media.asr?.enabled,false);
-  assert.equal(snapshot.config.media.asr?.model,'asr');assert.equal(mediaConfigNow(snapshot,{...config,media:{}}).media.image?.model,'old');
-});
-test('legacy configuration publishes a migration revision once without changing history or bindings',async t=>{
-  const store=await fixture(t);const session=store.binding(scope());const original=store.config('default');
-  const raw:any={...original,skills:['image-generation'],voiceReply:true,media:{tts:{baseUrl:'https://example.invalid'},asr:{baseUrl:'https://old.invalid',keyEnv:'OLD',model:'fixture'}}};delete raw.schemaVersion;
-  store.put('config','default',raw);store.put('config-version','default:1',raw);
-  const upgraded=new Store(store.home);try{const config=upgraded.config('default');assert.equal(config.revision,2);assert.equal(config.schemaVersion,4);assert.deepEqual(config.skills,['image-generation','media-analysis','voice-generation']);assert.equal(config.tools.includes('bot_voice'),true);assert.equal(config.media.voice?.enabled,false);assert.deepEqual(config.media.voice?.protocol,'edge_tts');assert.equal('voiceReply'in config,false);assert.equal('tts'in config.media,false);assert.equal('baseUrl'in config.media.asr!,false);assert.deepEqual(upgraded.get('config-version','default:1'),raw);assert.equal(upgraded.binding(scope()).sessionId,session.sessionId);}finally{upgraded.close();}
-  const repeated=new Store(store.home);try{assert.equal(repeated.config('default').revision,2);}finally{repeated.close();}
+  assert.equal(snapshot.config.media.asr?.enabled,true);assert.equal(mediaConfigNow(snapshot,{...config,media:{}}).media.image?.model,'old');
 });
 test('image skill inherits operator variables without media setup, overrides stay optional and secrets stay outside settings',()=>{
-  const config=configSchema.parse({id:'image',name:'Image',personaPrompt:'A',media:{vision:{baseUrl:'https://unused.invalid'}}});assert.equal('vision' in config.media,false);
+  const config=configSchema.parse({id:'image',name:'Image',personaPrompt:'A',media:{}});assert.equal('vision' in config.media,false);
   const env={IMAGE_ACCESS_KEY:'test-secret',BOT_IMAGE_BASE_URL:'https://example.com/v1',BOT_IMAGE_MODEL:'custom'};
   const endpoint=resolveImageSkill(config,env);assert.equal(endpoint.keyEnv,'IMAGE_ACCESS_KEY');assert.equal(endpoint.model,'custom');assert.equal(endpoint.baseUrl,env.BOT_IMAGE_BASE_URL);assert.ok(!JSON.stringify(endpoint).includes('test-secret'));
   const override=configSchema.parse({...config,media:{image:{model:'persona-model'}}});assert.equal(resolveImageSkill(override,env).model,'persona-model');assert.equal(resolveImageSkill(override,env).baseUrl,env.BOT_IMAGE_BASE_URL);

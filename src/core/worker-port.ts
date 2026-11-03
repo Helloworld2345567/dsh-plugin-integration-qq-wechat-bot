@@ -1,6 +1,6 @@
 import type {MediaFile, MediaResult} from './media.js';
-import {gptSovitsSchema,edgeTtsSchema,singingSkillSchema} from './types.js';
-import type {MusicHealth} from './music-state.js';
+import {rvcWorkerConfigSchema} from './rvc-worker-config.js';
+import {gptSovitsSchema,edgeTtsSchema} from './types.js';
 
 export const MEDIA_WORKER_PROTOCOL = 'dsh.media-worker';
 export const MEDIA_WORKER_PROTOCOL_VERSION = 1;
@@ -27,7 +27,7 @@ export interface MediaWorkerJob {
 }
 /** Provider secrets are carried out-of-band and are never serialized into a job. */
 export type WorkerCredentials = Readonly<Record<string, string>>;
-export interface WorkerPort { run(job: MediaWorkerJob, signal: AbortSignal, credentials?: WorkerCredentials): Promise<MediaResult>; musicHealth?(signal:AbortSignal,output:string):Promise<MusicHealth>; }
+export interface WorkerPort { run(job: MediaWorkerJob, signal: AbortSignal, credentials?: WorkerCredentials): Promise<MediaResult>; }
 
 const MAX_TEXT = 4096;
 const MAX_PARAMETER_BYTES = 256 * 1024;
@@ -65,7 +65,7 @@ export function validateMediaWorkerJob(job: MediaWorkerJob): void {
   if (job.endpoint !== undefined) {
     if(!isRecord(job.endpoint))throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');
     if(job.endpoint.protocol==='rvc_http_v1'){
-      if(job.operation!=='singing_convert'||job.endpoint.jobId!==job.id||!singingSkillSchema.safeParse(job.endpoint).success||job.endpoint.enabled!==true||!boundedString(job.endpoint.baseUrl,2048))throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');
+      if(job.operation!=='singing_convert'||job.endpoint.jobId!==job.id||!rvcWorkerConfigSchema.safeParse(job.endpoint).success||job.endpoint.enabled!==true||!boundedString(job.endpoint.baseUrl,2048))throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');
     }else if(job.endpoint.protocol==='gpt_sovits'){
       if(job.operation!=='voice_speak'||!gptSovitsSchema.safeParse(job.endpoint).success||!boundedString(job.endpoint.voice,100))throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');
     }else if(job.endpoint.protocol==='edge_tts'){

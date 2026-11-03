@@ -13,7 +13,7 @@ function deferred(){let resolve!:()=>void;const promise=new Promise<void>(done=>
 
 async function fixture(t:TestContext){
   await mkdir(path.resolve('.codex'),{recursive:true});const directory=await mkdtemp(path.resolve('.codex/qq-outbound-runtime-')),store=new Store(directory),assets=new Assets(store);
-  const initial=store.config('sakura'),config=configSchema.parse({...initial,schemaVersion:3,media:{voice:{enabled:true,protocol:'edge_tts',replyMode:'auto',format:'mp3'}}});
+  const initial=store.config('sakura'),config=configSchema.parse({...initial,schemaVersion:4,media:{voice:{enabled:true,protocol:'edge_tts',replyMode:'auto',format:'mp3'}}});
   store.put('config',config.id,config);store.put('config-version',`${config.id}:${config.revision}`,config);
   store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',configId:config.id,enabled:true,trustedUsers:['owner']}));
   const binding=store.binding(scope);store.accept({id:'context',scope,text:'已有上下文',attachments:[],timestamp:Date.now()-3600000,reply:{target:'owner',kind:'private',msgId:'old'}});store.mark(binding.key,['context'],'complete');
