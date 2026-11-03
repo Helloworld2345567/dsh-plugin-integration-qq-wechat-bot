@@ -1,5 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {scanReleaseText,validateReleaseEntry} from '../scripts/release-safety.mjs';
 
 test('release scanner rejects drive, UNC, loopback, credentials and download locators',()=>{
@@ -22,4 +23,11 @@ test('release entries reject traversal, absolute paths and credential-like files
   assert.match(validateReleaseEntry('/absolute.txt')??'',/normalized/);
   assert.match(validateReleaseEntry('config/secrets.json')??'',/Credential/);
   assert.match(validateReleaseEntry('data/runtime.json')??'',/Private/);
+});
+
+test('release packaging and publishing cannot bypass the complete verification gate',()=>{
+  const manifest=JSON.parse(readFileSync('package.json','utf8'));
+  assert.equal(manifest.scripts['prepublishOnly'],'npm run verify:release');
+  assert.match(manifest.scripts['release:pack'],/^npm run verify:release && npm pack --ignore-scripts$/);
+  assert.doesNotMatch(manifest.scripts['verify:release'],/npm pack(?!.*--ignore-scripts)/);
 });

@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-gate:
+    name: 发布门禁
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-voice-generation.txt
+
+      - name: 确认 FFmpeg
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg -y --no-progress
+          }
+          ffmpeg -version | Select-Object -First 1
+          ffprobe -version | Select-Object -First 1
+
+      - name: 安装依赖
+        run: |
+          npm ci
+          python -m pip install -r requirements.txt -r requirements-voice-generation.txt
+
+      - name: 执行发布门禁并生成归档
+        run: npm run release:pack
+
+  harness-integration:
+    name: Harness 集成与安装验收
+    needs: release-gate
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 确认 FFmpeg
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg -y --no-progress
+          }
+
+      - name: 安装依赖
+        run: |
+          npm ci
+          python -m pip install -r requirements.txt -r requirements-voice-generation.txt
+
+      - name: 运行 Harness 原生集成测试
+        shell: pwsh
+        run: |
+          $env:BOT_PYTHON = (Get-Command python).Source
+          npm run test:native
+          npm run test:lifecycle-native
+
+      - name: 运行独立产品安装验收
+        shell: pwsh
+        run: |
+          $env:BOT_TEST_PYTHON = (Get-Command python).Source
+          npm run test:install-smoke

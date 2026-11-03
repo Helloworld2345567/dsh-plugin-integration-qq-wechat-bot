@@ -17,6 +17,10 @@
 - 统计、失败记录和可恢复的生命周期管理
 - React 管理面板，支持配置热切换并在下一轮生效
 
+## 语言支持
+
+当前文档和管理界面仅支持简体中文。英文界面将在后续版本扩展；这不影响模型或用户消息使用其他语言。
+
 ## 环境要求
 
 - Node.js 24+
@@ -24,26 +28,23 @@
 - DeepSeek Harness 0.2.1-rc.2
 - 音频和视频处理需要 `ffmpeg` 与 `ffprobe`
 
-## 安装
+## 选择安装方式
 
-```bash
-npm ci
-npm run build
-```
+项目保留两种交付方式，二者共享主插件，但不会相互修改：
 
-本地目录和本地 `.tgz` 均可交给 `scripts/install.mjs`；两者都会在安装前经过同一 archive 安全校验。默认最小层为 `core,basic-media`，可在没有 GPT-SoVITS、Music、RVC、CUDA 或模型权重时安装并启动；Catalog 会将未登记能力显示为 `missing`/`blocked`，不会静默选择其他服务。
+### 方式一：安装到已有 Harness
 
-固定 GitHub release 安装使用 `scripts/bootstrap-github.mjs`，必须同时提供严格的 `owner/repo`、固定 semver release tag、固定 `.tgz` asset 名称和预期 SHA-256。`--ref` 不接受分支名或 commit SHA；摘要用于校验下载产物的固定内容。例如：
+适合已经维护 Harness profile 的用户。通过 Harness 插件命令安装主 bundle，不创建项目专属 profile，也不安装独立生命周期协调器。
 
-```bash
-node scripts/bootstrap-github.mjs --repository=OWNER/REPO --ref=v1.2.3 --asset=PACKAGE.tgz --sha256=64位小写十六进制摘要 --home=/absolute/product/home
-```
+请按[安装到已有 DeepSeek Harness](docs/install-existing-harness.md)操作。
 
-Bootstrap 只接受 HTTPS GitHub allowlist，逐跳检查重定向与 DNS，限制下载大小和时间；hash 和 tar 安全校验通过后才调用现有 installer。失败会使用安装前已有且 hash 仍匹配的 archive 回滚。下载内容位于一次性空目录，成功或失败都会清理，且不会从下载目录运行解释器或构建工具。脚本不会执行真实服务 health 或能力验收；安装后的 `health-verified` 只表示 package archive 与已安装 package identity 一致。
+### 方式二：部署独立机器人产品 profile
 
-将构建产物安装到 Harness 后启动 `bots` profile。打开 Harness 设置页，在“机器人面板”中完成渠道、账号和人格配置。面板的 Profile health 只表示当前可探测；真实 TTS、完整音乐下载和 RVC 转换须由运营者另行执行并登记 acceptance，记录绑定人格和 Profile revision。
+适合希望由项目管理隔离 `bots` profile、工作区、受监督启动、升级和回滚的运营者。产品安装器会同时安装主 bundle 和独立 `dsh-bot-lifecycle` bundle。
 
-基础媒体脚本依赖见 `requirements.txt`；Edge TTS 可选层见 `requirements-voice-generation.txt`。如果已有可用的 Python 环境，可通过 `BOT_PYTHON` 指定解释器。安装器不会安装 CUDA、RVC、Music 外部项目或模型权重。
+请按[部署独立机器人产品 profile](docs/deploy-product-profile.md)操作。
+
+两种方式都支持没有 GPT-SoVITS、Music、RVC、CUDA 或模型权重的最小安装。Catalog 会将未登记能力显示为 `missing` 或 `blocked`，不会静默选择其他服务。基础媒体依赖见 `requirements.txt`，Edge TTS 可选依赖见 `requirements-voice-generation.txt`；外部服务项目和模型权重始终由运营者单独部署。
 
 ## 配置
 
@@ -142,14 +143,10 @@ QQ 图片、视频、音频和普通文件的投递硬上限均为 200 MiB。直
 ## 常用命令
 
 ```bash
-npm run typecheck
-npm test
-npm run test:python
-npm run build
-npm run check:release
+npm run verify:release
 ```
 
-`npm run test:native`、`npm run test:lifecycle-native` 和 `npm run test:install-smoke` 用于更完整的 Harness 集成检查。
+`verify:release` 依次执行类型检查、隔离的 TypeScript 测试、Python 测试、构建和发布包检查。生成发布归档统一使用 `npm run release:pack`，它先执行同一门禁，再以禁用 lifecycle scripts 的方式打包；`npm publish` 由 `prepublishOnly` 强制执行门禁。`npm run test:native`、`npm run test:lifecycle-native` 和 `npm run test:install-smoke` 用于完整 Harness 集成与独立产品安装验收。
 
 ## 项目结构
 
@@ -167,4 +164,4 @@ tests/     TypeScript 与 Python 测试
 
 MIT。第三方依赖和来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-架构说明见 [docs/architecture.md](docs/architecture.md)，贡献和仓库约束见 [AGENTS.md](AGENTS.md)。
+架构说明见 [docs/architecture.md](docs/architecture.md)，长期设计决策见 [docs/adr/](docs/adr/)，自动化代理和仓库安全约束见 [AGENTS.md](AGENTS.md)。

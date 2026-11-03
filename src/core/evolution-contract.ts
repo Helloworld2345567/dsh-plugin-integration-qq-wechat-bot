@@ -1,5 +1,5 @@
 import {createHash,randomUUID} from 'node:crypto';
-import {existsSync,mkdirSync,readFileSync,readdirSync,renameSync,writeFileSync,lstatSync,globSync} from 'node:fs';
+import {existsSync,mkdirSync,readFileSync,readdirSync,renameSync,rmSync,writeFileSync,lstatSync,globSync} from 'node:fs';
 import path from 'node:path';
 
 export interface Artifact {path:string;sha256:string;identity:string}
@@ -14,9 +14,21 @@ export interface EvolutionTask {
 }
 
 export function defaultProductHome(dataHome:string):string{return path.basename(dataHome)==='bot-integration'&&path.basename(path.dirname(dataHome))==='storages'?path.resolve(dataHome,'../..'):dataHome;}
+const WINDOWS_REPLACE_RETRY_CODES=new Set(['EPERM','EACCES','EBUSY']);
+export function replaceFileSync(source:string,target:string,rename:(source:string,target:string)=>void=renameSync,platform:NodeJS.Platform=process.platform):void {
+  for(let attempt=0;;attempt++)try{rename(source,target);return;}catch(error){
+    const code=(error as NodeJS.ErrnoException).code;
+    if(platform!=='win32'||!WINDOWS_REPLACE_RETRY_CODES.has(String(code))||attempt>=9)throw error;
+    // Antivirus and indexers can briefly hold a just-flushed file on Windows.
+    // Atomics.wait is a bounded synchronous delay and never yields ownership of
+    // the lifecycle journal to another writer.
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,Math.min(100,5*2**attempt));
+  }
+}
 export function atomicJson(file:string,value:unknown):void{
   mkdirSync(path.dirname(file),{recursive:true});const temporary=`${file}.${randomUUID()}.tmp`;
-  writeFileSync(temporary,JSON.stringify(value,null,2)+'\n',{mode:0o600,flag:'wx',flush:true});renameSync(temporary,file);
+  try{writeFileSync(temporary,JSON.stringify(value,null,2)+'\n',{mode:0o600,flag:'wx',flush:true});replaceFileSync(temporary,file);}
+  finally{rmSync(temporary,{force:true});}
 }
 export function sha256(file:string):string{if(lstatSync(file).isSymbolicLink()||!lstatSync(file).isFile())throw Error('Expected regular artifact file');return createHash('sha256').update(readFileSync(file)).digest('hex');}
 export function packageIdentity(root:string):string{

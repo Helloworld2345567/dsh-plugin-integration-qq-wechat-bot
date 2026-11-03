@@ -4,6 +4,7 @@ import {mkdtempSync,mkdirSync,writeFileSync,existsSync,readFileSync,rmSync} from
 import path from 'node:path';
 import {EvolutionService,cleanValidationEnv,sourceFiles,sourceDigest,type ValidationCommand} from '../src/core/evolution.js';
 import {atomicJson,packageIdentity,sha256} from '../src/lifecycle/protocol.js';
+import {replaceFileSync} from '../src/core/evolution-contract.js';
 
 function fixture(t:any){
   mkdirSync('.codex',{recursive:true});const root=mkdtempSync(path.resolve('.codex/evolution-test-'));const source=path.join(root,'project');const home=path.join(root,'home');
@@ -21,6 +22,12 @@ function fixture(t:any){
   const service=new EvolutionService({home,saveEvolutionTask:()=>{}},source,{available:()=>true,run:runner});
   t.after(()=>rmSync(root,{recursive:true,force:true}));return{root,source,home,write,service,commands,runner};
 }
+
+test('Windows atomic lifecycle replacement retries transient file ownership without hiding permanent failures',()=>{
+  let attempts=0;replaceFileSync('source','target',()=>{if(attempts++<2)throw Object.assign(Error('busy'),{code:'EPERM'});},'win32');assert.equal(attempts,3);
+  let denied=0;assert.throws(()=>replaceFileSync('source','target',()=>{denied++;throw Object.assign(Error('denied'),{code:'EPERM'});},'linux'),/denied/);assert.equal(denied,1);
+  let invalid=0;assert.throws(()=>replaceFileSync('source','target',()=>{invalid++;throw Object.assign(Error('invalid'),{code:'EINVAL'});},'win32'),/invalid/);assert.equal(invalid,1);
+});
 
 test('candidate copies the dirty source into the project without private/runtime/dependency material',t=>{
   const f=fixture(t);const task=f.service.create('trusted-scope','sakura','Improve a feature');
