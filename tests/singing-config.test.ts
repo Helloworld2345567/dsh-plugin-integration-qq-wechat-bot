@@ -23,7 +23,7 @@ test('STS card supports disabled drafts and enabling supplies dedicated permissi
   const picker=React.createElement('select',{'aria-label':'唱歌音色'}),tree=singingCard(React.createElement,ui,config,(patch:any)=>{updated=patch;},picker);walk(tree);
   assert.ok(nodes.includes(picker));
   assert.equal(tree.children[1],picker);
-  assert.deepEqual(nodes.filter(node=>node.type==='label').map(node=>node.children[0]),['说话人编号','音高调整（半音）','转换输出']);
+  assert.deepEqual(nodes.filter(node=>node.type==='label').map(node=>node.children[0]),['说话人','音高（半音）','输出']);
   assert.doesNotMatch(JSON.stringify(nodes),/验收|health|acceptance|测试|权重|locator/);
   assert.ok(!nodes.some(node=>node.type==='label'&&/权重路径|服务地址|locator|凭据/i.test(String(node.children[0]))));
   nodes.find(node=>node.props?.role==='switch').props.onClick();await new Promise(resolve=>setImmediate(resolve));

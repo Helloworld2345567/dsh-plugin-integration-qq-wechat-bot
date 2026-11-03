@@ -46,7 +46,7 @@ test('panel retains summary options, drafts and local errors across its sections
     const nameLabel=tree.find(n=>n.type==='label'&&n.children[0]==='名称');nameLabel.children[1].props.onChange({target:{value:'未保存的人格'}});
     tree=render();tree.find(n=>n.type==='button'&&n.children.includes('媒体')).props.onClick();await new Promise(resolve=>setImmediate(resolve));
     tree=render();assert.ok(tree.some(n=>n.props?.role==='switch'&&n.props['aria-label']==='图片'&&!n.props['aria-checked']));
-    assert.ok(tree.some(n=>n.props?.role==='switch'&&n.props['aria-label']==='语音合成 TTS'&&!n.props['aria-checked']));
+    assert.ok(tree.some(n=>n.props?.role==='switch'&&n.props['aria-label']==='语音 TTS'&&!n.props['aria-checked']));
     assert.ok(!tree.some(n=>n.type==='input'&&n.props.type==='checkbox'));
     tree.find(n=>n.props?.role==='switch'&&n.props['aria-label']==='图片').props.onClick();await new Promise(resolve=>setImmediate(resolve));
     tree=render();assert.equal(states[7].name,'未保存的人格');assert.equal(states[7].media.image.enabled,true);assert.equal(states[8],true);
@@ -65,8 +65,8 @@ test('panel retains summary options, drafts and local errors across its sections
     states[7]={...states[7],schemaVersion:4,media:{...states[7].media,voice:{enabled:true,profileRef:{serviceId:'gpt-sovits',profileId:'speaker'},replyMode:'auto',format:'wav'}}};states[8]=false;
     states[13]={default:{keyConfigured:true}};
     tree=render();const voiceSection=nodes(tree.find(n=>n.props?.key==='voice'));
-    assert.ok(voiceSection.some(n=>n.type==='option'&&n.children.includes('文字加自动语音')));
-    assert.ok(voiceSection.some(n=>n.type==='label'&&n.children[0]==='说话音色'));
+    assert.ok(voiceSection.some(n=>n.type==='option'&&n.children.includes('文字 + 语音')));
+    assert.ok(voiceSection.some(n=>n.type==='label'&&n.children[0]==='说话'));
     assert.ok(!tree.some(n=>n.type==='button'&&/检查|验收|登记|模型服务/.test(n.children.join(''))));
     assert.ok(!voiceSection.some(n=>n.type==='label'&&/权重|凭据|locator/i.test(String(n.children[0]))));
     assert.ok(!voiceSection.some(n=>n.type==='label'&&n.children[0]==='提供商'));

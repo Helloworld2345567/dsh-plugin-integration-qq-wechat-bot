@@ -32,13 +32,13 @@ export function voiceModelPicker(h:any,ui:ReturnType<typeof createUI>,options:{r
   const {role,config,profiles,busy,dirty,existing}=options,selected=config.media[role];
   const rows=profiles.filter(profile=>profile.serviceId===serviceFor[role]&&profile.capabilities.includes(operationFor[role]));
   const key=selected?.profileRef?`${selected.profileRef.serviceId}/${selected.profileRef.profileId}`:'',disabled=busy||dirty||!existing;
-  const choices=[{id:'',name:role==='voice'&&config.media.voice?.protocol==='edge_tts'?'内置语音':rows.length?'请选择音色':'暂无音色',disabled:true},...rows.map(profile=>{
+  const choices=[...(!key?[{id:'',name:role==='voice'&&config.media.voice?.protocol==='edge_tts'?'内置语音':rows.length?'选择':'暂无',disabled:true}]:[]),...rows.map(profile=>{
     let version=profile.modelLabel?.replace(/^(?:GPT[- ]?SoVITS|RVC)\s*/i,'').trim();
     if(version?.startsWith(profile.displayName))version=version.slice(profile.displayName.length).replace(/^\s*[·:：-]?\s*/,'');
     return{id:`${profile.serviceId}/${profile.profileId}`,name:`${profile.displayName}${version?` · ${version}`:''}${profile.state==='ready'?'':'（不可用）'}`,disabled:profile.state!=='ready'};
   })];
-  if(key&&!choices.some(choice=>choice.id===key))choices.push({id:key,name:'当前音色（不可用）',disabled:true});
-  return h('div',null,ui.select(role==='voice'?'说话音色':'唱歌音色',key,choices,async value=>{
+  if(key&&!choices.some(choice=>choice.id===key))choices.push({id:key,name:'不可用',disabled:true});
+  return h('div',null,ui.select(role==='voice'?'说话':'唱歌',key,choices,async value=>{
     if(disabled)return;const profile=rows.find(item=>`${item.serviceId}/${item.profileId}`===value);if(profile?.state==='ready')await options.apply(role,profile);
-  },{disabled}),dirty||!existing?h('small',null,!existing?'请先保存当前人格，再选择音色。':'请先保存或取消当前修改。'):null);
+  },{disabled}),dirty||!existing?h('small',null,!existing?'请先保存。':'请先保存或取消。'):null);
 }

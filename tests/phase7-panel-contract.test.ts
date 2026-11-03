@@ -21,7 +21,7 @@ test('media cards keep unavailable selections without exposing internal status o
   const music=nodes(musicCard(React.createElement,ui,config,profiles,()=>{}));
   const picker=voiceModelPicker(React.createElement,ui,{role:'singing',config,profiles,busy:false,dirty:false,existing:true,apply:async()=>{}});
   const singing=nodes(singingCard(React.createElement,ui,config,()=>{},picker));
-  for(const [rows,value,label] of [[music,'music/blocked','音乐来源'],[singing,'rvc/missing','唱歌音色']] as const){assert.ok(rows.some(node=>node.type==='label'&&node.children[0]===label));assert.equal(rows.find(node=>node.type==='option'&&node.props.value===value).props.disabled,true);assert.ok(!rows.some(node=>node.type==='label'&&/endpoint|地址|端口|path|路径|weight|权重|credential|凭据|locator/i.test(String(node.children[0]))));assert.ok(!rows.some(node=>node.type==='button'&&/检查|验收|测试/.test(String(node.children[0]))));}
+  for(const [rows,value,label] of [[music,'music/blocked','音乐来源'],[singing,'rvc/missing','唱歌']] as const){assert.ok(rows.some(node=>node.type==='label'&&node.children[0]===label));assert.equal(rows.find(node=>node.type==='option'&&node.props.value===value).props.disabled,true);assert.ok(!rows.some(node=>node.type==='label'&&/endpoint|地址|端口|path|路径|weight|权重|credential|凭据|locator/i.test(String(node.children[0]))));assert.ok(!rows.some(node=>node.type==='button'&&/检查|验收|测试/.test(String(node.children[0]))));}
   assert.ok(music.some(node=>node.props?.role==='switch'&&node.props['aria-label']==='下载时附带歌词'));
 });
 
