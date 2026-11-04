@@ -24,6 +24,19 @@ export class Assets {
   constructor(readonly store:Store,readonly root=path.join(store.home,'assets')){}
   workspace(scope:string):Promise<string>{return scopeWorkspace(this.store,scope);}
   private currentSession(scope:string):string|undefined {const binding=this.store.findBinding(scope);return binding?.key===scope&&typeof binding.sessionId==='string'&&this.store.findSession(binding.sessionId)?.scopeKey===scope?binding.sessionId:undefined;}
+  bindingCurrent(binding:Pick<import('./types.js').SessionBinding,'key'|'sessionId'|'generation'>):boolean {const current=this.store.findBinding(binding.key);return current?.sessionId===binding.sessionId&&current.generation===binding.generation;}
+  generated(scope:string,sessionId:string,jobId:string,kind?:Asset['kind']):Asset[]{return this.store.list<Asset>('asset').filter(asset=>asset.jobId===jobId&&asset.scopeKey===scope&&asset.sessionId===sessionId&&(!kind||asset.kind===kind));}
+  hasDelivery(scope:string,assetId:string):boolean{return this.store.deliveryRepository().findByAsset(scope,assetId).length>0;}
+  async removeUnclaimed(scope:string,id:string):Promise<boolean>{
+    const asset=this.store.asset(scope,id);
+    if(this.hasDelivery(scope,id))return false;
+    if(!asset.workspace)throw Error('ASSET_CLEANUP_WORKSPACE_REQUIRED');
+    const folder=assetFolder(asset.workspace,asset),relative=path.relative(path.resolve(asset.workspace),path.resolve(folder));
+    if(!relative||relative.startsWith('..')||path.isAbsolute(relative)||path.resolve(asset.path)!==path.join(path.resolve(folder),asset.name))throw Error('ASSET_CLEANUP_PATH_INVALID');
+    await rm(folder,{recursive:true,force:true});
+    this.store.transaction(()=>{this.store.db.prepare('DELETE FROM asset_index WHERE id=? AND scope=?').run(id,scope);this.store.db.prepare("DELETE FROM records WHERE kind='asset' AND id=?").run(id);});
+    return true;
+  }
   async save(scope:string,input:MediaInput,bytes:Buffer,jobId?:string,origin:AssetOrigin=jobId?'generated':'received',expectedSession?:string,expectedGeneration?:number,authorize?:()=>void,serviceSnapshot?:import('./service-contract.js').TurnServiceSnapshot):Promise<Asset>{
     // Capture ownership before any I/O: a concurrent /new must not reassign an older upload.
     const sessionId=this.currentSession(scope);

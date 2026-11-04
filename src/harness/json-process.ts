@@ -1,4 +1,5 @@
 import {spawn} from 'node:child_process';
+export {jobEnvironment} from './process-environment.js';
 
 /** One bounded JSON exchange. Cancellation waits for process-tree termination. */
 export async function runJsonProcess(command:string,args:string[],request:unknown,options:{cwd:string;signal:AbortSignal;timeoutMs?:number;env?:NodeJS.ProcessEnv;maxOutputBytes?:number}):Promise<any>{
@@ -21,5 +22,3 @@ export async function runJsonProcess(command:string,args:string[],request:unknow
     child.stdin.end(JSON.stringify(request));if(options.signal.aborted)abort();
   });
 }
-
-export function jobEnvironment(output:string):NodeJS.ProcessEnv {return {PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,SYSTEMROOT:process.env.SYSTEMROOT,HOME:output,USERPROFILE:output,APPDATA:output,LOCALAPPDATA:output,TEMP:output,TMP:output,PYTHONDONTWRITEBYTECODE:'1',PYTHONIOENCODING:'utf-8',PYTHONUTF8:'1'};}

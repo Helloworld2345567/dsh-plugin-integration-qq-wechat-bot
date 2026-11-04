@@ -47,7 +47,7 @@ test('operator settings discover independent strict adapter profiles without cha
   assert.equal(rvc.managedConfig.device,'cuda');assert.equal(rvc.managedConfig.indexRate,0.75);assert.equal((rvc.managedConfig.separation as any).enabled,true);
   assert.equal(gpt.managedConfig.healthPath,'/openapi.json');assert.equal(gpt.managedConfig.baseUrl,'http://127.0.0.1:9880');
   assert.equal('__discovery' in gpt.managedConfig,false);assert.equal('__discovery' in rvc.managedConfig,false);
-  assert.equal((await new RvcCliServiceAdapter().health(rvc,new AbortController().signal)).state,'ready');
+  assert.equal((await new RvcCliServiceAdapter({run:async()=>{throw Error('not called');},cancel:async()=> 'cancelled'}).health(rvc,new AbortController().signal)).state,'ready');
   let received:any;const adapter=new GptSovitsServiceAdapter({run:async()=>({})},{check:async config=>{received=config;return true;}});
   assert.equal((await adapter.health(gpt,new AbortController().signal)).state,'ready');assert.equal(received.promptText,'参考文本。');
   assert.equal(JSON.stringify(f.store.configs()),before);assert.doesNotMatch(JSON.stringify(f.profiles.list()),/model\.pth|baseUrl|sourceId|resourceHash|modelsRoot/);

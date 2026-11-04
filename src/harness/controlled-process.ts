@@ -1,8 +1,7 @@
 import {spawn,type ChildProcess} from 'node:child_process';
-
-export interface ControlledProcessRequest {jobId?:string;command:string;args:readonly string[];cwd:string;env:NodeJS.ProcessEnv;signal:AbortSignal;deadline:number;maxOutputBytes?:number;stdin?:Buffer}
-export interface ControlledProcessResult {code:number|null;stdout:Buffer}
-export interface ControlledProcessPort {run(request:ControlledProcessRequest):Promise<ControlledProcessResult>;cancel(jobId:string):Promise<'cancelled'|'unknown'>}
+import type {ControlledProcessPort,ControlledProcessRequest,ControlledProcessResult} from '../core/process-port.js';
+import {jobEnvironment} from './process-environment.js';
+export type {ControlledProcessPort,ControlledProcessRequest,ControlledProcessResult} from '../core/process-port.js';
 
 type Active={child:ChildProcess;settled:Promise<void>;killing?:Promise<'cancelled'|'unknown'>;reason?:'abort'|'deadline'|'overflow'|'cancel'};
 async function terminateTree(child:ChildProcess):Promise<'cancelled'|'unknown'>{
@@ -18,7 +17,7 @@ export class NodeControlledProcessPort implements ControlledProcessPort {
   private readonly active=new Map<string,Active>();
   async run(request:ControlledProcessRequest):Promise<ControlledProcessResult>{
     request.signal.throwIfAborted();if(request.deadline<=Date.now())throw Error('SERVICE_DEADLINE_EXCEEDED');
-    const child=spawn(request.command,[...request.args],{cwd:request.cwd,env:request.env,windowsHide:true,stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32'}),chunks:Buffer[]=[];let bytes=0,overflow=false,settle!:()=>void,killing:Promise<'cancelled'|'unknown'>|undefined;const settled=new Promise<void>(resolve=>settle=resolve),active:Active={child,settled};if(request.jobId)this.active.set(request.jobId,active);
+    const child=spawn(request.command,[...request.args],{cwd:request.cwd,env:request.env??jobEnvironment(request.cwd),windowsHide:true,stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32'}),chunks:Buffer[]=[];let bytes=0,overflow=false,settle!:()=>void,killing:Promise<'cancelled'|'unknown'>|undefined;const settled=new Promise<void>(resolve=>settle=resolve),active:Active={child,settled};if(request.jobId)this.active.set(request.jobId,active);
     const stop=(reason:Active['reason'])=>{active.reason??=reason;killing??=active.killing??=terminateTree(child);};const abort=()=>stop((request.signal.reason as {name?:string}|undefined)?.name==='TimeoutError'?'deadline':'abort');request.signal.addEventListener('abort',abort,{once:true});const timeout=setTimeout(()=>stop('deadline'),Math.max(1,request.deadline-Date.now()));timeout.unref();child.stdout?.on('data',(chunk:Buffer)=>{bytes+=chunk.length;if(bytes>(request.maxOutputBytes??2*1024*1024)){overflow=true;stop('overflow');}else chunks.push(chunk);});child.stderr?.resume();child.stdin?.on('error',()=>{});child.stdin?.end(request.stdin);
     try{return await new Promise<ControlledProcessResult>((resolve,reject)=>{child.once('error',reject);child.once('close',async code=>{if(overflow)return reject(Error('PROCESS_OUTPUT_TOO_LARGE'));if(killing||active.killing){const result=await(killing??active.killing!);return reject(Error(result==='unknown'?'PROCESS_TREE_STATE_UNKNOWN':active.reason==='deadline'?'SERVICE_DEADLINE_EXCEEDED':active.reason==='overflow'?'PROCESS_OUTPUT_TOO_LARGE':'PROCESS_CANCELLED_CONFIRMED'));}if(Date.now()>=request.deadline)return reject(Error('SERVICE_DEADLINE_EXCEEDED'));resolve({code,stdout:Buffer.concat(chunks)});});});}
     finally{clearTimeout(timeout);request.signal.removeEventListener('abort',abort);if(request.jobId)this.active.delete(request.jobId);settle();}

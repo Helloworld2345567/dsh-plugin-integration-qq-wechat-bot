@@ -9,7 +9,7 @@ const failures = [];
 const scripts = packageJson.scripts ?? {};
 const commands = [...new Set([...text['CONTRIBUTING.md'].matchAll(/npm run ([a-z0-9:_-]+)/gi), ...text['docs/development.md'].matchAll(/npm run ([a-z0-9:_-]+)/gi), ...text['docs/testing.md'].matchAll(/npm run ([a-z0-9:_-]+)/gi)].map(match => match[1]))];
 for (const command of commands) if (!scripts[command]) failures.push(`documented npm script missing: ${command}`);
-for (const command of ['typecheck', 'test', 'test:python', 'check:python-dependencies', 'check:environment', 'build', 'check:docs', 'check:contracts', 'check:licenses', 'check:release', 'verify:release', 'release:pack', 'test:native', 'test:lifecycle-native', 'test:install-smoke']) {
+for (const command of ['check:architecture', 'typecheck', 'test', 'test:python', 'check:python-dependencies', 'check:environment', 'build', 'check:docs', 'check:contracts', 'check:licenses', 'check:release', 'verify:release', 'release:pack', 'test:native', 'test:lifecycle-native', 'test:install-smoke']) {
   if (!text['docs/testing.md'].includes(`npm run ${command}`)) failures.push(`testing contract missing: ${command}`);
 }
 if (packageJson.engines?.node !== '>=24.0.0') failures.push('package Node engine is not Node 24+');
@@ -29,6 +29,9 @@ for (const file of ['scripts/test-native.mjs', 'scripts/test-lifecycle-native.mj
 if (!text['scripts/test-native.mjs'].includes('BOT_TEST_WEB_TOOLS_SOURCE') || !text['scripts/test-native.mjs'].includes("manifest.name !== 'dsh-web-tools'")) failures.push('native web-tools fixture source is not validated');
 if (!text['scripts/test-process.mjs'].includes('timeoutMs') || !text['scripts/test-process.mjs'].includes('killProcessTree')) failures.push('test subprocess helper lacks timeout/tree cleanup');
 if (text['.github/workflows/ci.yml'].includes("path: '*.tgz'")) failures.push('CI must not upload the temporary release archive');
+if (packageJson.scripts['check:architecture'] !== 'node scripts/check-architecture.mjs') failures.push('architecture gate entry changed');
+if (!String(packageJson.scripts['verify:release']).startsWith('npm run check:architecture && ')) failures.push('verify:release does not start with the architecture gate');
+if (!text['.github/workflows/ci.yml'].includes('npm run verify:release')) failures.push('CI does not execute the release gate containing architecture checks');
 if (packageJson.scripts.prepublishOnly !== 'npm run verify:release') failures.push('prepublishOnly release gate changed');
 if (!String(packageJson.scripts['release:pack']).includes('release-pack.mjs')) failures.push('release:pack implementation changed');
 console.log(JSON.stringify({status: failures.length ? 'FAIL' : 'PASS', commands, failures}, null, 2));

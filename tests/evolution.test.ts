@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,writeFileSync,existsSync,readFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,existsSync,readFileSync,readdirSync,renameSync,rmSync} from 'node:fs';
 import path from 'node:path';
 import {EvolutionService,cleanValidationEnv,sourceFiles,sourceDigest,type ValidationCommand} from '../src/core/evolution.js';
 import {atomicJson,packageIdentity,sha256} from '../src/lifecycle/protocol.js';
@@ -9,7 +9,7 @@ import {replaceFileSync} from '../src/core/evolution-contract.js';
 function fixture(t:any){
   mkdirSync('.codex',{recursive:true});const root=mkdtempSync(path.resolve('.codex/evolution-test-'));const source=path.join(root,'project');const home=path.join(root,'home');
   const write=(file:string,value:string)=>{mkdirSync(path.dirname(file),{recursive:true});writeFileSync(file,value);};
-  for(const [name,value] of Object.entries({'package.json':'{"name":"test-package","version":"1.0.0"}','package-lock.json':'{}','cordis.patch.yml':'test','src/index.ts':'original dirty source','scripts/build.mjs':'protected build','src/lifecycle/index.ts':'protected coordinator','dist/index.js':'old code','dist/client.js':'client'}))write(path.join(source,name),value);
+  for(const [name,value] of Object.entries({'package.json':'{"name":"test-package","version":"1.0.0"}','package-lock.json':'{}','requirements.txt':'base','requirements-voice-generation.txt':'voice','requirements-ci.txt':'base-ci','requirements-voice-generation-ci.txt':'voice-ci','requirements-audit-ci.txt':'audit-ci','cordis.patch.yml':'test','src/index.ts':'original dirty source','scripts/build.mjs':'protected build','src/lifecycle/index.ts':'protected coordinator','dist/index.js':'old code','dist/client.js':'client'}))write(path.join(source,name),value);
   write(path.join(source,'.runtime','credentials.json'),'secret');write(path.join(source,'node_modules','test','index.js'),'excluded');write(path.join(source,'.env'),'secret');
   const archive=path.join(home,'old.tgz');write(archive,'old archive');
   atomicJson(path.join(home,'installation.json'),{schemaVersion:1,sourceRoot:source,projectRoot:source,sourceDigest:sourceDigest(sourceFiles(source)),installedFrom:archive,current:{path:archive,sha256:sha256(archive),identity:packageIdentity(source)},updatedAt:Date.now()});
@@ -27,6 +27,13 @@ test('Windows atomic lifecycle replacement retries transient file ownership with
   let attempts=0;replaceFileSync('source','target',()=>{if(attempts++<2)throw Object.assign(Error('busy'),{code:'EPERM'});},'win32');assert.equal(attempts,3);
   let denied=0;assert.throws(()=>replaceFileSync('source','target',()=>{denied++;throw Object.assign(Error('denied'),{code:'EPERM'});},'linux'),/denied/);assert.equal(denied,1);
   let invalid=0;assert.throws(()=>replaceFileSync('source','target',()=>{invalid++;throw Object.assign(Error('invalid'),{code:'EINVAL'});},'win32'),/invalid/);assert.equal(invalid,1);
+});
+
+test('script JSON replacement retries transient Windows ownership and cleans temporary files',async t=>{
+  mkdirSync('.codex',{recursive:true});const root=mkdtempSync(path.resolve('.codex/durable-json-'));t.after(()=>rmSync(root,{recursive:true,force:true}));const file=path.join(root,'state.json'),{atomicJson}=await import('../scripts/durable-json.mjs' as string);let attempts=0;
+  await atomicJson(file,{state:'ready'},{platform:'win32',sleep:async()=>{},renameFile:async(source:string,target:string)=>{if(attempts++<2)throw Object.assign(Error('busy'),{code:'EBUSY'});renameSync(source,target);}});
+  assert.equal(JSON.parse(readFileSync(file,'utf8')).state,'ready');assert.equal(attempts,3);assert.deepEqual(readdirSync(root),['state.json']);
+  await assert.rejects(atomicJson(file,{state:'failed'},{platform:'linux',renameFile:async()=>{throw Object.assign(Error('denied'),{code:'EACCES'});}}),/denied/);assert.deepEqual(readdirSync(root),['state.json']);
 });
 
 test('candidate copies the dirty source into the project without private/runtime/dependency material',t=>{
@@ -76,6 +83,7 @@ test('installer records the same complete source digest and shipped-file identit
   const archive={path:path.join(f.home,'old.tgz'),sha256:sha256(path.join(f.home,'old.tgz'))};
   await recordInstallation({home:f.home,sourceRoot:f.source,installedFrom:f.source,archive,installedRoot:f.source});
   const installed=JSON.parse(readFileSync(path.join(f.home,'installation.json'),'utf8'));assert.equal(installed.sourceDigest,sourceDigest(sourceFiles(f.source)));assert.equal(await identity(f.source),packageIdentity(f.source));
+  const baseline=sourceFiles(f.source);for(const file of ['requirements.txt','requirements-voice-generation.txt','requirements-ci.txt','requirements-voice-generation-ci.txt','requirements-audit-ci.txt'])assert.ok(baseline[file],`${file} must be part of the lifecycle source identity`);
   f.write(path.join(f.source,'python/worker.py'),'old');f.write(path.join(f.source,'package.json'),JSON.stringify({name:'test-package',files:['dist/*.js','python/**/*.py','cordis.patch.yml']}));
   const before=packageIdentity(f.source);f.write(path.join(f.source,'python/worker.py'),'changed');assert.notEqual(packageIdentity(f.source),before);assert.equal(await identity(f.source),packageIdentity(f.source));
 });

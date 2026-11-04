@@ -1,5 +1,4 @@
-import type {BotConfig} from '../core/types.js';
-import type {PublicServiceProfile} from '../core/service-management.js';
+import type {BotConfig,PublicServiceProfile} from '../core/client-contracts.js';
 import type {createUI} from './ui.js';
 import {chinese,type Translate} from './locale.js';
 

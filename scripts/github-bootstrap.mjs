@@ -1,13 +1,14 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {lookup as dnsLookup} from 'node:dns/promises';
 import {createWriteStream} from 'node:fs';
-import {mkdir,mkdtemp,readFile,rename,rm,writeFile} from 'node:fs/promises';
+import {mkdir,mkdtemp,readFile,rm} from 'node:fs/promises';
 import https from 'node:https';
 import net from 'node:net';
 import path from 'node:path';
 import {pipeline} from 'node:stream/promises';
 import {validatePackageArchive} from './archive-validation.mjs';
 import {readVerifiedInstallationArtifact,restoreVerifiedInstallation} from './installation.mjs';
+import {atomicJson} from './durable-json.mjs';
 
 export const GITHUB_HOSTS=Object.freeze(new Set(['github.com','objects.githubusercontent.com','release-assets.githubusercontent.com']));
 export const BOOTSTRAP_STATES=Object.freeze(['downloaded','hash-verified','archive-validated','installed','health-verified','failed','rolled-back']);
@@ -15,7 +16,6 @@ const REPOSITORY=/^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,38})\/[A-Za-z0-9](?:[A-Za-z0-9
 const RELEASE_TAG=/^(?:v|release-)?(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z][0-9A-Za-z.-]{0,99})?$/;
 const ASSET=/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}\.tgz$/;
 const SHA256=/^[a-f0-9]{64}$/;
-const atomicJson=async(file,value)=>{await mkdir(path.dirname(file),{recursive:true});const temporary=`${file}.${randomUUID()}.tmp`;await writeFile(temporary,JSON.stringify(value,null,2)+'\n',{flag:'wx',mode:0o600,flush:true});await rename(temporary,file);};
 const safeError=error=>{const value=error instanceof Error?error.message:String(error);return (/^[A-Z][A-Z0-9_:-]{2,120}$/.test(value)?value:'BOOTSTRAP_FAILED').slice(0,160);};
 export function validateBootstrapInput(input){if(!input||typeof input!=='object'||Array.isArray(input))throw Error('BOOTSTRAP_INPUT_INVALID');const keys=Object.keys(input),allowed=new Set(['repository','ref','asset','sha256','home','sourceDir']);if(keys.some(key=>!allowed.has(key)))throw Error('BOOTSTRAP_INPUT_UNKNOWN_FIELD');const {repository,ref,asset,sha256,home,sourceDir}=input;if(typeof repository!=='string'||!REPOSITORY.test(repository)||repository.split('/').some(part=>part==='.'||part==='..'))throw Error('BOOTSTRAP_REPOSITORY_INVALID');if(typeof ref!=='string'||!RELEASE_TAG.test(ref)||/^(?:main|master|latest|head)$/i.test(ref))throw Error('BOOTSTRAP_REF_NOT_IMMUTABLE');if(typeof asset!=='string'||!ASSET.test(asset)||asset.includes('..'))throw Error('BOOTSTRAP_ASSET_INVALID');if(typeof sha256!=='string'||!SHA256.test(sha256))throw Error('BOOTSTRAP_SHA256_INVALID');if(typeof home!=='string'||!path.isAbsolute(home)||/[\x00-\x1f]/.test(home))throw Error('BOOTSTRAP_HOME_INVALID');if(sourceDir!==undefined&&(typeof sourceDir!=='string'||!path.isAbsolute(sourceDir)||/[\x00-\x1f]/.test(sourceDir)))throw Error('BOOTSTRAP_SOURCE_DIR_INVALID');return Object.freeze({repository,ref,asset,sha256,home:path.resolve(home),...(sourceDir===undefined?{}:{sourceDir:path.resolve(sourceDir)})});}
 export function githubAssetUrl(input){const value=validateBootstrapInput(input);return new URL(`https://github.com/${value.repository}/releases/download/${encodeURIComponent(value.ref)}/${encodeURIComponent(value.asset)}`);}

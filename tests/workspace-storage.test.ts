@@ -40,9 +40,16 @@ test('installer moves shared runtime storage and preserves other composition and
   await mkdir(path.join(home,'sessions'));await writeFile(path.join(home,'sessions','record.bin'),'conflict');await assert.rejects(moveStorage(path.join(home,'sessions'),path.join(workspace,'.runtime','sessions')),/conflict/);assert.equal(await readFile(path.join(workspace,'.runtime','sessions','record.bin'),'utf8'),'sessions');
 });
 
+test('importing runtime configuration does not create product or workspace data',async t=>{
+  const root=await mkdtemp(path.resolve('.codex/storage-runtime-import-'));t.after(()=>rm(root,{recursive:true,force:true}));const home=path.join(root,'home'),workspace=path.join(root,'workspaces');
+  const code='const runtime=await import("./scripts/runtime.mjs");console.log(JSON.stringify({home:runtime.productHome,workspace:runtime.workspaceRoot}))';
+  const value=JSON.parse(execFileSync(process.execPath,['--input-type=module','-e',code],{env:{...process.env,BOT_HOME:home,BOT_WORKSPACE_ROOT:workspace},windowsHide:true,encoding:'utf8'}));assert.deepEqual(value,{home,workspace});
+  await assert.rejects(stat(home),{code:'ENOENT'});await assert.rejects(stat(workspace),{code:'ENOENT'});
+});
+
 test('launcher confines plugin home and temporary defaults to workspace runtime',async t=>{
   const root=await mkdtemp(path.resolve('.codex/storage-env-'));t.after(()=>rm(root,{recursive:true,force:true}));
-  const code='const {runtimeEnv}=await import("./scripts/runtime.mjs");console.log(JSON.stringify(Object.fromEntries(["USERPROFILE","HOME","TEMP","TMP","APPDATA","LOCALAPPDATA","BOT_DATA_HOME","npm_config_store_dir"].map(key=>[key,runtimeEnv[key]]))))';
+  const code='const {runtimeEnv,prepareRuntimeDirectories}=await import("./scripts/runtime.mjs");prepareRuntimeDirectories();console.log(JSON.stringify(Object.fromEntries(["USERPROFILE","HOME","TEMP","TMP","APPDATA","LOCALAPPDATA","BOT_DATA_HOME","npm_config_store_dir"].map(key=>[key,runtimeEnv[key]]))))';
   const env=JSON.parse(execFileSync(process.execPath,['--input-type=module','-e',code],{env:{...process.env,BOT_HOME:path.join(root,'home'),BOT_WORKSPACE_ROOT:path.join(root,'workspaces')},windowsHide:true,encoding:'utf8'}));
   for(const value of Object.values(env))assert.ok(String(value).startsWith(path.join(root,'workspaces','.runtime')+path.sep));
   assert.ok((await readdir(path.join(root,'workspaces','.runtime'))).includes('tmp'));

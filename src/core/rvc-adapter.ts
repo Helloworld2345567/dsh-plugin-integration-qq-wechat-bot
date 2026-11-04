@@ -6,7 +6,7 @@ import type {CancelResult,HealthResult,ResolvedServiceProfileRevision,ServiceAda
 type Delegate='cli'|'http';
 export class RvcServiceAdapter implements ServiceAdapter {
   readonly serviceId='rvc';private readonly active=new Map<string,Delegate>();
-  constructor(readonly cli=new RvcCliServiceAdapter(),readonly http=new RvcHttpCompatibilityAdapter()){}
+  constructor(readonly cli:RvcCliServiceAdapter,readonly http:RvcHttpCompatibilityAdapter){}
   private delegate(profile:ResolvedServiceProfileRevision):{kind:Delegate;adapter:RvcCliServiceAdapter|RvcHttpCompatibilityAdapter}{const protocol=profile.managedConfig.protocol;return protocol==='rvc_cli_v1'?{kind:'cli',adapter:this.cli}:protocol==='rvc_http_v1'?{kind:'http',adapter:this.http}:(()=>{throw new ServiceContractError({category:'NOT_CONFIGURED',safeDiagnostic:'RVC Profile 未声明受支持的固定协议。',retryable:false,blocksService:false});})();}
   async listProfiles(signal:AbortSignal):Promise<readonly ServiceProfileRevision[]>{signal.throwIfAborted();return[];}
   health(profile:ResolvedServiceProfileRevision,signal:AbortSignal):Promise<HealthResult>{return this.delegate(profile).adapter.health(profile,signal);}

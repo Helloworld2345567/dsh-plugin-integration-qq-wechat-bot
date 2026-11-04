@@ -67,6 +67,7 @@
 | requests | 2.34.2 | Apache-2.0 | 是 |
 | Pillow | 13.0.0 | MIT-CMU（以安装包 License-Expression 为准） | 是 |
 | aiohttp | 3.14.3 | Apache-2.0 AND MIT | 是 |
+| yarl | 1.25.1 | Apache-2.0 | 是（代码直接导入，不依赖 aiohttp 的传递安装） |
 | pypdf | 6.21.4 | BSD-3-Clause | 是 |
 | python-docx | 1.2.0 | MIT | 是 |
 | pypdfium2 | 5.14.0 | BSD-3-Clause、Apache-2.0 及 PDFium/依赖许可证 | 是 |

@@ -3,10 +3,11 @@ import {randomBytes} from 'node:crypto';
 import {mkdir,writeFile,unlink,readFile,rename} from 'node:fs/promises';
 import {spawn} from 'node:child_process';
 import path from 'node:path';
-import {productHome,launcher,runtimeEnv,run} from './runtime.mjs';
+import {productHome,launcher,runtimeEnv,run,prepareRuntimeDirectories} from './runtime.mjs';
 import {recoverFailedUpgrade} from './installation.mjs';
 import {Supervisor} from './supervisor.mjs';
 
+prepareRuntimeDirectories();
 await mkdir(productHome,{recursive:true});const stateFile=path.join(productHome,'launcher.json');const token=randomBytes(32).toString('base64url');
 try{
   const previous=JSON.parse(await readFile(stateFile,'utf8'));let alive=false;

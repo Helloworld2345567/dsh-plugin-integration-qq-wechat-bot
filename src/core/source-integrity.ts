@@ -3,7 +3,7 @@ import {readdirSync,lstatSync} from 'node:fs';
 import path from 'node:path';
 import {sha256} from './evolution-contract.js';
 const roots=new Set(['src','python','skills','tests','scripts','docs','examples','packages']);
-const files=new Set(['package.json','package-lock.json','tsconfig.json','requirements.txt','cordis.patch.yml','README.md','AGENTS.md','LICENSE','THIRD_PARTY_NOTICES.md','.gitignore','.gitattributes']);
+const files=new Set(['package.json','package-lock.json','tsconfig.json','requirements.txt','requirements-voice-generation.txt','requirements-ci.txt','requirements-voice-generation-ci.txt','requirements-audit-ci.txt','cordis.patch.yml','README.md','AGENTS.md','LICENSE','THIRD_PARTY_NOTICES.md','.gitignore','.gitattributes']);
 const excluded=(name:string)=>/^(?:node_modules|dist|\.codex|\.git|\.runtime|\.venv|__pycache__|coverage|data|artifacts)$/i.test(name)||/^\.env(?:\.|$)/.test(name)||/\.(?:sqlite|db|log|tgz|pyc)(?:-|$)/i.test(name);
 export function sourceFiles(root:string):Record<string,string>{
   const result:Record<string,string>={};

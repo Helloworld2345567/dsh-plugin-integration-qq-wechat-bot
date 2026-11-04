@@ -2,13 +2,10 @@ import {mkdir,mkdtemp,readFile,rm,stat,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {decode,encode,getDuration,isSilk} from 'silk-wasm';
 import type {Assets} from '../core/media.js';
-import type {Store} from '../core/store.js';
 import type {Asset,ChannelOutboundContext,Output} from '../core/types.js';
 import {AUDIO_LIMITS} from '../core/limits.js';
-import {assetFolder} from '../core/workspace-files.js';
 import {transformSlots,type TransformSlots} from '../core/transform-slots.js';
-import {NodeControlledProcessPort,type ControlledProcessPort} from '../harness/controlled-process.js';
-import {jobEnvironment} from '../harness/json-process.js';
+import type {ControlledProcessPort} from '../core/process-port.js';
 
 const SAMPLE_RATE=24_000;
 const FRAME_BYTES=SAMPLE_RATE*2/50;
@@ -17,16 +14,15 @@ const SEGMENT_BYTES=SAMPLE_RATE*2*SEGMENT_MS/1000;
 const PART_NAME=/^qq-voice-(\d+)-of-(\d+)\.silk$/;
 const FULL_NAME='qq-complete.mp3';
 
-export interface QQAudioOptions {processes?:ControlledProcessPort;slots?:TransformSlots;ffmpeg?:string}
+export interface QQAudioOptions {processes:ControlledProcessPort;slots?:TransformSlots;ffmpeg?:string}
 
-export function createQQAudioPreparer(store:Store,assets:Assets,options:QQAudioOptions={}):(context:ChannelOutboundContext)=>Promise<Output[]> {
-  const processes=options.processes??new NodeControlledProcessPort(),slots=options.slots??transformSlots,ffmpeg=options.ffmpeg??'ffmpeg';
+export function createQQAudioPreparer(assets:Assets,options:QQAudioOptions):(context:ChannelOutboundContext)=>Promise<Output[]> {
+  const processes=options.processes,slots=options.slots??transformSlots,ffmpeg=options.ffmpeg??'ffmpeg';
   return async context=>{
     const {binding,signal}=context,created:Asset[]=[];
     const authorize=()=>{
       signal.throwIfAborted();context.authorize();
-      const current=store.findBinding(binding.key);
-      if(current?.sessionId!==binding.sessionId||current.generation!==binding.generation)throw Error('QQ_AUDIO_SESSION_CHANGED');
+      if(!assets.bindingCurrent(binding))throw Error('QQ_AUDIO_SESSION_CHANGED');
     };
     const output=(assetId:string,source:Output,asFile=false):Output=>({type:'asset',assetId,...source.resend?{resend:true}:{},...asFile?{asFile:true}:{}});
     const resolve=async(id:string)=>{
@@ -38,7 +34,7 @@ export function createQQAudioPreparer(store:Store,assets:Assets,options:QQAudioO
       authorize();const asset=await assets.save(binding.key,{kind:'audio',name,mime},bytes,jobId,'generated',binding.sessionId,binding.generation,authorize,source.serviceSnapshot);created.push(asset);authorize();return asset;
     };
     const cached=async(source:Asset,item:Output,jobId:string):Promise<Output[]|undefined>=>{
-      const candidates=store.list<Asset>('asset').filter(asset=>asset.jobId===jobId&&asset.scopeKey===binding.key&&asset.sessionId===binding.sessionId&&asset.kind==='audio');
+      const candidates=assets.generated(binding.key,binding.sessionId,jobId,'audio');
       const named=candidates.flatMap(asset=>{const match=PART_NAME.exec(asset.name);return match?[{asset,ordinal:Number(match[1]),count:Number(match[2])}]:[];});
       const counts=[...new Set(named.map(row=>row.count))].filter(count=>Number.isSafeInteger(count)&&count>0&&count<=Math.ceil(AUDIO_LIMITS.outputBytes/SEGMENT_BYTES));
       for(const count of counts){
@@ -78,7 +74,7 @@ export function createQQAudioPreparer(store:Store,assets:Assets,options:QQAudioO
         const pcmPath=path.join(temporary,'decoded.pcm');
         const run=async(args:string[])=>{
           authorize();let result;
-          try{result=await processes.run({command:ffmpeg,args:['-hide_banner','-nostdin','-loglevel','error','-y',...args],cwd:temporary!,env:jobEnvironment(temporary!),signal,deadline:Date.now()+15*60_000,maxOutputBytes:64*1024});}catch(error){authorize();if((error as NodeJS.ErrnoException)?.code==='ENOENT')throw Error('QQ_AUDIO_FFMPEG_UNAVAILABLE');throw error;}
+          try{result=await processes.run({command:ffmpeg,args:['-hide_banner','-nostdin','-loglevel','error','-y',...args],cwd:temporary!,env:undefined,signal,deadline:Date.now()+15*60_000,maxOutputBytes:64*1024});}catch(error){authorize();if((error as NodeJS.ErrnoException)?.code==='ENOENT')throw Error('QQ_AUDIO_FFMPEG_UNAVAILABLE');throw error;}
           authorize();if(result.code!==0)throw Error('QQ_AUDIO_CONVERSION_FAILED');
         };
         let pcm:Buffer;
@@ -115,12 +111,7 @@ export function createQQAudioPreparer(store:Store,assets:Assets,options:QQAudioO
       }
       authorize();return outputs;
     }catch(error){
-      for(const asset of created){
-        if(store.deliveryRepository().findByAsset(binding.key,asset.id).length)continue;
-        const folder=assetFolder(asset.workspace!,asset),relative=path.relative(path.resolve(asset.workspace!),path.resolve(folder));
-        if(!relative||relative.startsWith('..')||path.isAbsolute(relative)||path.resolve(asset.path)!==path.join(path.resolve(folder),asset.name))throw Error('QQ_AUDIO_CLEANUP_PATH_INVALID');
-        await rm(folder,{recursive:true,force:true});store.transaction(()=>{store.db.prepare('DELETE FROM asset_index WHERE id=? AND scope=?').run(asset.id,binding.key);store.db.prepare("DELETE FROM records WHERE kind='asset' AND id=?").run(asset.id);});
-      }
+      for(const asset of created)try{await assets.removeUnclaimed(asset.scopeKey,asset.id);}catch(cleanupError){if(cleanupError instanceof Error&&cleanupError.message.startsWith('ASSET_CLEANUP_'))throw Error('QQ_AUDIO_CLEANUP_PATH_INVALID');throw cleanupError;}
       throw error;
     }
   };

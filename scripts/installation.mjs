@@ -1,9 +1,11 @@
 import {createHash,randomUUID} from 'node:crypto';
-import {mkdir,readFile,writeFile,rename,copyFile,stat,realpath,rm} from 'node:fs/promises';
+import {mkdir,readFile,copyFile,stat,realpath,rm} from 'node:fs/promises';
 import {existsSync,globSync,lstatSync,readdirSync} from 'node:fs';
 import {spawn} from 'node:child_process';
 import path from 'node:path';
 import {validatePackageArchive} from './archive-validation.mjs';
+import {atomicJson} from './durable-json.mjs';
+export {atomicJson} from './durable-json.mjs';
 
 export const bundleName='dsh-plugin-integration-qq-wechat-bot';
 export const hashFile=async file=>createHash('sha256').update(await readFile(file)).digest('hex');
@@ -13,7 +15,6 @@ export async function identity(root){
   for(const pattern of manifest.files??['cordis.patch.yml','dist/*.js'])for(const entry of globSync(pattern,{cwd:root}))add(entry);
   const hash=createHash('sha256');for(const file of [...included].sort())hash.update(file).update('\0').update(await readFile(path.join(root,file))).update('\0');return hash.digest('hex');
 }
-export async function atomicJson(file,value){await mkdir(path.dirname(file),{recursive:true});const temporary=`${file}.${randomUUID()}.tmp`;await writeFile(temporary,JSON.stringify(value,null,2)+'\n',{flag:'wx',mode:0o600,flush:true});await rename(temporary,file);}
 export async function archivePackage(source,home){
   const folder=path.join(home,'package-archives',randomUUID());await mkdir(folder,{recursive:true});let archive;
   if((await stat(source)).isDirectory()){
@@ -30,7 +31,7 @@ export async function recordInstallation({home,sourceRoot,installedFrom,archive,
   const file=path.join(home,'installation.json');let previous;try{previous=JSON.parse(await readFile(file,'utf8')).current;}catch(error){if(error.code!=='ENOENT')throw error;}
   const root=await realpath(sourceRoot);const installedIdentity=await identity(installedRoot);
   if(verifySource&&existsSync(path.join(root,'src/index.ts'))&&await identity(root)!==installedIdentity)throw Error('Source release files differ from the installed archive; rebuild and install that source, or set BOT_SOURCE_ROOT to its exact checkout');
-  const baseline={};const roots=new Set(['src','python','skills','tests','scripts','docs','examples','packages']);const files=new Set(['package.json','package-lock.json','tsconfig.json','requirements.txt','cordis.patch.yml','README.md','AGENTS.md','LICENSE','THIRD_PARTY_NOTICES.md','.gitignore','.gitattributes']);
+  const baseline={};const roots=new Set(['src','python','skills','tests','scripts','docs','examples','packages']);const files=new Set(['package.json','package-lock.json','tsconfig.json','requirements.txt','requirements-voice-generation.txt','requirements-ci.txt','requirements-voice-generation-ci.txt','requirements-audit-ci.txt','cordis.patch.yml','README.md','AGENTS.md','LICENSE','THIRD_PARTY_NOTICES.md','.gitignore','.gitattributes']);
   const walk=async(relative='')=>{for(const name of readdirSync(path.join(root,relative)).sort()){
     if(/^(?:node_modules|dist|\.codex|\.git|\.runtime|\.venv|__pycache__|coverage|data|artifacts)$/i.test(name)||/^\.env(?:\.|$)/.test(name)||/\.(?:sqlite|db|log|tgz|pyc)(?:-|$)/i.test(name))continue;
     if(!relative&&!roots.has(name)&&!files.has(name))continue;const rel=relative?`${relative}/${name}`:name;const info=lstatSync(path.join(root,rel));if(info.isSymbolicLink())throw Error('Source snapshot contains a symlink');if(info.isDirectory())await walk(rel);else if(info.isFile())baseline[rel]=await hashFile(path.join(root,rel));

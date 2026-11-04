@@ -4,7 +4,7 @@
 
 ## 开发入口与测试契约
 
-首次初始化、目录职责、测试安全边界和按变更类型的最低验证见[开发指南](docs/development.md)；测试分层、变量分类、CI 对照和脱敏证据要求见[测试契约](docs/testing.md)。这两页是贡献者命令的唯一维护入口。
+首次初始化、目录职责、测试安全边界和按变更类型的最低验证见[开发指南](docs/development.md)；测试分层、变量分类、CI 对照和脱敏证据要求见[测试契约](docs/testing.md)；模块职责、合法依赖方向和扩展限制见[架构边界契约](docs/architecture-boundaries.md)。前两页是贡献者命令的唯一维护入口。
 
 ## 开发环境（Windows）
 
@@ -33,6 +33,7 @@ CI 使用经过记录的测试版本文件 `requirements-ci.txt` 和 `requiremen
 
 ```powershell
 npm run check:environment
+npm run check:architecture
 npm run typecheck
 npm test
 npm run test:python

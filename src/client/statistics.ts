@@ -1,4 +1,4 @@
-import type {StatsResult} from '../core/stats.js';
+import type {StatsResult} from '../core/client-contracts.js';
 import {botStatus} from './ui.js';
 import type {Translate} from './locale.js';
 

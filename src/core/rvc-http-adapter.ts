@@ -1,6 +1,5 @@
 import path from 'node:path';
 import {z} from 'zod';
-import {ProcessWorker} from '../harness/process-worker.js';
 import {MEDIA_WORKER_PROTOCOL,MEDIA_WORKER_PROTOCOL_VERSION,type MediaWorkerJob,type WorkerPort} from './worker-port.js';
 import {IsolatedServiceAdapter,assertOutputFile,providerFailure,SERVICE_OPERATION_MAP} from './service-adapter-utils.js';
 import {ServiceContractError} from './service-errors.js';
@@ -14,7 +13,7 @@ type HttpActive={submitted:boolean;controller:AbortController;profile:z.infer<ty
 async function jsonRequest(url:string,options:RequestInit):Promise<any>{const response=await fetch(url,{...options,redirect:'error'});if(!response.ok)throw Error('SINGING_SERVICE_STATE_UNKNOWN');const bytes=Buffer.from(await response.arrayBuffer());if(bytes.length>16*1024)throw Error('SINGING_SERVICE_STATE_UNKNOWN');try{return JSON.parse(bytes.toString('utf8'));}catch{throw Error('SINGING_SERVICE_STATE_UNKNOWN');}}
 export class RvcHttpCompatibilityAdapter extends IsolatedServiceAdapter {
   private readonly jobs=new Map<string,HttpActive>();
-  constructor(readonly worker:WorkerPort=new ProcessWorker(),shadow?:ServiceShadowComparator){super('rvc',shadow);}
+  constructor(readonly worker:WorkerPort,shadow?:ServiceShadowComparator){super('rvc',shadow);}
   async listProfiles(_signal:AbortSignal):Promise<readonly ServiceProfileRevision[]>{return[];}
   async health(profile:ResolvedServiceProfileRevision,signal:AbortSignal):Promise<HealthResult>{const checkedAt=Date.now();try{const config=profileSchema.parse(profile.managedConfig),value=await jsonRequest(`${config.baseUrl.replace(/\/+$/,'')}/health`,{signal:AbortSignal.any([signal,AbortSignal.timeout(5000)])}),ready=value?.protocol==='rvc_http_v1'&&value?.status==='ready'&&!value.activeJobId&&value.queued===0;return{state:ready?'ready':'blocked',checkedAt,expiresAt:checkedAt+(ready?30_000:5000),safeDiagnostic:ready?'RVC HTTP compatibility facade 已确认空闲。':'RVC HTTP compatibility facade 未确认空闲。'};}catch{return{state:'unavailable',checkedAt,expiresAt:checkedAt+5000,safeDiagnostic:'RVC HTTP compatibility facade 健康检查失败。'};}}
   async execute(job:ServiceAdapterJob,signal:AbortSignal):Promise<ServiceResult>{return this.tracked(job,async()=>{if(job.operation!==SERVICE_OPERATION_MAP.rvcConvert||job.inputs.length!==1||!['audio','file'].includes(job.inputs[0].kind))throw new ServiceContractError({category:'INVALID_INPUT',safeDiagnostic:'RVC HTTP facade 需要一个已解析音频输入。',retryable:false,blocksService:false});const config=profileSchema.parse(job.profile.managedConfig),parameters=parametersSchema.parse(job.parameters),controller=new AbortController(),combined=AbortSignal.any([signal,controller.signal]);let settle!:()=>void;const settled=new Promise<void>(resolve=>settle=resolve),active:HttpActive={submitted:false,controller,profile:config,settled};this.jobs.set(job.jobId,active);

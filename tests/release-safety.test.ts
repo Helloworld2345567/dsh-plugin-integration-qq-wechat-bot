@@ -41,6 +41,9 @@ test('release entries reject traversal, absolute paths and credential-like files
 
 test('release packaging and publishing cannot bypass the complete verification gate',()=>{
   const manifest=JSON.parse(readFileSync('package.json','utf8'));
+  assert.ok(!manifest.files.some((file:string)=>/(?:^|\/)(?:tests?|fixtures?)(?:\/|$)/i.test(file)),'test doubles and fixtures must not be declared for npm pack');
+  assert.equal(manifest.scripts['check:architecture'],'node scripts/check-architecture.mjs');
+  assert.match(manifest.scripts['verify:release'],/^npm run check:architecture && /);
   assert.equal(manifest.scripts['prepublishOnly'],'npm run verify:release');
   assert.match(manifest.scripts['release:pack'],/^npm run verify:release && node scripts\/release-pack\.mjs$/);
   assert.doesNotMatch(manifest.scripts['verify:release'],/npm pack(?!.*--ignore-scripts)/);

@@ -1,6 +1,5 @@
 import path from 'node:path';
 import {z} from 'zod';
-import {ProcessWorker} from '../harness/process-worker.js';
 import {MEDIA_WORKER_PROTOCOL,MEDIA_WORKER_PROTOCOL_VERSION,type MediaWorkerJob,type WorkerPort} from './worker-port.js';
 import {VoiceServiceQueue} from './voice-service-queue.js';
 import {gptSovitsSchema} from './types.js';
@@ -16,7 +15,7 @@ export class FetchGptSovitsHealth implements GptSovitsHealthPort {async check(co
 type ActiveVoice={phase:'waiting'|'submitted';controller:AbortController;settled:Promise<void>};
 export class GptSovitsServiceAdapter extends IsolatedServiceAdapter {
   private readonly queue=new VoiceServiceQueue();private readonly jobs=new Map<string,ActiveVoice>();
-  constructor(readonly worker:WorkerPort=new ProcessWorker(),readonly healthPort:GptSovitsHealthPort=new FetchGptSovitsHealth(),shadow?:ServiceShadowComparator){super('gpt-sovits',shadow);}
+  constructor(readonly worker:WorkerPort,readonly healthPort:GptSovitsHealthPort=new FetchGptSovitsHealth(),shadow?:ServiceShadowComparator){super('gpt-sovits',shadow);}
   async listProfiles(_signal:AbortSignal):Promise<readonly ServiceProfileRevision[]>{return[];}
   async health(profile:ResolvedServiceProfileRevision,signal:AbortSignal):Promise<HealthResult>{const checkedAt=Date.now();try{const config=profileSchema.parse(profile.managedConfig),ready=await this.healthPort.check(config,signal);return{state:ready?'ready':'unavailable',checkedAt,expiresAt:checkedAt+(ready?30_000:5000),safeDiagnostic:ready?'GPT-SoVITS 服务可达；真实合成验收仍需单独记录。':'GPT-SoVITS 服务不可达。'};}catch{return{state:'unavailable',checkedAt,expiresAt:checkedAt+5000,safeDiagnostic:'GPT-SoVITS 服务健康检查失败。'};}}
   async execute(job:ServiceAdapterJob,signal:AbortSignal):Promise<ServiceResult>{return this.tracked(job,async()=>{const config=profileSchema.parse(job.profile.managedConfig),parameters=parametersSchema.parse(job.parameters);if(job.operation!==SERVICE_OPERATION_MAP.voiceSpeak||job.inputs.length)throw new ServiceContractError({category:'INVALID_INPUT',safeDiagnostic:'GPT-SoVITS 请求参数无效。',retryable:false,blocksService:false});

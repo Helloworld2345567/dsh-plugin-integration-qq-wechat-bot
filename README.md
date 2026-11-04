@@ -52,7 +52,7 @@
 
 ## 开源治理与依赖
 
-贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，开发初始化和变更最低验证见[开发指南](docs/development.md)，测试分层和验收边界见[测试契约](docs/testing.md)。安全问题请看 [SECURITY.md](SECURITY.md)，使用支持按 [SUPPORT.md](SUPPORT.md) 分流。依赖来源、审计结果、Python 3.12/3.13 支持范围和许可证边界见 [依赖审计](docs/dependency-audit.md)、[Python 依赖说明](docs/python-dependencies.md) 与 [第三方声明](THIRD_PARTY_NOTICES.md)。
+贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，开发初始化和变更最低验证见[开发指南](docs/development.md)，测试分层和验收边界见[测试契约](docs/testing.md)，静态依赖方向与扩展规则见[架构边界契约](docs/architecture-boundaries.md)。安全问题请看 [SECURITY.md](SECURITY.md)，使用支持按 [SUPPORT.md](SUPPORT.md) 分流。依赖来源、审计结果、Python 3.12/3.13 支持范围和许可证边界见 [依赖审计](docs/dependency-audit.md)、[Python 依赖说明](docs/python-dependencies.md) 与 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
 ## 配置
 
@@ -154,7 +154,7 @@ QQ 图片、视频、音频和普通文件的投递硬上限均为 200 MiB。直
 npm run verify:release
 ```
 
-`verify:release` 依次执行类型检查、隔离的 TypeScript/Python 测试、Python 依赖检查、构建、文档/契约/许可证检查和发布包检查。生成发布归档统一使用 `npm run release:pack`，它先执行同一门禁，再以禁用 lifecycle scripts 的方式打包；`npm publish` 由 `prepublishOnly` 强制执行门禁。`npm run test:native`、`npm run test:lifecycle-native` 和 `npm run test:install-smoke` 用于完整 Harness 集成与独立产品安装验收。
+`verify:release` 依次执行静态架构检查、类型检查、隔离的 TypeScript/Python 测试、Python 依赖检查、构建、文档/契约/许可证检查和发布包检查。生成发布归档统一使用 `npm run release:pack`，它先执行同一门禁，再以禁用 lifecycle scripts 的方式打包；`npm publish` 由 `prepublishOnly` 强制执行门禁。`npm run test:native`、`npm run test:lifecycle-native` 和 `npm run test:install-smoke` 用于完整 Harness 集成与独立产品安装验收。
 
 ## 项目结构
 
@@ -172,4 +172,4 @@ tests/     TypeScript 与 Python 测试
 
 MIT。第三方依赖和来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-架构说明见 [docs/architecture.md](docs/architecture.md)，长期设计决策见 [docs/adr/](docs/adr/)，自动化代理和仓库安全约束见 [AGENTS.md](AGENTS.md)。
+总体架构见 [docs/architecture.md](docs/architecture.md)，可执行的依赖方向、composition root 例外和扩展规则见[架构边界契约](docs/architecture-boundaries.md)，长期设计决策见 [docs/adr/](docs/adr/)，自动化代理和仓库安全约束见 [AGENTS.md](AGENTS.md)。

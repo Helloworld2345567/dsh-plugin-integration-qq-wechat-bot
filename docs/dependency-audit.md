@@ -8,6 +8,7 @@
 - `npm ci` 使用 lockfile，不运行 lifecycle 脚本以外的项目安装逻辑；发布检查使用 `npm pack --ignore-scripts`。受限网络可通过 `npm_config_registry`、命令行 `--registry` 或组织缓存显式覆盖下载端点，但不应改写提交的公共 registry resolved 来源。
 - `requirements.txt` 和 `requirements-voice-generation.txt` 是用户输入文件，保留兼容范围；安全修复要求的 Pillow 版本范围从 `>=10,<13` 收紧为 `>=13,<14`。`requirements-ci.txt` 与 `requirements-voice-generation-ci.txt` 记录当前 CI 验证用的精确版本，但不把 Python 环境或外部服务打进主包。
 - 基础媒体依赖与可选 voice-generation 依赖分离。Music、RVC、GPT-SoVITS、CUDA、模型权重和外部服务不在 npm 或 Python 主依赖中。
+- 阶段 5 静态 import 审计确认 vendored 网络模块直接导入 `yarl`；因此用户范围显式声明 `yarl>=1.17,<2`，CI 快照使用已随 aiohttp 环境验证的 `1.25.1`。这消除对传递安装的隐式依赖，不新增网络能力。
 
 ## npm 审计结果
 

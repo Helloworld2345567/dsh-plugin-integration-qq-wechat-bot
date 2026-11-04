@@ -1,7 +1,6 @@
 import path from 'node:path';
-import {lstat,mkdir,realpath} from 'node:fs/promises';
+import {lstat,realpath} from 'node:fs/promises';
 import {z} from 'zod';
-import {runJsonProcess,jobEnvironment} from '../harness/json-process.js';
 import {canonicalJsonHash} from './canonical-json.js';
 import {ConflictError,type Store} from './store.js';
 import {ReadOnlyServiceDiscovery,type DiscoveryCandidate,type ServiceDiscoveryStatus} from './service-discovery.js';
@@ -26,20 +25,6 @@ export interface VoiceLibraryView extends VoiceLibrarySettings {revision:string;
 export interface VoiceScannerContext {modelsRoot:string;projectRoot:string;python:string;script:string;cache:string;signal:AbortSignal}
 export interface VoiceModelScanner {scan(context:VoiceScannerContext):Promise<unknown>;device?(context:VoiceScannerContext):Promise<'cpu'|'cuda'>}
 
-export class ProcessVoiceModelScanner implements VoiceModelScanner {
-  async scan(context:VoiceScannerContext):Promise<unknown>{
-    const output=path.dirname(context.cache);await mkdir(output,{recursive:true});
-    return runJsonProcess(context.python,['-B',context.script,'scan','--root',context.modelsRoot,'--import','--cache',context.cache],{},
-      {cwd:context.projectRoot,signal:context.signal,timeoutMs:120_000,maxOutputBytes:4*1024*1024,env:jobEnvironment(output)});
-  }
-  async device(context:VoiceScannerContext):Promise<'cpu'|'cuda'>{
-    const output=path.dirname(context.cache);await mkdir(output,{recursive:true});
-    const value=await runJsonProcess(context.python,['-B','-c','import json,torch; print(json.dumps({"cuda": torch.cuda.is_available()}))'],{},
-      {cwd:context.projectRoot,signal:context.signal,timeoutMs:30_000,env:jobEnvironment(output)});
-    return value?.cuda===true?'cuda':'cpu';
-  }
-}
-
 const relativeFile=z.string().min(1).max(4096).refine(value=>!path.isAbsolute(value)&&!path.win32.isAbsolute(value)&&!value.split(/[\\/]/).includes('..')&&!/[\x00-\x1f]/.test(value),'模型资源必须使用库内相对路径');
 const scannerModelSchema=z.object({
   id:profileIdSchema,serviceId:z.enum(SERVICES),displayName:z.string().min(1).max(160),modelVersion:z.string().max(40),modelLabel:z.string().max(240).optional(),
@@ -59,7 +44,7 @@ export class VoiceModelLibrary {
   private reports:Record<VoiceService,VoiceLibraryReport>={rvc:emptyReport(),'gpt-sovits':emptyReport()};
   private pending:Promise<unknown>=Promise.resolve();
   private scanning:Promise<void>|undefined;
-  constructor(readonly store:Store,readonly profiles:ProfileStore,readonly scanner:VoiceModelScanner=new ProcessVoiceModelScanner(),readonly defaults:Partial<VoiceLibrarySettings>={}){
+  constructor(readonly store:Store,readonly profiles:ProfileStore,readonly scanner:VoiceModelScanner,readonly defaults:Partial<VoiceLibrarySettings>={}){
     this.discovery=new ReadOnlyServiceDiscovery(profiles,new Map());
   }
   private settings():VoiceLibrarySettings{return voiceLibrarySettingsSchema.parse(this.store.get('voice-model-library','settings')??{modelsRoot:this.defaults.modelsRoot??process.env.BOT_VOICE_MODELS_ROOT??'',gptSovitsUrl:this.defaults.gptSovitsUrl??'http://127.0.0.1:9880'});}

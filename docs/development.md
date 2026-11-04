@@ -25,6 +25,7 @@ python -m pip install -r requirements.txt
 python -m pip install -r requirements-voice-generation.txt
 
 npm run check:environment
+npm run check:architecture
 npm run typecheck
 npm test
 npm run test:python
@@ -35,6 +36,8 @@ npm run check:contracts
 npm run check:licenses
 npm run check:release
 ```
+
+`check:architecture` 是只读、离线的静态模块图门禁；它检查 runtime import 循环、client/core/channel/Harness/lifecycle/Service Adapter/测试/package 边界以及构建入口漂移，输出仅包含仓库相对路径。完整规则见[架构边界契约](architecture-boundaries.md)。
 
 `check:environment` 是只读、离线优先的预检：它不会修改 Harness profile、安装依赖、启动平台连接或打印环境变量。可选 `voice-generation` 缺失只显示 `OPTIONAL`，基础 Python 依赖、Python 版本、Node/Harness 版本、FFmpeg/ffprobe 或 lockfile 缺失才会阻止流程。
 
@@ -79,8 +82,8 @@ npm run test:install-smoke
 | 变更类型 | 最低验证 |
 | --- | --- |
 | 纯文档 | `npm run check:docs`；若涉及命令/版本契约，再运行 `npm run check:release` |
-| 构建/脚本 | `npm run typecheck`、`npm test`、`npm run build`、`npm run check:release` |
-| TypeScript 核心 | `npm run typecheck`、`npm test`、`npm run test:python`、`npm run build` |
+| 构建/脚本 | `npm run check:architecture`、`npm run typecheck`、`npm test`、`npm run build`、`npm run check:release` |
+| TypeScript 核心 | `npm run check:architecture`、`npm run typecheck`、`npm test`、`npm run test:python`、`npm run build` |
 | Python worker | `npm run test:python`、`npm run check:python-dependencies`、`npm run build`；媒体相关变更需确认 FFmpeg/ffprobe |
 | lifecycle | 上述源码门禁、`npm run test:lifecycle-native`；涉及安装时加 `npm run test:install-smoke` |
 | 安装器/发布 | `npm run check:release`、`npm run verify:release`、`npm run release:pack`、`npm run test:install-smoke` |

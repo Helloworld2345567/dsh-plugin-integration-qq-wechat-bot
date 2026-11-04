@@ -1,7 +1,6 @@
 import path from 'node:path';
 import {z} from 'zod';
-import {jobEnvironment,runJsonProcess} from '../harness/json-process.js';
-import {MUSIC_PROTOCOL,MUSIC_SOURCES,type MusicCandidate} from './music-state.js';
+import {MUSIC_SOURCES,type MusicCandidate} from './music-state.js';
 import {IsolatedServiceAdapter,assertOutputFile,providerFailure,SERVICE_OPERATION_MAP} from './service-adapter-utils.js';
 import {serviceFailure} from './service-errors.js';
 import type {CancelResult,HealthResult,ResolvedServiceProfileRevision,ServiceAdapterJob,ServiceHealthContext,ServiceProfileRevision,ServiceResult} from './service-contract.js';
@@ -10,22 +9,16 @@ import type {ServiceShadowComparator} from './service-shadow.js';
 const musicProfileSchema=z.object({home:z.string().min(1).max(4096),sources:z.array(z.enum(MUSIC_SOURCES)).min(1).max(MUSIC_SOURCES.length).refine(value=>new Set(value).size===value.length)}).strict();
 const querySchema=z.object({song:z.string().trim().min(1).max(300),artist:z.string().trim().max(200).optional(),includeLyrics:z.boolean().optional()}).strict();
 const selectionSchema=z.object({selection:z.object({source:z.enum(MUSIC_SOURCES),id:z.string().min(1).max(500),title:z.string().min(1).max(500),artist:z.string().min(1).max(500),album:z.string().max(500).optional(),format:z.string().max(500).optional(),version:z.string().max(500).optional(),duration:z.number().nonnegative().optional(),size:z.number().nonnegative().optional(),locator:z.unknown().optional()}).passthrough(),includeLyrics:z.boolean().optional()}).strict();
+export type MusicProfileConfig=z.infer<typeof musicProfileSchema>;
 export interface MusicFacadeRequest {action:'health'|'search'|'acquire';song?:string;artist?:string;selection?:unknown;includeLyrics?:boolean;outputDirectory:string;deadline:number;sources:readonly string[]}
-export interface MusicFacadePort {exchange(config:z.infer<typeof musicProfileSchema>,request:MusicFacadeRequest,signal:AbortSignal):Promise<any>}
-export class ProcessMusicFacade implements MusicFacadePort {
-  async exchange(config:z.infer<typeof musicProfileSchema>,request:MusicFacadeRequest,signal:AbortSignal):Promise<any>{
-    const timeoutMs=Math.max(1,request.deadline-Date.now()),python=path.join(config.home,'.venv',process.platform==='win32'?'Scripts/python.exe':'bin/python'),entry=path.join(config.home,'scripts','music_api.py');
-    const response=await runJsonProcess(python,['-B','-u',entry],{protocol:MUSIC_PROTOCOL,version:1,action:request.action,song:request.song,artist:request.artist,selection:request.selection,purpose:'source',includeLyrics:request.includeLyrics??false,output:request.outputDirectory,deadline:request.deadline,sources:request.sources},{cwd:request.outputDirectory,signal,timeoutMs,env:jobEnvironment(request.outputDirectory)});
-    if(response.protocol!==MUSIC_PROTOCOL||response.version!==1)throw Error('MUSIC_PROTOCOL_UNSUPPORTED');if(response.ok!==true)throw Error(/^MUSIC_[A-Z_]+$/.test(response.error?.code??'')?response.error.code:'MUSIC_OPERATION_FAILED');return response.result;
-  }
-}
+export interface MusicFacadePort {exchange(config:MusicProfileConfig,request:MusicFacadeRequest,signal:AbortSignal):Promise<any>}
 function publicCandidate(value:any):MusicCandidate {
   for(const key of ['source','id','title','artist'])if(typeof value?.[key]!=='string'||!value[key].trim()||value[key].length>500)throw Error('MUSIC_RESPONSE_INVALID');if(!(MUSIC_SOURCES as readonly string[]).includes(value.source))throw Error('MUSIC_RESPONSE_INVALID');
   const result:MusicCandidate={source:value.source,id:value.id,title:value.title,artist:value.artist};for(const key of ['album','format','version'] as const)if(typeof value[key]==='string')result[key]=value[key].slice(0,500);for(const key of ['duration','size'] as const)if(typeof value[key]==='number'&&Number.isFinite(value[key])&&value[key]>=0)result[key]=value[key];if(value.locator!==undefined)result.locator=value.locator;return result;
 }
 function diagnostics(result:any,sources:readonly string[]):Array<{source:string;status:string}>{const values=Array.isArray(result?.diagnostics)?result.diagnostics:[];return sources.map(source=>{const found=values.find((item:any)=>item?.source===source);return{source,status:typeof found?.status==='string'?found.status.slice(0,100):'unavailable'};});}
 export class MusicServiceAdapter extends IsolatedServiceAdapter {
-  constructor(readonly facade:MusicFacadePort=new ProcessMusicFacade(),shadow?:ServiceShadowComparator){super('music',shadow);}
+  constructor(readonly facade:MusicFacadePort,shadow?:ServiceShadowComparator){super('music',shadow);}
   async listProfiles(_signal:AbortSignal):Promise<readonly ServiceProfileRevision[]>{return[];}
   async health(profile:ResolvedServiceProfileRevision,signal:AbortSignal,context?:ServiceHealthContext):Promise<HealthResult>{const checkedAt=Date.now();try{if(!context)throw Error('MUSIC_HEALTH_CONTEXT_REQUIRED');const config=musicProfileSchema.parse(profile.managedConfig),result=await this.facade.exchange(config,{action:'health',outputDirectory:context.outputDirectory,deadline:Date.now()+20_000,sources:config.sources},signal),advertised=Array.isArray(result?.sources)?new Set(result.sources.filter((value:unknown):value is string=>typeof value==='string')):undefined,rows=Array.isArray(result?.diagnostics)?diagnostics(result,config.sources):config.sources.map(source=>({source,status:result?.ready===true&&advertised?.has(source)?'success':'unavailable'})),ready=result?.ready===true&&rows.every(item=>item.status==='success');return{state:ready?'ready':'degraded',checkedAt,expiresAt:checkedAt+30_000,safeDiagnostic:ready?'所有已启用音乐来源通过健康检查。':'至少一个音乐来源未通过健康检查。'};}catch{return{state:'unavailable',checkedAt,expiresAt:checkedAt+5000,safeDiagnostic:'音乐服务健康检查失败。'};}}
   async execute(job:ServiceAdapterJob,signal:AbortSignal):Promise<ServiceResult>{return this.tracked(job,async()=>{try{

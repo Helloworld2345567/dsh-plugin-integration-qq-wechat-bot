@@ -27,9 +27,10 @@ import {OutputValidatorRegistry} from './core/output-validator.js';
 import {ServiceRuntime,type ApprovedServicePolicy} from './core/service-runtime.js';
 import {mediaOperationRegistry} from './core/media-operation-registry.js';
 import {StoreServiceStateRepository} from './core/service-state-store.js';
-import {builtinServiceAdapters,BUILTIN_SERVICE_POLICIES} from './core/builtin-service-adapters.js';
+import {BUILTIN_SERVICE_POLICIES} from './core/builtin-service-adapters.js';
 import {ServiceManagement} from './core/service-management.js';
-import {VoiceModelLibrary} from './core/voice-model-library.js';
+import {createBuiltinServiceAdapters,createVoiceModelLibrary} from './harness/service-adapter-runtime.js';
+import {NodeControlledProcessPort} from './harness/controlled-process.js';
 
 export const name='bot-integration';
 export const inject=['agents','agentPresets','llm','settings','tools','skills','systemPrompt','attachments','credentials','webServer','permissionPresets','sessions','sessionPersistence','sessionQuery','storageDomain','workingDirectory','commands'];
@@ -49,7 +50,7 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
   try{
     // Validate every fixed source and create the immutable catalog before any
     // executable operation or Harness tool is exposed.
-    serviceHost=await ServicePluginHost.createBuiltin(builtinServiceAdapters);
+    serviceHost=await ServicePluginHost.createBuiltin(createBuiltinServiceAdapters(config.python));
     const validators=new OutputValidatorRegistry();
     serviceRuntime=new ServiceRuntime(serviceHost,profiles,validators,HOST_SERVICE_POLICIES,new StoreServiceStateRepository(store),path.join(store.home,'.tmp','service-health'));
     serviceRuntime.assertApprovedMediaOperations(mediaOperationRegistry);
@@ -57,11 +58,11 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
   const assets=new Assets(store);const media=new MediaService(store,assets,config.python,new HarnessMediaProvider(ctx),new ProcessWorker(config.python),mediaOperationRegistry,undefined,serviceRuntime);
   const credentials=createBotCredentials(ctx.credentials);
   const extensions:HarnessExtensions={};const harness=new NativeHarness(ctx,store,assets,media,extensions);let disposeMode;try{disposeMode=await harness.registerMode();}catch(error){await serviceHost.dispose().catch(()=>{});store.close();throw error;}
-  const channels=createChannelRegistry([qqChannel(new QQAdapter(undefined,{emit:event=>extensions.stats?.observeGroup({botId:event.botId,groupId:event.groupId,name:event.name,event:event.type==='group.joined'?'joined':event.type==='group.left'?'left':'observed',at:event.at,eventId:event.eventId})},undefined,undefined,createQQAudioPreparer(store,assets))),weixinChannel(new WeixinAdapter(store.cursorStore()))]);
+  const channels=createChannelRegistry([qqChannel(new QQAdapter(undefined,{emit:event=>extensions.stats?.observeGroup({botId:event.botId,groupId:event.groupId,name:event.name,event:event.type==='group.joined'?'joined':event.type==='group.left'?'left':'observed',at:event.at,eventId:event.eventId})},undefined,undefined,createQQAudioPreparer(assets,{processes:new NodeControlledProcessPort()}))),weixinChannel(new WeixinAdapter(store.cursorStore()))]);
   const runtime=new BotRuntime(store,assets,media,harness,channels,credentials,config.debounceMs,0,profiles);
   const features=new BotFeatures(runtime,createLifecyclePort());extensions.stats=features.stats;extensions.model=(binding,snapshot,args,signal)=>features.model(binding,snapshot,args,signal);extensions.evolve=(binding,snapshot,args,signal)=>features.execute(binding,snapshot,args,signal);
   extensions.management=new BotManagement(runtime,features);
-  const voiceLibrary=new VoiceModelLibrary(store,profiles);
+  const voiceLibrary=createVoiceModelLibrary(store,profiles);
   await voiceLibrary.initialize();
   const services=new ServiceManagement(store,profiles,serviceRuntime,{models:()=>harness.models()},new Map(),voiceLibrary);
   const token=randomBytes(32).toString('base64url');const admin=new Admin(ctx,runtime,token,undefined,features,services);

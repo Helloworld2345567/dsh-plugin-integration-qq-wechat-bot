@@ -89,15 +89,20 @@ def image(job):
 
 def skill(job):
     import importlib.util
-    entry = SKILL_OPERATIONS.get(job['operation'])
+    entry = skill_operations().get(job['operation'])
     if entry is None:
         raise JobError('UNKNOWN_MEDIA_OPERATION')
     script, _ = entry
-    spec = importlib.util.spec_from_file_location('bot_skill_worker', script)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module_name = f"bot_skill_{job['operation'].replace('-', '_').replace('.', '_')}"
     try:
+        spec = importlib.util.spec_from_file_location(module_name, script)
+        if spec is None or spec.loader is None:
+            raise JobError('SKILL_OPERATION_IMPORT_FAILED')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
         return module.execute(job)
+    except JobError:
+        raise
     except Exception as error:
         raise JobError(getattr(error, 'code', type(error).__name__)) from None
 
@@ -116,7 +121,15 @@ def load_skill_operations(root):
     return result
 
 
-SKILL_OPERATIONS = load_skill_operations(ROOT / 'skills')
+SKILL_OPERATIONS = None
+
+
+def skill_operations():
+    """Load installed skill descriptors only when a skill operation is requested."""
+    global SKILL_OPERATIONS
+    if SKILL_OPERATIONS is None:
+        SKILL_OPERATIONS = load_skill_operations(ROOT / 'skills')
+    return SKILL_OPERATIONS
 
 
 def document(job):
@@ -329,8 +342,6 @@ def _validate_protocol(job):
 
 OPERATIONS = OperationRegistry()
 OPERATIONS.register("skill", skill)
-for operation in SKILL_OPERATIONS:
-    OPERATIONS.register(operation, skill)
 OPERATIONS.register("image", image)
 OPERATIONS.register("document", document)
 # Legacy direct callers may omit the descriptor handler; aliases preserve that
@@ -344,7 +355,15 @@ OPERATIONS.register("social_read", _social)
 
 def execute(job):
     _validate_protocol(job)
-    result = _validate_result(OPERATIONS.execute(job))
+    try:
+        raw = OPERATIONS.execute(job)
+    except JobError as error:
+        if str(error) != "UNKNOWN_MEDIA_OPERATION" or job.get("handler") != job.get("operation"):
+            raise
+        if job.get("operation") not in skill_operations():
+            raise
+        raw = skill(job)
+    result = _validate_result(raw)
     _validate_usage_journal(job)
     return result
 

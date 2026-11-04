@@ -23,6 +23,7 @@ def load(name, file):
 
 
 worker = load('bot_worker', ROOT / 'python/worker.py')
+IMPORTED_SKILL_OPERATIONS = worker.SKILL_OPERATIONS
 image_api = load('bot_image_api', ROOT / 'skills/image-generation/scripts/image_api.py')
 media_api = load('bot_media_analysis', ROOT / 'skills/media-analysis/scripts/media_api.py')
 
@@ -38,6 +39,9 @@ class WorkerTests(unittest.TestCase):
                     inputs=[dict(path=str(source), name=source.name, kind='file', mime='application/octet-stream')] if source else [],
                     parameters=params, output=str(self.root), endpoint=dict(baseUrl='https://example.invalid/v1', model='fixture', keyEnv='TEST_PROVIDER_KEY'))
 
+    def test_worker_import_does_not_scan_optional_skill_manifests(self):
+        self.assertIsNone(IMPORTED_SKILL_OPERATIONS)
+
     def test_skill_manifest_dispatch_without_worker_switch(self):
         skills = self.root / 'skills'
         folder = skills / 'fixture'
@@ -52,13 +56,16 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(worker.execute(job)['text'], 'skill-owned-result')
             with self.assertRaisesRegex(worker.JobError, 'UNKNOWN_MEDIA_OPERATION'):
                 worker.execute({**job, 'operation': 'undeclared'})
+            with self.assertRaisesRegex(worker.JobError, 'UNKNOWN_MEDIA_OPERATION'):
+                worker.execute({**job, 'handler': 'typo'})
+            self.assertEqual(worker.execute({**job, 'handler': 'fixture_extract'})['text'], 'skill-owned-result')
         manifest['worker'] = '../../outside.py'
         (folder / 'operations.json').write_text(json.dumps(manifest), encoding='utf8')
         with self.assertRaisesRegex(worker.JobError, 'MANIFEST_INVALID'):
             worker.load_skill_operations(skills)
 
     def test_shipped_skill_operations_dispatch_declared_entry(self):
-        self.assertEqual(set(worker.SKILL_OPERATIONS), {'transcribe', 'video_analyze', 'image_download', 'video_download', 'voice_speak', 'image_convert', 'image_compress', 'image_resize', 'convert_gif', 'singing_convert', 'music_search', 'music_acquire', 'music_delivery'})
+        self.assertEqual(set(worker.skill_operations()), {'transcribe', 'video_analyze', 'image_download', 'video_download', 'voice_speak', 'image_convert', 'image_compress', 'image_resize', 'convert_gif', 'singing_convert', 'music_search', 'music_acquire', 'music_delivery'})
         job = self.job('image_download')
         job['handler'] = 'skill'
         # Real entry import and error translation, without a provider/network call.

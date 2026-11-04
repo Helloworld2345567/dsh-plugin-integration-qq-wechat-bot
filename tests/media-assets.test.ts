@@ -22,6 +22,11 @@ test('asset persistence captures session ownership before asynchronous file writ
   const next=store.reset(scope);const asset=await saving;assert.equal(asset.sessionId,old.sessionId);assert.notEqual(asset.sessionId,next.sessionId);assert.deepEqual(assets.recent(old.key),[]);
   store.activateSession(scope,old.sessionId);assert.deepEqual(assets.recent(old.key).map(a=>a.id),[asset.id]);
 });
+test('unclaimed cleanup resolves the canonical asset and never removes a registered delivery',async t=>{
+  const {store,assets}=await fixture(t),binding=store.binding(scope),asset=await assets.save(binding.key,media,Buffer.from('claimed'),'derived','generated',binding.sessionId,binding.generation);
+  store.enqueue(binding,'source','turn',[{type:'asset',assetId:asset.id}],{});assert.equal(await assets.removeUnclaimed(binding.key,asset.id),false);assert.equal((await assets.read(binding.key,asset.id)).toString(),'claimed');
+});
+
 test('legacy and unassociated assets are excluded from automatic selection without removing explicit access',async t=>{
   const {store,assets}=await fixture(t);const key=scopeKey(scope);store.binding(scope);const uploaded=await assets.save(key,media,Buffer.from('before binding'));const unassociated={...uploaded,sessionId:undefined};store.put('asset',uploaded.id,unassociated);
   const associated=await assets.save(key,media,Buffer.from('legacy'));const {sessionId,...legacy}=associated;store.put('asset',legacy.id,legacy);

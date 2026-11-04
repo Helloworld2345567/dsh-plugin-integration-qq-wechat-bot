@@ -9,7 +9,7 @@ python -m pip install -r requirements.txt
 python -m pip check
 ```
 
-基础依赖提供 HTTP、图片、PDF、Office、PDFium 和媒体下载能力。FFmpeg/ffprobe 是独立系统前置条件，不由 pip 安装。
+基础依赖提供 HTTP、URL 校验、图片、PDF、Office、PDFium 和媒体下载能力。`yarl` 由 vendored 网络边界直接导入，因此作为直接依赖声明，不依赖 `aiohttp` 的传递安装。FFmpeg/ffprobe 是独立系统前置条件，不由 pip 安装。
 
 ## 可选语音生成
 
