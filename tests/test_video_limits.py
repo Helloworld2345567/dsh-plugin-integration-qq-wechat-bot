@@ -1,4 +1,5 @@
 import asyncio
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -19,9 +20,9 @@ from video_understanding_core.sources import SourceResolver
 
 class VideoLimitTests(unittest.TestCase):
     def setUp(self):
-        temporary = ROOT / '.codex/video-limits-10x-20261030/python-tests'
+        temporary = Path(os.environ.get('BOT_TEST_TMP', ROOT / '.codex'))
         temporary.mkdir(parents=True, exist_ok=True)
-        self.directory = tempfile.TemporaryDirectory(dir=temporary)
+        self.directory = tempfile.TemporaryDirectory(prefix='video-limits-', dir=temporary)
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
 

@@ -107,20 +107,14 @@ jobs:
           npm ci --ignore-scripts --registry=https://registry.npmjs.org
           python -m pip install -r requirements-ci.txt -r requirements-voice-generation-ci.txt
 
+      - name: 运行只读环境预检
+        run: npm run check:environment
+
       - name: 执行发布门禁并生成临时归档
         run: npm run release:pack
 
       - name: 运行依赖审计
         run: npm run audit:dependencies
-
-      - name: 上传发布证据（不发布）
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: npm-pack-windows-${{ github.run_id }}
-          path: '*.tgz'
-          if-no-files-found: ignore
-          retention-days: 7
 
   harness-integration:
     name: Harness 集成与安装验收
@@ -162,10 +156,13 @@ jobs:
           npm ci --ignore-scripts --registry=https://registry.npmjs.org
           python -m pip install -r requirements-ci.txt -r requirements-voice-generation-ci.txt
 
+      - name: 运行只读环境预检
+        run: npm run check:environment
+
       - name: 运行 Harness 原生集成测试
         shell: pwsh
         run: |
-          $env:BOT_PYTHON = (Get-Command python).Source
+          $env:BOT_TEST_PYTHON = (Get-Command python).Source
           npm run test:native
           npm run test:lifecycle-native
 

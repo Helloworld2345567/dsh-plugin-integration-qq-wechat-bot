@@ -1,63 +1,43 @@
 // Real packaged product + trusted installer + supervisor, in an empty disposable home.
 // No bot is created, no platform is connected, and no provider credential is inherited.
 import assert from 'node:assert/strict';
-import {mkdir,readFile,writeFile,access} from 'node:fs/promises';
+import {access,mkdir,readFile,writeFile} from 'node:fs/promises';
 import {DatabaseSync} from 'node:sqlite';
 import {spawn} from 'node:child_process';
 import {createRequire} from 'node:module';
 import path from 'node:path';
 import {atomicJson,identity,bundleName} from './installation.mjs';
+import {safeSubprocessEnv,redactEvidence,validateTestPython} from './test-environment.mjs';
+import {boundedOutput,createTestRoot,finalizeTestRoot,killProcessTree,spawnCapture} from './test-process.mjs';
 
-const root=process.cwd();const folder=path.join(root,'.codex',`install-smoke-${Date.now()}`);const home=path.join(folder,'home');await mkdir(home,{recursive:true});
-const python=process.env.BOT_TEST_PYTHON||path.join(root,'.codex','venvs','media',process.platform==='win32'?'Scripts/python.exe':'bin/python');await access(python);
-const env={};for(const [key,value] of Object.entries(process.env))if(/^(?:PATH|PATHEXT|SystemRoot|WINDIR|COMSPEC|TEMP|TMP|HOME|USERPROFILE|LOCALAPPDATA|APPDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROCESSOR_ARCHITECTURE)$/i.test(key))env[key]=value;
-Object.assign(env,{BOT_HOME:home,DSH_HOME:home,DSH_AGENTS_HOME:path.join(home,'agents'),BOT_DATA_HOME:path.join(home,'storages','bot-integration'),BOT_WORKSPACE_ROOT:path.join(folder,'workspaces'),BOT_SOURCE_ROOT:root,BOT_PYTHON:python,npm_config_userconfig:path.join(home,'empty.npmrc')});await writeFile(env.npm_config_userconfig,'');
-const run=(script,args=[],timeoutMs=300000,allowFailure=false)=>new Promise((resolve,reject)=>{
-  const child=spawn(process.execPath,[script,...args],{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']});let logs='';
-  child.stdout.on('data',data=>logs+=data);child.stderr.on('data',data=>logs+=data);child.on('error',reject);
-  const timer=setTimeout(()=>{child.kill();reject(Error(`${script} timed out`));},timeoutMs);timer.unref();
-  child.on('close',async code=>{clearTimeout(timer);await writeFile(path.join(folder,`${path.basename(script,'.mjs')}.log`),logs);if(code===0||allowFailure)resolve(logs);else reject(Error(`${script} exited ${code}; evidence ${folder}`));});
-});
-await run('scripts/build.mjs');
-const sourceIdentity=await identity(root);
-await run('scripts/install.mjs',[root]);
-const installation=JSON.parse(await readFile(path.join(home,'installation.json'),'utf8'));
-assert.equal(installation.current.identity,sourceIdentity);assert.equal(installation.sourceRoot,root);assert.deepEqual(installation.layers,['core','basic-media']);
-const profile=JSON.parse(await readFile(path.join(home,'profiles','bots','package.json'),'utf8'));
-assert.ok(profile.dsh.profile.bundles.includes('dsh-bot-lifecycle'));assert.ok(profile.dsh.profile.bundles.includes(bundleName));
-const installedRoot=path.join(home,'profiles','bots','node_modules',bundleName),lifecycleRoot=path.join(home,'profiles','bots','node_modules','dsh-bot-lifecycle');
-assert.equal(await identity(installedRoot),sourceIdentity);
-for(const directory of [installedRoot,lifecycleRoot]){const installedManifest=JSON.parse(await readFile(path.join(directory,'package.json'),'utf8')),locale=JSON.parse(await readFile(path.join(directory,'locale','zh.json'),'utf8')),icon=await readFile(path.join(directory,'icon.svg'),'utf8');assert.equal(installedManifest.engines.dsh,'0.2.1-rc.2');assert.ok(installedManifest.exports['./locale/*.json']);assert.ok(installedManifest.exports['./icon']);assert.ok(locale.meta.title);assert.ok(locale.meta.description);assert.match(icon,/^<svg\b/);}
-const cli=path.join(path.dirname(createRequire(import.meta.url).resolve('@deepseek-ai/dsh/package.json')),'lib','bin.js');const schemaDump=await run(cli,['--profile','bots','--dump-config-schema'],300000,true);assert.match(schemaDump,/"const":\s*"bot-integration"/);for(const field of ['dataDir','python','debounceMs'])assert.match(schemaDump,new RegExp(`"${field}"\\s*:`));
-
-const database=path.join(folder,'workspaces','.runtime','storages','bot-integration','bots.sqlite');
-const runtimeState=()=>{const db=new DatabaseSync(database,{readOnly:true});try{return{owner:JSON.parse(db.prepare("SELECT json FROM records WHERE kind='runtime' AND id='owner'").get()?.json??'null'),bots:Number(db.prepare("SELECT COUNT(*) AS count FROM records WHERE kind='bot'").get().count)};}finally{db.close();}};
-const host=spawn(process.execPath,['scripts/start.mjs','--port','0'],{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']});let logs='';host.stdout.on('data',data=>logs+=data);host.stderr.on('data',data=>logs+=data);const hostExit=new Promise(resolve=>host.once('exit',(code,signal)=>resolve({code,signal})));
-const wait=async(check,timeoutMs=90000)=>{const deadline=Date.now()+timeoutMs;let last;while(Date.now()<deadline){try{const value=await check();if(value)return value;}catch(error){last=error;}if(host.exitCode!==null)throw Error(`Host exited before acceptance: ${host.exitCode}`);await new Promise(resolve=>setTimeout(resolve,100));}throw Error(`Acceptance timeout: ${last??'condition not met'}`);};
-const api=async()=>{
-  const urls=[...logs.matchAll(/dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/\?token=[^\s]+)/g)];const url=urls.at(-1)?.[1];if(!url)return;
-  // Node fetch does not retain the cookie issued by Harness's launch-token redirect.
-  const ticket=await fetch(url,{redirect:'manual',signal:AbortSignal.timeout(5000)});const cookie=ticket.headers.getSetCookie().map(value=>value.split(';',1)[0]).join('; ');
-  const page=ticket.status===303?await fetch(new URL(ticket.headers.get('location'),url),{headers:{cookie},signal:AbortSignal.timeout(5000)}):ticket;const html=await page.text();
-  const match=html.match(/globalThis\["__BOT_INTEGRATION__"\]\s*=\s*(\{[^<]+\})<\/script>/);if(!match){await writeFile(path.join(folder,'bootstrap-response.html'),html);throw Error(`Bot bootstrap not found in HTTP ${page.status} response`);}
-  const bootstrap=JSON.parse(match[1]);const response=await fetch(new URL(bootstrap.endpoint,url),{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${bootstrap.token}`,cookie},body:JSON.stringify({action:'state',input:{}}),signal:AbortSignal.timeout(5000)});
-  if(!response.ok)throw Error(`Admin health request returned ${response.status}`);const state=(await response.json()).result;const profiles=await fetch(new URL(bootstrap.endpoint,url),{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${bootstrap.token}`,cookie},body:JSON.stringify({version:1,kind:'query',name:'catalog.profiles',input:{limit:100}}),signal:AbortSignal.timeout(5000)});if(!profiles.ok)throw Error(`Profile catalog returned ${profiles.status}`);return{state,profiles:(await profiles.json()).result,url};
-};
-let first,second,task,result;
+const root=process.cwd();const folder=await createTestRoot(root,'install-smoke');const home=path.join(folder,'home');const workspace=path.join(folder,'workspaces');const processHome=path.join(workspace,'.runtime','home'),processTemp=path.join(workspace,'.runtime','tmp');
+let python,env;let host;let logs={value:''};let result;let failed=false;let failureEvidence;
+const run=async(script,args=[],timeoutMs=300000,allowFailure=false,maxOutputBytes)=>{try{return(await spawnCapture(process.execPath,[script,...args],{cwd:root,env,timeoutMs,maxOutputBytes})).output;}catch(error){if(allowFailure)return error.result?.output??'';throw error;}};
 try{
-  first=await wait(async()=>{const admin=await api();const current=runtimeState();return admin&&current.owner?{...current,configs:admin.state.configs.length,profiles:admin.profiles.items,port:new URL(admin.url).port}:undefined;});assert.equal(first.bots,0);assert.deepEqual(first.profiles,[]);
-  task={id:'install-smoke-restart',kind:'restart',scopeKey:'local-smoke',configId:'sakura',goal:'Verify supervised restart of the actual installed root package with zero bots',phase:'queued',createdAt:Date.now(),updatedAt:Date.now(),events:[]};await atomicJson(path.join(home,'evolution',`${task.id}.json`),task);
-  second=await wait(async()=>{const journal=JSON.parse(await readFile(path.join(home,'evolution',`${task.id}.json`),'utf8'));if(journal.phase==='failed')throw Error(journal.error);if(journal.phase!=='succeeded')return;const admin=await api();const current=runtimeState();return admin&&current.owner&&current.owner.pid!==first.owner.pid?{...current,configs:admin.state.configs.length,port:new URL(admin.url).port,phase:journal.phase}:undefined;},120000);
-  assert.equal(second.bots,0);assert.notEqual(second.owner.pid,first.owner.pid);assert.equal(second.phase,'succeeded');
-  result={status:'PASS',packageVersion:JSON.parse(await readFile(path.join(root,'package.json'),'utf8')).version,artifactSha256:installation.current.sha256,shippedIdentity:sourceIdentity,bots:0,initialPid:first.owner.pid,restartedPid:second.owner.pid,restart:second.phase,adminHealthBefore:true,adminHealthAfter:true,sourceRoot:installation.sourceRoot,evidence:folder};
-}catch(error){result={status:'FAIL',error:String(error),initial:first,restarted:second,evidence:folder};process.exitCode=1;}
-finally{
-  await writeFile(path.join(folder,'host.log'),logs);
-  try{const state=JSON.parse(await readFile(path.join(home,'launcher.json'),'utf8'));await fetch(`http://127.0.0.1:${state.port}/stop`,{method:'POST',headers:{authorization:`Bearer ${state.token}`},signal:AbortSignal.timeout(5000)});}catch(error){result??={status:'FAIL',evidence:folder};result.stopError=String(error);process.exitCode=1;}
-  let stopTimer;const exited=await Promise.race([hostExit,new Promise(resolve=>{stopTimer=setTimeout(()=>resolve(undefined),25000);})]);clearTimeout(stopTimer);
-  if(!exited){result.stop='FAIL';process.exitCode=1;if(process.platform==='win32')spawn('taskkill',['/PID',String(host.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});else host.kill('SIGTERM');}
-  else{result.stop=exited.code===0?'PASS':'FAIL';result.launcherExit=exited;if(exited.code!==0)process.exitCode=1;}
-  try{await access(path.join(home,'launcher.json'));result.launcherStateRemoved=false;process.exitCode=1;}catch(error){if(error.code==='ENOENT')result.launcherStateRemoved=true;else throw error;}
-  if(first){result.runtimeReleased=runtimeState().owner===null;if(!result.runtimeReleased)process.exitCode=1;}
-  if(process.exitCode)result.status='FAIL';await atomicJson(path.join(folder,'result.json'),result);console.log(JSON.stringify(result,null,2));
-}
+  await mkdir(home,{recursive:true});await mkdir(processHome,{recursive:true});await mkdir(processTemp,{recursive:true});
+  const pythonCandidate=process.env.BOT_TEST_PYTHON;if(!pythonCandidate)throw Error('BOT_TEST_PYTHON must explicitly name the Python 3.12/3.13 test interpreter');
+  env=safeSubprocessEnv({HOME:processHome,USERPROFILE:processHome,APPDATA:path.join(processHome,'appdata'),LOCALAPPDATA:path.join(processHome,'localappdata'),TEMP:processTemp,TMP:processTemp,BOT_HOME:home,DSH_HOME:home,DSH_AGENTS_HOME:path.join(home,'agents'),BOT_DATA_HOME:path.join(home,'storages','bot-integration'),BOT_WORKSPACE_ROOT:workspace,BOT_SOURCE_ROOT:root,BOT_TEST_TMP:path.join(folder,'fixtures'),npm_config_store_dir:path.join(processHome,'localappdata','pnpm','store'),npm_config_userconfig:path.join(home,'empty.npmrc'),XDG_CONFIG_HOME:path.join(processHome,'config'),PIP_CONFIG_FILE:path.join(processHome,'empty-pip.ini')});python=await validateTestPython(pythonCandidate,env);env.BOT_PYTHON=python;env.BOT_TEST_PYTHON=python;await writeFile(env.npm_config_userconfig,'');await writeFile(env.PIP_CONFIG_FILE,'[global]\nno-index = true\n');
+  await run('scripts/build.mjs');
+  const sourceIdentity=await identity(root);
+  await run('scripts/install.mjs',[root]);
+  const installation=JSON.parse(await readFile(path.join(home,'installation.json'),'utf8'));
+  assert.equal(installation.current.identity,sourceIdentity);assert.equal(installation.sourceRoot,root);assert.deepEqual(installation.layers,['core','basic-media']);
+  const profile=JSON.parse(await readFile(path.join(home,'profiles','bots','package.json'),'utf8'));
+  assert.ok(profile.dsh.profile.bundles.includes('dsh-bot-lifecycle'));assert.ok(profile.dsh.profile.bundles.includes(bundleName));
+  const installedRoot=path.join(home,'profiles','bots','node_modules',bundleName),lifecycleRoot=path.join(home,'profiles','bots','node_modules','dsh-bot-lifecycle');
+  assert.equal(await identity(installedRoot),sourceIdentity);
+  for(const directory of [installedRoot,lifecycleRoot]){const installedManifest=JSON.parse(await readFile(path.join(directory,'package.json'),'utf8')),locale=JSON.parse(await readFile(path.join(directory,'locale','zh.json'),'utf8')),icon=await readFile(path.join(directory,'icon.svg'),'utf8');assert.equal(installedManifest.engines.dsh,'0.2.1-rc.2');assert.ok(installedManifest.exports['./locale/*.json']);assert.ok(installedManifest.exports['./icon']);assert.ok(locale.meta.title);assert.ok(locale.meta.description);assert.match(icon,/^<svg\b/);}
+  const cli=path.join(path.dirname(createRequire(import.meta.url).resolve('@deepseek-ai/dsh/package.json')),'lib','bin.js');const schemaDump=await run(cli,['--profile','bots','--dump-config-schema'],300000,true,8*1024*1024);assert.match(schemaDump,/"const":\s*"bot-integration"/);for(const field of ['dataDir','python','debounceMs'])assert.match(schemaDump,new RegExp(`"${field}"\\s*:`));
+  const database=path.join(workspace,'.runtime','storages','bot-integration','bots.sqlite');
+  const runtimeState=()=>{const db=new DatabaseSync(database,{readOnly:true});try{return{owner:JSON.parse(db.prepare("SELECT json FROM records WHERE kind='runtime' AND id='owner'").get()?.json??'null'),bots:Number(db.prepare("SELECT COUNT(*) AS count FROM records WHERE kind='bot'").get().count)};}finally{db.close();}};
+  host=spawn(process.execPath,['scripts/start.mjs','--port','0'],{cwd:root,env,windowsHide:true,detached:process.platform!=='win32',stdio:['ignore','pipe','pipe']});host.stdout.on('data',data=>boundedOutput(logs,data));host.stderr.on('data',data=>boundedOutput(logs,data));const hostExit=new Promise(resolve=>host.once('exit',(code,signal)=>resolve({code,signal})));
+  const wait=async(check,timeoutMs=180000)=>{const deadline=Date.now()+timeoutMs;let last;while(Date.now()<deadline){try{const value=await check();if(value)return value;}catch(error){last=error;}if(host.exitCode!==null)throw Error(`Host exited before acceptance: ${host.exitCode}`);await new Promise(resolve=>setTimeout(resolve,100));}throw Error(`Acceptance timeout: ${last??'condition not met'}`);};
+  const api=async()=>{const urls=[...logs.value.matchAll(/dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/\?token=[^\s]+)/g)];const url=urls.at(-1)?.[1];if(!url)return;const ticket=await fetch(url,{redirect:'manual',signal:AbortSignal.timeout(5000)});const cookie=ticket.headers.getSetCookie().map(value=>value.split(';',1)[0]).join('; ');const page=ticket.status===303?await fetch(new URL(ticket.headers.get('location'),url),{headers:{cookie},signal:AbortSignal.timeout(5000)}):ticket;const html=await page.text();const match=html.match(/globalThis\["__BOT_INTEGRATION__"\]\s*=\s*(\{[^<]+\})<\/script>/);if(!match)throw Error(`Bot bootstrap not found in HTTP ${page.status} response`);const bootstrap=JSON.parse(match[1]);const response=await fetch(new URL(bootstrap.endpoint,url),{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${bootstrap.token}`,cookie},body:JSON.stringify({action:'state',input:{}}),signal:AbortSignal.timeout(5000)});if(!response.ok)throw Error(`Admin health request returned ${response.status}`);const state=(await response.json()).result;const profiles=await fetch(new URL(bootstrap.endpoint,url),{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${bootstrap.token}`,cookie},body:JSON.stringify({version:1,kind:'query',name:'catalog.profiles',input:{limit:100}}),signal:AbortSignal.timeout(5000)});if(!profiles.ok)throw Error(`Profile catalog returned ${profiles.status}`);return{state,profiles:(await profiles.json()).result,url};};
+  const first=await wait(async()=>{const admin=await api();const current=runtimeState();return admin&&current.owner?{...current,configs:admin.state.configs.length,profiles:admin.profiles.items,port:new URL(admin.url).port}:undefined;});assert.equal(first.bots,0);assert.deepEqual(first.profiles,[]);
+  const task={id:'install-smoke-restart',kind:'restart',scopeKey:'local-smoke',configId:'sakura',goal:'Verify supervised restart of the actual installed root package with zero bots',phase:'queued',createdAt:Date.now(),updatedAt:Date.now(),events:[]};await atomicJson(path.join(home,'evolution',`${task.id}.json`),task);
+  const second=await wait(async()=>{const journal=JSON.parse(await readFile(path.join(home,'evolution',`${task.id}.json`),'utf8'));if(journal.phase==='failed')throw Error(journal.error);if(journal.phase!=='succeeded')return;const admin=await api();const current=runtimeState();return admin&&current.owner&&current.owner.pid!==first.owner.pid?{...current,configs:admin.state.configs.length,port:new URL(admin.url).port,phase:journal.phase}:undefined;},180000);assert.equal(second.bots,0);assert.notEqual(second.owner.pid,first.owner.pid);assert.equal(second.phase,'succeeded');
+  result={status:'PASS',packageVersion:JSON.parse(await readFile(path.join(root,'package.json'),'utf8')).version,artifactSha256:installation.current.sha256,shippedIdentity:sourceIdentity,bots:0,restart:second.phase,adminHealthBefore:true,adminHealthAfter:true};
+  try{const state=JSON.parse(await readFile(path.join(home,'launcher.json'),'utf8'));await fetch(`http://127.0.0.1:${state.port}/stop`,{method:'POST',headers:{authorization:`Bearer ${state.token}`},signal:AbortSignal.timeout(5000)});}catch(error){throw Error(`launcher stop failed: ${error}`);}
+  const exited=await Promise.race([hostExit,new Promise(resolve=>setTimeout(()=>resolve(undefined),25000))]);if(!exited)throw Error('launcher did not stop within 25 seconds');assert.equal(exited.code,0);await access(path.join(home,'launcher.json')).then(()=>{throw Error('launcher state was not removed');},error=>{if(error.code!=='ENOENT')throw error;});assert.equal(runtimeState().owner,null);
+}catch(error){failed=true;process.exitCode=1;result={status:'FAIL'};failureEvidence={'host.log':logs.value,'error.txt':redactEvidence(error.stack??error),'subprocess.log':error.result?.output??''};}
+finally{if(host){try{await killProcessTree(host);}catch(error){failed=true;process.exitCode=1;failureEvidence={...failureEvidence,'cleanup-error.txt':error.stack??error};}}await finalizeTestRoot(folder,{failed,evidence:failureEvidence,result});}

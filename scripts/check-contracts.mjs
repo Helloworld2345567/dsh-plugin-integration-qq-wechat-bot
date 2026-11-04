@@ -1,0 +1,35 @@
+import {readFile} from 'node:fs/promises';
+import path from 'node:path';
+
+const root = process.cwd();
+const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+const files = ['CONTRIBUTING.md', 'docs/development.md', 'docs/testing.md', '.github/workflows/ci.yml', 'scripts/test-typescript.mjs', 'scripts/test-native.mjs', 'scripts/test-lifecycle-native.mjs', 'scripts/test-install-smoke.mjs', 'scripts/test-process.mjs'];
+const text = Object.fromEntries(await Promise.all(files.map(async file => [file, await readFile(path.join(root, file), 'utf8')])));
+const failures = [];
+const scripts = packageJson.scripts ?? {};
+const commands = [...new Set([...text['CONTRIBUTING.md'].matchAll(/npm run ([a-z0-9:_-]+)/gi), ...text['docs/development.md'].matchAll(/npm run ([a-z0-9:_-]+)/gi), ...text['docs/testing.md'].matchAll(/npm run ([a-z0-9:_-]+)/gi)].map(match => match[1]))];
+for (const command of commands) if (!scripts[command]) failures.push(`documented npm script missing: ${command}`);
+for (const command of ['typecheck', 'test', 'test:python', 'check:python-dependencies', 'check:environment', 'build', 'check:docs', 'check:contracts', 'check:licenses', 'check:release', 'verify:release', 'release:pack', 'test:native', 'test:lifecycle-native', 'test:install-smoke']) {
+  if (!text['docs/testing.md'].includes(`npm run ${command}`)) failures.push(`testing contract missing: ${command}`);
+}
+if (packageJson.engines?.node !== '>=24.0.0') failures.push('package Node engine is not Node 24+');
+if (packageJson.engines?.dsh !== '0.2.1-rc.2') failures.push('package Harness engine changed');
+if (!text['.github/workflows/ci.yml'].includes("NODE_VERSION: '24'") || !text['.github/workflows/ci.yml'].includes("HARNESS_VERSION: '0.2.1-rc.2'")) failures.push('CI Node/Harness versions do not match package contract');
+for (const version of ['3.12', '3.13']) if (!text['.github/workflows/ci.yml'].includes(`'${version}'`)) failures.push(`CI Python matrix missing ${version}`);
+for (const variable of ['BOT_TEST_PYTHON', 'BOT_TEST_TMP', 'BOT_TEST_WEB_TOOLS_SOURCE', 'BOT_TEST_IMAGE_KEY', 'NATIVE_TEST_RESULT', 'LIFECYCLE_NATIVE_FOLDER']) if (!text['docs/testing.md'].includes(variable)) failures.push(`testing variable not classified: ${variable}`);
+if (!/(?:不得|不)发送平台消息/.test(text['docs/testing.md'])) failures.push('testing boundary must forbid real platform messages');
+for (const file of ['scripts/test-typescript.mjs', 'scripts/test-native.mjs', 'scripts/test-lifecycle-native.mjs', 'scripts/test-install-smoke.mjs']) {
+  if (text[file].includes('{...process.env}') || text[file].includes('{ ...process.env }')) failures.push(`${file}: copies the complete host environment`);
+  if (!text[file].includes('safeSubprocessEnv')) failures.push(`${file}: does not use the test environment allowlist`);
+}
+for (const file of ['scripts/test-native.mjs', 'scripts/test-lifecycle-native.mjs', 'scripts/test-install-smoke.mjs']) {
+  if (!text[file].includes("'--port', '0'") && !text[file].includes("'--port','0'")) failures.push(`${file}: native host must use a dynamic port`);
+  if (!text[file].includes('killProcessTree')) failures.push(`${file}: native host lacks process-tree cleanup`);
+}
+if (!text['scripts/test-native.mjs'].includes('BOT_TEST_WEB_TOOLS_SOURCE') || !text['scripts/test-native.mjs'].includes("manifest.name !== 'dsh-web-tools'")) failures.push('native web-tools fixture source is not validated');
+if (!text['scripts/test-process.mjs'].includes('timeoutMs') || !text['scripts/test-process.mjs'].includes('killProcessTree')) failures.push('test subprocess helper lacks timeout/tree cleanup');
+if (text['.github/workflows/ci.yml'].includes("path: '*.tgz'")) failures.push('CI must not upload the temporary release archive');
+if (packageJson.scripts.prepublishOnly !== 'npm run verify:release') failures.push('prepublishOnly release gate changed');
+if (!String(packageJson.scripts['release:pack']).includes('release-pack.mjs')) failures.push('release:pack implementation changed');
+console.log(JSON.stringify({status: failures.length ? 'FAIL' : 'PASS', commands, failures}, null, 2));
+if (failures.length) process.exitCode = 1;

@@ -1,18 +1,88 @@
-import {mkdir,writeFile,readFile} from 'node:fs/promises';import path from 'node:path';import {createRequire} from 'node:module';import {spawn} from 'node:child_process';import {build} from 'esbuild';
-const root=process.cwd();const folder=path.join(root,'.codex',`native-${Date.now()}`);const fixture=path.join(folder,'fixture');const home=path.join(folder,'home');await mkdir(fixture,{recursive:true});await mkdir(path.join(home,'profiles','bots'),{recursive:true});
-await build({entryPoints:['src/index.ts'],outfile:'dist/index.js',bundle:true,platform:'node',format:'esm',target:'node24',packages:'external'});
-await build({entryPoints:['tests/native-plugin.ts'],outfile:path.join(fixture,'index.js'),bundle:true,platform:'node',format:'esm',target:'node24',packages:'external'});
-await writeFile(path.join(fixture,'package.json'),JSON.stringify({name:'dsh-bot-native-fixture',version:'0.0.0',type:'module',exports:'./index.js',dsh:{bundle:{patch:'./cordis.patch.yml'}}}));
-await writeFile(path.join(fixture,'cordis.patch.yml'),'- insert:\n    - id: bot-native-fixture\n      name: dsh-bot-native-fixture\n');
-await writeFile(path.join(home,'profiles','bots','package.json'),JSON.stringify({name:'native-smoke-profile',private:true,type:'module',dsh:{profile:{bundles:['@deepseek-ai/dsh-base','@deepseek-ai/dsh-web-app']}}}));
-await writeFile(path.join(home,'profiles','bots','cordis.patch.yml'),'- id: skill-filesystem\n  disabled: true\n- id: session-log-deepseek\n  disabled: true\n- id: session-query-sqlite\n  config:\n    path: ":memory:"\n    openAt: first-search\n');
-const resultPath=path.join(folder,'result.json');const cli=path.join(path.dirname(createRequire(import.meta.url).resolve('@deepseek-ai/dsh/package.json')),'lib','bin.js');
-const workspaceRoot=path.join(folder,'workspaces'),processHome=path.join(workspaceRoot,'.runtime','home');
-const env={...process.env,BOT_HOME:home,DSH_HOME:home,BOT_PERSONAS_ROOT:path.join(home,'personas'),BOT_WORKSPACE_ROOT:workspaceRoot,DSH_AGENTS_HOME:path.join(home,'agents'),BOT_DATA_HOME:path.join(home,'storages','bot-integration'),BOT_PYTHON:process.env.BOT_PYTHON||path.join(root,'.codex','venvs','media',process.platform==='win32'?'Scripts/python.exe':'bin/python'),BOT_IMAGE_KEY_ENV:'BOT_TEST_IMAGE_KEY',BOT_TEST_IMAGE_KEY:'fixture-not-a-real-key',NATIVE_TEST_RESULT:resultPath,npm_config_store_dir:path.join(processHome,'localappdata','pnpm','store')};
-const run=args=>new Promise((resolve,reject)=>{const p=spawn(process.execPath,[cli,...args],{env,windowsHide:true,stdio:['ignore','pipe','pipe']});let output='';p.stdout.on('data',c=>output+=c);p.stderr.on('data',c=>output+=c);p.on('error',reject);p.on('exit',code=>code===0?resolve():reject(Error(output)));});
-await run(['plugin','--profile','bots','add',root]);await run(['plugin','--profile','bots','add',fixture]);
-if(process.env.BOT_TEST_WEB_TOOLS_SOURCE){await run(['plugin','--profile','bots','add',path.resolve(process.env.BOT_TEST_WEB_TOOLS_SOURCE)]);const manifest=path.join(home,'profiles','bots','package.json');const profile=JSON.parse(await readFile(manifest,'utf8'));profile.dsh.profile.bundles=[...new Set([...profile.dsh.profile.bundles,'dsh-web-tools'])];await writeFile(manifest,JSON.stringify(profile));}
-const host=spawn(process.execPath,[cli,'--profile','bots','--no-open','--port','0'],{env,windowsHide:true,stdio:['ignore','pipe','pipe']});let logs='';host.stdout.on('data',c=>logs+=c);host.stderr.on('data',c=>logs+=c);
+import {mkdir, writeFile, readFile, realpath} from 'node:fs/promises';
+import path from 'node:path';
+import {createRequire} from 'node:module';
+import {spawn} from 'node:child_process';
+import {safeSubprocessEnv, validateTestPython} from './test-environment.mjs';
+import {createTestRoot, killProcessTree, boundedOutput, finalizeTestRoot, runEsbuild, spawnCapture} from './test-process.mjs';
+
+const root = process.cwd();
+const folder = await createTestRoot(root, 'native');
+const fixture = path.join(folder, 'fixture');
+const home = path.join(folder, 'home');
+const workspaceRoot = path.join(folder, 'workspaces');
+const processHome = path.join(workspaceRoot, '.runtime', 'home');
+const processTemp = path.join(workspaceRoot, '.runtime', 'tmp');
+let env;
+let host;
+let logs = {value: ''};
+let failed = false;
+let failureEvidence;
 let result;
-try{const deadline=Date.now()+90000;while(Date.now()<deadline){try{result=JSON.parse(await readFile(resultPath,'utf8'));break;}catch{}await new Promise(r=>setTimeout(r,500));}await writeFile(path.join(folder,'host.log'),logs);if(!result)throw Error(`Native fixture timed out; logs: ${folder}`);console.log(JSON.stringify({...result,evidence:folder},null,2));if(result.status!=='PASS')process.exitCode=1;}
-finally{if(process.platform==='win32')spawn('taskkill',['/PID',String(host.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});else host.kill('SIGTERM');}
+try {
+await mkdir(fixture, {recursive: true});
+await mkdir(path.join(home, 'profiles', 'bots'), {recursive: true});
+await mkdir(processHome, {recursive: true});
+await mkdir(processTemp, {recursive: true});
+let webToolsSource;
+if (process.env.BOT_TEST_WEB_TOOLS_SOURCE) {
+  webToolsSource = await realpath(path.resolve(process.env.BOT_TEST_WEB_TOOLS_SOURCE));
+  const relative = path.relative(root, webToolsSource);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('BOT_TEST_WEB_TOOLS_SOURCE must be a reviewed package inside this checkout');
+  const manifest = JSON.parse(await readFile(path.join(webToolsSource, 'package.json'), 'utf8'));
+  if (manifest.name !== 'dsh-web-tools') throw new Error('BOT_TEST_WEB_TOOLS_SOURCE package name must be dsh-web-tools');
+}
+const testPythonCandidate = process.env.BOT_TEST_PYTHON;
+if (!testPythonCandidate) throw new Error('BOT_TEST_PYTHON must explicitly name the Python 3.12/3.13 test interpreter');
+env = safeSubprocessEnv({
+  HOME: processHome, USERPROFILE: processHome, APPDATA: path.join(processHome, 'appdata'), LOCALAPPDATA: path.join(processHome, 'localappdata'), TEMP: processTemp, TMP: processTemp,
+  BOT_HOME: home, DSH_HOME: home, BOT_PERSONAS_ROOT: path.join(home, 'personas'),
+  BOT_WORKSPACE_ROOT: workspaceRoot, DSH_AGENTS_HOME: path.join(home, 'agents'),
+  BOT_DATA_HOME: path.join(home, 'storages', 'bot-integration'),
+  BOT_IMAGE_KEY_ENV: 'BOT_TEST_IMAGE_KEY', BOT_TEST_IMAGE_KEY: 'fixture-not-a-real-key',
+  NATIVE_TEST_RESULT: path.join(folder, 'result.json'), npm_config_store_dir: path.join(processHome, 'localappdata', 'pnpm', 'store'),
+  XDG_CONFIG_HOME: processHome, PIP_CONFIG_FILE: path.join(processHome, 'empty.pip.ini'), BOT_TEST_TMP: path.join(folder, 'fixtures'),
+  ...(webToolsSource ? {BOT_TEST_WEB_TOOLS_SOURCE: webToolsSource} : {}),
+});
+const testPython = await validateTestPython(testPythonCandidate, env);
+env.BOT_PYTHON = testPython;
+env.BOT_TEST_PYTHON = testPython;
+await mkdir(path.dirname(env.PIP_CONFIG_FILE), {recursive: true});
+await writeFile(env.PIP_CONFIG_FILE, '[global]\nno-index = true\n');
+await writeFile(env.npm_config_userconfig, '');
+  await runEsbuild(['src/index.ts', '--outfile=dist/index.js', '--bundle', '--platform=node', '--format=esm', '--target=node24', '--packages=external'], {cwd: root, env});
+  await runEsbuild(['tests/native-plugin.ts', `--outfile=${path.join(fixture, 'index.js')}`, '--bundle', '--platform=node', '--format=esm', '--target=node24', '--packages=external'], {cwd: root, env});
+  await writeFile(path.join(fixture, 'package.json'), JSON.stringify({name: 'dsh-bot-native-fixture', version: '0.0.0', type: 'module', exports: './index.js', dsh: {bundle: {patch: './cordis.patch.yml'}}}));
+  await writeFile(path.join(fixture, 'cordis.patch.yml'), '- insert:\n    - id: bot-native-fixture\n      name: dsh-bot-native-fixture\n');
+  await writeFile(path.join(home, 'profiles', 'bots', 'package.json'), JSON.stringify({name: 'native-smoke-profile', private: true, type: 'module', dsh: {profile: {bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']}}}));
+  await writeFile(path.join(home, 'profiles', 'bots', 'cordis.patch.yml'), '- id: skill-filesystem\n  disabled: true\n- id: session-log-deepseek\n  disabled: true\n- id: session-query-sqlite\n  config:\n    path: ":memory:"\n    openAt: first-search\n');
+  const resultPath = env.NATIVE_TEST_RESULT;
+  const cli = path.join(path.dirname(createRequire(import.meta.url).resolve('@deepseek-ai/dsh/package.json')), 'lib', 'bin.js');
+  const run = args => spawnCapture(process.execPath, [cli, ...args], {cwd: root, env, timeoutMs: 180_000});
+  await run(['plugin', '--profile', 'bots', 'add', root]);
+  await run(['plugin', '--profile', 'bots', 'add', fixture]);
+  if (webToolsSource) {
+    await run(['plugin', '--profile', 'bots', 'add', webToolsSource]);
+    const manifestPath = path.join(home, 'profiles', 'bots', 'package.json');
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    manifest.dsh.profile.bundles = [...new Set([...manifest.dsh.profile.bundles, 'dsh-web-tools'])];
+    await writeFile(manifestPath, JSON.stringify(manifest));
+  }
+  host = spawn(process.execPath, [cli, '--profile', 'bots', '--no-open', '--port', '0'], {cwd: root, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe']});
+  host.stdout.on('data', chunk => boundedOutput(logs, chunk)); host.stderr.on('data', chunk => boundedOutput(logs, chunk));
+  const deadline = Date.now() + 180_000;
+  while (Date.now() < deadline) {
+    try { result = JSON.parse(await readFile(resultPath, 'utf8')); break; } catch {}
+    if (host.exitCode !== null) throw new Error(`Native fixture exited before result (${host.exitCode})`);
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  if (!result) throw new Error('Native fixture timed out');
+  if (result.status !== 'PASS') throw new Error(`Native fixture reported ${result.status}: ${result.error ?? '<no safe diagnostic>'}`);
+} catch (error) {
+  failed = true; process.exitCode = 1;
+  failureEvidence = {'host.log': logs.value, 'error.txt': error.stack ?? error};
+}
+if (host) {
+  try { await killProcessTree(host); }
+  catch (error) { failed = true; process.exitCode = 1; failureEvidence = {...failureEvidence, 'cleanup-error.txt': error.stack ?? error}; }
+}
+await finalizeTestRoot(folder, {failed, evidence: failureEvidence, result});

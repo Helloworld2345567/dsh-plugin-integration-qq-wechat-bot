@@ -1,43 +1,36 @@
-import { globSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
-
-const runtimeOwnedEnvironment = [
-  'BOT_DATA_HOME',
-  'BOT_HOME',
-  'BOT_PERSONAS_ROOT',
-  'BOT_WORKSPACE_ROOT',
-  'DSH_AGENTS_HOME',
-  'DSH_HOME',
-  'DSH_PROFILE',
-  'DSH_PROFILE_DIR',
-  'DSH_SESSION_ID',
-  'DSH_WEB_URL',
-];
-
-const env = { ...process.env };
-for (const name of runtimeOwnedEnvironment) delete env[name];
+import {globSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
+import {mkdir, writeFile} from 'node:fs/promises';
+import path from 'node:path';
+import {spawnCapture, createTestRoot, finalizeTestRoot} from './test-process.mjs';
+import {redactEvidence, safeSubprocessEnv} from './test-environment.mjs';
 
 const files = globSync('tests/*.test.ts').sort();
 if (!files.length) throw new Error('No TypeScript tests found');
-
 const cli = fileURLToPath(import.meta.resolve('tsx/cli'));
-const child = spawn(process.execPath, [cli, '--test', ...files], {
-  cwd: process.cwd(),
-  env,
-  stdio: 'inherit',
-  windowsHide: true,
-});
-
-child.once('error', error => {
-  console.error(error);
+const root = process.cwd();
+const temporary = await createTestRoot(root, 'typescript');
+const processHome = path.join(temporary, 'home');
+const processTemp = path.join(temporary, 'tmp');
+let failed = false;
+let evidence;
+try {
+  await mkdir(processHome, {recursive: true});
+  await mkdir(processTemp, {recursive: true});
+  const env = safeSubprocessEnv({
+    HOME: processHome, USERPROFILE: processHome,
+    APPDATA: path.join(processHome, 'appdata'), LOCALAPPDATA: path.join(processHome, 'localappdata'),
+    TEMP: processTemp, TMP: processTemp, BOT_TEST_TMP: path.join(temporary, 'fixtures'),
+    XDG_CONFIG_HOME: path.join(processHome, 'config'), PIP_CONFIG_FILE: path.join(processHome, 'empty-pip.ini'),
+  });
+  await mkdir(env.BOT_TEST_TMP, {recursive: true});
+  await writeFile(env.npm_config_userconfig, '');
+  await writeFile(env.PIP_CONFIG_FILE, '[global]\nno-index = true\n');
+  const result = await spawnCapture(process.execPath, [cli, '--test', ...files], {cwd: root, env, timeoutMs: 10 * 60 * 1000});
+  if (result.output) console.error(redactEvidence(result.output));
+} catch (error) {
+  failed = true;
+  evidence = {'test-output.log': error.result?.output ?? error.message};
   process.exitCode = 1;
-});
-child.once('exit', (code, signal) => {
-  if (signal) {
-    console.error(`TypeScript tests terminated by ${signal}`);
-    process.exitCode = 1;
-  } else {
-    process.exitCode = code ?? 1;
-  }
-});
+}
+await finalizeTestRoot(temporary, {failed, evidence});

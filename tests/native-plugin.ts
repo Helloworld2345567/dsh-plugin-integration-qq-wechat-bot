@@ -152,7 +152,7 @@ export async function apply(ctx:Context){
     mediaCall={name:'bot_media',args:{operation:'image_understand',inputs:[asset.id]}};
     await bridge.run(binding,[msg('pixels','读取刚才的图片')],AbortSignal.timeout(30000));
     assert.ok(requests.at(-1)!.messages.some(m=>m.role==='tool'&&m.content.some(b=>b.type==='image')),'native model must receive image tool pixels: '+JSON.stringify(requests.at(-1)!.messages.slice(-3)));
-    const docFile=path.join(store.home,'native-scan.pdf');execFileSync(process.env.BOT_PYTHON!,['-c',"from pypdf import PdfWriter; import sys; w=PdfWriter(); w.add_blank_page(width=200,height=200); w.write(sys.argv[1])",docFile],{windowsHide:true});
+    const docFile=path.join(store.home,'native-scan.pdf');const pythonEnv=Object.fromEntries(['PATH','PATHEXT','SystemRoot','WINDIR','TEMP','TMP','HOME','USERPROFILE','APPDATA','LOCALAPPDATA','PYTHONNOUSERSITE','PYTHONDONTWRITEBYTECODE','PIP_CONFIG_FILE','PIP_NO_INDEX'].flatMap(key=>process.env[key]===undefined?[]:[[key,process.env[key]!]]));execFileSync(process.env.BOT_PYTHON!,['-c',"from pypdf import PdfWriter; import sys; w=PdfWriter(); w.add_blank_page(width=200,height=200); w.write(sys.argv[1])",docFile],{windowsHide:true,env:pythonEnv,timeout:30000,maxBuffer:1024*1024});
     const scan=await runtime.assets.save(binding.key,{kind:'file',name:'scan.pdf',mime:'application/pdf'},await (await import('node:fs/promises')).readFile(docFile));
     mediaCall={name:'bot_media',args:{operation:'document_read',inputs:[scan.id]}};
     const docResult=await bridge.run(binding,[msg('ocr','读取扫描页')],AbortSignal.timeout(30000));assert.deepEqual(docResult.outputs,[{type:'text',text:'FINAL_ONLY'}]);

@@ -1,7 +1,8 @@
-import {readFile, readdir, stat} from 'node:fs/promises';
+import {readFile, readdir, realpath, stat} from 'node:fs/promises';
 import path from 'node:path';
 
 const root = process.cwd();
+const canonicalRoot = await realpath(root);
 const ignored = new Set(['.git', '.codex', '.runtime', 'node_modules', 'dist', 'outputs', 'coverage']);
 const markdown = [];
 async function walk(directory) {
@@ -70,6 +71,17 @@ for (const file of markdown) {
     try { exists = (await stat(resolved)).isFile() || (await stat(resolved)).isDirectory(); } catch {}
     if (!exists) {
       failures.push(`${path.relative(root, file)} -> ${raw}: missing target`);
+      continue;
+    }
+    try {
+      const canonicalTarget = await realpath(resolved);
+      const canonicalRelative = path.relative(canonicalRoot, canonicalTarget);
+      if (canonicalRelative.startsWith('..') || path.isAbsolute(canonicalRelative)) {
+        failures.push(`${path.relative(root, file)} -> ${raw}: target escapes repository through a link`);
+        continue;
+      }
+    } catch {
+      failures.push(`${path.relative(root, file)} -> ${raw}: target cannot be resolved safely`);
       continue;
     }
     if (parsed.fragment) {

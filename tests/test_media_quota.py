@@ -24,9 +24,9 @@ spec.loader.exec_module(worker)
 
 class MediaQuotaTests(unittest.TestCase):
     def setUp(self):
-        temporary = ROOT / '.codex/trusted-media-unlimited-20261031/python-tests'
+        temporary = Path(os.environ.get('BOT_TEST_TMP', ROOT / '.codex'))
         temporary.mkdir(parents=True, exist_ok=True)
-        directory = tempfile.TemporaryDirectory(dir=temporary)
+        directory = tempfile.TemporaryDirectory(prefix='media-quota-', dir=temporary)
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
         self.store = JobStore(self.root / 'jobs.sqlite')

@@ -29,3 +29,10 @@
 - 将 image-generation 技能修正为 V4-only 人格契约；不承诺 V3 迁移或回退。
 - 扩展 lifecycle bundle 文档，明确受监督失败恢复、一次回滚、未知结果不重放和无第三方 Adapter ABI 承诺。
 - 增强 Markdown 本地链接/锚点、CI 结构、发布包文档包含性和敏感内容检查。
+
+### 阶段 4：开发与测试契约
+
+- 增加 Windows 开发入口、测试分层、CI 对照和外部验收边界文档。
+- 增加只读环境预检，统一 Node/Harness/Python、FFmpeg/ffprobe、基础与可选 Python 依赖状态。
+- 将 TypeScript、Python 和三项 Harness 原生验收改为最小环境白名单、隔离 HOME/临时目录、动态端口、受控输出和进程树清理。
+- 增加文档命令、CI 版本、测试变量、发布门禁和测试 runner 隔离契约检查；未改变 QQ/微信业务、权限、媒体、凭据、人格或 lifecycle 运行语义。
