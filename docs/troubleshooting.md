@@ -153,11 +153,11 @@
 
 **症状**：升级后无法健康启动、任务停留在 restarting/rolling-back，或回滚被拒绝。
 
-**安全检查**：确认只在独立产品 profile 使用项目 lifecycle；确认 `BOT_HOME` 未变化、上一份归档仍存在且 SHA-256 匹配；不要删除 `installation.json`、evolution journal 或旧归档来“清理”状态。
+**安全检查**：确认只在独立产品 profile 使用项目 lifecycle；确认 `BOT_HOME` 未变化、上一对主包/coordinator 归档仍存在且 SHA-256 匹配；不要删除 `installation.json`、`lifecycle-installation.json`、`lifecycle-installations/`、evolution journal 或旧归档来“清理”状态。
 
-**可能原因**：新归档未通过安全检查/哈希验证、主 bundle 与 lifecycle 版本不匹配、启动健康检查超时、上一归档被改动，或已有 Harness 模式本来就没有独立协调器。
+**可能原因**：新归档未通过安全检查/哈希验证；runtime protocol、coordinator API、package range 或 capability 不兼容；identity/version 与安装记录不一致；启动健康检查超时；上一归档被改动；或已有 Harness 模式本来就没有独立协调器。
 
-**修复动作**：先区分失败路径。journal 驱动的受管升级在健康启动失败时最多自动恢复一次上一份 hash 仍匹配的归档；无法确认的外部投递不因升级而重放。离线执行 `stop → install.mjs <package-directory-or-tgz> → start` 不带 lifecycle task ID，不提供该自动回滚；若离线重装失败，运营者必须停止实例并手工重新安装上一份已验证归档。已完成的受管升级可由可信管理员使用 `/evolve rollback <task-id>` 排队回滚。始终保留当前数据和 journal，不要直接替换 live `node_modules`。
+**修复动作**：先区分失败路径。兼容的主包受管升级在健康启动失败时最多自动恢复一次上一份 hash 仍匹配的主包归档；无法确认的外部投递不因升级而重放。需要新 coordinator 或缺少 `lifecycle-installation.json` 时保持停止，执行 `stop → install.mjs <package-directory-or-tgz> → start`。离线安装器会预检并记录双包 journal；中途失败只尝试一次 previous main→previous coordinator 恢复。若报告 previous hash/identity 不匹配，不要启动或手工混装，改用可信、匹配的双包归档重跑安装器。若进程被强杀后报告 `LIFECYCLE_OPERATION_STALE`，先从操作系统确认记录的 PID 已不存在，再把 `BOT_HOME/lifecycle-operation.lock` **移动并归档**（不要直接覆盖或在进程仍存活时删除），随后先重跑 installer 让未完成 journal 收敛，再启动。已完成的兼容主包升级可由可信管理员使用 `/evolve rollback <task-id>` 排队回滚。始终保留当前数据和 journal，不要直接替换 live `node_modules`。
 
 **仍失败时的脱敏证据**：任务 ID 可截断/替换、phase、安装归档 SHA-256（可只给前后若干字符）、Harness 版本、健康检查阶段和脱敏错误代码。
 

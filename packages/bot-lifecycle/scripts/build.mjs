@@ -1,0 +1,14 @@
+import {createHash} from 'node:crypto';
+import {mkdir,readFile,writeFile,copyFile} from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {build} from 'esbuild';
+import {lifecycleSourceDigest} from './source-digest.mjs';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),dist=path.join(root,'dist');
+await mkdir(dist,{recursive:true});
+await build({entryPoints:[path.join(root,'src','index.ts')],outfile:path.join(dist,'index.js'),bundle:true,platform:'node',format:'esm',target:'node24',packages:'external'});
+await build({entryPoints:[path.join(root,'src','contract','compatibility.mjs')],outfile:path.join(dist,'compatibility.js'),bundle:true,platform:'node',format:'esm',target:'node24'});
+await copyFile(path.join(root,'src','contract','compatibility.d.mts'),path.join(dist,'compatibility.d.mts'));
+const source=await lifecycleSourceDigest(root),manifest=JSON.parse(await readFile(path.join(root,'package.json'),'utf8')),outputs={};
+for(const file of ['index.js','compatibility.js','compatibility.d.mts'])outputs[file]=createHash('sha256').update(await readFile(path.join(dist,file))).digest('hex');
+await writeFile(path.join(dist,'lifecycle-build.json'),JSON.stringify({schemaVersion:1,sourceEntry:'src/index.ts',sourceDigest:source.digest,sourceFiles:source.files,packageVersion:manifest.version,contract:manifest.dshLifecycle,outputs},null,2)+'\n');

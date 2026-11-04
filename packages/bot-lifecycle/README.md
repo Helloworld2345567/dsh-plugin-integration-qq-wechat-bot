@@ -1,39 +1,30 @@
 # 独立产品生命周期协调器
 
-`dsh-bot-lifecycle` 是本项目独立产品 profile 使用的 Harness bundle。它由当前仓库的产品安装器安装，由 `scripts/start.mjs` 启动器监督；它不是独立的第三方运行时，也不是面向外部 Adapter 的公共插件平台。
+`dsh-bot-lifecycle` 是独立产品 profile 使用的 Harness bundle。它由产品安装器与主插件成对安装，由 `scripts/start.mjs` 监督；它不是主插件内部服务、第三方运行时或外部 Adapter 平台。
 
-## 责任和版本关系
+## 源码与构建
 
-- 只有独立产品路径（`node scripts/install.mjs`）安装和管理该 bundle；“安装到已有 Harness”只安装主插件，不包含 lifecycle coordinator。
-- 它随主插件的同一 npm 归档交付，但有独立的 bundle 名称和 package 版本；兼容关系以该项目版本的安装器和原生测试为准，不承诺任意版本交叉组合。产品安装器会把主插件和 `dsh-bot-lifecycle` 都加入隔离的 `bots` profile；不要手工替换其中一个。
-- 当前只支持项目已验证的 DeepSeek Harness `0.2.1-rc.2` 运行时范围。不得将当前内部 lifecycle handshake 或 TypeScript 接口当成第三方 Adapter ABI；项目不承诺对外稳定的 Adapter ABI。
-- lifecycle 不能脱离主插件的运行数据、安装 journal、受监督 launcher 和当前产品 profile 独立运行。
+可构建源码位于本包 `src/`：coordinator、integrity、protocol、bundle entry 和中立 contract 均在包边界内，不导入根包 `src/`。本包 `source` 为 `./src/index.ts`，`npm run build` 生成 `dist/index.js`、可序列化 compatibility export 和 `dist/lifecycle-build.json`。`npm run verify:build`／prepack 会比较源码摘要、文件清单、package version、contract 与输出 hash，陈旧 dist 不能静默打包。
 
-## 安装、升级、停止和回滚
+`src/contract/` 是主插件/coordinator 共用的 protocol、artifact identity、journal 和源码完整性单一来源；不得复制两份可漂移的版本范围、hash 或 identity 算法。
 
-安装由产品路径完成：
+## 版本兼容协议
 
-```powershell
-node scripts/install.mjs <package-directory-or-tgz>
-node scripts/start.mjs --port 3080
-```
+主插件声明 runtime protocol、可接受的 coordinator API range、capabilities 与 required coordinator capabilities；coordinator 声明 coordinator API、可接受的 runtime protocol/main package range、capabilities 与 required main capabilities。bundle package version 与这两个 protocol/API version 相互独立。
 
-停止由同一产品 home 的 launcher 完成：
+运行握手还绑定 instance nonce 和双方 artifact identity。缺失/伪造元数据、protocol major、package range、required capability、instance、hash、版本或 identity 不匹配都以稳定 `LIFECYCLE_*` 错误 fail closed。内部 TypeScript interface 不是公共协议；只承诺显式声明并测试的组合。
 
-```powershell
-node scripts/stop.mjs
-```
+## 热更新与离线双包更新
 
-已有 Harness profile 不应调用这里的 lifecycle 命令。升级前由运营者保留 `BOT_HOME` 和工作区备份。本地源码/本地 `.tgz` 安装会检查归档结构并计算、记录 hash 与安装后包身份，但不证明下载来源；固定 GitHub bootstrap 才会比较运营者提供的预期 SHA-256。受管升级由 lifecycle 校验 journal 中记录的归档 hash、排空当前任务、等待主插件报告健康，再恢复连接。受管升级失败时 launcher/协调器只尝试一次仍能通过哈希验证的上一份归档；离线 `stop → install → start` 没有该自动回滚。无法确认的投递或远程任务不自动重放。
+- 当前 coordinator 和 candidate 主包双向声明兼容时，允许 coordinator 排空后只替换主包。
+- coordinator API、protocol major、package range 或 required capability 需要变化时，旧 coordinator 不会热替换自己；必须 `stop → install → start`，由监督 launcher 停机后安装两个 bundle。
+- 安装器在 profile 修改前验证双包 archive/hash/版本/contract；启动器再验证安装记录与实际文件。
+- 双包安装 journal 记录 current/previous 两个 artifact 的 archive hash、identity、package version 与 contract。中途失败只恢复一次 previous main，再恢复 previous coordinator；任一旧 hash 不匹配就停止。
 
-成功升级后的人工回滚通过可信管理员命令 `/evolve rollback <task-id>` 排队，使用历史任务 ID。回滚和升级都保留人格、会话、附件、凭据引用和工作区数据；它们不会把外部平台已经接受但本地状态未知的消息重新发送。安装、升级、停止和回滚的实际状态写入产品 home 的 journal，由运营者依据状态处理，不要直接编辑 journal 或 live `node_modules`。
+`installation.json` 保持原 schema；新增 `lifecycle-installation.json` 保存双包 current/previous 组合。旧安装缺少该文件时不会静默迁移，必须停机重跑可信安装器。
 
-## 失败和恢复语义
+## 数据与失败语义
 
-1. 主插件提出 restart/apply 后，协调器先让运行时进入 quiescing，排空可安全排空的任务并停止接受新的生命周期操作。
-2. coordinator 与主插件通过版本化 handshake 和 launcher nonce 确认是同一实例；不匹配、缺少主插件或健康检查失败时 fail closed。
-3. 子进程退出后由 launcher 负责重新启动；健康超时不会自动无限重启。
-4. 安装归档、当前安装记录或上一归档 hash 不匹配时拒绝恢复；恢复失败会保留失败状态，等待运营者提供新的已验证归档或明确的人工回滚。
-5. `unknown` 只表示外部提交结果无法确认，不能当成失败后自动重做；恢复入口复用原 Asset/作业身份。
+排空、unknown、不自动重放、一次回滚、监督重启、取消与服务 fence 语义不变。升级和回滚保留人格、会话、附件、凭据引用和工作区数据；不会把外部平台已经接受但本地状态未知的消息重新发送。coordinator 不导入或发送 QQ／微信消息。
 
-该协调器的失败恢复优先避免重复执行和重复投递，而不是追求表面可用。真实 QQ/微信授权、外部 TTS、Music、RVC、GPT-SoVITS 和模型验收仍由运营者完成。详见 [独立产品部署](../../docs/deploy-product-profile.md)、[ADR 0001](../../docs/adr/0001-delivery-modes.md) 和 [ADR 0003](../../docs/adr/0003-lifecycle-and-uncertain-outcomes.md)。
+普通已有 Harness profile 只安装主插件，不包含本 coordinator，也不获得受管升级承诺。详见[独立产品部署](../../docs/deploy-product-profile.md)、[ADR 0003](../../docs/adr/0003-lifecycle-and-uncertain-outcomes.md)和[ADR 0004](../../docs/adr/0004-lifecycle-bundle-compatibility.md)。

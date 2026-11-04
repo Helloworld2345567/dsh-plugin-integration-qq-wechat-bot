@@ -74,6 +74,23 @@
     "scripts/supervisor.mjs",
     "scripts/workspace-storage.mjs"
   ],
+  "dshLifecycle": {
+    "schemaVersion": 1,
+    "role": "main",
+    "runtimeProtocol": "2.1.0",
+    "coordinatorApiRange": ">=2.0.0 <3.0.0",
+    "capabilities": [
+      "runtime.health",
+      "runtime.quiesce",
+      "runtime.resume",
+      "upgrade.main-hot"
+    ],
+    "requiredCoordinatorCapabilities": [
+      "coordinator.tick",
+      "upgrade.main-hot",
+      "upgrade.offline-pair"
+    ]
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

@@ -37,7 +37,11 @@ flowchart LR
 - **Store**：保存 bot、人格版本、会话绑定、任务、投递、媒体记录和统计事件。
 - **媒体 worker**：只接受宿主解析后的附件和固定操作，凭据按任务注入，不写入配置或结果。
 - **管理 API**：提供摘要、分页查询和受保护命令；面板只使用 API，不直接访问存储层。
-- **生命周期协调器**：独立处理升级、重启、回退和恢复，不把生命周期状态交给可变插件逻辑。
+- **生命周期协调器**：是独立 bundle，不是主插件内部服务。其可构建源码、integrity、protocol 和入口位于 `packages/bot-lifecycle/src/`；主插件只连接中立 runtime port。双方按 runtime protocol、coordinator API、package version range、capabilities、instance 与 artifact identity 双向握手；不兼容组合 fail closed，不把生命周期状态交给可变插件逻辑。
+
+## Lifecycle 更新边界
+
+独立产品 profile 在启动前核对 `installation.json` 和独立的 `lifecycle-installation.json`：两份归档 hash、实际安装 identity、package version 与 contract 必须一致。当前 coordinator 明确接受 candidate 主包时，才允许排空后只热替换主包；涉及 coordinator API、protocol major、package range 或 required capability 变化时，旧 coordinator 不会替换自己，必须由 launcher 停机后运行可信安装器离线安装两个 bundle。失败时只使用 hash 仍匹配的 previous 主包与 coordinator 各回滚一次。详见 [ADR 0004](adr/0004-lifecycle-bundle-compatibility.md)。
 
 ## 配置与人格
 

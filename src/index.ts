@@ -19,7 +19,7 @@ import {ProcessWorker} from './harness/process-worker.js';
 import {BotFeatures} from './core/features.js';
 import {BotManagement} from './core/management.js';
 import {packageRoot} from './core/paths.js';
-import {registerLifecycleRuntime,handleLifecycleShutdown,createLifecyclePort,packageIdentity} from './lifecycle/protocol.js';
+import {registerLifecycleRuntime,handleLifecycleShutdown,createLifecyclePort,packageIdentity} from '../packages/bot-lifecycle/src/contract/protocol.js';
 import {SessionId} from '@deepseek-ai/dsh-session';
 import {ServicePluginHost} from './core/service-plugin-host.js';
 import {ProfileStore,StoreProfileRepository} from './core/profile-store.js';
@@ -81,9 +81,12 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
   if(features.evolution.history().some(task=>['queued','draining','applying','restarting','reconnecting','rolling-back'].includes(task.phase)))runtime.pauseProcessing();
   await assets.migrate();await harness.exportHistory();await features.backfill({readSession:id=>ctx.sessionQuery.readSession(SessionId(id))});await runtime.initialize();store.start();
   const runtimePackageRoot=packageRoot();
-  detachLifecycle=registerLifecycleRuntime({packageRoot:runtimePackageRoot,quiesce:()=>runtime.quiesce(),resumeProcessing:()=>runtime.resumeProcessing(),health:()=>runtime.health()});
-  // The lifecycle bundle normally reports readiness. Emit the same authenticated
-  // signal here as a fallback for hosts that isolate bundle timers from IPC.
-  if(process.send&&process.env.BOT_LAUNCH_TOKEN)process.send({type:'bot-ready',nonce:process.env.BOT_LAUNCH_TOKEN,identity:packageIdentity(runtimePackageRoot)});
+  const runtimeIdentity=packageIdentity(runtimePackageRoot);
+  detachLifecycle=registerLifecycleRuntime({packageRoot:runtimePackageRoot,quiesce:()=>runtime.quiesce(),resumeProcessing:()=>runtime.resumeProcessing(),health:()=>runtime.health()},runtimeIdentity);
+  // The lifecycle bundle reports readiness only after the versioned handshake is
+  // compatible. The fallback carries the same serialized contract for launchers
+  // whose bundle timer cannot own IPC, and is ignored when compatibility fails.
+  const lifecycle=createLifecyclePort();const handshake=lifecycle.handshake();const compatibility=lifecycle.compatibility();
+  if(process.send&&process.env.BOT_LAUNCH_TOKEN&&handshake&&compatibility.compatible)process.send({type:'bot-ready',nonce:process.env.BOT_LAUNCH_TOKEN,identity:runtimeIdentity,lifecycle:{protocol:handshake.runtimeProtocol,mainVersion:handshake.packageVersion,coordinatorApi:compatibility.coordinator?.coordinatorApi,coordinatorVersion:compatibility.coordinator?.packageVersion,coordinatorIdentity:compatibility.coordinator?.artifactIdentity}});
   ctx.provide('botIntegration',runtime);
 }

@@ -6,7 +6,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {spawn} from 'node:child_process';
 import {createRequire} from 'node:module';
 import path from 'node:path';
-import {atomicJson,identity,bundleName} from './installation.mjs';
+import {atomicJson,identity,bundleName,verifyInstalledLifecycleCombination} from './installation.mjs';
 import {safeSubprocessEnv,redactEvidence,validateTestPython} from './test-environment.mjs';
 import {boundedOutput,createTestRoot,finalizeTestRoot,killProcessTree,spawnCapture} from './test-process.mjs';
 
@@ -22,6 +22,7 @@ try{
   await run('scripts/install.mjs',[root]);
   const installation=JSON.parse(await readFile(path.join(home,'installation.json'),'utf8'));
   assert.equal(installation.current.identity,sourceIdentity);assert.equal(installation.sourceRoot,root);assert.deepEqual(installation.layers,['core','basic-media']);
+  const lifecycleInstallation=JSON.parse(await readFile(path.join(home,'lifecycle-installation.json'),'utf8'));assert.equal(lifecycleInstallation.schemaVersion,1);assert.equal(lifecycleInstallation.current.main.identity,sourceIdentity);assert.equal(lifecycleInstallation.current.main.lifecycle.runtimeProtocol,'2.1.0');assert.equal(lifecycleInstallation.current.coordinator.lifecycle.coordinatorApi,'2.0.0');assert.equal((await verifyInstalledLifecycleCombination(home)).installed.compatibility.compatible,true);
   const profile=JSON.parse(await readFile(path.join(home,'profiles','bots','package.json'),'utf8'));
   assert.ok(profile.dsh.profile.bundles.includes('dsh-bot-lifecycle'));assert.ok(profile.dsh.profile.bundles.includes(bundleName));
   const installedRoot=path.join(home,'profiles','bots','node_modules',bundleName),lifecycleRoot=path.join(home,'profiles','bots','node_modules','dsh-bot-lifecycle');

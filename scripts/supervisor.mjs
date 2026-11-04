@@ -1,7 +1,7 @@
 /** Child ownership and authenticated restart protocol, separately testable without launching Harness. */
 export class Supervisor {
-  constructor({spawn,token,onExit=()=>{},recover=async()=>{},onError=()=>{},readTask=async()=>{},timeoutMs=90000,stopTimeoutMs=15000,forceKill=child=>child.kill('SIGKILL')}){
-    Object.assign(this,{spawn,token,onExit,recover,onError,readTask,timeoutMs,stopTimeoutMs,forceKill});this.stopping=false;this.restarting=false;this.recoveryAttempted=false;this.child=undefined;this.taskId=undefined;this.generation=0;
+  constructor({spawn,token,taskId,onExit=()=>{},recover=async()=>{},onError=()=>{},readTask=async()=>{},validateReady=async()=>true,timeoutMs=90000,stopTimeoutMs=15000,forceKill=child=>child.kill('SIGKILL')}){
+    Object.assign(this,{spawn,token,onExit,recover,onError,readTask,validateReady,timeoutMs,stopTimeoutMs,forceKill});this.stopping=false;this.restarting=false;this.recoveryAttempted=false;this.child=undefined;this.taskId=taskId;this.generation=0;
   }
   start(){
     this.generation++;const generation=this.generation;const child=this.spawn();this.child=child;this.restarting=false;this.healthy=false;
@@ -15,6 +15,7 @@ export class Supervisor {
     if(child!==this.child||!message||message.nonce!==this.token)return;
     if(message.type==='bot-ready'){
       if(this.taskId){const task=await this.readTask(this.taskId);const expected=task.rollbackAttempted?task.previous:task.artifact;if(expected&&message.identity!==expected.identity)return;}
+      if(!await this.validateReady(message))return;
       this.healthy=true;clearTimeout(this.healthTimer);return;
     }
     if(message.type!=='bot-restart'||this.stopping||this.restarting)return;

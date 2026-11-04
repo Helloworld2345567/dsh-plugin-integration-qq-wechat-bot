@@ -16,6 +16,8 @@
   },
   "include": [
     "src/**/*.ts",
+    "packages/bot-lifecycle/src/**/*.ts",
+    "packages/bot-lifecycle/src/**/*.mts",
     "tests/**/*.ts"
   ]
 }

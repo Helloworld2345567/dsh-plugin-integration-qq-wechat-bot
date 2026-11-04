@@ -78,6 +78,26 @@ Profile health 只代表当前可探测，不等于真实媒体结果已经通�
 - 人格与产品状态保存在 `BOT_HOME`。
 - 会话、附件索引、引擎缓存和默认机器人工作区位于 `BOT_WORKSPACE_ROOT`。
 - 凭据由 Harness credentials 服务管理，不写入发布文件。
-- 受管升级由独立 `dsh-bot-lifecycle` bundle 排空任务、安装已验证归档并在失败时尝试一次回滚。
+- `dsh-bot-lifecycle` 是独立 bundle，不是主插件内部服务；`installation.json` 保持既有 schema，`lifecycle-installation.json` 另行记录 current/previous 主包与 coordinator 的 archive hash、identity、package version 和 contract。
 
-架构决策见 [ADR 0001](adr/0001-delivery-modes.md)和 [ADR 0003](adr/0003-lifecycle-and-uncertain-outcomes.md)。
+### 只替换主包
+
+只有当前 coordinator 明确接受 candidate 的 runtime protocol、主包 package version 和 capabilities，且 candidate 明确接受当前 coordinator API/capabilities 时，才允许受管热更新。coordinator 会先校验 candidate/previous hash 和 contract，再排空任务；激活失败仍只恢复 previous 主包一次，不重放 unknown 外部结果。
+
+### 离线更新两个 bundle
+
+protocol major、coordinator API、双方 package range 或 required capability 需要变化时，旧 coordinator 不会尝试热替换自己。按以下顺序操作：
+
+```powershell
+node scripts/stop.mjs
+node scripts/install.mjs <package-directory-or-tgz>
+node scripts/start.mjs --port 3080
+```
+
+安装器在修改 profile 前验证双包兼容并要求 launcher 已停止；installer 与 launcher 通过产品级排他锁互斥。然后离线安装 coordinator 与主包，记录安全 journal，再核对两份 hash、identity、版本和 contract。中途失败只尝试一次 previous 主包→previous coordinator 恢复；强杀后须先重跑 installer 收敛非终态 journal。旧归档 hash 不匹配时保持停机，不能删除 journal、猜测版本或只手工替换其中一个。锁文件的人工归档条件见[排障文档](troubleshooting.md#11-安装后升级或回滚失败)。
+
+### 不兼容恢复
+
+遇到 `LIFECYCLE_*` 错误时：保持 profile 停止；保留 `installation.json`、`lifecycle-installation.json`、`lifecycle-installations/`、`evolution/` 和 package archives；从可信源码或已验证归档重新运行安装器；只有启动检查通过后再启动 launcher。旧安装缺少 `lifecycle-installation.json` 不会静默迁移，必须走上述停机双包安装。
+
+架构决策见 [ADR 0001](adr/0001-delivery-modes.md)、[ADR 0003](adr/0003-lifecycle-and-uncertain-outcomes.md)和 [ADR 0004](adr/0004-lifecycle-bundle-compatibility.md)。

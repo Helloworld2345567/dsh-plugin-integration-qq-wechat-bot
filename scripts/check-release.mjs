@@ -1,9 +1,11 @@
 import {spawnSync} from 'node:child_process';
 import {readFile,readdir} from 'node:fs/promises';
 import {isReleaseTextFile,scanReleaseText,validateReleaseEntry} from './release-safety.mjs';
+import {verifyLifecycleBuild} from '../packages/bot-lifecycle/scripts/verify-build.mjs';
 
 const packageJson=JSON.parse(await readFile('package.json','utf8'));
 if(!packageJson.files?.includes('.env.example'))throw new Error('package.json files must explicitly include .env.example');
+await verifyLifecycleBuild('packages/bot-lifecycle');
 
 const npmCli=process.env.npm_execpath;
 const windowsCommandFallback=process.platform==='win32'&&!npmCli;
@@ -43,8 +45,9 @@ for(const script of ['image_transform.py','video_transform.py','transform_common
 for(const expected of ['python/rvc_service.py','python/rvc_runner.py','python/separation_runner.py','python/singing_common.py','python/singing_worker.py','skills/singing-conversion/SKILL.md','skills/singing-conversion/operations.json','skills/singing-conversion/scripts/entry.py'])if(!files.includes(expected))throw new Error(`Missing STS runtime file: ${expected}`);
 for(const expected of ['docs/singing-conversion-plan.md'])if(!files.includes(expected))throw new Error(`Missing STS documentation: ${expected}`);
 for(const expected of ['python/audio_output.py','skills/music-download/SKILL.md','skills/music-download/operations.json','skills/music-download/scripts/entry.py','docs/music-integration.md'])if(!files.includes(expected))throw new Error(`Missing music runtime file: ${expected}`);
-for(const expected of ['docs/install-existing-harness.md','docs/deploy-product-profile.md','docs/adr/0001-delivery-modes.md','docs/adr/0002-trusted-adapters-and-profiles.md','docs/adr/0003-lifecycle-and-uncertain-outcomes.md'])if(!files.includes(expected))throw new Error(`Missing delivery or architecture decision document: ${expected}`);
+for(const expected of ['docs/install-existing-harness.md','docs/deploy-product-profile.md','docs/adr/0001-delivery-modes.md','docs/adr/0002-trusted-adapters-and-profiles.md','docs/adr/0003-lifecycle-and-uncertain-outcomes.md','docs/adr/0004-lifecycle-bundle-compatibility.md'])if(!files.includes(expected))throw new Error(`Missing delivery or architecture decision document: ${expected}`);
 for(const expected of ['locale/zh.json','icon.svg','packages/bot-lifecycle/locale/zh.json','packages/bot-lifecycle/icon.svg'])if(!files.includes(expected))throw new Error(`Missing plugin display resource: ${expected}`);
+for(const expected of ['packages/bot-lifecycle/src/index.ts','packages/bot-lifecycle/src/coordinator.ts','packages/bot-lifecycle/src/contract/protocol.ts','packages/bot-lifecycle/src/contract/compatibility.mjs','packages/bot-lifecycle/scripts/build.mjs','packages/bot-lifecycle/scripts/verify-build.mjs','packages/bot-lifecycle/dist/lifecycle-build.json'])if(!files.includes(expected))throw new Error(`Missing lifecycle source, contract or build evidence: ${expected}`);
 if(files.includes('docs/capability-service-plugin-plan.md'))throw new Error('Removed implementation plan returned to the package');
 if(files.includes('fix_plan.md')||files.some(file=>/(?:^|\/)(?:node_modules|\.codex|\.runtime|outputs|coverage|data|artifacts|tests?|fixtures?)(?:\/|$)/i.test(file)))throw new Error('Runtime, test, temporary or ignored file returned to the package');
 if(files.some(file=>/(?:\.db|\.sqlite|\.log|\.tgz|\.pyc|\.env(?:\.|$))/i.test(file)&&file!=='.env.example'))throw new Error('Database, log, credential or temporary archive returned to the package');

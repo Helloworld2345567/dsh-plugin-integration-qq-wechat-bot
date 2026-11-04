@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,existsSync,readFileSync,readdirSync,renameSync,rmSync} from 'node:fs';
 import path from 'node:path';
 import {EvolutionService,cleanValidationEnv,sourceFiles,sourceDigest,type ValidationCommand} from '../src/core/evolution.js';
-import {atomicJson,packageIdentity,sha256} from '../src/lifecycle/protocol.js';
-import {replaceFileSync} from '../src/core/evolution-contract.js';
+import {atomicJson,packageIdentity,sha256,lifecycleDeclaration} from '../packages/bot-lifecycle/src/contract/protocol.js';
+import {replaceFileSync} from '../packages/bot-lifecycle/src/contract/evolution-contract.js';
 
 function fixture(t:any){
   mkdirSync('.codex',{recursive:true});const root=mkdtempSync(path.resolve('.codex/evolution-test-'));const source=path.join(root,'project');const home=path.join(root,'home');
   const write=(file:string,value:string)=>{mkdirSync(path.dirname(file),{recursive:true});writeFileSync(file,value);};
-  for(const [name,value] of Object.entries({'package.json':'{"name":"test-package","version":"1.0.0"}','package-lock.json':'{}','requirements.txt':'base','requirements-voice-generation.txt':'voice','requirements-ci.txt':'base-ci','requirements-voice-generation-ci.txt':'voice-ci','requirements-audit-ci.txt':'audit-ci','cordis.patch.yml':'test','src/index.ts':'original dirty source','scripts/build.mjs':'protected build','src/lifecycle/index.ts':'protected coordinator','dist/index.js':'old code','dist/client.js':'client'}))write(path.join(source,name),value);
+  const mainManifest={name:'dsh-plugin-integration-qq-wechat-bot',version:'0.2.10',files:['dist/*.js','cordis.patch.yml'],dshLifecycle:{schemaVersion:1,role:'main',runtimeProtocol:'2.1.0',coordinatorApiRange:'>=2.0.0 <3.0.0',capabilities:['runtime.health','runtime.quiesce','runtime.resume','upgrade.main-hot'],requiredCoordinatorCapabilities:['coordinator.tick','upgrade.main-hot','upgrade.offline-pair']}};
+  for(const [name,value] of Object.entries({'package.json':JSON.stringify(mainManifest),'package-lock.json':'{}','requirements.txt':'base','requirements-voice-generation.txt':'voice','requirements-ci.txt':'base-ci','requirements-voice-generation-ci.txt':'voice-ci','requirements-audit-ci.txt':'audit-ci','cordis.patch.yml':'test','src/index.ts':'original dirty source','scripts/build.mjs':'protected build','packages/bot-lifecycle/src/index.ts':'protected coordinator','dist/index.js':'old code','dist/client.js':'client'}))write(path.join(source,name),value);
   write(path.join(source,'.runtime','credentials.json'),'secret');write(path.join(source,'node_modules','test','index.js'),'excluded');write(path.join(source,'.env'),'secret');
   const archive=path.join(home,'old.tgz');write(archive,'old archive');
   atomicJson(path.join(home,'installation.json'),{schemaVersion:1,sourceRoot:source,projectRoot:source,sourceDigest:sourceDigest(sourceFiles(source)),installedFrom:archive,current:{path:archive,sha256:sha256(archive),identity:packageIdentity(source)},updatedAt:Date.now()});
@@ -19,8 +20,10 @@ function fixture(t:any){
     if(command.name==='build'){write(path.join(cwd,'dist/index.js'),'new code');write(path.join(cwd,'dist/client.js'),'client');}
     if(command.name==='pack'){write(path.join(path.dirname(cwd),'new.tgz'),'new archive');return JSON.stringify([{filename:'new.tgz'}]);}return'PASS';
   };
-  const service=new EvolutionService({home,saveEvolutionTask:()=>{}},source,{available:()=>true,run:runner});
-  t.after(()=>rmSync(root,{recursive:true,force:true}));return{root,source,home,write,service,commands,runner};
+  const coordinator=lifecycleDeclaration({name:'dsh-bot-lifecycle',version:'0.2.0',dshLifecycle:{schemaVersion:1,role:'coordinator',coordinatorApi:'2.0.0',runtimeProtocolRange:'>=2.0.0 <3.0.0',mainPackageRange:'>=0.2.10 <0.3.0',capabilities:['coordinator.tick','runtime.health','runtime.quiesce','runtime.resume','upgrade.main-hot','upgrade.offline-pair'],requiredMainCapabilities:['runtime.health','runtime.quiesce','runtime.resume','upgrade.main-hot']}},'coordinator') as any;
+  const lifecycle={available:()=>true,handshake:()=>({protocol:'dsh.lifecycle',...lifecycleDeclaration(mainManifest,'main'),instance:'fixture-instance',artifactIdentity:'a'.repeat(64)} as any),compatibility:()=>({compatible:true,code:'LIFECYCLE_COMPATIBLE',diagnostic:'fixture',main:lifecycleDeclaration(mainManifest,'main') as any,coordinator,negotiatedCapabilities:[]})};
+  const service=new EvolutionService({home,saveEvolutionTask:()=>{}},source,{lifecycle,run:runner});
+  t.after(()=>rmSync(root,{recursive:true,force:true}));return{root,source,home,write,service,commands,runner,lifecycle};
 }
 
 test('Windows atomic lifecycle replacement retries transient file ownership without hiding permanent failures',()=>{
@@ -75,7 +78,7 @@ test('missing coordinator refuses self-modification while trusted admin may repa
 });
 test('orphaned validation is recovered as failed with retained evidence and can be retried',async t=>{
   const f=fixture(t);const task=f.service.create('scope','sakura','resume');task.phase='validating';task.validation=[{name:'typecheck',status:'PASS',log:'retained.log'}];f.service.journal.write(task);
-  const resumed=new EvolutionService({home:f.home,saveEvolutionTask:()=>{}},f.source,{available:()=>true,run:f.runner});assert.equal(resumed.inspect(task.id).phase,'failed');assert.equal(resumed.inspect(task.id).validation?.[0].log,'retained.log');
+  const resumed=new EvolutionService({home:f.home,saveEvolutionTask:()=>{}},f.source,{lifecycle:f.lifecycle,run:f.runner});assert.equal(resumed.inspect(task.id).phase,'failed');assert.equal(resumed.inspect(task.id).validation?.[0].log,'retained.log');
   assert.equal((await resumed.validate(task.id)).phase,'validated');
 });
 test('installer records the same complete source digest and shipped-file identity as runtime',async t=>{

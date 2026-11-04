@@ -11,7 +11,7 @@
 | `npm test` | 隔离的 TypeScript 纯逻辑/fixture 测试 | 使用临时 `.codex` 目录；启动受限 Node/Python 子进程 | 否 | 视 fixture 而定 | 个别媒体 fixture 使用测试解释器 | 默认不允许真实外网；网络测试只用 fixture/local server | 禁止 | Node test 全部通过；失败只保留短的脱敏输出 |
 | `npm run test:python` | Python worker、媒体限制与协议单元测试 | Python unittest 临时输出；不保留运行数据 | 否 | 依测试而定 | 是，3.12/3.13 | 禁止真实服务 | 禁止 | `OK`；Python traceback 不得含凭据/绝对路径 |
 | `npm run check:python-dependencies` | 需求语法、pip check、基础包检查 | 只读；启动受限 Python 子进程 | 否 | 否 | 是 | 默认不允许安装/下载 | 禁止 | JSON `PASS` 或明确缺包；optional 缺失不冒充基础失败 |
-| `npm run build` | 生成 `dist/` 和 lifecycle bundle | 修改被 Git/npm 排除的构建目录；esbuild 子进程/worker | 否 | 否 | 否 | 否 | 禁止 | 构建成功；失败日志必须脱敏 |
+| `npm run build` | 生成主包 `dist/`，并由 lifecycle 子包自己的源码入口生成 bundle、contract export 与源码/输出摘要 | 修改被 Git/npm 排除的构建目录；esbuild 子进程/worker | 否 | 否 | 否 | 否 | 禁止 | 构建成功；陈旧 lifecycle dist 或摘要变化必须失败 |
 | `npm run check:docs` | Markdown 链接、锚点、CI YAML 与文档入口 | 只读 | 否 | 否 | 否 | 否 | 禁止 | JSON `PASS`；失败指出文档相对路径 |
 | `npm run check:contracts` | 文档、npm scripts、CI 版本和测试隔离契约一致性 | 只读 | 否 | 否 | 否 | 否 | 禁止 | JSON `PASS`；失败指出漂移的命令、版本或 runner |
 | `npm run check:licenses` | npm/Python 许可证与来源契约 | 只读或读取已安装元数据 | 否 | 否 | 可选 | 否 | 禁止 | JSON `PASS`；证据不得含用户路径/凭据 |
@@ -19,8 +19,10 @@
 | `npm run verify:release` | 统一源码发布门禁：架构、类型、TS/Python 测试、依赖、构建、文档、许可证、归档检查 | 只允许既有被排除的 `dist/`/临时目录 | 否 | 否 | 是 | 否 | 禁止 | 所有阶段成功；按失败阶段保留脱敏摘要 |
 | `npm run release:pack` | 先运行同一 `verify:release`，再实际生成、校验并清理临时 npm 归档 | 临时目录和归档必须在 `finally` 清理 | 否 | 否 | 否 | 否 | 禁止 | JSON 含归档摘要/hash，不上传原始运行数据 |
 | `npm run test:native` | Harness 原生插件集成：真实 loop、持久化、fixture provider | 临时 profile/workspace、受限子进程；失败才保留脱敏证据 | 是，临时 profile | 仅 fixture 需要 | 测试解释器 | 禁止真实平台/外部模型 | 仅明显假的 fixture credential | `status: PASS`；证据目录只含脱敏摘要 |
-| `npm run test:lifecycle-native` | lifecycle 原生安装、升级、排空、回滚握手 | 临时 profile、动态端口、子进程树必须停止 | 是，临时 profile | 否 | 测试解释器 | 禁止真实服务 | 仅 fixture 值 | `status: PASS`；失败保留必要脱敏日志，不保留 token/数据库 |
+| `npm run test:lifecycle-native` | lifecycle 原生安装、版本握手、主包热升级、排空、监督重启和一次回滚 | 临时 profile、动态端口、子进程树必须停止 | 是，临时 profile | 否 | 测试解释器 | 禁止真实服务 | 仅 fixture 值 | `status: PASS`；coordinator 在主包卸载后保持存活；失败保留必要脱敏日志，不保留 token/数据库 |
 | `npm run test:install-smoke` | 实际 npm 包/安装器/监督启动与重启 smoke | 空产品 home、临时 workspace、动态端口；失败才保留证据 | 是，临时 profile | 否 | `BOT_TEST_PYTHON` 指定解释器 | 仅本机 smoke；禁止外部平台 | 禁止 | `status: PASS` 且零 bot；验证 launcher state 清理 |
+
+Lifecycle 单元/原生/安装测试覆盖：完全兼容、protocol major 不兼容、coordinator 太旧、主包太旧、compatible minor capability 协商、缺失/伪造元数据、capability-free 旧组合、允许的主包热替换、必须离线双包升级的拒绝、启动 identity/version/hash 检查、排空后的监督重启、激活失败恢复 previous artifact、离线双包中途失败的一次回滚、源码/output 摘要漂移和 identity pattern 越界。测试不导入或发送 QQ／微信消息。
 
 `npm run check:environment` 是测试前的只读预检，不替代上述门禁。它检查操作系统、Node 24+、Harness `0.2.1-rc.2`、Python 3.12/3.13、ffmpeg/ffprobe、基础 Python 依赖和 lockfile；voice-generation 缺失显示 `OPTIONAL`，不阻止基础流程。
 

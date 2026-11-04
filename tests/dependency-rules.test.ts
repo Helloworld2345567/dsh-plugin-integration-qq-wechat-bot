@@ -63,6 +63,13 @@ test('service adapters and channels cannot own Store, SQLite, Session, identity 
   assert.ok(result.violations.some(item=>item.rule==='channel-isolation'&&item.target==='src/core/sqlite-stats-data.ts'));
 });
 
+test('lifecycle source is package-owned and cannot import or send QQ or WeChat messages',()=>{
+  const entries=[
+    {path:'packages/bot-lifecycle/src/index.ts',source:readFileSync(path.resolve('packages/bot-lifecycle/src/index.ts'),'utf8')},
+    {path:'packages/bot-lifecycle/src/coordinator.ts',source:readFileSync(path.resolve('packages/bot-lifecycle/src/coordinator.ts'),'utf8')},
+  ];const result=analyze(entries);assert.deepEqual(result.violations,[]);for(const entry of entries){assert.doesNotMatch(entry.source,/QQAdapter|WeixinAdapter|sendMessage|send_file|deliveryWorker/);assert.doesNotMatch(entry.source,/\.\.\/\.\.\/\.\.\/src\//);}
+});
+
 test('architecture graph rejects package escapes and unknown dynamic import or require targets',()=>{
   const result=analyze([
     {path:'packages/example/src/index.ts',source:"import '../../../src/core/types.js'; const target='./runtime.js'; void import(target);"},

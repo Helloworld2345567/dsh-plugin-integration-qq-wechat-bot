@@ -1,14 +1,15 @@
 import {randomUUID} from 'node:crypto';
-import {existsSync,mkdirSync,copyFileSync,realpathSync,writeFileSync,lstatSync} from 'node:fs';
+import {existsSync,mkdirSync,copyFileSync,realpathSync,writeFileSync,lstatSync,readFileSync} from 'node:fs';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import type {Store} from './store.js';
-import {LifecycleJournal,defaultProductHome,readInstallation,packageIdentity,sha256,verifyArtifact,type EvolutionTask} from './evolution-contract.js';
+import {LifecycleJournal,defaultProductHome,readInstallation,packageIdentity,sha256,verifyArtifact,type EvolutionTask} from '../../packages/bot-lifecycle/src/contract/evolution-contract.js';
 import type {EvolutionJournalPort,LifecyclePort} from './runtime-ports.js';
-import {sourceFiles,sourceDigest} from './source-integrity.js';
-export {sourceFiles,sourceDigest} from './source-integrity.js';
+import {sourceFiles,sourceDigest} from '../../packages/bot-lifecycle/src/contract/source-integrity.js';
+import {planMainReplacement,lifecycleDeclaration,type MainLifecycleDeclaration} from '../../packages/bot-lifecycle/src/contract/compatibility.mjs';
+export {sourceFiles,sourceDigest} from '../../packages/bot-lifecycle/src/contract/source-integrity.js';
 
-const protectedFile=(file:string)=>/^(?:scripts\/|src\/lifecycle\/|packages\/bot-lifecycle\/|tests\/(?:native-plugin|lifecycle-native-plugin|evolution\.test|lifecycle\.test)\.ts$|package(?:-lock)?\.json$|tsconfig\.json$|requirements\.txt$|cordis\.patch\.yml$)/.test(file);
+const protectedFile=(file:string)=>/^(?:scripts\/|packages\/bot-lifecycle\/|tests\/(?:native-plugin|lifecycle-native-plugin|evolution\.test|lifecycle\.test)\.ts$|package(?:-lock)?\.json$|tsconfig\.json$|requirements\.txt$|cordis\.patch\.yml$)/.test(file);
 export function cleanValidationEnv(home:string):NodeJS.ProcessEnv{
   const env:NodeJS.ProcessEnv={};for(const [key,value] of Object.entries(process.env))if(/^(?:PATH|PATHEXT|SystemRoot|WINDIR|COMSPEC|TEMP|TMP|HOME|USERPROFILE|LOCALAPPDATA|APPDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROCESSOR_ARCHITECTURE)$/i.test(key))env[key]=value;
   return{...env,HOME:home,USERPROFILE:home,APPDATA:path.join(home,'appdata'),LOCALAPPDATA:path.join(home,'localappdata'),BOT_HOME:home,DSH_HOME:home,DSH_AGENTS_HOME:path.join(home,'agents'),BOT_DATA_HOME:path.join(home,'storages','bot-integration'),BOT_WORKSPACE_ROOT:path.join(home,'workspaces'),CI:'1',npm_config_userconfig:path.join(home,'empty.npmrc'),npm_config_audit:'false',npm_config_fund:'false'};
@@ -16,6 +17,7 @@ export function cleanValidationEnv(home:string):NodeJS.ProcessEnv{
 export interface ValidationCommand {name:string;file:string;args:string[]}
 export interface EvolutionOptions {productHome?:string;run?:(command:ValidationCommand,cwd:string,env:NodeJS.ProcessEnv,signal?:AbortSignal)=>Promise<string>;available?:()=>boolean;lifecycle?:LifecyclePort}
 export interface EvolutionCreateOptions {trustedAdmin?:boolean}
+function artifactLifecycle(root:string){const manifest=JSON.parse(readFileSync(path.join(root,'package.json'),'utf8'));return{packageVersion:String(manifest.version),lifecycle:lifecycleDeclaration(manifest,'main') as MainLifecycleDeclaration};}
 function npmCli():string{
   const candidates=[process.env.npm_execpath,path.join(path.dirname(process.execPath),'node_modules/npm/bin/npm-cli.js'),path.resolve(path.dirname(process.execPath),'../lib/node_modules/npm/bin/npm-cli.js')];
   const found=candidates.find(p=>p&&path.basename(p)==='npm-cli.js'&&existsSync(p));if(!found)throw Error('npm CLI not found beside Node; launch via npm or install npm for this Node runtime');return found;
@@ -47,8 +49,8 @@ export class EvolutionService {
     const available=this.options.lifecycle?.available??this.options.available??(()=>false);
     if(!available())throw Error('Independent lifecycle coordinator is unavailable or protocol-incompatible; reinstall with scripts/install.mjs and start with scripts/start.mjs');
     if(this.options.lifecycle){
-      const handshake=this.options.lifecycle.handshake();
-      if(!handshake||handshake.protocol!=='dsh.lifecycle'||handshake.version!==1||!handshake.capabilities.includes('runtime.quiesce')||!handshake.capabilities.includes('runtime.health')||!handshake.capabilities.includes('runtime.resume'))throw Error('LIFECYCLE_HANDSHAKE_UNAVAILABLE');
+      const handshake=this.options.lifecycle.handshake(),compatibility=this.options.lifecycle.compatibility();
+      if(!handshake||handshake.protocol!=='dsh.lifecycle'||!compatibility.compatible||!handshake.capabilities.includes('runtime.quiesce')||!handshake.capabilities.includes('runtime.health')||!handshake.capabilities.includes('runtime.resume'))throw Error(`LIFECYCLE_HANDSHAKE_UNAVAILABLE: ${compatibility.code}`);
     }
   }
   history():EvolutionTask[]{return this.journal.list();}
@@ -69,7 +71,8 @@ export class EvolutionService {
     const baseline=sourceFiles(sourceRoot);
     for(const file of Object.keys(baseline)){const target=path.join(candidateRoot,file);mkdirSync(path.dirname(target),{recursive:true});copyFileSync(path.join(sourceRoot,file),target);}
     if(sourceDigest(sourceFiles(sourceRoot))!==sourceDigest(baseline))throw Error('Source changed while creating candidate; retry');
-    const task:EvolutionTask={id,kind:'upgrade',scopeKey,configId,goal:goal.trim(),phase:'draft',createdAt:Date.now(),updatedAt:Date.now(),candidateRoot,sourceRoot,projectRoot,baseline,protectedFiles:Object.fromEntries(Object.entries(baseline).filter(([file])=>protectedFile(file))),sourceDigest:sourceDigest(baseline),previous:installation.current,events:[]};
+    const previous={...installation.current,...artifactLifecycle(this.installedPackageRoot)};
+    const task:EvolutionTask={id,kind:'upgrade',scopeKey,configId,goal:goal.trim(),phase:'draft',createdAt:Date.now(),updatedAt:Date.now(),candidateRoot,sourceRoot,projectRoot,baseline,protectedFiles:Object.fromEntries(Object.entries(baseline).filter(([file])=>protectedFile(file))),sourceDigest:sourceDigest(baseline),previous,events:[]};
     return this.save(task);
   }
   private assertCandidate(task:EvolutionTask):Record<string,string>{
@@ -100,7 +103,7 @@ export class EvolutionService {
       if(before!==sourceDigest(this.assertCandidate(task)))throw Error('Candidate source changed during validation');
       signal?.throwIfAborted();const output=await(this.options.run??run)({name:'pack',file:process.execPath,args:[npm,'pack','--ignore-scripts','--json','--pack-destination',path.dirname(cwd)]},cwd,env,signal);
       const packed=JSON.parse(output);if(!Array.isArray(packed)||packed.length!==1||path.basename(packed[0].filename)!==packed[0].filename)throw Error('Invalid npm pack result');
-      const archive=path.join(path.dirname(cwd),packed[0].filename);task.artifact={path:archive,sha256:sha256(archive),identity:packageIdentity(cwd)};
+      const archive=path.join(path.dirname(cwd),packed[0].filename);task.artifact={path:archive,sha256:sha256(archive),identity:packageIdentity(cwd),...artifactLifecycle(cwd)};
       task.validatedDigest=before;if(before!==sourceDigest(this.assertCandidate(task)))throw Error('Candidate changed while packing');
       task.error=undefined;return this.journal.phase(task,'validated','All required checks passed; immutable package archived');
     }catch(error){task.error=error instanceof Error?error.message:String(error);this.journal.phase(task,'failed',task.error);throw error;}finally{this.validating.delete(id);}
@@ -109,8 +112,10 @@ export class EvolutionService {
     this.available();const task=this.journal.read(id);if(task.phase!=='validated'||!task.artifact||!task.validatedDigest)throw Error('Validate candidate before applying');
     if(sourceDigest(this.assertCandidate(task))!==task.validatedDigest||packageIdentity(task.candidateRoot!)!==task.artifact.identity)throw Error('Validated candidate changed; validate again');
     verifyArtifact(task.artifact);verifyArtifact(task.previous!);
+    const coordinator=this.options.lifecycle?.compatibility().coordinator;if(!coordinator||!task.artifact.lifecycle)throw Error('LIFECYCLE_METADATA_MISSING: candidate or coordinator metadata is unavailable');
+    const plan=planMainReplacement(task.artifact.lifecycle,coordinator);if(plan.mode!=='main-hot')throw Error(`${plan.code}: ${plan.cause??plan.diagnostic}; stop the launcher and run the trusted installer for both bundles`);
     if(readInstallation(this.productHome).current.sha256!==task.previous!.sha256)throw Error('Installed baseline changed; create a new candidate');
-    this.rejectPending();return this.journal.phase(task,'queued','Apply queued; coordinator will drain after the current tool returns');
+    this.rejectPending();return this.journal.phase(task,'queued','Compatible main-only apply queued; coordinator will drain after the current tool returns');
   }
   private rejectPending():void{if(this.journal.list().some(t=>['queued','draining','applying','restarting','reconnecting','rolling-back'].includes(t.phase)))throw Error('Another lifecycle operation is pending');}
   queueRestart(scopeKey:string,configId:string):EvolutionTask{

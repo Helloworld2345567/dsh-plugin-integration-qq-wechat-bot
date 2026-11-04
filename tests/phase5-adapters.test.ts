@@ -7,7 +7,7 @@ import {MediaOperationRegistry} from '../src/core/media-operation-registry.js';
 import {MediaService} from '../src/core/media.js';
 import {Store} from '../src/core/store.js';
 import {validateMediaWorkerJob,MEDIA_WORKER_PROTOCOL,MEDIA_WORKER_PROTOCOL_VERSION,type MediaWorkerJob} from '../src/core/worker-port.js';
-import {lifecycleAvailable,lifecycleRuntime,markLifecycleAvailable,registerLifecycleRuntime} from '../src/lifecycle/protocol.js';
+import {lifecycleAvailable,lifecycleRuntime,markLifecycleAvailable,registerLifecycleRuntime,packageIdentity} from '../packages/bot-lifecycle/src/contract/protocol.js';
 import {EvolutionService} from '../src/core/evolution.js';
 
 test('capability registry applies authorization and scope concurrency',async()=>{
@@ -49,25 +49,24 @@ test('Store lifecycle stages are explicit and ordered',async()=>{
 });
 
 test('lifecycle handshake fails closed until coordinator and runtime agree',()=>{
-  const runtime={packageRoot:'fixture',quiesce:async()=>{},resumeProcessing:()=>{},health:()=>({ready:true})};
-  const previousCoordinator=(globalThis as any)[Symbol.for('sakura.lifecycle.coordinator')];const previousHandshake=(globalThis as any).__DSH_LIFECYCLE_HANDSHAKE__;
+  const mainRoot=path.resolve('.'),coordinatorRoot=path.resolve('packages/bot-lifecycle');
+  const runtime={packageRoot:mainRoot,quiesce:async()=>{},resumeProcessing:()=>{},health:()=>({ready:true})};
+  const coordinatorKey=Symbol.for('sakura.lifecycle.coordinator'),anchorKey=Symbol.for('sakura.lifecycle.coordinator.anchor');
+  const previousCoordinator=(globalThis as any)[coordinatorKey],previousAnchor=(globalThis as any)[anchorKey],previousProcess=(process as any).__DSH_LIFECYCLE_COORDINATOR__,previousHandshake=(globalThis as any).__DSH_LIFECYCLE_HANDSHAKE__;
   try{
-    delete (globalThis as any)[Symbol.for('sakura.lifecycle.coordinator')];delete (globalThis as any).__DSH_LIFECYCLE_HANDSHAKE__;
-    (globalThis as any).__DSH_LIFECYCLE_HANDSHAKE__={protocol:'dsh.lifecycle',version:99,instance:'stale',capabilities:['runtime.quiesce']};
-    assert.equal(lifecycleAvailable(),false);
-    (globalThis as any).__DSH_LIFECYCLE_HANDSHAKE__={protocol:'dsh.lifecycle',version:1,instance:'orphan',capabilities:['runtime.health'],runtime};
-    assert.equal(lifecycleAvailable(),false);assert.equal(lifecycleRuntime(),undefined);
+    delete (globalThis as any)[coordinatorKey];delete (globalThis as any)[anchorKey];delete (process as any).__DSH_LIFECYCLE_COORDINATOR__;delete (globalThis as any).__DSH_LIFECYCLE_HANDSHAKE__;
+    (globalThis as any).__DSH_LIFECYCLE_HANDSHAKE__={protocol:'dsh.lifecycle',version:99,instance:'stale',capabilities:['runtime.quiesce']};assert.equal(lifecycleAvailable(),false);
     delete (globalThis as any).__DSH_LIFECYCLE_HANDSHAKE__;
-    const incompatible={protocol:'dsh.lifecycle',version:99,instance:'old',capabilities:['coordinator.tick']};
-    (globalThis as any)[Symbol.for('sakura.lifecycle.coordinator')]=incompatible;
-    markLifecycleAvailable(true);assert.equal(lifecycleAvailable(),false);assert.equal(incompatible.version,99);
-    const blocked=registerLifecycleRuntime(runtime);assert.equal(lifecycleAvailable(),false);assert.equal(incompatible.version,99);blocked();
-    delete (globalThis as any)[Symbol.for('sakura.lifecycle.coordinator')];
-    markLifecycleAvailable(true);assert.equal(lifecycleAvailable(),false);
-    const dispose=registerLifecycleRuntime(runtime);assert.equal(lifecycleAvailable(),true);
-    dispose();assert.equal(lifecycleAvailable(),false);
+    const incompatible={protocol:'dsh.lifecycle',version:99,instance:'old',capabilities:['coordinator.tick']};(globalThis as any)[coordinatorKey]=incompatible;
+    assert.equal(markLifecycleAvailable(true,coordinatorRoot,packageIdentity(coordinatorRoot)).compatible,false);assert.equal(incompatible.version,99);
+    delete (globalThis as any)[coordinatorKey];
+    const waiting=markLifecycleAvailable(true,coordinatorRoot,packageIdentity(coordinatorRoot));assert.equal(waiting.compatible,false);assert.equal(waiting.code,'LIFECYCLE_METADATA_MISSING');
+    const dispose=registerLifecycleRuntime(runtime,packageIdentity(mainRoot));assert.equal(lifecycleAvailable(),true);assert.equal(lifecycleRuntime(),runtime);
+    markLifecycleAvailable(false);assert.equal(lifecycleAvailable(),false);assert.throws(()=>registerLifecycleRuntime(runtime,packageIdentity(mainRoot)),/LIFECYCLE_METADATA_INVALID/);dispose();
   }finally{
-    if(previousCoordinator===undefined)delete (globalThis as any)[Symbol.for('sakura.lifecycle.coordinator')];else (globalThis as any)[Symbol.for('sakura.lifecycle.coordinator')]=previousCoordinator;
+    if(previousCoordinator===undefined)delete (globalThis as any)[coordinatorKey];else (globalThis as any)[coordinatorKey]=previousCoordinator;
+    if(previousAnchor===undefined)delete (globalThis as any)[anchorKey];else (globalThis as any)[anchorKey]=previousAnchor;
+    if(previousProcess===undefined)delete (process as any).__DSH_LIFECYCLE_COORDINATOR__;else (process as any).__DSH_LIFECYCLE_COORDINATOR__=previousProcess;
     if(previousHandshake===undefined)delete (globalThis as any).__DSH_LIFECYCLE_HANDSHAKE__;else (globalThis as any).__DSH_LIFECYCLE_HANDSHAKE__=previousHandshake;
   }
 });
@@ -75,7 +74,7 @@ test('lifecycle handshake fails closed until coordinator and runtime agree',()=>
 test('evolution rejects an injected incompatible lifecycle port',async()=>{
   const home=await mkdtemp(path.resolve('.codex/phase5-evolution-'));
   try {
-    const service=new EvolutionService({home,saveEvolutionTask:()=>{}},home,{lifecycle:{available:()=>true,handshake:()=>({protocol:'dsh.lifecycle',version:99,instance:'bad',capabilities:[]})}});
+    const service=new EvolutionService({home,saveEvolutionTask:()=>{}},home,{lifecycle:{available:()=>true,handshake:()=>undefined,compatibility:()=>({compatible:false,code:'LIFECYCLE_PROTOCOL_INCOMPATIBLE',diagnostic:'fixture',negotiatedCapabilities:[]})}});
     assert.throws(()=>service.create('scope','config','goal'),/LIFECYCLE_HANDSHAKE_UNAVAILABLE/);
   } finally { await rm(home,{recursive:true,force:true}); }
 });

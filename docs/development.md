@@ -37,7 +37,7 @@ npm run check:licenses
 npm run check:release
 ```
 
-`check:architecture` 是只读、离线的静态模块图门禁；它检查 runtime import 循环、client/core/channel/Harness/lifecycle/Service Adapter/测试/package 边界以及构建入口漂移，输出仅包含仓库相对路径。完整规则见[架构边界契约](architecture-boundaries.md)。
+`check:architecture` 是只读、离线的静态模块图门禁；它检查 runtime import 循环、client/core/channel/Harness/lifecycle/Service Adapter/测试/package 边界以及构建入口漂移。它还要求 lifecycle 从 `packages/bot-lifecycle/src/index.ts` 构建、子包不越界导入根 `src/`、主包/coordinator 都声明版本化 contract、发布 export/files 完整且旧 `src/lifecycle/` 不得复活。输出仅包含仓库相对路径。完整规则见[架构边界契约](architecture-boundaries.md)。
 
 `check:environment` 是只读、离线优先的预检：它不会修改 Harness profile、安装依赖、启动平台连接或打印环境变量。可选 `voice-generation` 缺失只显示 `OPTIONAL`，基础 Python 依赖、Python 版本、Node/Harness 版本、FFmpeg/ffprobe 或 lockfile 缺失才会阻止流程。
 
@@ -61,10 +61,12 @@ npm run test:install-smoke
 | `src/` | TypeScript 运行时、渠道适配器、管理 API 与管理面板 |
 | `python/` | 媒体 worker 与受控 Python 运行组件 |
 | `skills/` | 图片和媒体技能及其操作脚本 |
-| `packages/` | 可独立安装的辅助 bundle，例如 lifecycle |
+| `packages/bot-lifecycle/src/` | coordinator、integrity、protocol、bundle entry 和双方共享的版本化 contract 单一源码；不得导入根 `src/` |
 | `scripts/` | 构建、安装、启动、发布门禁和测试辅助脚本 |
 | `tests/` | TypeScript、Python、Harness fixture 与契约测试 |
 | `docs/` | 用户、贡献者、运维和架构文档 |
+
+根 `npm run build` 会调用 lifecycle 子包自己的 `scripts/build.mjs`，生成源码摘要和输出 hash；`npm --prefix packages/bot-lifecycle run verify:build` 在 prepack 前拒绝陈旧 dist。不得手工复制 protocol、identity 或 hash 算法到主包。
 
 运行数据、Harness profile、凭据、数据库、日志、npm 临时归档、测试证据、`.codex/`、`.runtime/` 和 Python 缓存不属于源码目录，也不得提交或进入发布包。
 

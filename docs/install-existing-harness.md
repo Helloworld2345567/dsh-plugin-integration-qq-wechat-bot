@@ -48,6 +48,6 @@ python -m pip install -r requirements-voice-generation.txt
 
 ## 能力边界
 
-本方式不会创建项目专属的 `bots` profile，也不会安装 `dsh-bot-lifecycle`。主插件可以正常运行，但项目提供的受管升级、监督重启和自动回滚只属于[独立产品 profile 部署](deploy-product-profile.md)。
+本方式不会创建项目专属的 `bots` profile，也不会安装 `dsh-bot-lifecycle`。主插件可以正常运行，但项目提供的版本握手、受管热升级、监督重启、离线双包 journal 和自动回滚只属于[独立产品 profile 部署](deploy-product-profile.md)。已有 Harness 的运营者必须按该 profile 自己的停机／升级流程替换主包；不要从独立产品路径复制 coordinator，也不承诺未声明的跨版本组合兼容。
 
 GPT-SoVITS、Music、RVC、CUDA、模型权重和第三方外部项目不会随主插件安装。未登记的能力显示为 `missing` 或 `blocked`，不会静默切换到其他服务。

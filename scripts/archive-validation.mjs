@@ -1,6 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {gunzipSync} from 'node:zlib';
+import {hashPackageEntries,identityFileIncluded} from '../packages/bot-lifecycle/src/contract/integrity.mjs';
 
 export const DEFAULT_ARCHIVE_LIMITS=Object.freeze({maxArchiveBytes:128*1024*1024,maxEntries:20_000,maxEntryBytes:128*1024*1024,maxExpandedBytes:512*1024*1024,maxDepth:24});
 const RESERVED=/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
@@ -13,4 +14,23 @@ function validateName(raw,limits){if(!raw||raw.length>4096||raw.includes('\0'))t
 export async function validatePackageArchive(file,overrides={}){const limits={...DEFAULT_ARCHIVE_LIMITS,...overrides},compressed=await readFile(file);if(compressed.length<18||compressed.length>limits.maxArchiveBytes)throw Error('ARCHIVE_COMPRESSED_SIZE_LIMIT');if(compressed[0]!==0x1f||compressed[1]!==0x8b||compressed[2]!==0x08)throw Error('ARCHIVE_GZIP_REQUIRED');let tar;try{tar=gunzipSync(compressed,{maxOutputLength:limits.maxExpandedBytes+limits.maxEntries*1024});}catch(error){throw Error((error?.code==='ERR_BUFFER_TOO_LARGE'||/larger than|output length/i.test(String(error)))?'ARCHIVE_EXPANDED_SIZE_LIMIT':'ARCHIVE_GZIP_INVALID');}if(tar.length<1024||tar.length%512!==0)throw Error('ARCHIVE_TAR_INVALID');const names=new Map(),entries=[];let offset=0,total=0,zeroBlocks=0,entryCount=0;
   while(offset+512<=tar.length){const block=tar.subarray(offset,offset+512);if(block.every(value=>value===0)){zeroBlocks++;offset+=512;if(zeroBlocks>=2)break;continue;}zeroBlocks=0;checksum(block);const name=readString(block,0,100),prefix=readString(block,345,155),raw=prefix?`${prefix}/${name}`:name,type=String.fromCharCode(block[156]||48),size=readOctal(block,124,12,'SIZE');if(!['0','5'].includes(type))throw Error(type==='1'?'ARCHIVE_HARDLINK_REJECTED':type==='2'?'ARCHIVE_SYMLINK_REJECTED':'ARCHIVE_SPECIAL_FILE_REJECTED');const normalized=validateName(raw,limits),caseKey=normalized.toLocaleLowerCase('en-US'),previous=names.get(caseKey);if(previous)throw Error(previous===normalized?'ARCHIVE_DUPLICATE_ENTRY':'ARCHIVE_CASE_COLLISION');names.set(caseKey,normalized);if(++entryCount>limits.maxEntries)throw Error('ARCHIVE_ENTRY_LIMIT');if(type==='5'&&size!==0)throw Error('ARCHIVE_DIRECTORY_SIZE_INVALID');if(size>limits.maxEntryBytes)throw Error('ARCHIVE_ENTRY_SIZE_LIMIT');if(type==='0'){total+=size;if(total>limits.maxExpandedBytes)throw Error('ARCHIVE_EXPANDED_SIZE_LIMIT');}const dataStart=offset+512,dataEnd=dataStart+size,padded=Math.ceil(size/512)*512;if(dataEnd>tar.length)throw Error('ARCHIVE_TRUNCATED');entries.push(Object.freeze({path:normalized,type:type==='5'?'directory':'file',size}));offset=dataStart+padded;}
   if(zeroBlocks<2||!entries.length)throw Error('ARCHIVE_TAR_INVALID');return Object.freeze({format:'tgz',compressedBytes:compressed.length,expandedBytes:total,entries:Object.freeze(entries)});
+}
+
+/** Read one validated regular JSON entry without extracting the archive. */
+export async function readPackageArchiveJson(file,entry='package/package.json'){
+  await validatePackageArchive(file);const tar=gunzipSync(await readFile(file));let offset=0;
+  while(offset+512<=tar.length){const block=tar.subarray(offset,offset+512);if(block.every(value=>value===0))break;const name=readString(block,0,100),prefix=readString(block,345,155),raw=prefix?`${prefix}/${name}`:name,size=readOctal(block,124,12,'SIZE'),type=String.fromCharCode(block[156]||48),start=offset+512;if(raw===entry){if(type!=='0'||size>1024*1024)throw Error('ARCHIVE_JSON_ENTRY_INVALID');try{return JSON.parse(tar.subarray(start,start+size).toString('utf8'));}catch{throw Error('ARCHIVE_JSON_ENTRY_INVALID');}}offset=start+Math.ceil(size/512)*512;
+  }
+  throw Error('ARCHIVE_JSON_ENTRY_MISSING');
+}
+export async function readPackageArchiveFiles(file,prefix){
+  await validatePackageArchive(file);if(typeof prefix!=='string'||!prefix.startsWith('package/')||!prefix.endsWith('/')||prefix.includes('..'))throw Error('ARCHIVE_PREFIX_INVALID');const tar=gunzipSync(await readFile(file)),files=[];let offset=0;
+  while(offset+512<=tar.length){const block=tar.subarray(offset,offset+512);if(block.every(value=>value===0))break;const name=readString(block,0,100),headerPrefix=readString(block,345,155),raw=headerPrefix?`${headerPrefix}/${name}`:name,size=readOctal(block,124,12,'SIZE'),type=String.fromCharCode(block[156]||48),start=offset+512;if(type==='0'&&raw.startsWith(prefix)){const relative=raw.slice(prefix.length);if(relative)files.push(Object.freeze({path:relative,data:Buffer.from(tar.subarray(start,start+size))}));}offset=start+Math.ceil(size/512)*512;}
+  if(!files.some(entry=>entry.path==='package.json'))throw Error('ARCHIVE_EMBEDDED_PACKAGE_MISSING');return Object.freeze(files);
+}
+export async function packageArchiveIdentity(file){
+  await validatePackageArchive(file);const tar=gunzipSync(await readFile(file)),entries=[];let offset=0;
+  while(offset+512<=tar.length){const block=tar.subarray(offset,offset+512);if(block.every(value=>value===0))break;const name=readString(block,0,100),prefix=readString(block,345,155),raw=prefix?`${prefix}/${name}`:name,size=readOctal(block,124,12,'SIZE'),type=String.fromCharCode(block[156]||48),start=offset+512;if(type==='0'&&raw.startsWith('package/'))entries.push({file:raw.slice('package/'.length),data:tar.subarray(start,start+size)});offset=start+Math.ceil(size/512)*512;}
+  const manifestEntry=entries.find(entry=>entry.file==='package.json');if(!manifestEntry)throw Error('ARCHIVE_JSON_ENTRY_MISSING');let manifest;try{manifest=JSON.parse(manifestEntry.data.toString('utf8'));}catch{throw Error('ARCHIVE_JSON_ENTRY_INVALID');}
+  return hashPackageEntries(entries.filter(entry=>identityFileIncluded(manifest,entry.file)).map(entry=>({path:entry.file,data:entry.data})));
 }

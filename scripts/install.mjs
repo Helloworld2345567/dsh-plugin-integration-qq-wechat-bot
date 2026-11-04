@@ -1,66 +1,35 @@
-import { mkdir, readFile, writeFile, access,stat } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import {mkdir,readFile,writeFile,access,stat,rm} from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
-import { productHome,run,workspaceRoot,runtimeEnv,prepareRuntimeDirectories } from './runtime.mjs';
+import {spawn} from 'node:child_process';
+import {productHome,run,workspaceRoot,runtimeEnv,prepareRuntimeDirectories} from './runtime.mjs';
 import {configureWorkspaceStorage} from './workspace-storage.mjs';
 import YAML from 'yaml';
-import {archivePackage,recordInstallation,bundleName} from './installation.mjs';
+import {readPackageArchiveJson} from './archive-validation.mjs';
+import {acquireProductOperation,archivePackage,archiveEmbeddedLifecycle,recordInstallation,bundleName,lifecycleBundleName,assertLauncherStopped,validateLifecyclePair,previousInstalledPair,installOfflineLifecyclePair,recoverInterruptedOfflinePair,readInstalledPair,identity} from './installation.mjs';
 prepareRuntimeDirectories();
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const layerArgument=process.argv.find(value=>value.startsWith('--layers='))?.slice('--layers='.length)??process.env.BOT_INSTALL_LAYERS??'core,basic-media';
 const layers=new Set(layerArgument.split(',').map(value=>value.trim()).filter(Boolean)),allowedLayers=new Set(['core','basic-media','voice-generation','music','singing-rvc']);if(!layers.has('core')||!layers.has('basic-media')||[...layers].some(layer=>!allowedLayers.has(layer)))throw Error('INSTALL_LAYERS_INVALID');
-await mkdir(productHome,{recursive:true});
-try{await writeFile(path.join(productHome,'workspace.json'),JSON.stringify({root:workspaceRoot},null,2)+'\n',{flag:'wx'});}catch(error){if(error.code!=='EEXIST')throw error;}
-await mkdir(workspaceRoot,{recursive:true});
-const command=(file,args,options={})=>new Promise((resolve,reject)=>{const child=spawn(file,args,{stdio:'inherit',windowsHide:true,...options});child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(new Error(`${file} exited ${code}`)));});
-const mediaEnv=path.join(productHome,'media-venv');
-const python=process.env.BOT_PYTHON||path.join(mediaEnv,process.platform==='win32'?'Scripts/python.exe':'bin/python');
-if(!process.env.BOT_PYTHON){
-  try{await access(python);}catch{try{await command('uv',['venv','--python','3.12',mediaEnv]);}catch(error){if(error.code!=='ENOENT')throw error;await command(process.platform==='win32'?'python':'python3',['-m','venv',mediaEnv]);}}
-}
-const requirementFiles=[path.join(root,'requirements.txt'),...(layers.has('voice-generation')?[path.join(root,'requirements-voice-generation.txt')]:[])];
-for(const requirements of requirementFiles)try{await command('uv',['pip','install','--python',python,'-r',requirements]);}catch(error){if(error.code!=='ENOENT')throw error;await command(python,['-m','pip','install','-r',requirements]);}
-const profile=path.join(productHome,'profiles','bots');await mkdir(profile,{recursive:true});await mkdir(path.join(productHome,'agents'),{recursive:true});
-const manifest=path.join(profile,'package.json');
-let profilePackage;
-try{profilePackage=JSON.parse(await readFile(manifest,'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;profilePackage={name:'dsh-profile-bots',version:'1.0.0',private:true,type:'module'};}
-profilePackage.dependencies??={};profilePackage.dsh??={};profilePackage.dsh.profile??={};
-const requiredBundles=['@deepseek-ai/dsh-base','@deepseek-ai/dsh-web-app'];
-for(const bundle of requiredBundles){const existing=profilePackage.dependencies[bundle];if(existing&&existing!=='0.2.1-rc.2')throw new Error(`Profile requires ${bundle}@0.2.1-rc.2; found ${existing}`);profilePackage.dependencies[bundle]='0.2.1-rc.2';}
-profilePackage.dsh.profile.bundles=[...new Set([...(profilePackage.dsh.profile.bundles??[]),...requiredBundles])];
-await writeFile(manifest,JSON.stringify(profilePackage,null,2)+'\n');
-const workspaceFile=path.join(profile,'pnpm-workspace.yaml');let workspace={};try{workspace=YAML.parse(await readFile(workspaceFile,'utf8'))||{};}catch(error){if(error.code!=='ENOENT')throw error;}
-workspace.allowBuilds??={};
-// Fixed native/runtime dependencies of the pinned Harness. Never approve arbitrary plugin scripts.
-for(const id of ['@deepseek-ai/dsh-subprocess-local@0.2.1-rc.2','@google/genai@2.21.0','koffi@3.1.1','node-pty@1.2.0-beta.15','protobufjs@7.6.6'])if(!(id in workspace.allowBuilds))workspace.allowBuilds[id]=true;
-workspace.storeDir=runtimeEnv.npm_config_store_dir;
-await writeFile(workspaceFile,YAML.stringify(workspace));
-const patch=path.join(profile,'cordis.patch.yml');
-try{await access(patch);}catch{await writeFile(patch,`# Product-owned initial composition. Upgrades never replace this document.
-- id: skill-filesystem
-  disabled: true
-- id: session-log-deepseek
-  disabled: true
-`);}
-const patchEntries=YAML.parse(await readFile(patch,'utf8'))??[];
-await configureWorkspaceStorage(productHome,workspaceRoot,patchEntries);
-await writeFile(patch,YAML.stringify(patchEntries));
-await mkdir(runtimeEnv.TEMP,{recursive:true});
-// pnpm requires a reinstall when an existing profile changes its store location.
-let oldStore;try{oldStore=YAML.parse(await readFile(path.join(profile,'node_modules','.modules.yaml'),'utf8')).storeDir;}catch(error){if(error.code!=='ENOENT')throw error;}
-if(oldStore){const relative=path.relative(runtimeEnv.npm_config_store_dir,oldStore);if(relative.startsWith('..')||path.isAbsolute(relative))await command(process.platform==='win32'?'pnpm.cmd':'pnpm',['install','--force','--frozen-lockfile'],{cwd:profile,env:{...runtimeEnv,CI:'1'},shell:process.platform==='win32'});}
-const sourceArgument=process.argv.slice(2).find(value=>!value.startsWith('--'));
-const source=path.resolve(sourceArgument||root);await access(source);
-const archive=await archivePackage(source,productHome);
-const lifecycleArchive=await archivePackage(path.join(root,'packages','bot-lifecycle'),productHome);
-await run(['plugin','--profile','bots','add',lifecycleArchive.path]);
-await run(['plugin','--profile','bots','add',archive.path]);
-// Native discovery does not always add a local tarball's bundle to the ordered profile.
-const installedProfile=JSON.parse(await readFile(manifest,'utf8'));
-installedProfile.dsh??={};installedProfile.dsh.profile??={};
-installedProfile.dsh.profile.bundles=[...new Set([...(installedProfile.dsh.profile.bundles??[]),'dsh-bot-lifecycle',bundleName])];
-await writeFile(manifest,JSON.stringify(installedProfile,null,2)+'\n');
-const installedRoot=path.join(profile,'node_modules',bundleName),sourceIsDirectory=(await stat(source)).isDirectory(),sourceRoot=process.env.BOT_SOURCE_ROOT?path.resolve(process.env.BOT_SOURCE_ROOT):sourceIsDirectory?source:installedRoot;
-await recordInstallation({home:productHome,sourceRoot,installedFrom:sourceIsDirectory?source:'verified-archive',archive,installedRoot,layers:[...layers],verifySource:sourceIsDirectory||!!process.env.BOT_SOURCE_ROOT});
-console.log(`Installed. Runtime home: ${productHome}. Start with node scripts/start.mjs`);
+await mkdir(productHome,{recursive:true});const releaseOperation=await acquireProductOperation(productHome,'install');
+try{
+  await assertLauncherStopped(productHome);
+  const profile=path.join(productHome,'profiles','bots'),manifest=path.join(profile,'package.json'),workspaceFile=path.join(profile,'pnpm-workspace.yaml'),patch=path.join(profile,'cordis.patch.yml');
+  const install=async(file,expectedName)=>{const value=await readPackageArchiveJson(file);if(value.name!==expectedName)throw Error('LIFECYCLE_ARTIFACT_MISMATCH: unexpected package name');await run(['plugin','--profile','bots','add',file]);},finalizeStorage=async()=>{const patchEntries=YAML.parse(await readFile(patch,'utf8'))??[];await configureWorkspaceStorage(productHome,workspaceRoot,patchEntries);await writeFile(patch,YAML.stringify(patchEntries));};
+  await recoverInterruptedOfflinePair(productHome,profile,install,finalizeStorage);
+  const sourceArgument=process.argv.slice(2).find(value=>!value.startsWith('--')),source=path.resolve(sourceArgument||root);await access(source);
+  const archive=await archivePackage(source,productHome),lifecycleArchive=await archiveEmbeddedLifecycle(archive,productHome),pair=await validateLifecyclePair(archive,lifecycleArchive),previous=await previousInstalledPair(productHome,profile);
+  const targets={installation:path.join(productHome,'installation.json'),lifecycle:path.join(productHome,'lifecycle-installation.json'),workspace:path.join(productHome,'workspace.json'),profile:manifest,workspaceConfig:workspaceFile,patch},snapshot=async file=>{try{return await readFile(file,'utf8');}catch(error){if(error.code==='ENOENT')return;throw error;}},metadataBefore=Object.fromEntries(await Promise.all(Object.entries(targets).map(async([name,file])=>[name,await snapshot(file)])));
+  const restoreState=async()=>{for(const [name,file] of Object.entries(targets)){const value=metadataBefore[name];if(value===undefined)await rm(file,{force:true});else{await mkdir(path.dirname(file),{recursive:true});await writeFile(file,value,{flush:true});}}};
+  const command=(file,args,options={})=>new Promise((resolve,reject)=>{const child=spawn(file,args,{stdio:'inherit',windowsHide:true,...options});child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(new Error(`${file} exited ${code}`)));});
+  const prepare=async()=>{
+    try{await writeFile(targets.workspace,JSON.stringify({root:workspaceRoot},null,2)+'\n',{flag:'wx'});}catch(error){if(error.code!=='EEXIST')throw error;}await mkdir(workspaceRoot,{recursive:true});
+    const mediaEnv=path.join(productHome,'media-venv'),python=process.env.BOT_PYTHON||path.join(mediaEnv,process.platform==='win32'?'Scripts/python.exe':'bin/python');if(!process.env.BOT_PYTHON)try{await access(python);}catch{try{await command('uv',['venv','--python','3.12',mediaEnv]);}catch(error){if(error.code!=='ENOENT')throw error;await command(process.platform==='win32'?'python':'python3',['-m','venv',mediaEnv]);}}for(const requirements of [path.join(root,'requirements.txt'),...(layers.has('voice-generation')?[path.join(root,'requirements-voice-generation.txt')]:[])])try{await command('uv',['pip','install','--python',python,'-r',requirements]);}catch(error){if(error.code!=='ENOENT')throw error;await command(python,['-m','pip','install','-r',requirements]);}
+    await mkdir(profile,{recursive:true});await mkdir(path.join(productHome,'agents'),{recursive:true});let profilePackage;try{profilePackage=JSON.parse(await readFile(manifest,'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;profilePackage={name:'dsh-profile-bots',version:'1.0.0',private:true,type:'module'};}profilePackage.dependencies??={};profilePackage.dsh??={};profilePackage.dsh.profile??={};const requiredBundles=['@deepseek-ai/dsh-base','@deepseek-ai/dsh-web-app'];for(const bundle of requiredBundles){const existing=profilePackage.dependencies[bundle];if(existing&&existing!=='0.2.1-rc.2')throw Error(`Profile requires ${bundle}@0.2.1-rc.2; found ${existing}`);profilePackage.dependencies[bundle]='0.2.1-rc.2';}profilePackage.dsh.profile.bundles=[...new Set([...(profilePackage.dsh.profile.bundles??[]),...requiredBundles])];await writeFile(manifest,JSON.stringify(profilePackage,null,2)+'\n');
+    let workspace={};try{workspace=YAML.parse(await readFile(workspaceFile,'utf8'))||{};}catch(error){if(error.code!=='ENOENT')throw error;}workspace.allowBuilds??={};for(const id of ['@deepseek-ai/dsh-subprocess-local@0.2.1-rc.2','@google/genai@2.21.0','koffi@3.1.1','node-pty@1.2.0-beta.15','protobufjs@7.6.6'])if(!(id in workspace.allowBuilds))workspace.allowBuilds[id]=true;workspace.storeDir=runtimeEnv.npm_config_store_dir;await writeFile(workspaceFile,YAML.stringify(workspace));try{await access(patch);}catch{await writeFile(patch,'# Product-owned initial composition. Upgrades never replace this document.\n- id: skill-filesystem\n  disabled: true\n- id: session-log-deepseek\n  disabled: true\n');}await mkdir(runtimeEnv.TEMP,{recursive:true});let oldStore;try{oldStore=YAML.parse(await readFile(path.join(profile,'node_modules','.modules.yaml'),'utf8')).storeDir;}catch(error){if(error.code!=='ENOENT')throw error;}if(oldStore){const relative=path.relative(runtimeEnv.npm_config_store_dir,oldStore);if(relative.startsWith('..')||path.isAbsolute(relative))await command(process.platform==='win32'?'pnpm.cmd':'pnpm',['install','--force','--frozen-lockfile'],{cwd:profile,env:{...runtimeEnv,CI:'1'},shell:process.platform==='win32'});}
+  };
+  const verify=async options=>{const expected=options?.expected??{main:pair.main.artifact,coordinator:pair.coordinator.artifact};if(options?.allowLegacy){const mainIdentity=await identity(path.join(profile,'node_modules',bundleName)),coordinatorIdentity=await identity(path.join(profile,'node_modules',lifecycleBundleName));if(expected.main.identity!==mainIdentity||expected.coordinator.identity!==coordinatorIdentity)throw Error('LIFECYCLE_IDENTITY_MISMATCH: restored legacy pair differs from previous archives');return{main:{...expected.main,identity:mainIdentity},coordinator:{...expected.coordinator,identity:coordinatorIdentity}};}const installed=await readInstalledPair(profile);for(const [key,value] of [['main',installed.mainIdentity],['coordinator',installed.coordinatorIdentity]])if(expected[key].identity!==value)throw Error(`LIFECYCLE_IDENTITY_MISMATCH: installed ${key} differs from the verified archive`);return{main:{...expected.main,identity:installed.mainIdentity},coordinator:{...expected.coordinator,identity:installed.coordinatorIdentity}};};
+  const installedRoot=path.join(profile,'node_modules',bundleName),sourceIsDirectory=(await stat(source)).isDirectory(),sourceRoot=process.env.BOT_SOURCE_ROOT?path.resolve(process.env.BOT_SOURCE_ROOT):sourceIsDirectory?source:installedRoot,commit=async installed=>{const installedProfile=JSON.parse(await readFile(manifest,'utf8'));installedProfile.dsh??={};installedProfile.dsh.profile??={};installedProfile.dsh.profile.bundles=[...new Set([...(installedProfile.dsh.profile.bundles??[]),lifecycleBundleName,bundleName])];await writeFile(manifest,JSON.stringify(installedProfile,null,2)+'\n');await recordInstallation({home:productHome,sourceRoot,installedFrom:sourceIsDirectory?source:'verified-archive',archive:installed.main,installedRoot,layers:[...layers],verifySource:sourceIsDirectory||!!process.env.BOT_SOURCE_ROOT,lifecycle:installed.coordinator});};
+  await installOfflineLifecyclePair({home:productHome,candidate:{main:pair.main.artifact,coordinator:pair.coordinator.artifact},previous,install,verify,prepare,commit,finalize:finalizeStorage,restoreMetadata:restoreState,metadataBefore});
+  console.log(`Installed compatible main/coordinator pair. Runtime home: ${productHome}. Start with node scripts/start.mjs`);
+}finally{await releaseOperation();}

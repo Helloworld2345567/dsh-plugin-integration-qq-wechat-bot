@@ -1,14 +1,17 @@
-import {createHash,randomUUID} from 'node:crypto';
-import {existsSync,mkdirSync,readFileSync,readdirSync,renameSync,rmSync,writeFileSync,lstatSync,globSync} from 'node:fs';
+import {randomUUID} from 'node:crypto';
+import {existsSync,mkdirSync,readFileSync,readdirSync,renameSync,rmSync,writeFileSync} from 'node:fs';
 import path from 'node:path';
+import type {MainLifecycleDeclaration} from './compatibility.mjs';
+import {sha256} from './integrity.mjs';
+export {packageIdentity,sha256} from './integrity.mjs';
 
-export interface Artifact {path:string;sha256:string;identity:string}
+export interface Artifact {path:string;sha256:string;identity:string;packageVersion?:string;lifecycle?:MainLifecycleDeclaration}
 export interface Installation {schemaVersion:1;sourceRoot:string;projectRoot?:string;sourceDigest:string;installedFrom:string;current:Artifact;previous?:Artifact;updatedAt:number}
 export type Phase='draft'|'validating'|'validated'|'queued'|'draining'|'applying'|'restarting'|'reconnecting'|'succeeded'|'rolling-back'|'rolled-back'|'failed';
 export interface EvolutionTask {
   id:string;kind:'upgrade'|'restart'|'rollback';scopeKey:string;configId:string;goal:string;phase:Phase;createdAt:number;updatedAt:number;
   candidateRoot?:string;sourceRoot?:string;projectRoot?:string;selectedSourceRoot?:string;baseline?:Record<string,string>;protectedFiles?:Record<string,string>;sourceDigest?:string;
-  validatedDigest?:string;validationPid?:number;artifact?:Artifact;previous?:Artifact;rollbackOf?:string;rollbackAttempted?:boolean;activationRestarts?:string[];error?:string;
+  validatedDigest?:string;validationPid?:number;artifact?:Artifact;previous?:Artifact;rollbackOf?:string;rollbackAttempted?:boolean;rollbackStep?:'requested'|'install-started'|'installed';activationRestarts?:string[];error?:string;
   validation?:Array<{name:string;status:'PASS'|'FAIL';log:string}>;changes?:Array<{file:string;change:'added'|'modified'|'deleted'}>;
   events:Array<{at:number;phase:Phase;message:string}>;
 }
@@ -19,9 +22,6 @@ export function replaceFileSync(source:string,target:string,rename:(source:strin
   for(let attempt=0;;attempt++)try{rename(source,target);return;}catch(error){
     const code=(error as NodeJS.ErrnoException).code;
     if(platform!=='win32'||!WINDOWS_REPLACE_RETRY_CODES.has(String(code))||attempt>=9)throw error;
-    // Antivirus and indexers can briefly hold a just-flushed file on Windows.
-    // Atomics.wait is a bounded synchronous delay and never yields ownership of
-    // the lifecycle journal to another writer.
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,Math.min(100,5*2**attempt));
   }
 }
@@ -30,15 +30,7 @@ export function atomicJson(file:string,value:unknown):void{
   try{writeFileSync(temporary,JSON.stringify(value,null,2)+'\n',{mode:0o600,flag:'wx',flush:true});replaceFileSync(temporary,file);}
   finally{rmSync(temporary,{force:true});}
 }
-export function sha256(file:string):string{if(lstatSync(file).isSymbolicLink()||!lstatSync(file).isFile())throw Error('Expected regular artifact file');return createHash('sha256').update(readFileSync(file)).digest('hex');}
-export function packageIdentity(root:string):string{
-  const manifest=JSON.parse(readFileSync(path.join(root,'package.json'),'utf8'));const included=new Set<string>(['package.json']);
-  const add=(relative:string)=>{const normalized=relative.replaceAll('\\','/');if(normalized.split('/').some(part=>/^(?:node_modules|\.git|\.codex|__pycache__)$/.test(part))||/\.pyc$/.test(normalized))return;const stat=lstatSync(path.join(root,relative));if(stat.isSymbolicLink())throw Error('Shipped package files must not be symlinks');if(stat.isDirectory())for(const name of readdirSync(path.join(root,relative)))add(path.join(relative,name));else if(stat.isFile())included.add(normalized);};
-  for(const pattern of manifest.files??['cordis.patch.yml','dist/*.js'])for(const entry of globSync(pattern,{cwd:root}))add(entry);
-  const hash=createHash('sha256');for(const file of [...included].sort())hash.update(file).update('\0').update(readFileSync(path.join(root,file))).update('\0');
-  return hash.digest('hex');
-}
-export function verifyArtifact(artifact:Artifact):void{if(!path.isAbsolute(artifact.path)||sha256(artifact.path)!==artifact.sha256)throw Error('Package archive hash mismatch');}
+export function verifyArtifact(artifact:Artifact):void{if(!path.isAbsolute(artifact.path)||sha256(artifact.path)!==artifact.sha256)throw Error('LIFECYCLE_ARTIFACT_MISMATCH: package archive hash mismatch');}
 export function readInstallation(home:string):Installation{
   const value=JSON.parse(readFileSync(path.join(home,'installation.json'),'utf8')) as Installation;
   if(value.schemaVersion!==1||!path.isAbsolute(value.sourceRoot)||!value.current?.identity)throw Error('Invalid installation metadata; run the trusted installer with the source checkout');

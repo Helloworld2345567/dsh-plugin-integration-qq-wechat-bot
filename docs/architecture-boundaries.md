@@ -11,8 +11,9 @@
 | `src/channels/` | QQ／微信协议、登录、收发和平台格式适配 | Harness 管理 API、人格规则和 lifecycle |
 | `src/harness/` | Harness 服务接入、管理 API、工具注册及 Node 进程／worker 端口实现 | 浏览器渲染和渠道业务规则 |
 | `src/client/` | 浏览器管理界面，仅消费管理 API 和可共享的纯类型契约 | Node 内建模块、SQLite、渠道或 Harness 服务端实现 |
-| `src/lifecycle/` | 独立产品的升级、排空、恢复与回退协调 | QQ／微信业务、真实消息发送、人格实现 |
-| `packages/bot-lifecycle/` | 可独立安装的 lifecycle bundle 交付物 | 主插件运行时源码和渠道实现 |
+| `packages/bot-lifecycle/src/` | 独立产品的升级、排空、恢复、回退与 bundle 入口；从自己的源码入口独立构建 | 根包 `src/`、QQ／微信业务、真实消息发送、人格实现 |
+| `packages/bot-lifecycle/src/contract/` | 主包与 coordinator 共用的可序列化协议、artifact identity、journal 与源码完整性单一来源 | Store、Runtime、channel、delivery、persona 或 Harness 管理实现 |
+| `packages/bot-lifecycle/` | 可独立安装的 lifecycle bundle 源码、构建脚本与交付物 | 主插件内部实现和渠道实现 |
 | `python/` | 媒体 worker、受控服务入口和共享 Python 运行组件 | 宿主身份、权限和投递决策 |
 | `skills/` | 技能声明及受控脚本入口 | 宿主 Store、凭据和平台发送 |
 | `scripts/` | 开发、构建、安装、测试与发布辅助 | 被 `src/` 生产运行时隐式导入的业务实现 |
@@ -26,9 +27,9 @@
 src/client       -> 浏览器 API、src/core/client-contracts.ts（仅 type）
 src/channels     -> src/core 的渠道 contract、纯策略与端口
 src/harness      -> src/core 的 contract、应用服务与端口
-src/lifecycle    -> lifecycle 专用 contract（evolution-contract、source-integrity）
-src/core         -> Node 标准库、仓库依赖和 src/core 内部模块
-src/index.ts     -> src/core + src/channels + src/harness + lifecycle protocol
+packages/bot-lifecycle/src -> 同包 contract、Node 标准库、Cordis Plugin Manager type
+src/core         -> Node 标准库、仓库依赖、src/core 内部模块和中立 lifecycle contract
+src/index.ts     -> src/core + src/channels + src/harness + 中立 lifecycle runtime port
 scripts          -> scripts 内部纯 helper；CLI 入口显式调用副作用
 Python skills    -> python 共享模块和 vendored 命名空间
 ```
@@ -48,9 +49,9 @@ Python skills    -> python 共享模块和 vendored 命名空间
 
 ## 禁止的依赖方向
 
-- `src/client/` 不得导入 Node-only 模块、SQLite、`src/channels/`、`src/harness/`、`src/lifecycle/` 或服务端 core 实现。
-- `src/core/` 不得依赖 client、具体 QQ／微信 adapter、Harness 实现或 lifecycle 协调器。
-- `src/lifecycle/` 不得依赖 QQ／微信业务、真实发送、投递队列或人格实现。
+- `src/client/` 不得导入 Node-only 模块、SQLite、`src/channels/`、`src/harness/`、coordinator 或服务端 core 实现。
+- `src/core/` 不得依赖 client、具体 QQ／微信 adapter、Harness 实现或 lifecycle coordinator 实现；只允许依赖中立、版本化的 `packages/bot-lifecycle/src/contract/`。
+- `packages/bot-lifecycle/src/` 不得通过任何相对路径导入根 `src/`，也不得依赖 QQ／微信业务、真实发送、投递队列、Store、Runtime、channel、delivery 或人格实现。
 - Service Adapter 不得拥有或导入 Store、Session、channel identity、delivery 或宿主数据库；它只接收宿主校验并冻结的作业、Profile revision、取消信号和受控端口。
 - Channel Adapter 不得绕过公开 core contract 访问数据库或 Harness 内部。渠道特定的格式准备由 composition root 显式注入必要端口。
 - 生产代码不得导入 `tests/`、fixture、`.codex/` 或 `.runtime/`。
@@ -119,7 +120,7 @@ Python skills    -> python 共享模块和 vendored 命名空间
 
 生产依赖清单由 `scripts/check-architecture.mjs` 使用 TypeScript parser 和 Node 标准库从以下范围即时生成：`src/**/*.ts`、`packages/**/*.{ts,mjs,js}` 与 `scripts/*.mjs`。它记录显式 import、export-from、可确定字符串目标的动态 import；不可静态确定的动态目标只报告文件和相对行号、不猜测目标，并令门禁失败，避免用变量 import／require 绕过边界。Python 显式 import 由审计覆盖 `python/**/*.py` 与 `skills/**/*.py`，且 worker／服务入口必须由 main guard 或显式调用启动。
 
-阶段 5 基线共包含 115 个生产 TypeScript 模块、30 个 Python／技能模块、541 条 runtime import 和 286 条 Python import；未发现 TypeScript runtime cycle、不可确定的动态 import 或 import 时启动 server／数据库／child process。门禁每次从工作树重新计算，不把这些数量作为固定阈值。
+阶段 5 初始基线为 115 个生产 TypeScript 模块、30 个 Python／技能模块、541 条 runtime import 和 286 条 Python import；lifecycle 源码迁移后数量会随中立 contract 与包内构建脚本变化。未发现 TypeScript runtime cycle、不可确定的动态 import 或 import 时启动 server／数据库／child process。门禁每次从工作树重新计算，不把这些数量作为固定阈值。
 
 | 调用层 | 当前直接目标 | 审计结论 |
 | --- | --- | --- |
@@ -128,7 +129,7 @@ Python skills    -> python 共享模块和 vendored 命名空间
 | `src/core/` | core 内部、Node 标准库、已声明依赖 | 无 client/channel/Harness/lifecycle 反向 import |
 | `src/channels/` | core channel contract／策略、平台依赖 | 无 Store、delivery 或 Harness 实现 import |
 | `src/harness/` | core contract／应用服务、Harness 包 | Node 进程、worker、credentials 和管理 API 的实现边界 |
-| `src/lifecycle/` | lifecycle 内部、两个专用 core contract | 未导入渠道、投递、人格或业务发送实现 |
+| `packages/bot-lifecycle/src/` | 同包内 coordinator、integrity、protocol、bundle entry 与中立 contract | 不导入根 `src/`，也不导入渠道、投递、人格或业务发送实现 |
 | `scripts/` | scripts helper、Node 标准库和构建依赖 | `runtime.mjs` import 已只读；start/install 显式准备目录 |
 | `python/`、`skills/` | 标准库、已声明 Python 依赖、共享 worker 模块 | 显式 import 有清单；skill manifest 延迟到首次 skill 执行加载 |
 
@@ -146,7 +147,7 @@ Python skills    -> python 共享模块和 vendored 命名空间
 
 ### 未混入本阶段的语义性问题
 
-Python skill 的命名空间重整、lifecycle 源码交付布局、数据库 repository 全面拆分和外部 Service Adapter ABI 都需要改变打包、运行或兼容语义，不能作为本阶段的“静态检查修复”顺带实施。后续若处理，必须分别给出迁移、回滚和原生测试方案。
+Python skill 的命名空间重整、数据库 repository 全面拆分和外部 Service Adapter ABI 仍需要独立方案。lifecycle 源码交付布局已由 ADR 0004 单独整改：源码现在位于独立子包，安装和回滚使用显式双包兼容协议，不是阶段 5 静态修复的隐含例外。
 
 ## 门禁输出
 
@@ -156,5 +157,7 @@ Python skill 的命名空间重整、lifecycle 源码交付布局、数据库 re
 - client、core、channel、lifecycle、Service Adapter、生产／测试和 package 边界；
 - Python 显式 import 清单和 import-time 长期进程／server／数据库启动；
 - composition root 例外没有扩散；
-- package export 与三个构建入口仍存在；
-- 本页声明的目录与仓库一致。
+- 主包 export 与三个构建入口仍存在，其中 lifecycle 必须由 `packages/bot-lifecycle/src/index.ts` 经子包自己的构建脚本生成；
+- lifecycle 子包无越界 import、旧 `src/lifecycle/` 不得复活、共享 contract 只有一个来源；
+- 主包/coordinator 的版本化 contract 声明、子包 export/files/dist 清单存在；
+- 本页声明的目录与仓库一致，不以 allowlist 隐藏越界依赖。

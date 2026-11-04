@@ -1,7 +1,7 @@
 import type {Context} from '@deepseek-ai/cordis';
 import {readFileSync,writeFileSync} from 'node:fs';
 import path from 'node:path';
-import {LifecycleJournal,type EvolutionTask} from '../src/lifecycle/protocol.js';
+import {LifecycleJournal,type EvolutionTask} from '../packages/bot-lifecycle/src/contract/protocol.js';
 
 export const name='bot-lifecycle-native-fixture';
 export const inject=['pluginManager'];

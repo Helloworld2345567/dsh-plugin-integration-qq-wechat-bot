@@ -1,16 +1,77 @@
 {
   "name": "dsh-bot-lifecycle",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Lifecycle coordinator for the QQ and WeChat bot product profile",
   "type": "module",
   "license": "MIT",
-  "engines": {"node": ">=24.0.0", "dsh": "0.2.1-rc.2"},
+  "source": "./src/index.ts",
+  "main": "./dist/index.js",
+  "engines": {
+    "node": ">=24.0.0",
+    "dsh": "0.2.1-rc.2"
+  },
   "exports": {
     ".": "./dist/index.js",
+    "./compatibility": {
+      "types": "./dist/compatibility.d.mts",
+      "import": "./dist/compatibility.js"
+    },
     "./locale/*.json": "./locale/*.json",
-    "./icon": "./icon.svg"
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
   },
-  "files": ["dist/*.js", "cordis.patch.yml", "README.md", "LICENSE", "locale/*.json", "icon.svg"],
-  "dsh": {"bundle": {"patch": "./cordis.patch.yml"}},
-  "peerDependencies": {"@deepseek-ai/cordis": "~4.0.5", "@deepseek-ai/dsh-plugin-manager": "0.2.1-rc.2"}
+  "files": [
+    "dist/index.js",
+    "dist/compatibility.js",
+    "dist/compatibility.d.mts",
+    "dist/lifecycle-build.json",
+    "src/**/*.ts",
+    "src/**/*.mts",
+    "src/**/*.mjs",
+    "scripts/*.mjs",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "verify:build": "node scripts/verify-build.mjs",
+    "prepack": "npm run verify:build"
+  },
+  "dshLifecycle": {
+    "schemaVersion": 1,
+    "role": "coordinator",
+    "coordinatorApi": "2.0.0",
+    "runtimeProtocolRange": ">=2.0.0 <3.0.0",
+    "mainPackageRange": ">=0.2.10 <0.3.0",
+    "capabilities": [
+      "coordinator.tick",
+      "runtime.health",
+      "runtime.quiesce",
+      "runtime.resume",
+      "upgrade.main-hot",
+      "upgrade.offline-pair"
+    ],
+    "requiredMainCapabilities": [
+      "runtime.health",
+      "runtime.quiesce",
+      "runtime.resume",
+      "upgrade.main-hot"
+    ]
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/dsh-plugin-manager": "0.2.1-rc.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.11",
+    "typescript": "^5.9.3"
+  }
 }

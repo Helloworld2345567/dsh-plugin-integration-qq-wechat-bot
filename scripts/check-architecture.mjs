@@ -5,11 +5,12 @@ import {pathToFileURL} from 'node:url';
 import ts from 'typescript';
 
 const NODE_BUILTINS=new Set([...builtinModules,...builtinModules.map(name=>`node:${name}`)]);
-const REQUIRED_DIRECTORIES=['src/client','src/core','src/channels','src/harness','src/lifecycle','packages/bot-lifecycle','python','skills','scripts','tests'];
+const REQUIRED_DIRECTORIES=['src/client','src/core','src/channels','src/harness','packages/bot-lifecycle/src','packages/bot-lifecycle/src/contract','python','skills','scripts','tests'];
 const HOST_OWNED_MODULE=/^src\/core\/(?:store|runtime|delivery-worker|channel-registry|channel-ports|session-actions|repositories)\.ts$/;
 const CHANNEL_HOST_OWNED_MODULE=/^src\/core\/(?:store|runtime|delivery-worker|session-actions|repositories|sqlite-[^/]+|[^/]+-store)\.ts$/;
 const ADAPTER_HOST_OWNED_MODULE=/^src\/core\/(?:[^/]*(?:store|session|delivery|sqlite|repositories|runtime)[^/]*)\.ts$/;
-const LIFECYCLE_CORE_ALLOW=new Set(['src/core/evolution-contract.ts','src/core/source-integrity.ts']);
+const LIFECYCLE_SOURCE='packages/bot-lifecycle/src/';
+const LIFECYCLE_CONTRACT='packages/bot-lifecycle/src/contract/';
 
 export function normalizeRepoPath(value){
   const normalized=String(value).replaceAll('\\','/').replace(/^\.\//,'');
@@ -64,7 +65,7 @@ function candidateTargets(from,specifier){
 }
 
 function resolveTarget(from,specifier,fileSet){return candidateTargets(from,specifier).find(candidate=>fileSet.has(candidate));}
-function productionTypeScript(file){return (file.startsWith('src/')||file.startsWith('packages/'))&&file.endsWith('.ts')&&!/\.(?:test|spec)\.ts$/.test(file);}
+function productionTypeScript(file){return (file.startsWith('src/')||file.startsWith('packages/'))&&/\.m?ts$/.test(file)&&!/\.(?:test|spec)\.ts$/.test(file);}
 const RUNTIME_SCRIPTS=new Set(['scripts/start.mjs','scripts/stop.mjs','scripts/runtime.mjs','scripts/install.mjs','scripts/installation.mjs','scripts/supervisor.mjs','scripts/workspace-storage.mjs','scripts/bootstrap-github.mjs','scripts/github-bootstrap.mjs']);
 function productionModule(file){return productionTypeScript(file)||file.startsWith('packages/')&&/\.(?:mjs|cjs|js)$/.test(file)&&!file.includes('/dist/')||RUNTIME_SCRIPTS.has(file);}
 function packageRoot(file){const parts=file.split('/');return parts.length>=2&&parts[0]==='packages'?parts.slice(0,2).join('/'):undefined;}
@@ -99,16 +100,17 @@ export function analyzeModules(entries){
         if(target&&/^src\/(?:channels|harness|lifecycle)\//.test(target))violations.push(violation('client-server',file,'imports a server layer',target));
         if(target?.startsWith('src/core/')&&(dependency.runtime||target!=='src/core/client-contracts.ts'))violations.push(violation('client-server',file,dependency.runtime?'runtime-imports core implementation':'type-imports a non-public core implementation',target));
       }
-      if(file.startsWith('src/core/')&&target&&/^src\/(?:client|channels|harness|lifecycle)\//.test(target))violations.push(violation('core-direction',file,'imports an outer layer',target));
+      if(file.startsWith('src/core/')&&target&&(/^src\/(?:client|channels|harness)\//.test(target)||target.startsWith(LIFECYCLE_SOURCE)&&!target.startsWith(LIFECYCLE_CONTRACT)))violations.push(violation('core-direction',file,'imports an outer layer or coordinator implementation',target));
       if(file.startsWith('src/channels/')&&(dependency.specifier==='node:sqlite'||target&&(/^src\/harness\//.test(target)||CHANNEL_HOST_OWNED_MODULE.test(target))))violations.push(violation('channel-isolation',file,'imports SQLite, Harness or a host-owned Store, Session or delivery implementation',target));
-      if(file.startsWith('src/lifecycle/')&&target&&/^src\/(?:client|channels|harness)\//.test(target))violations.push(violation('lifecycle-isolation',file,'imports client, channel or Harness business code',target));
-      if(file.startsWith('src/lifecycle/')&&target?.startsWith('src/core/')&&!LIFECYCLE_CORE_ALLOW.has(target))violations.push(violation('lifecycle-isolation',file,'imports core business code outside the lifecycle contract',target));
+      if(file.startsWith(LIFECYCLE_SOURCE)&&target?.startsWith('src/'))violations.push(violation('lifecycle-isolation',file,'imports root-package source; lifecycle must build inside its own package boundary',target));
+      if(file.startsWith(LIFECYCLE_SOURCE)&&/(?:qq|wechat|weixin|persona|delivery|channel|credentials|store|runtime-bridge)/i.test(dependency.specifier)&&target&&!target.startsWith(LIFECYCLE_CONTRACT))violations.push(violation('lifecycle-business-isolation',file,'imports messaging, persona, delivery, credential, Store or channel behavior',target));
       if(serviceAdapter){
         if(target&&ADAPTER_HOST_OWNED_MODULE.test(target))violations.push(violation('service-adapter-isolation',file,'imports host-owned Store, Session, channel, delivery, SQLite or runtime implementation',target));
         if(dependency.specifier==='node:sqlite'||/@deepseek-ai\/dsh-(?:session|storage|attachment)/.test(dependency.specifier))violations.push(violation('service-adapter-isolation',file,`imports host service ${safeSpecifier(dependency.specifier)}`));
       }
       const owner=packageRoot(file);
-      if(owner&&dependency.specifier.startsWith('.')&&target&&!target.startsWith(`${owner}/`))violations.push(violation('package-isolation',file,'escapes the package source boundary',target));
+      if(owner&&dependency.specifier.startsWith('.')){const requested=normalizeRepoPath(path.posix.join(path.posix.dirname(file),dependency.specifier));if(!requested.startsWith(`${owner}/`))violations.push(violation('package-isolation',file,'relative import escapes the package source boundary',target??requested));}
+      if(owner&&dependency.specifier.startsWith('.')&&target&&!target.startsWith(`${owner}/`))violations.push(violation('package-isolation',file,'resolved import escapes the package source boundary',target));
     }
   }
   for(const skipped of skippedDynamicImports)if(productionModule(skipped.file))violations.push(violation('dynamic-import-target',skipped.file,`cannot determine import or require target at line ${skipped.line}`));
@@ -159,8 +161,8 @@ async function exists(file){return stat(file).then(value=>value.isFile()||value.
 
 export async function checkRepository(root=process.cwd(),options={}){
   const relativeFiles=[
-    ...await walk(root,'src',file=>file.endsWith('.ts')),
-    ...await walk(root,'packages',file=>/\.(?:ts|mjs|cjs|js)$/.test(file)),
+    ...await walk(root,'src',file=>/\.m?ts$/.test(file)),
+    ...await walk(root,'packages',file=>/\.(?:mts|ts|mjs|cjs|js)$/.test(file)),
     ...await walk(root,'scripts',file=>file.endsWith('.mjs')),
   ];
   const entries=await Promise.all(relativeFiles.map(async file=>({path:file,source:await readFile(path.join(root,file),'utf8')}))),analysis=analyzeModules(entries),violations=[...analysis.violations];
@@ -171,17 +173,24 @@ export async function checkRepository(root=process.cwd(),options={}){
   const manifest=JSON.parse(await readFile(path.join(root,'package.json'),'utf8')),lifecycleManifest=JSON.parse(await readFile(path.join(root,'packages/bot-lifecycle/package.json'),'utf8')),build=await readFile(path.join(root,'scripts/build.mjs'),'utf8'),architecture=await readFile(path.join(root,'docs/architecture-boundaries.md'),'utf8');
   const requiredExports={'.':'./dist/index.js','./client':'./dist/client.js'};
   for(const [name,target] of Object.entries(requiredExports))if(manifest.exports?.[name]!==target)violations.push(violation('package-entry','package.json',`export ${name} must remain ${target}`));
-  if(lifecycleManifest.exports?.['.']!=='./dist/index.js')violations.push(violation('package-entry','packages/bot-lifecycle/package.json','export . must remain ./dist/index.js'));
-  for(const [source,target] of [['src/index.ts','dist/index.js'],['src/client/index.ts','dist/client.js'],['src/lifecycle/index.ts','packages/bot-lifecycle/dist/index.js']]){
+  if(lifecycleManifest.source!=='./src/index.ts'||lifecycleManifest.main!=='./dist/index.js'||lifecycleManifest.exports?.['.']!=='./dist/index.js')violations.push(violation('package-entry','packages/bot-lifecycle/package.json','source, main and export . must map src/index.ts to dist/index.js'));
+  if(lifecycleManifest.exports?.['./compatibility']?.import!=='./dist/compatibility.js'||lifecycleManifest.exports?.['./compatibility']?.types!=='./dist/compatibility.d.mts')violations.push(violation('package-entry','packages/bot-lifecycle/package.json','serialized compatibility contract export is missing'));
+  for(const file of ['dist/index.js','dist/compatibility.js','dist/compatibility.d.mts','dist/lifecycle-build.json'])if(!lifecycleManifest.files?.includes(file))violations.push(violation('package-entry','packages/bot-lifecycle/package.json',`published lifecycle file is missing: ${file}`));
+  for(const [source,target] of [['src/index.ts','dist/index.js'],['src/client/index.ts','dist/client.js'],['packages/bot-lifecycle/src/index.ts','packages/bot-lifecycle/dist/index.js']]){
     if(!await exists(path.join(root,source)))violations.push(violation('package-entry',source,'source entry is missing'));
-    if(!build.includes(source)||!build.includes(target))violations.push(violation('package-entry','scripts/build.mjs',`build mapping missing: ${source} -> ${target}`));
+    if(!build.includes(source)&&source.startsWith('packages/')){const packageBuild=await readFile(path.join(root,'packages/bot-lifecycle/scripts/build.mjs'),'utf8');if(!packageBuild.includes("'src','index.ts'")&&!packageBuild.includes('src/index.ts'))violations.push(violation('package-entry','packages/bot-lifecycle/scripts/build.mjs',`build mapping missing: ${source} -> ${target}`));}
+    else if(!source.startsWith('packages/')&&(!build.includes(source)||!build.includes(target)))violations.push(violation('package-entry','scripts/build.mjs',`build mapping missing: ${source} -> ${target}`));
   }
+  if(!build.includes("../packages/bot-lifecycle/scripts/build.mjs"))violations.push(violation('package-entry','scripts/build.mjs','root build must invoke the lifecycle package-owned build'));
+  if(await exists(path.join(root,'src/lifecycle')))violations.push(violation('architecture-layout','src/lifecycle','legacy lifecycle source directory must not exist'));
+  for(const legacy of ['src/core/evolution-contract.ts','src/core/source-integrity.ts'])if(await exists(path.join(root,legacy)))violations.push(violation('architecture-layout',legacy,'lifecycle contract must have a single source under packages/bot-lifecycle/src/contract'));
+  for(const [file,declaration,role] of [['package.json',manifest.dshLifecycle,'main'],['packages/bot-lifecycle/package.json',lifecycleManifest.dshLifecycle,'coordinator']])if(declaration?.schemaVersion!==1||declaration?.role!==role)violations.push(violation('lifecycle-contract',file,`${role} versioned lifecycle declaration is missing`));
   for(const directory of REQUIRED_DIRECTORIES){
     if(!await exists(path.join(root,directory)))violations.push(violation('architecture-layout',directory,'declared directory is missing'));
     if(!architecture.includes(`\`${directory}${directory.includes('.')?'':'/'}\``)&&!architecture.includes(`\`${directory}\``))violations.push(violation('architecture-layout','docs/architecture-boundaries.md',`directory declaration missing: ${directory}`));
   }
   if(!architecture.includes('`src/index.ts`'))violations.push(violation('architecture-layout','docs/architecture-boundaries.md','composition root declaration missing: src/index.ts'));
-  return{status:violations.length?'FAIL':'PASS',modules:analysis.files.length,typescriptModules:analysis.files.filter(file=>file.endsWith('.ts')&&(file.startsWith('src/')||file.startsWith('packages/'))).length,runtimeEdges:analysis.edges.filter(edge=>edge.runtime).length,pythonModules:pythonFiles.length,pythonImports:explicitPythonImports.length,pythonImportSideEffects:pythonSideEffects,cycles:analysis.cycles,skippedDynamicImports:analysis.skippedDynamicImports,...options.inventory?{dependencyInventory:{modules:analysis.files,imports:analysis.edges,pythonImports:explicitPythonImports}}:{},violations:violations.sort((a,b)=>a.file.localeCompare(b.file)||a.rule.localeCompare(b.rule)||a.detail.localeCompare(b.detail))};
+  return{status:violations.length?'FAIL':'PASS',modules:analysis.files.length,typescriptModules:analysis.files.filter(file=>/\.m?ts$/.test(file)&&(file.startsWith('src/')||file.startsWith('packages/'))).length,runtimeEdges:analysis.edges.filter(edge=>edge.runtime).length,pythonModules:pythonFiles.length,pythonImports:explicitPythonImports.length,pythonImportSideEffects:pythonSideEffects,cycles:analysis.cycles,skippedDynamicImports:analysis.skippedDynamicImports,...options.inventory?{dependencyInventory:{modules:analysis.files,imports:analysis.edges,pythonImports:explicitPythonImports}}:{},violations:violations.sort((a,b)=>a.file.localeCompare(b.file)||a.rule.localeCompare(b.rule)||a.detail.localeCompare(b.detail))};
 }
 
 export function formatArchitectureResult(result){return JSON.stringify(result,null,2);}

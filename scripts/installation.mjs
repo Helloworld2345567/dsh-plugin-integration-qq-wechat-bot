@@ -1,23 +1,138 @@
-import {createHash,randomUUID} from 'node:crypto';
-import {mkdir,readFile,copyFile,stat,realpath,rm} from 'node:fs/promises';
-import {existsSync,globSync,lstatSync,readdirSync} from 'node:fs';
+import {randomUUID} from 'node:crypto';
+import {mkdir,readFile,copyFile,stat,realpath,rm,access,writeFile} from 'node:fs/promises';
+import {existsSync,readdirSync,readFileSync} from 'node:fs';
 import {spawn} from 'node:child_process';
 import path from 'node:path';
-import {validatePackageArchive} from './archive-validation.mjs';
+import {validatePackageArchive,readPackageArchiveJson,readPackageArchiveFiles,packageArchiveIdentity} from './archive-validation.mjs';
 import {atomicJson} from './durable-json.mjs';
+import {evaluateLifecycleCompatibility,lifecycleDeclaration} from '../packages/bot-lifecycle/src/contract/compatibility.mjs';
+import {packageIdentity,sha256,sourceFiles,sourceDigest} from '../packages/bot-lifecycle/src/contract/integrity.mjs';
+import {verifyLifecycleBuild} from '../packages/bot-lifecycle/scripts/verify-build.mjs';
 export {atomicJson} from './durable-json.mjs';
 
 export const bundleName='dsh-plugin-integration-qq-wechat-bot';
-export const hashFile=async file=>createHash('sha256').update(await readFile(file)).digest('hex');
-export async function identity(root){
-  const manifest=JSON.parse(await readFile(path.join(root,'package.json'),'utf8'));const included=new Set(['package.json']);
-  const add=relative=>{const normalized=relative.replaceAll('\\','/');if(normalized.split('/').some(part=>/^(?:node_modules|\.git|\.codex|__pycache__)$/.test(part))||/\.pyc$/.test(normalized))return;const info=lstatSync(path.join(root,relative));if(info.isSymbolicLink())throw Error('Shipped package files must not be symlinks');if(info.isDirectory())for(const name of readdirSync(path.join(root,relative)))add(path.join(relative,name));else if(info.isFile())included.add(normalized);};
-  for(const pattern of manifest.files??['cordis.patch.yml','dist/*.js'])for(const entry of globSync(pattern,{cwd:root}))add(entry);
-  const hash=createHash('sha256');for(const file of [...included].sort())hash.update(file).update('\0').update(await readFile(path.join(root,file))).update('\0');return hash.digest('hex');
+export const lifecycleBundleName='dsh-bot-lifecycle';
+export const hashFile=async file=>sha256(file);
+export async function acquireProductOperation(home,kind){
+  if(!['install','start'].includes(kind))throw Error('LIFECYCLE_OPERATION_KIND_INVALID');await mkdir(home,{recursive:true});const file=path.join(home,'lifecycle-operation.lock'),token=randomUUID(),record={schemaVersion:1,pid:process.pid,kind,token,createdAt:Date.now()};
+  try{await writeFile(file,JSON.stringify(record)+'\n',{flag:'wx',mode:0o600,flush:true});}catch(error){if(error.code!=='EEXIST')throw error;let owner;try{owner=JSON.parse(await readFile(file,'utf8'));}catch{throw Error('LIFECYCLE_OPERATION_LOCK_INVALID: archive the stale lock only after confirming no installer or launcher is active');}if(!Number.isSafeInteger(owner.pid)||owner.pid<=0||!['install','start'].includes(owner.kind)||typeof owner.token!=='string')throw Error('LIFECYCLE_OPERATION_LOCK_INVALID: archive the stale lock only after confirming no installer or launcher is active');let alive=false;try{process.kill(owner.pid,0);alive=true;}catch(failure){if(failure.code!=='ESRCH')alive=true;}throw Error(alive?`LIFECYCLE_OPERATION_BUSY: ${owner.kind}`:'LIFECYCLE_OPERATION_STALE: archive the lock only after confirming the recorded process is gone');}
+  return async()=>{let owner;try{owner=JSON.parse(await readFile(file,'utf8'));}catch(error){if(error.code==='ENOENT')return;throw error;}if(owner.token!==token)throw Error('LIFECYCLE_OPERATION_LOCK_OWNERSHIP_LOST');await rm(file,{force:true});};
 }
+export async function assertLauncherStopped(home){
+  try{const state=JSON.parse(await readFile(path.join(home,'launcher.json'),'utf8'));let alive=false;if(Number.isSafeInteger(state.pid)&&state.pid>0)try{process.kill(state.pid,0);alive=true;}catch(error){if(error.code!=='ESRCH')alive=true;}if(alive)throw Error('LIFECYCLE_OFFLINE_PAIR_REQUIRED: stop scripts/start.mjs before installing both bundles');throw Error('LIFECYCLE_STALE_LAUNCHER_STATE: archive launcher.json before offline installation');}catch(error){if(error.code!=='ENOENT')throw error;}
+}
+export async function readArchiveLifecycle(archive,role){if(!path.isAbsolute(archive.path)||!`${archive.sha256??''}`.match(/^[a-f0-9]{64}$/)||await hashFile(archive.path)!==archive.sha256)throw Error('LIFECYCLE_ARTIFACT_MISMATCH: candidate archive hash');const manifest=await readPackageArchiveJson(archive.path);const declaration=lifecycleDeclaration(manifest,role);return{manifest,declaration,artifact:{...archive,identity:await packageArchiveIdentity(archive.path),packageVersion:manifest.version,lifecycle:declaration}};}
+export async function validateLifecyclePair(mainArchive,lifecycleArchive){
+  const main=await readArchiveLifecycle(mainArchive,'main'),coordinator=await readArchiveLifecycle(lifecycleArchive,'coordinator');if(main.manifest.name!==bundleName||coordinator.manifest.name!==lifecycleBundleName)throw Error('LIFECYCLE_ARTIFACT_MISMATCH: unexpected bundle package name');const compatibility=evaluateLifecycleCompatibility(main.declaration,coordinator.declaration);
+  if(!compatibility.compatible)throw Error(`${compatibility.code}: ${compatibility.diagnostic}`);return{main,coordinator,compatibility};
+}
+export async function preflightLifecycleInstall(home,mainArchive,lifecycleArchive){await assertLauncherStopped(home);return validateLifecyclePair(mainArchive,lifecycleArchive);}
+export async function archiveEmbeddedLifecycle(mainArchive,home){
+  const files=await readPackageArchiveFiles(mainArchive.path,'package/packages/bot-lifecycle/'),folder=path.join(home,'embedded-lifecycle',randomUUID());await mkdir(folder,{recursive:true});
+  try{for(const entry of files){const target=path.join(folder,...entry.path.split('/'));await mkdir(path.dirname(target),{recursive:true});await writeFile(target,entry.data,{flag:'wx'});}await verifyLifecycleBuild(folder);return await archivePackage(folder,home);}
+  finally{await rm(folder,{recursive:true,force:true});}
+}
+export async function readInstalledPair(profile){
+  const mainRoot=path.join(profile,'node_modules',bundleName),coordinatorRoot=path.join(profile,'node_modules',lifecycleBundleName),mainManifest=JSON.parse(await readFile(path.join(mainRoot,'package.json'),'utf8')),coordinatorManifest=JSON.parse(await readFile(path.join(coordinatorRoot,'package.json'),'utf8'));
+  const main=lifecycleDeclaration(mainManifest,'main'),coordinator=lifecycleDeclaration(coordinatorManifest,'coordinator'),compatibility=evaluateLifecycleCompatibility(main,coordinator);if(!compatibility.compatible)throw Error(`${compatibility.code}: installed lifecycle pair is incompatible`);
+  return{mainRoot,coordinatorRoot,main,coordinator,mainIdentity:await identity(mainRoot),coordinatorIdentity:await identity(coordinatorRoot),compatibility};
+}
+export async function lifecycleInstallationArtifact(root,archive,role){const manifest=JSON.parse(await readFile(path.join(root,'package.json'),'utf8')),declaration=lifecycleDeclaration(manifest,role);return{...archive,identity:await identity(root),packageVersion:manifest.version,lifecycle:declaration};}
+function journalArchive(home,file){const relative=path.relative(home,file).replaceAll('\\','/');if(!relative||relative.startsWith('../')||path.isAbsolute(relative)||!relative.startsWith('package-archives/'))throw Error('LIFECYCLE_JOURNAL_ARCHIVE_OUTSIDE_HOME');return relative;}
+const journalArtifact=(home,artifact)=>artifact&&({archive:journalArchive(home,artifact.path),sha256:artifact.sha256,identity:artifact.identity,packageVersion:artifact.packageVersion,lifecycle:artifact.lifecycle});
+const journalPair=(home,pair)=>pair&&({main:journalArtifact(home,pair.main),coordinator:journalArtifact(home,pair.coordinator)});
+const safeLifecycleError=error=>{const value=error instanceof Error?error.message:String(error),code=/^(LIFECYCLE_[A-Z0-9_]+|[A-Z][A-Z0-9_]{2,80})(?::|$)/.exec(value)?.[1];return code??'LIFECYCLE_INSTALL_FAILED';};
+export async function offlinePairJournal(home,value){const directory=path.join(home,'lifecycle-installations');await mkdir(directory,{recursive:true});const id=value.id??randomUUID(),file=path.join(directory,`${id}.json`),record={schemaVersion:1,id,createdAt:value.createdAt??Date.now(),updatedAt:Date.now(),...value};await atomicJson(file,record);return{file,record};}
+export async function installOfflineLifecyclePair({home,candidate,previous,install,verify,prepare=async()=>{},commit=async()=>{},finalize=async()=>{},restoreMetadata=async()=>{},metadataBefore={}}){
+  const journal=await offlinePairJournal(home,{kind:'offline-pair-upgrade',phase:'validated',candidate:journalPair(home,candidate),previous:journalPair(home,previous),events:[{at:Date.now(),phase:'validated',message:'Candidate main/coordinator declarations and archive hashes are compatible'}]});
+  const backup={};for(const [name,value] of Object.entries(metadataBefore)){if(value===undefined){backup[name]=null;continue;}const file=path.join(path.dirname(journal.file),`${journal.record.id}.${name}.json`);await writeFile(file,value,{flag:'wx',mode:0o600,flush:true});backup[name]=path.basename(file);}journal.record.metadataBackup=backup;await atomicJson(journal.file,journal.record);
+  const phase=async(name,message,extra={})=>{Object.assign(journal.record,extra,{phase:name,updatedAt:Date.now()});journal.record.events.push({at:Date.now(),phase:name,message});await atomicJson(journal.file,journal.record);};
+  try{
+    await phase('preparing-profile','Preparing profile and workspace while the supervised launcher is stopped');await prepare();await phase('profile-prepared','Profile preparation completed');
+    await phase('installing-coordinator','Installing coordinator while the supervised launcher is stopped');await install(candidate.coordinator.path,lifecycleBundleName);
+    await phase('installing-main','Installing main bundle while no runtime can observe the intermediate pair');await install(candidate.main.path,bundleName);
+    const installed=await verify();await commit(installed);await phase('finalizing-storage','Both bundles and metadata committed; finalizing idempotent storage migration',{installed:journalPair(home,installed)});await finalize();await phase('succeeded','Both installed artifacts and storage migration completed',{installed:journalPair(home,installed)});return{journal:journal.record,installed};
+  }catch(error){
+    if(journal.record.phase==='finalizing-storage'){await phase('finalizing-storage','Storage finalization was interrupted; rerun the trusted installer to resume',{error:safeLifecycleError(error)});throw error;}
+    if(['validated','preparing-profile','profile-prepared'].includes(journal.record.phase)){await restoreMetadata();await phase('failed','Profile preparation failed before package mutation; restored the saved profile state',{error:safeLifecycleError(error)});throw error;}
+    if(['rollback-main-started','rollback-coordinator-started'].includes(journal.record.phase)){await phase(journal.record.phase,'Rollback action outcome is unknown; rerun the trusted installer to verify without replay',{rollbackError:safeLifecycleError(error),rollbackAttempted:true});throw error;}
+    await phase('rolling-back','Offline pair installation failed; restoring exact previous main then coordinator archives once',{error:safeLifecycleError(error),rollbackAttempted:true});
+    if(!previous?.main||!previous?.coordinator){await restoreMetadata();await phase('failed','No complete previous pair was recorded; restored profile metadata and kept the profile stopped');throw error;}
+    try{
+      if(await hashFile(previous.main.path)!==previous.main.sha256||await hashFile(previous.coordinator.path)!==previous.coordinator.sha256)throw Error('LIFECYCLE_PREVIOUS_PAIR_HASH_MISMATCH');
+      await phase('rollback-main-started','Restoring previous main archive once',{rollbackAttempted:true});await install(previous.main.path,bundleName);await phase('rollback-main-installed','Previous main archive restored',{rollbackAttempted:true});
+      await phase('rollback-coordinator-started','Restoring previous coordinator archive once',{rollbackAttempted:true});await install(previous.coordinator.path,lifecycleBundleName);await phase('rollback-pair-installed','Previous pair archives restored',{rollbackAttempted:true});
+      const restored=await verify({expected:previous,allowLegacy:true});await restoreMetadata(restored);await phase('rolled-back','Previous main and coordinator archives and metadata were restored; restart only after operator review',{restored:journalPair(home,restored),rollbackAttempted:true});
+    }catch(rollbackError){if(['rollback-main-started','rollback-coordinator-started'].includes(journal.record.phase)){await phase(journal.record.phase,'Rollback action outcome is unknown; rerun the trusted installer to verify without replay',{rollbackError:safeLifecycleError(rollbackError),rollbackAttempted:true});throw rollbackError;}await phase('failed','Offline pair rollback failed; do not start the profile',{rollbackError:safeLifecycleError(rollbackError),rollbackAttempted:true});throw rollbackError;}
+    throw error;
+  }
+}
+function resolveJournalArtifact(home,value){if(!value||typeof value.archive!=='string'||value.archive.includes('..')||path.isAbsolute(value.archive)||!value.archive.startsWith('package-archives/'))throw Error('LIFECYCLE_JOURNAL_ARTIFACT_INVALID');const file=path.resolve(home,...value.archive.split('/'));if(!file.startsWith(`${path.resolve(home)}${path.sep}`))throw Error('LIFECYCLE_JOURNAL_ARTIFACT_INVALID');return{...value,path:file};}
+const BACKUP_TARGETS=Object.freeze({installation:'installation.json',lifecycle:'lifecycle-installation.json',workspace:'workspace.json',profile:'profiles/bots/package.json',workspaceConfig:'profiles/bots/pnpm-workspace.yaml',patch:'profiles/bots/cordis.patch.yml'});
+async function restoreJournalMetadata(home,journalFile,backup={}){for(const [name,target] of Object.entries(BACKUP_TARGETS)){const saved=backup[name];if(saved===undefined)continue;const destination=path.join(home,...target.split('/'));if(saved===null){await rm(destination,{force:true});continue;}if(typeof saved!=='string'||path.basename(saved)!==saved)throw Error('LIFECYCLE_METADATA_BACKUP_INVALID');const file=path.join(path.dirname(journalFile),saved);await mkdir(path.dirname(destination),{recursive:true});await writeFile(destination,await readFile(file),{flush:true});}}
+async function activeOfflineTransactions(home){const directory=path.join(home,'lifecycle-installations');let files=[];try{files=readdirSync(directory).filter(name=>/^[a-z0-9-]+\.json$/i.test(name));}catch(error){if(error.code==='ENOENT')return[];throw error;}const active=[];for(const name of files){const file=path.join(directory,name),record=JSON.parse(await readFile(file,'utf8'));if(!['succeeded','rolled-back','failed'].includes(record.phase))active.push({file,record});}return active;}
+export async function assertNoActiveOfflineTransaction(home){if((await activeOfflineTransactions(home)).length)throw Error('LIFECYCLE_OFFLINE_TRANSACTION_ACTIVE: rerun the trusted installer while stopped');}
+export async function recoverInterruptedOfflinePair(home,profile,install,finalize=async()=>{}){
+  const active=await activeOfflineTransactions(home);if(!active.length)return;if(active.length!==1)throw Error('LIFECYCLE_OFFLINE_JOURNAL_CONFLICT');const {file,record}=active[0],save=async(phase,message,extra={})=>{Object.assign(record,extra,{phase,updatedAt:Date.now()});record.events??=[];record.events.push({at:Date.now(),phase,message});await atomicJson(file,record);};
+  if(['validated','preparing-profile','profile-prepared'].includes(record.phase)){await restoreJournalMetadata(home,file,record.metadataBackup);await save('failed','Installer stopped before package mutation; restored the saved profile state',{error:'LIFECYCLE_INSTALL_INTERRUPTED'});return;}
+  if(record.phase==='finalizing-storage'){await verifyInstalledLifecycleCombination(home,profile);await finalize();await save('succeeded','Resumed idempotent storage finalization after revalidating both installed bundles');return record;}
+  if(!record.previous?.main||!record.previous?.coordinator){await restoreJournalMetadata(home,file,record.metadataBackup);await save('failed','Interrupted first installation has no previous pair; restored profile metadata and kept the profile stopped',{error:'LIFECYCLE_PREVIOUS_PAIR_MISSING'});throw Error('LIFECYCLE_PREVIOUS_PAIR_MISSING');}const previous={main:resolveJournalArtifact(home,record.previous.main),coordinator:resolveJournalArtifact(home,record.previous.coordinator)};
+  try{
+    if(!record.rollbackAttempted)await save('rolling-back','Resuming the one durable offline rollback after an interrupted install',{rollbackAttempted:true,error:'LIFECYCLE_INSTALL_INTERRUPTED'});
+    for(const artifact of [previous.main,previous.coordinator])if(await hashFile(artifact.path)!==artifact.sha256)throw Error('LIFECYCLE_PREVIOUS_PAIR_HASH_MISMATCH');
+    const mainRoot=path.join(profile,'node_modules',bundleName),coordinatorRoot=path.join(profile,'node_modules',lifecycleBundleName),matches=async(root,expected)=>{try{return await identity(root)===expected.identity;}catch{return false;}};
+    if(record.phase==='rollback-main-started'){if(!await matches(mainRoot,previous.main))throw Error('LIFECYCLE_ROLLBACK_MAIN_OUTCOME_UNKNOWN');await save('rollback-main-installed','Verified the previous main after an interrupted rollback action',{rollbackAttempted:true});}
+    else if(!['rollback-main-installed','rollback-coordinator-started','rollback-pair-installed'].includes(record.phase)){await save('rollback-main-started','Restoring previous main archive once',{rollbackAttempted:true});await install(previous.main.path,bundleName);await save('rollback-main-installed','Previous main archive restored',{rollbackAttempted:true});}
+    if(record.phase==='rollback-coordinator-started'){if(!await matches(coordinatorRoot,previous.coordinator))throw Error('LIFECYCLE_ROLLBACK_COORDINATOR_OUTCOME_UNKNOWN');await save('rollback-pair-installed','Verified the previous coordinator after an interrupted rollback action',{rollbackAttempted:true});}
+    else if(record.phase!=='rollback-pair-installed'){await save('rollback-coordinator-started','Restoring previous coordinator archive once',{rollbackAttempted:true});await install(previous.coordinator.path,lifecycleBundleName);await save('rollback-pair-installed','Previous pair archives restored',{rollbackAttempted:true});}
+    const mainIdentity=await identity(mainRoot),coordinatorIdentity=await identity(coordinatorRoot);if(mainIdentity!==previous.main.identity||coordinatorIdentity!==previous.coordinator.identity)throw Error('LIFECYCLE_IDENTITY_MISMATCH');await restoreJournalMetadata(home,file,record.metadataBackup);await save('rolled-back','Interrupted offline pair transaction recovered once',{restored:journalPair(home,previous),rollbackAttempted:true});return record;
+  }catch(error){await save('failed','Interrupted offline pair rollback failed; do not start the profile',{rollbackError:safeLifecycleError(error),rollbackAttempted:true});throw error;}
+}
+export async function previousInstalledPair(home,profile){
+  const mainRoot=path.join(profile,'node_modules',bundleName),coordinatorRoot=path.join(profile,'node_modules',lifecycleBundleName);let installation;try{installation=JSON.parse(await readFile(path.join(home,'installation.json'),'utf8'));await access(path.join(mainRoot,'package.json'));await access(path.join(coordinatorRoot,'package.json'));}catch(error){if(error.code==='ENOENT')return;throw error;}const installedMainIdentity=await identity(mainRoot);if(installation.schemaVersion!==1||installation.current?.identity!==installedMainIdentity)throw Error('LIFECYCLE_PREVIOUS_BASELINE_UNTRUSTED');
+  const main=await archivePackage(mainRoot,home),coordinator=await archivePackage(coordinatorRoot,home),mainManifest=JSON.parse(await readFile(path.join(mainRoot,'package.json'),'utf8')),coordinatorManifest=JSON.parse(await readFile(path.join(coordinatorRoot,'package.json'),'utf8'));
+  const enrich=async(root,archive,manifest,role)=>{let lifecycle;try{lifecycle=lifecycleDeclaration(manifest,role);}catch{}return{...archive,identity:await identity(root),packageVersion:manifest.version,...lifecycle?{lifecycle}:{}};};
+  return{main:await enrich(mainRoot,main,mainManifest,'main'),coordinator:await enrich(coordinatorRoot,coordinator,coordinatorManifest,'coordinator')};
+}
+export async function recoverInterruptedHotUpgrade(home,install,profile=path.join(home,'profiles','bots')){
+  await assertNoActiveOfflineTransaction(home);const directory=path.join(home,'evolution');let tasks=[];try{tasks=readdirSync(directory).filter(name=>/^[a-z0-9-]+\.json$/i.test(name)).map(name=>JSON.parse(readFileSync(path.join(directory,name),'utf8'))).filter(task=>['applying','rolling-back'].includes(task.phase));}catch(error){if(error.code==='ENOENT')return;throw error;}if(!tasks.length)return;if(tasks.length!==1)throw Error('LIFECYCLE_HOT_TRANSACTION_CONFLICT');const task=tasks[0],file=path.join(directory,`${task.id}.json`),phase=async(name,message)=>{task.phase=name;task.updatedAt=Date.now();task.events??=[];task.events.push({at:task.updatedAt,phase:name,message});await atomicJson(file,task);};
+  const lifecycleInstallation=JSON.parse(await readFile(path.join(home,'lifecycle-installation.json'),'utf8')),coordinator=lifecycleInstallation.current?.coordinator,coordinatorRoot=path.join(profile,'node_modules',lifecycleBundleName);if(lifecycleInstallation.schemaVersion!==1||!coordinator?.lifecycle||!path.isAbsolute(coordinator.path)||await hashFile(coordinator.path)!==coordinator.sha256)throw Error('LIFECYCLE_COORDINATOR_BASELINE_INVALID');const coordinatorManifest=JSON.parse(await readFile(path.join(coordinatorRoot,'package.json'),'utf8'));if(await identity(coordinatorRoot)!==coordinator.identity||coordinatorManifest.version!==coordinator.packageVersion||JSON.stringify(lifecycleDeclaration(coordinatorManifest,'coordinator'))!==JSON.stringify(coordinator.lifecycle))throw Error('LIFECYCLE_COORDINATOR_BASELINE_INVALID');
+  if(!task.previous?.path||!task.previous?.identity||!task.previous?.lifecycle||!path.isAbsolute(task.previous.path)||await hashFile(task.previous.path)!==task.previous.sha256)throw Error('LIFECYCLE_PREVIOUS_ARTIFACT_INVALID');
+  const installedMatches=async()=>{try{const root=path.join(profile,'node_modules',bundleName),manifest=JSON.parse(await readFile(path.join(root,'package.json'),'utf8'));return await identity(root)===task.previous.identity&&manifest.version===task.previous.packageVersion&&JSON.stringify(lifecycleDeclaration(manifest,'main'))===JSON.stringify(task.previous.lifecycle);}catch{return false;}};
+  if(task.phase==='applying'){task.rollbackAttempted=true;task.rollbackStep='requested';await phase('rolling-back','Launcher queued one previous-main restore after interrupted apply');task.rollbackStep='install-started';await atomicJson(file,task);await install(task.previous.path);task.rollbackStep='installed';await phase('restarting','Previous main installed offline; restart once');return task;}
+  if(task.rollbackStep==='requested'){task.rollbackStep='install-started';await atomicJson(file,task);await install(task.previous.path);task.rollbackStep='installed';await phase('restarting','Previous main installed offline; restart once');return task;}
+  if(task.rollbackStep==='install-started'){if(!await installedMatches()){task.error='Rollback install outcome is unknown; refusing to replay';await phase('failed',task.error);throw Error('LIFECYCLE_ROLLBACK_OUTCOME_UNKNOWN');}task.rollbackStep='installed';await phase('restarting','Verified previous main after interrupted rollback install');return task;}
+  if(task.rollbackStep==='installed'){await phase('restarting','Previous main was already installed; restart once');return task;}
+  task.error='Interrupted rollback lacks a safe durable step; refusing to replay';await phase('failed',task.error);throw Error('LIFECYCLE_ROLLBACK_STEP_INVALID');
+}
+export async function verifyInstalledLifecycleCombination(home,profile=path.join(home,'profiles','bots')){
+  const installation=JSON.parse(await readFile(path.join(home,'installation.json'),'utf8'));let lifecycleInstallation;try{lifecycleInstallation=JSON.parse(await readFile(path.join(home,'lifecycle-installation.json'),'utf8'));}catch(error){if(error.code==='ENOENT')throw Error('LIFECYCLE_METADATA_MISSING: stop the launcher and run the trusted offline installer for both bundles');throw error;}
+  const pair=lifecycleInstallation.current,current=pair?.main,coordinatorArtifact=pair?.coordinator;
+  if(lifecycleInstallation.schemaVersion!==1||!current?.lifecycle||!current.packageVersion||!coordinatorArtifact?.lifecycle||!coordinatorArtifact.packageVersion||JSON.stringify(installation.current)!==JSON.stringify(current))throw Error('LIFECYCLE_METADATA_INVALID: lifecycle installation state does not match installation.json');
+  for(const [name,artifact] of [['main',current],['coordinator',coordinatorArtifact]])if(!path.isAbsolute(artifact.path)||await hashFile(artifact.path)!==artifact.sha256)throw Error(`LIFECYCLE_ARTIFACT_MISMATCH: ${name} archive hash`);
+  const installed=await readInstalledPair(profile);if(installed.mainIdentity!==current.identity||installed.coordinatorIdentity!==coordinatorArtifact.identity)throw Error('LIFECYCLE_IDENTITY_MISMATCH: installed files differ from lifecycle installation metadata');
+  if(installed.main.packageVersion!==current.packageVersion||installed.coordinator.packageVersion!==coordinatorArtifact.packageVersion)throw Error('LIFECYCLE_VERSION_MISMATCH: installed versions differ from lifecycle installation metadata');
+  if(JSON.stringify(installed.main)!==JSON.stringify(current.lifecycle)||JSON.stringify(installed.coordinator)!==JSON.stringify(coordinatorArtifact.lifecycle))throw Error('LIFECYCLE_METADATA_INVALID: installed declarations differ from lifecycle installation metadata');
+  return{installation,lifecycleInstallation,installed};
+}
+export async function verifyLauncherLifecycleState(home,profile=path.join(home,'profiles','bots')){
+  await assertNoActiveOfflineTransaction(home);
+  const evolutionDirectory=path.join(home,'evolution');let allTasks=[];try{allTasks=readdirSync(evolutionDirectory).filter(name=>/^[a-z0-9-]+\.json$/i.test(name)).map(name=>JSON.parse(readFileSync(path.join(evolutionDirectory,name),'utf8')));}catch(error){if(error.code!=='ENOENT')throw error;}const pending=allTasks.filter(task=>['restarting','reconnecting'].includes(task.phase));if(pending.length>1)throw Error('LIFECYCLE_HOT_TRANSACTION_CONFLICT');
+  try{return{...await verifyInstalledLifecycleCombination(home,profile),...(pending[0]?{pendingTask:pending[0]}:{})};}catch(strictError){
+    let lifecycleInstallation,installation;try{lifecycleInstallation=JSON.parse(await readFile(path.join(home,'lifecycle-installation.json'),'utf8'));installation=JSON.parse(await readFile(path.join(home,'installation.json'),'utf8'));}catch{throw strictError;}if(lifecycleInstallation.schemaVersion!==1||installation.schemaVersion!==1)throw strictError;
+    const active=pending;if(active.length!==1)throw strictError;const task=active[0],expected=task.rollbackAttempted?task.previous:task.artifact,coordinator=lifecycleInstallation.current?.coordinator,durableMain=lifecycleInstallation.current?.main,allowed=[task.previous,task.artifact].filter(Boolean);if(!expected?.lifecycle||!expected.packageVersion||!durableMain?.lifecycle||!coordinator?.lifecycle)throw strictError;
+    for(const artifact of [expected,durableMain,coordinator,installation.current])if(!path.isAbsolute(artifact.path)||await hashFile(artifact.path)!==artifact.sha256)throw strictError;
+    const matchesAllowed=artifact=>allowed.some(item=>JSON.stringify(item)===JSON.stringify(artifact));if(!matchesAllowed(durableMain)||!matchesAllowed(installation.current))throw strictError;
+    const installed=await readInstalledPair(profile);if(installed.mainIdentity!==expected.identity||installed.main.packageVersion!==expected.packageVersion||JSON.stringify(installed.main)!==JSON.stringify(expected.lifecycle)||installed.coordinatorIdentity!==coordinator.identity||installed.coordinator.packageVersion!==coordinator.packageVersion||JSON.stringify(installed.coordinator)!==JSON.stringify(coordinator.lifecycle))throw strictError;
+    return{installation,lifecycleInstallation,installed,pendingTask:task};
+  }
+}
+
+export async function identity(root){return packageIdentity(root);}
 export async function archivePackage(source,home){
   const folder=path.join(home,'package-archives',randomUUID());await mkdir(folder,{recursive:true});let archive;
   if((await stat(source)).isDirectory()){
+    const sourceManifest=JSON.parse(await readFile(path.join(source,'package.json'),'utf8'));if(sourceManifest.name===lifecycleBundleName)try{await access(path.join(source,'src','index.ts'));await verifyLifecycleBuild(source);}catch(error){if(error.code!=='ENOENT')throw error;}
     const npm=[process.env.npm_execpath,path.join(path.dirname(process.execPath),'node_modules/npm/bin/npm-cli.js'),path.resolve(path.dirname(process.execPath),'../lib/node_modules/npm/bin/npm-cli.js')].find(p=>p&&path.basename(p)==='npm-cli.js'&&existsSync(p));
     if(!npm)throw Error('Cannot locate npm CLI beside Node');
     const output=await new Promise((resolve,reject)=>{const child=spawn(process.execPath,[npm,'pack','--json','--ignore-scripts','--pack-destination',folder],{cwd:source,windowsHide:true,stdio:['ignore','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',data=>stdout+=data);child.stderr.on('data',data=>stderr+=data);child.on('error',reject);child.on('exit',code=>code===0?resolve(stdout):reject(Error(stderr)));});
@@ -27,26 +142,24 @@ export async function archivePackage(source,home){
 }
 export async function readVerifiedInstallationArtifact(home){const installation=JSON.parse(await readFile(path.join(home,'installation.json'),'utf8')),artifact=installation.current;if(!artifact||typeof artifact.path!=='string'||typeof artifact.sha256!=='string'||!/^[a-f0-9]{64}$/.test(artifact.sha256)||!path.isAbsolute(artifact.path)||await hashFile(artifact.path)!==artifact.sha256)throw Error('PREVIOUS_INSTALLATION_ARCHIVE_INVALID');await validatePackageArchive(artifact.path);const layers=Array.isArray(installation.layers)&&installation.layers.every(layer=>typeof layer==='string')?installation.layers:['core','basic-media'];return{path:artifact.path,sha256:artifact.sha256,layers};}
 export async function restoreVerifiedInstallation(artifact,install){if(!artifact||await hashFile(artifact.path)!==artifact.sha256)throw Error('PREVIOUS_INSTALLATION_ARCHIVE_INVALID');await validatePackageArchive(artifact.path);await install(artifact.path,{layers:artifact.layers,rollback:true});return artifact;}
-export async function recordInstallation({home,sourceRoot,installedFrom,archive,installedRoot,layers=['core','basic-media'],verifySource=true}){
-  const file=path.join(home,'installation.json');let previous;try{previous=JSON.parse(await readFile(file,'utf8')).current;}catch(error){if(error.code!=='ENOENT')throw error;}
+export async function recordInstallation({home,sourceRoot,installedFrom,archive,installedRoot,layers=['core','basic-media'],verifySource=true,lifecycle}){
+  const file=path.join(home,'installation.json'),lifecycleFile=path.join(home,'lifecycle-installation.json');let previous,previousPair;try{previous=JSON.parse(await readFile(file,'utf8')).current;}catch(error){if(error.code!=='ENOENT')throw error;}try{previousPair=JSON.parse(await readFile(lifecycleFile,'utf8')).current;}catch(error){if(error.code!=='ENOENT')throw error;}
   const root=await realpath(sourceRoot);const installedIdentity=await identity(installedRoot);
   if(verifySource&&existsSync(path.join(root,'src/index.ts'))&&await identity(root)!==installedIdentity)throw Error('Source release files differ from the installed archive; rebuild and install that source, or set BOT_SOURCE_ROOT to its exact checkout');
-  const baseline={};const roots=new Set(['src','python','skills','tests','scripts','docs','examples','packages']);const files=new Set(['package.json','package-lock.json','tsconfig.json','requirements.txt','requirements-voice-generation.txt','requirements-ci.txt','requirements-voice-generation-ci.txt','requirements-audit-ci.txt','cordis.patch.yml','README.md','AGENTS.md','LICENSE','THIRD_PARTY_NOTICES.md','.gitignore','.gitattributes']);
-  const walk=async(relative='')=>{for(const name of readdirSync(path.join(root,relative)).sort()){
-    if(/^(?:node_modules|dist|\.codex|\.git|\.runtime|\.venv|__pycache__|coverage|data|artifacts)$/i.test(name)||/^\.env(?:\.|$)/.test(name)||/\.(?:sqlite|db|log|tgz|pyc)(?:-|$)/i.test(name))continue;
-    if(!relative&&!roots.has(name)&&!files.has(name))continue;const rel=relative?`${relative}/${name}`:name;const info=lstatSync(path.join(root,rel));if(info.isSymbolicLink())throw Error('Source snapshot contains a symlink');if(info.isDirectory())await walk(rel);else if(info.isFile())baseline[rel]=await hashFile(path.join(root,rel));
-  }};await walk();const sourceDigest=createHash('sha256').update(JSON.stringify(Object.entries(baseline).sort(([a],[b])=>a.localeCompare(b)))).digest('hex');
+  const baseline=sourceFiles(root),digest=sourceDigest(baseline);
   const allowed=new Set(['core','basic-media','voice-generation','music','singing-rvc']);if(!Array.isArray(layers)||!layers.includes('core')||!layers.includes('basic-media')||layers.some(layer=>!allowed.has(layer)))throw Error('INSTALL_LAYERS_INVALID');
-  await atomicJson(file,{schemaVersion:1,sourceRoot:root,projectRoot:root,sourceDigest,installedFrom,current:{...archive,identity:installedIdentity},previous,layers:[...new Set(layers)],updatedAt:Date.now()});
+  if(archive.identity&&archive.identity!==installedIdentity)throw Error('LIFECYCLE_IDENTITY_MISMATCH: main installed identity changed before recording');
+  const main={...archive,identity:installedIdentity};await atomicJson(file,{schemaVersion:1,sourceRoot:root,projectRoot:root,sourceDigest:digest,installedFrom,current:main,previous,layers:[...new Set(layers)],updatedAt:Date.now()});
+  if(lifecycle)await atomicJson(lifecycleFile,{schemaVersion:1,current:{main,coordinator:lifecycle},previous:previousPair,updatedAt:Date.now()});
 }
 
 /** Called only by the owning launcher after its child exited. No active profile is modified. */
 export async function recoverFailedUpgrade(home,taskId,install){
   if(!/^[a-z0-9-]{1,80}$/i.test(taskId))throw Error('Invalid lifecycle task ID');
   const file=path.join(home,'evolution',`${taskId}.json`);const task=JSON.parse(await readFile(file,'utf8'));
-  if(task.phase!=='restarting'||task.kind==='restart'||task.rollbackAttempted||!task.previous){task.phase='failed';task.error='Startup failed; no automatic package rollback is available';task.events.push({at:Date.now(),phase:task.phase,message:task.error});await atomicJson(file,task);throw Error(task.error);}
+  if(!['restarting','reconnecting'].includes(task.phase)||task.kind==='restart'||task.rollbackAttempted||!task.previous){task.phase='failed';task.error='Startup failed; no automatic package rollback is available';task.events.push({at:Date.now(),phase:task.phase,message:task.error});await atomicJson(file,task);throw Error(task.error);}
   if(await hashFile(task.previous.path)!==task.previous.sha256)throw Error('Previous archive hash mismatch');await validatePackageArchive(task.previous.path);
-  task.rollbackAttempted=true;task.phase='rolling-back';task.error='Supervised process failed before healthy activation';task.events.push({at:Date.now(),phase:task.phase,message:task.error});await atomicJson(file,task);
+  task.rollbackAttempted=true;task.rollbackStep='install-started';task.phase='rolling-back';task.error='Supervised process failed before healthy activation';task.events.push({at:Date.now(),phase:task.phase,message:task.error});await atomicJson(file,task);
   await install(task.previous.path);
-  task.phase='restarting';task.events.push({at:Date.now(),phase:task.phase,message:'Previous package installed offline; restart once'});await atomicJson(file,task);
+  task.rollbackStep='installed';task.phase='restarting';task.events.push({at:Date.now(),phase:task.phase,message:'Previous package installed offline; restart once'});await atomicJson(file,task);
 }
