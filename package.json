@@ -51,6 +51,7 @@
     "requirements-ci.txt",
     "requirements-voice-generation-ci.txt",
     "docs",
+    ".env.example",
     "README.md",
     "CONTRIBUTING.md",
     "SECURITY.md",

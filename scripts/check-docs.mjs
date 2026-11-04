@@ -13,21 +13,86 @@ async function walk(directory) {
   }
 }
 await walk(root);
+
+function slugify(value) {
+  return value
+    .replace(/<[^>]+>/g, '')
+    .replace(/[`*_~]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+    .replace(/[\s_]+/g, '-')
+    .replace(/-+/g, '-');
+}
+function headingSlugs(text) {
+  const slugs = new Set();
+  for (const match of text.matchAll(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/gm)) {
+    const base = slugify(match[2]);
+    if (!base) continue;
+    let slug = base;
+    let suffix = 1;
+    while (slugs.has(slug)) slug = `${base}-${suffix++}`;
+    slugs.add(slug);
+  }
+  return slugs;
+}
+function localTarget(raw) {
+  const withoutTitle = raw.trim().replace(/^<|>$/g, '');
+  const hash = withoutTitle.indexOf('#');
+  const query = withoutTitle.indexOf('?');
+  const cut = [hash, query].filter(index => index >= 0).sort((a, b) => a - b)[0];
+  const target = cut === undefined ? withoutTitle : withoutTitle.slice(0, cut);
+  const fragment = hash < 0 ? undefined : withoutTitle.slice(hash + 1).split('?', 1)[0];
+  return {target: decodeURIComponent(target), fragment: fragment ? decodeURIComponent(fragment).toLowerCase() : undefined};
+}
+
 const failures = [];
-const linkPattern = /(?<!!?)\[[^\]]*\]\((?:<([^>]+)>|([^\s)]+)(?:\s+[^)]*)?)\)/g;
+const linkPattern = /!?\[[^\]]*\]\(\s*(?:<([^>\n]+)>|([^\s)\n]+))/g;
 for (const file of markdown) {
   const text = await readFile(file, 'utf8');
+  const slugs = headingSlugs(text);
   for (const match of text.matchAll(linkPattern)) {
     const raw = (match[1] ?? match[2]).trim();
-    if (!raw || /^(?:https?:|mailto:|data:|#)/i.test(raw)) continue;
-    const target = raw.split('#', 1)[0].split('?', 1)[0];
-    if (!target) continue;
-    const resolved = path.resolve(path.dirname(file), target);
+    if (!raw || /^(?:https?:|wss?:|mailto:|data:|javascript:)/i.test(raw)) continue;
+    let parsed;
+    try { parsed = localTarget(raw); } catch { failures.push(`${path.relative(root, file)} -> ${raw}: invalid URL encoding`); continue; }
+    if (!parsed.target) {
+      if (parsed.fragment && !slugs.has(parsed.fragment)) failures.push(`${path.relative(root, file)} -> ${raw}: missing fragment #${parsed.fragment}`);
+      continue;
+    }
+    const resolved = path.resolve(path.dirname(file), parsed.target);
+    const repositoryRelative = path.relative(root, resolved);
+    if (repositoryRelative.startsWith('..') || path.isAbsolute(repositoryRelative)) {
+      failures.push(`${path.relative(root, file)} -> ${raw}: target escapes repository`);
+      continue;
+    }
     let exists = false;
-    try { await stat(resolved); exists = true; } catch {}
-    if (!exists) failures.push(`${path.relative(root, file)} -> ${raw}`);
+    try { exists = (await stat(resolved)).isFile() || (await stat(resolved)).isDirectory(); } catch {}
+    if (!exists) {
+      failures.push(`${path.relative(root, file)} -> ${raw}: missing target`);
+      continue;
+    }
+    if (parsed.fragment) {
+      let fragmentFile = resolved;
+      try {
+        if ((await stat(fragmentFile)).isDirectory()) {
+          const readme = path.join(fragmentFile, 'README.md');
+          if ((await stat(readme)).isFile()) fragmentFile = readme;
+        }
+        const targetText = await readFile(fragmentFile, 'utf8');
+        if (!headingSlugs(targetText).has(parsed.fragment)) failures.push(`${path.relative(root, file)} -> ${raw}: missing fragment #${parsed.fragment}`);
+      } catch { failures.push(`${path.relative(root, file)} -> ${raw}: cannot inspect fragment #${parsed.fragment}`); }
+    }
+  }
+  // V3 persona migration is intentionally not a supported contract. Scan every
+  // published Markdown source, but allow explicit negative/V4-only statements.
+  const migrationClaim=/preserved\s+when\s+migrating\s+v3\s+personas?\s+to\s+v4|migrat(?:e|ing|ion)\s+v3(?:\s+personas?)?\s+(?:to|into)\s+v4|v3\s*(?:to|→)\s*v4.{0,40}migrat\w*|v3.{0,20}(?:到|至|→).{0,20}v4.{0,20}(?:迁移|升级|转换)|v3.{0,40}(?:迁移到|升级到|转换为|回退到).{0,20}v4|(?:迁移|升级|转换).{0,20}v3.{0,20}(?:到|至|为).{0,20}v4/gis;
+  for(const claim of text.matchAll(migrationClaim)){
+    const before=text.slice(Math.max(0,(claim.index??0)-40),claim.index??0);
+    if(!/(?:does\s+not|do\s+not|not\s+supported|unsupported|不承诺|不支持|不会|不再|禁止|无)\s*.{0,30}$/is.test(before))failures.push(`${path.relative(root, file)}: unsupported V3-to-V4 persona migration promise`);
   }
 }
+
 const workflows = [];
 async function findYaml(directory) {
   for (const entry of await readdir(directory, {withFileTypes: true})) {
@@ -36,11 +101,26 @@ async function findYaml(directory) {
     else if (entry.isFile() && /\.(?:yml|yaml)$/i.test(entry.name)) workflows.push(full);
   }
 }
-await findYaml(path.join(root, '.github'));
+try { await findYaml(path.join(root, '.github')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
 const {parse} = await import('yaml');
 for (const file of workflows) {
-  try { parse(await readFile(file, 'utf8')); }
-  catch (error) { failures.push(`${path.relative(root, file)}: invalid YAML (${error.message})`); }
+  const text = await readFile(file, 'utf8');
+  let document;
+  try { document = parse(text); }
+  catch (error) { failures.push(`${path.relative(root, file)}: invalid YAML (${error.message})`); continue; }
+  if (path.relative(root, file).replaceAll('\\', '/') === '.github/workflows/ci.yml') {
+    if (!document || typeof document !== 'object' || Array.isArray(document)) failures.push('.github/workflows/ci.yml: root must be an object');
+    else {
+      const jobs = document.jobs;
+      for (const job of ['quality', 'release-gate', 'harness-integration', 'python-compatibility']) if (!jobs?.[job]) failures.push(`.github/workflows/ci.yml: missing job ${job}`);
+      if (document.env?.NODE_VERSION !== '24' || document.env?.HARNESS_VERSION !== '0.2.1-rc.2') failures.push('.github/workflows/ci.yml: Node/Harness version contract changed');
+      const pythonMatrix=jobs?.['python-compatibility']?.strategy?.matrix?.['python-version']?.map(String)??[];
+      if (!pythonMatrix.includes('3.12') || !pythonMatrix.includes('3.13')) failures.push('.github/workflows/ci.yml: Python 3.12/3.13 matrix missing');
+      for (const command of ['npm run verify:release', 'npm run release:pack', 'npm run test:native', 'npm run test:lifecycle-native', 'npm run test:install-smoke']) if (!text.includes(command)) failures.push(`.github/workflows/ci.yml: missing ${command}`);
+      if (!/ffmpeg\s+-version[\s\S]*ffprobe\s+-version/m.test(text)) failures.push('.github/workflows/ci.yml: ffmpeg/ffprobe verification missing');
+    }
+  }
 }
+
 console.log(JSON.stringify({status: failures.length ? 'FAIL' : 'PASS', markdownFiles: markdown.length, yamlFiles: workflows.length, failures}, null, 2));
 if (failures.length) process.exitCode = 1;

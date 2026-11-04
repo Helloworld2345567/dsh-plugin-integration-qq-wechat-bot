@@ -1,15 +1,19 @@
 # 部署独立机器人产品 profile
 
+统一前置检查、首次验证和能力边界见[快速开始](getting-started.md)；变量说明见[配置参考](configuration.md)，失败处理见[排障文档](troubleshooting.md)。
+
 本方式适合希望由项目创建并管理隔离 `bots` profile 的运营者。安装器会创建产品数据目录、媒体 Python 环境、独立工作区、主 bundle 和生命周期协调 bundle；不会修改其他 Harness profile。
 
-> 当前项目的文档和管理界面仅提供简体中文。英文界面后续再扩展。
+> 当前项目的文档和管理界面仅提供简体中文，当前版本不承诺英文 UI。
 
 ## 前置条件
 
+- Windows 10/11、PowerShell 7
 - Node.js 24+
-- Python 3.12+
+- Python 3.12 或 3.13
 - DeepSeek Harness 0.2.1-rc.2
 - `ffmpeg` 与 `ffprobe`
+- 基础安装不要求 CUDA、RVC、GPT-SoVITS、Music 或模型权重
 - 可选：`uv`，未安装时回退到 Python `venv` 和 `pip`
 
 ## 本地源码部署

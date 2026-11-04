@@ -4,7 +4,7 @@
 
 ## 使用问题
 
-安装、配置、人格、技能、媒体限制和 Harness profile 使用问题，请先查看 [README](README.md)、[已有 Harness 安装说明](docs/install-existing-harness.md) 和项目文档；仍无法解决时创建带有最小复现步骤的 Discussion 或 Issue。
+安装、配置、人格、技能、媒体限制和 Harness profile 使用问题，请先查看 [README](README.md)、[快速开始](docs/getting-started.md)、[配置参考](docs/configuration.md) 和[排障文档](docs/troubleshooting.md)；仍无法解决时创建带有最小复现步骤的 Discussion 或 Issue。
 
 ## Bug
 

@@ -14,7 +14,7 @@
 1. **已有 Harness 安装**只通过 `dsh plugin --profile <profile> add <package>` 安装主 bundle，不手工改写用户 profile，不自动安装生命周期协调器。
 2. **独立产品 profile**由 `scripts/install.mjs` 创建和管理隔离的 `bots` profile、产品数据目录、工作区、主 bundle 与 `dsh-bot-lifecycle`。
 3. 主包继续内置 `bot-unified-chat` Agent preset；不再发布重复的 `packages/bot-unified-chat` 子 bundle。
-4. 当前文档和管理 UI 仅承诺简体中文；英文支持后续单独设计。
+4. 当前文档和管理 UI 仅承诺简体中文；当前版本不承诺英文 UI。
 
 ## 结果
 

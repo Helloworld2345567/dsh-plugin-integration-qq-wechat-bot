@@ -4,6 +4,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {validatePackageArchive} from './archive-validation.mjs';
+import {validateReleaseEntry} from './release-safety.mjs';
 
 const packageJson = JSON.parse(await readFile('package.json', 'utf8'));
 const temporary = await mkdtemp(path.join(tmpdir(), 'dsh-plugin-release-'));
@@ -24,8 +25,13 @@ try {
     throw new Error('npm pack returned an unexpected archive manifest');
   }
   const validation = await validatePackageArchive(archive);
-  const forbidden = validation.entries.filter(entry => /(?:^|\/)(?:package\/)?(?:fix_plan\.md|node_modules|\.codex|\.runtime|outputs|coverage|data|artifacts)(?:\/|$)/i.test(entry.path) || /(?:\.db|\.sqlite|\.log|\.tgz|\.pyc|\.env(?:\.|$))/i.test(entry.path));
-  if (forbidden.length) throw new Error(`Forbidden package entries: ${forbidden.map(entry => entry.path).join(', ')}`);
+  const forbidden = validation.entries.flatMap(entry => {
+    if (entry.type !== 'file') return [];
+    const relative = entry.path.startsWith('package/') ? entry.path.slice('package/'.length) : entry.path;
+    const reason = relative === 'fix_plan.md' ? 'Local fix plan is included' : validateReleaseEntry(relative);
+    return reason ? [`${entry.path}: ${reason}`] : [];
+  });
+  if (forbidden.length) throw new Error(`Forbidden package entries: ${forbidden.join(', ')}`);
   const digest = createHash('sha256').update(await readFile(archive)).digest('hex');
   console.log(JSON.stringify({status: 'PASS', archive: archiveName, sha256: digest, ...validation}, null, 2));
 } finally {

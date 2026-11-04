@@ -19,14 +19,18 @@
 
 ## 语言支持
 
-当前文档和管理界面仅支持简体中文。英文界面将在后续版本扩展；这不影响模型或用户消息使用其他语言。
+当前文档和管理界面仅支持简体中文，当前版本不承诺英文 UI；这不影响模型或用户消息使用其他语言。
 
 ## 环境要求
 
 - Node.js 24+
-- Python 3.12+
+- Python 3.12 或 3.13
 - DeepSeek Harness 0.2.1-rc.2
 - 音频和视频处理需要 `ffmpeg` 与 `ffprobe`
+
+## 快速开始
+
+首次安装请先阅读[快速开始](docs/getting-started.md)，其中按“已有 Harness profile”和“独立机器人产品 profile”分别给出可复制命令、首次验证、升级、回滚和卸载边界。环境变量完整说明见[配置参考](docs/configuration.md)，常见故障见[排障文档](docs/troubleshooting.md)。
 
 ## 选择安装方式
 

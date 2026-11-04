@@ -21,3 +21,11 @@
 - 增加依赖审计、许可证/来源检查、Markdown/CI 配置检查和实际临时归档验证。
 - 明确 Python 3.12/3.13、基础媒体依赖与可选 voice-generation 依赖的边界，并记录当前安全审计中必须暂缓的 Harness 间接依赖。
 - 完善第三方声明：无法从当前 checkout 验证的上游 commit/tag 不作猜测；AGPL/PolyForm 项目仅作参考或外部可选集成时单独说明。
+
+### 阶段 3：安装、配置与运维契约
+
+- 增加统一快速开始、实际环境变量配置参考、安全 `.env.example` 和结构化排障文档。
+- 明确已有 Harness profile 与独立产品 profile 的安装、停止、升级、回滚和卸载责任边界。
+- 将 image-generation 技能修正为 V4-only 人格契约；不承诺 V3 迁移或回退。
+- 扩展 lifecycle bundle 文档，明确受监督失败恢复、一次回滚、未知结果不重放和无第三方 Adapter ABI 承诺。
+- 增强 Markdown 本地链接/锚点、CI 结构、发布包文档包含性和敏感内容检查。
