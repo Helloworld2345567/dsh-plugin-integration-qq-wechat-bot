@@ -212,8 +212,9 @@ export async function checkRepository(root=process.cwd(),options={}){
     'media-analysis':'dsh_bot_runtime.skills.media_analysis.media_api','music-download':'dsh_bot_runtime.skills.music_download.entry',
     'singing-conversion':'dsh_bot_runtime.skills.singing_conversion.entry','voice-generation':'dsh_bot_runtime.skills.voice_generation.voice_api',
   },normalizedSkills=new Set(),skillDigest=createHash('sha256');
+  const normalizeText=text=>text.replace(/\r\n?/g,'\n');
   for(const file of operationFiles){
-    const text=await readFile(path.join(root,file),'utf8');skillDigest.update(file).update('\0').update(text).update('\0');
+    const text=normalizeText(await readFile(path.join(root,file),'utf8'));skillDigest.update(file).update('\0').update(text).update('\0');
     let descriptor;try{descriptor=JSON.parse(text);}catch{violations.push(violation('python-skill-entry',file,'skill operation manifest must be valid JSON'));continue;}
     const skill=normalizeRepoPath(file).split('/').at(-2),normalized=skill.replaceAll('-','_'),moduleBase=path.join(root,'python',...String(descriptor.entry??'').split('.'));
     if(normalizedSkills.has(normalized))violations.push(violation('python-skill-entry',file,'normalized skill package name collides with another published skill'));normalizedSkills.add(normalized);
@@ -221,7 +222,7 @@ export async function checkRepository(root=process.cwd(),options={}){
   }
   const generatedSkills=await readFile(path.join(root,'src/core/published-skill-operations.ts'),'utf8'),recordedSkillDigest=/PUBLISHED_SKILL_MANIFEST_DIGEST=\"([a-f0-9]{64})\"/.exec(generatedSkills)?.[1];
   if(recordedSkillDigest!==skillDigest.digest('hex'))violations.push(violation('python-skill-entry','src/core/published-skill-operations.ts','generated published skill registry is stale'));
-  const pythonErrors=await readFile(path.join(root,'python/dsh_bot_runtime/errors.py'),'utf8'),generatedErrors=await readFile(path.join(root,'src/core/python-worker-errors.ts'),'utf8'),recordedErrorDigest=/PYTHON_ERROR_CODE_DIGEST=\"([a-f0-9]{64})\"/.exec(generatedErrors)?.[1];
+  const pythonErrors=normalizeText(await readFile(path.join(root,'python/dsh_bot_runtime/errors.py'),'utf8')),generatedErrors=await readFile(path.join(root,'src/core/python-worker-errors.ts'),'utf8'),recordedErrorDigest=/PYTHON_ERROR_CODE_DIGEST=\"([a-f0-9]{64})\"/.exec(generatedErrors)?.[1];
   if(recordedErrorDigest!==createHash('sha256').update(pythonErrors).digest('hex'))violations.push(violation('python-error-contract','src/core/python-worker-errors.ts','generated Python worker error registry is stale'));
   const manifest=JSON.parse(await readFile(path.join(root,'package.json'),'utf8')),lifecycleManifest=JSON.parse(await readFile(path.join(root,'packages/bot-lifecycle/package.json'),'utf8')),build=await readFile(path.join(root,'scripts/build.mjs'),'utf8'),architecture=await readFile(path.join(root,'docs/architecture-boundaries.md'),'utf8');
   const requiredExports={'.':'./dist/index.js','./client':'./dist/client.js'};
