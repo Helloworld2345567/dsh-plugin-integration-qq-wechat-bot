@@ -79,7 +79,7 @@ export class SqlitePersistence {
   static open(home: string, personasRoot = defaultPersonasRoot(home), options: {secureDefaults?:boolean} = {}): SqlitePersistence {
     return new SqlitePersistence(home, personasRoot, {...options, defer:true});
   }
-  constructor(readonly home: string, personasRoot: string, readonly options: PersistenceOptions = {}) {
+  constructor(readonly home: string, personasRoot = defaultPersonasRoot(home), readonly options: PersistenceOptions = {}) {
     this.database = new SqliteDatabase(home);
     this.personaFiles = PersonaFiles.forHome(home, personasRoot);
     this.bots = new SqliteBotRepository(this.database, () => this.personas);

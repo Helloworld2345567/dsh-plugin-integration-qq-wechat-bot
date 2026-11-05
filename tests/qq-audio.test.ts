@@ -5,7 +5,7 @@ import path from 'node:path';
 import {decode,encode,getDuration,isSilk} from 'silk-wasm';
 import {createQQAudioPreparer} from '../src/channels/qq-audio.js';
 import {Assets} from '../src/core/media.js';
-import {Store} from '../src/infrastructure/sqlite/store.js';
+import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
 import {botSchema,type Asset,type ChannelOutboundContext} from '../src/core/types.js';
 import {TransformSlots} from '../src/core/transform-slots.js';
 import {NodeControlledProcessPort,type ControlledProcessPort} from '../src/harness/controlled-process.js';
@@ -13,9 +13,9 @@ import {NodeControlledProcessPort,type ControlledProcessPort} from '../src/harne
 function pcm(samples:number){const bytes=Buffer.alloc(samples*2);for(let sample=0;sample<samples;sample++)bytes.writeInt16LE(Math.round(5000*Math.sin(sample*2*Math.PI*440/24000)),sample*2);return bytes;}
 function wav(data:Buffer){const header=Buffer.alloc(44);header.write('RIFF');header.writeUInt32LE(data.length+36,4);header.write('WAVEfmt ',8);header.writeUInt32LE(16,16);header.writeUInt16LE(1,20);header.writeUInt16LE(1,22);header.writeUInt32LE(24000,24);header.writeUInt32LE(48000,28);header.writeUInt16LE(2,32);header.writeUInt16LE(16,34);header.write('data',36);header.writeUInt32LE(data.length,40);return Buffer.concat([header,data]);}
 async function fixture(t:TestContext){
-  await mkdir(path.resolve('.codex'),{recursive:true});const home=await mkdtemp(path.resolve('.codex/qq-audio-')),store=new Store(home,path.join(home,'personas')),assets=new Assets(store.repositories());assets.workspace=async()=>path.join(home,'workspace');
-  t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});store.saveBot(botSchema.parse({id:'qq-audio',name:'QQ audio',channel:'qq',accountId:'account',enabled:true}));
-  const binding=store.binding({botId:'qq-audio',platform:'qq',accountId:'account',kind:'private',channelId:'owner',senderId:'owner'}),controller=new AbortController();let allowed=true;
+  await mkdir(path.resolve('.codex'),{recursive:true});const home=await mkdtemp(path.resolve('.codex/qq-audio-')),store=new SqlitePersistence(home,path.join(home,'personas')),assets=new Assets(store.repositories());assets.workspace=async()=>path.join(home,'workspace');
+  t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});store.bots.saveBot(botSchema.parse({id:'qq-audio',name:'QQ audio',channel:'qq',accountId:'account',enabled:true}));
+  const binding=store.sessions.binding({botId:'qq-audio',platform:'qq',accountId:'account',kind:'private',channelId:'owner',senderId:'owner'}),controller=new AbortController();let allowed=true;
   const context=(source:Asset):ChannelOutboundContext=>({binding,outputs:[{type:'asset',assetId:source.id}],signal:controller.signal,authorize:()=>{if(!allowed)throw Error('REVOKED');}});
   const source=(bytes:Buffer,name='source.wav',mime='audio/wav')=>assets.save(binding.key,{kind:'audio',name,mime},bytes,'source-job','generated',binding.sessionId,binding.generation,undefined,{serviceId:'rvc',profileId:'voice',profileRevision:1,profileContentHash:'a'.repeat(64)});
   const temporaryFiles=async()=>{try{return await readdir(path.join(home,'workspace','.bot','tmp'));}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return[];throw error;}};
@@ -50,7 +50,7 @@ test('QQ existing short SILK and explicitly requested files require no FFmpeg',a
 
 test('QQ rejects unavailable FFmpeg without registering partial derived assets',async t=>{
   const f=await fixture(t),source=await f.source(wav(pcm(4800))),prepare=createQQAudioPreparer(f.assets,{processes:new NodeControlledProcessPort(),ffmpeg:path.join(f.home,'missing-ffmpeg.exe')});
-  await assert.rejects(prepare(f.context(source)),/QQ_AUDIO_FFMPEG_UNAVAILABLE/);assert.deepEqual(f.store.list<Asset>('asset').map(asset=>asset.id),[source.id]);assert.deepEqual(await f.temporaryFiles(),[]);
+  await assert.rejects(prepare(f.context(source)),/QQ_AUDIO_FFMPEG_UNAVAILABLE/);assert.deepEqual(f.store.assets.allAssets().map(asset=>asset.id),[source.id]);assert.deepEqual(await f.temporaryFiles(),[]);
 });
 
 test('QQ cancels preparation while queued and rechecks revocation after FFmpeg',async t=>{
@@ -58,7 +58,7 @@ test('QQ cancels preparation while queued and rechecks revocation after FFmpeg',
     const f=await fixture(t),source=await f.source(wav(pcm(4800))),slots=new TransformSlots(1),held=mode==='cancel'?await slots.acquire(1,new AbortController().signal):undefined,real=new NodeControlledProcessPort();let calls=0;
     const prepare=createQQAudioPreparer(f.assets,{slots,processes:{run:async request=>{calls++;const result=await real.run(request);f.revoke();return result;},cancel:id=>real.cancel(id)}}),pending=prepare(f.context(source));
     if(mode==='cancel')f.controller.abort(Error('CANCELLED'));
-    await assert.rejects(pending,mode==='cancel'?/CANCELLED/:/REVOKED/);held?.release();assert.equal(calls,mode==='cancel'?0:1);assert.deepEqual(f.store.list<Asset>('asset').map(asset=>asset.id),[source.id]);assert.deepEqual(await f.temporaryFiles(),[]);
+    await assert.rejects(pending,mode==='cancel'?/CANCELLED/:/REVOKED/);held?.release();assert.equal(calls,mode==='cancel'?0:1);assert.deepEqual(f.store.assets.allAssets().map(asset=>asset.id),[source.id]);assert.deepEqual(await f.temporaryFiles(),[]);
   });
 });
 
@@ -66,5 +66,5 @@ test('QQ rolls back newly registered derivatives when a later asset save is revo
   const f=await fixture(t),first=await f.source(wav(pcm(4800)),'first.wav'),second=await f.source(wav(pcm(4801)),'second.wav'),save=f.assets.save.bind(f.assets);let derivativeSaves=0;
   f.assets.save=async(...args:Parameters<Assets['save']>)=>{if(args[3]?.startsWith('qq-voice:')&&++derivativeSaves===2)f.revoke();return save(...args);};
   await assert.rejects(createQQAudioPreparer(f.assets,{processes:new NodeControlledProcessPort()})({...f.context(first),outputs:[{type:'asset',assetId:first.id},{type:'asset',assetId:second.id}]}),/REVOKED/);
-  assert.deepEqual(new Set(f.store.list<Asset>('asset').map(asset=>asset.id)),new Set([first.id,second.id]));assert.deepEqual(await f.temporaryFiles(),[]);
+  assert.deepEqual(new Set(f.store.assets.allAssets().map(asset=>asset.id)),new Set([first.id,second.id]));assert.deepEqual(await f.temporaryFiles(),[]);
 });

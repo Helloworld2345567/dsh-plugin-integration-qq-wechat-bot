@@ -37,7 +37,7 @@ npm run check:licenses
 npm run check:release
 ```
 
-`check:architecture` 是只读、离线的静态模块图门禁；它检查 runtime import 循环、client/core/channel/Harness/lifecycle/Service Adapter/测试/package 边界、Python 单一命名空间、路径修改／裸内部 import／动态 module key、固定 skill entry 以及构建入口漂移。它还要求 lifecycle 从 `packages/bot-lifecycle/src/index.ts` 构建、子包不越界导入根 `src/`、主包/coordinator 都声明版本化 contract、发布 export/files 完整且旧 `src/lifecycle/` 不得复活。持久化边界同样是门禁的一部分：只有 `src/infrastructure/sqlite/` 可导入 `node:sqlite`，只有 `src/infrastructure/` 可准备 SQL 或持有数据库句柄，业务层不得导入 repository 实现或 Store facade，旧 `src/core/store.ts` 不得复活。输出仅包含仓库相对路径。完整规则见[架构边界契约](architecture-boundaries.md)。
+`check:architecture` 是只读、离线的静态模块图门禁；它检查 runtime import 循环、client/core/channel/Harness/lifecycle/Service Adapter/测试/package 边界、Python 单一命名空间、路径修改／裸内部 import／动态 module key、固定 skill entry 以及构建入口漂移。它还要求 lifecycle 从 `packages/bot-lifecycle/src/index.ts` 构建、子包不越界导入根 `src/`、主包/coordinator 都声明版本化 contract、发布 export/files 完整且旧 `src/lifecycle/` 不得复活。持久化边界同样是门禁的一部分：只有 `src/infrastructure/sqlite/` 可导入 `node:sqlite`，只有 `src/infrastructure/` 可准备 SQL 或持有数据库句柄，业务层不得导入 repository 实现，`src/core/store.ts` 与 `src/infrastructure/sqlite/store.ts` 两个历史 facade 均不得复活。输出仅包含仓库相对路径。完整规则见[架构边界契约](architecture-boundaries.md)。
 
 `check:environment` 是只读、离线优先的预检：它不会修改 Harness profile、安装依赖、启动平台连接或打印环境变量。可选 `voice-generation` 缺失只显示 `OPTIONAL`，基础 Python 依赖、Python 版本、Node/Harness 版本、FFmpeg/ffprobe 或 lockfile 缺失才会阻止流程。
 

@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
-import {Store} from '../src/infrastructure/sqlite/store.js';
+import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
 import {publicPersonaConfig,v4ConfigSchema} from '../src/core/types.js';
 import {resolveImageSkill} from '../src/core/image-skill.js';
 
@@ -11,19 +11,19 @@ const persona=(schemaVersion:4)=>({schemaVersion,id:'image-config',name:'Image c
 
 async function fixture(t:any){
   await mkdir(path.resolve('.codex'),{recursive:true});
-  const root=await mkdtemp(path.resolve('.codex/image-config-')),store=new Store(path.join(root,'store'),path.join(root,'personas'));
+  const root=await mkdtemp(path.resolve('.codex/image-config-')),store=new SqlitePersistence(path.join(root,'store'),path.join(root,'personas'));
   t.after(async()=>{store.close();await rm(root,{recursive:true,force:true});});
   return store;
 }
 
 test('v4 image connection survives persona save, file read, projection and endpoint selection',async t=>{
-  const store=await fixture(t),saved=store.saveConfig(persona(4));
+  const store=await fixture(t),saved=store.personas.saveConfig(persona(4));
   assert.deepEqual(saved.media.image,image);
-  assert.deepEqual(store.config(saved.id).media.image,image);
-  assert.deepEqual(store.readPersonaDraft(saved.id).config.media.image,image);
+  assert.deepEqual(store.personas.config(saved.id).media.image,image);
+  assert.deepEqual(store.personas.readPersonaDraft(saved.id).config.media.image,image);
   assert.deepEqual(publicPersonaConfig(saved).media.image,image);
   assert.deepEqual(resolveImageSkill(saved,{BOT_IMAGE_BASE_URL:'https://fallback.example.invalid',BOT_IMAGE_KEY_ENV:'FALLBACK_KEY',BOT_IMAGE_MODEL:'fallback'}),{baseUrl:image.baseUrl,model:image.model,keyEnv:image.keyEnv});
-  const edited=store.saveConfig({...saved,name:'Edited'},saved.revision);
+  const edited=store.personas.saveConfig({...saved,name:'Edited'},saved.revision);
   assert.deepEqual(edited.media.image,image);
   assert.equal(edited.revision,saved.revision+1);
 });

@@ -3,7 +3,7 @@ import {test,type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
-import {Store} from '../src/infrastructure/sqlite/store.js';
+import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
 import {ProfileStore} from '../src/core/profile-store.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {botSchema,configSchema,type CallerScope} from '../src/core/types.js';
@@ -12,18 +12,19 @@ import {executeSingingTool,type SingingContext} from '../src/harness/singing-too
 import {hasPendingSingingUpload,consumeSingingUpload,explicitSingingRequest,singingCandidates,saveSingingCandidates} from '../src/core/singing-state.js';
 import {NativeHarness} from '../src/harness/bridge.js';
 import {ServiceContractError} from '../src/core/service-errors.js';
+import {seedAppliedConfig} from './sqlite-fixtures.js';
 
 const singing={enabled:true,profileRef:{serviceId:'rvc',profileId:'default'},defaultOutput:'mp3'};
 async function fixture(t:TestContext){
   await mkdir(path.resolve('.codex'),{recursive:true});
-  const home=await mkdtemp(path.resolve('.codex/singing-host-')),store=new Store(home,path.join(home,'personas'));
+  const home=await mkdtemp(path.resolve('.codex/singing-host-')),store=new SqlitePersistence(home,path.join(home,'personas'));
   t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
   const config=configSchema.parse({id:'singing',name:'Singing',personaPrompt:'Hello',skills:['singing-conversion'],tools:['bot_sing','web_search','web_fetch'],media:{singing}});
-  store.put('config',config.id,config);store.put('config-version',`${config.id}:${config.revision}`,config);const bot=store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'bot',configId:config.id,enabled:true}));
-  const scope:CallerScope={botId:bot.id,platform:'qq',accountId:'bot',channelId:'alice',senderId:'alice',kind:'private'},binding=store.binding(scope);
+  seedAppliedConfig(store,config);const bot=store.bots.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'bot',configId:config.id,enabled:true}));
+  const scope:CallerScope={botId:bot.id,platform:'qq',accountId:'bot',channelId:'alice',senderId:'alice',kind:'private'},binding=store.sessions.binding(scope);
   const assets=new Assets(store.repositories());assets.workspace=async scope=>path.join(home,'workspaces',scope);
   const snapshot=freezeTurn(config,bot,scope,['request'],testServiceProfiles());const live:SingingContext={binding,snapshot,singing:{attempted:false},assets:[]};
-  const deps={repos:{bindings:store.persistence.sessions,music:store.persistence.musicState,singing:store.persistence.singingState,personas:store.persistence.personas,capabilities:store.persistence.capability,assets:store.persistence.assets},assets,media:{} as MediaService,current:()=>config,bot:()=>bot};
+  const deps={repos:{bindings:store.sessions,music:store.musicState,singing:store.singingState,personas:store.personas,capabilities:store.capability,assets:store.assets},assets,media:{} as MediaService,current:()=>config,bot:()=>bot};
   const call=(args:Record<string,unknown>)=>executeSingingTool(live,args,new AbortController().signal,deps);
   const input=await assets.save(binding.key,{kind:'file',mime:'application/octet-stream',name:'vocals.wav'},Buffer.from('source'));
   return{home,store,assets,config,bot,binding,live,deps,call,input};
@@ -33,9 +34,9 @@ async function prepare(f:Awaited<ReturnType<typeof fixture>>){return JSON.parse(
 test('singing candidates resolve explicit old session-owned files and reject cross-session references',async t=>{
   const f=await fixture(t);f.assets.recent=()=>[];
   const first=await prepare(f);assert.equal(first.candidates[0].title,'vocals.wav');assert.equal(first.candidates[0].assetId,undefined);
-  f.store.saveAsset({...f.input,sessionId:'another-session'});
+  f.store.assets.saveAsset({...f.input,sessionId:'another-session'});
   await assert.rejects(prepare(f),/SINGING_ATTACHMENT_INVALID/);
-  f.store.reset(f.binding.scope);assert.equal(singingCandidates({bindings:f.store.persistence.sessions,singing:f.store.persistence.singingState},f.binding),undefined); // current binding is checked on mutation
+  f.store.sessions.reset(f.binding.scope);assert.equal(singingCandidates({bindings:f.store.sessions,singing:f.store.singingState},f.binding),undefined); // current binding is checked on mutation
   await assert.rejects(prepare(f),/SINGING_SESSION_CHANGED/);
 });
 
@@ -58,11 +59,11 @@ test('conversion attempts survive prepare and redact worker internals without re
 test('v4 conversion preserves only safe singing provider codes and hides service diagnostics',async t=>{
   for(const providerCode of ['SINGING_MODEL_INCOMPATIBLE',undefined,'RVC_PROVIDER_FAILED','SINGING_FAILED:private-token'])await t.test(providerCode??'no provider code',async t=>{
     const f=await fixture(t),profiles=new ProfileStore();profiles.create({serviceId:'rvc',profileId:'managed',state:'ready',capabilities:['rvc.convert'],displayName:'RVC',managedConfig:{protocol:'rvc_cli_v1'}});
-    const v4=configSchema.parse({schemaVersion:4,id:'managed',name:'Managed',personaPrompt:'A',tools:['bot_sing'],skills:['singing-conversion'],media:{singing:{enabled:true,profileRef:{serviceId:'rvc',profileId:'managed'}}}});f.store.put('config',v4.id,v4);f.live.snapshot=freezeTurn(v4,f.bot,f.binding.scope,['v4-error'],profiles);f.deps.current=()=>v4;
+    const v4=configSchema.parse({schemaVersion:4,id:'managed',name:'Managed',personaPrompt:'A',tools:['bot_sing'],skills:['singing-conversion'],media:{singing:{enabled:true,profileRef:{serviceId:'rvc',profileId:'managed'}}}});seedAppliedConfig(f.store,v4,false);f.live.snapshot=freezeTurn(v4,f.bot,f.binding.scope,['v4-error'],profiles);f.deps.current=()=>v4;
     const prepared=await prepare(f);let calls=0;f.deps.media={run:async()=>{calls++;throw new ServiceContractError({category:'PROVIDER_ERROR',providerCode,safeDiagnostic:'SINGING_PRIVATE_DIAGNOSTIC',retryable:false,blocksService:false},Error('https://provider.invalid/private token=secret'));}} as any;
     const expected=providerCode==='SINGING_MODEL_INCOMPATIBLE'?providerCode:'SINGING_CONVERSION_FAILED',convert=()=>f.call({action:'convert',candidateSet:prepared.candidateSet,candidate:1,sourceType:'vocals'});
     await assert.rejects(convert(),new RegExp(`^Error: ${expected}$`));await assert.rejects(convert(),new RegExp(`^Error: ${expected}$`));
-    assert.equal(f.store.get<any>('singing-attempt',f.binding.key)?.code,expected);assert.equal(calls,1);assert.equal(f.live.assets.length,0);
+    assert.equal(f.store.singingState.attempt(f.binding.key)?.code,expected);assert.equal(calls,1);assert.equal(f.live.assets.length,0);
   });
 });
 
@@ -78,7 +79,7 @@ test('success returns safe names, reuses one audio asset and forwards only busin
 });
 
 test('URL candidates require current network permission and pending upload has explicit consumption',async t=>{
-  const f=await fixture(t);await f.call({action:'prepare'});assert.equal(hasPendingSingingUpload({bindings:f.store.persistence.sessions,singing:f.store.persistence.singingState},f.binding),true);consumeSingingUpload({bindings:f.store.persistence.sessions,singing:f.store.persistence.singingState},f.binding);assert.equal(hasPendingSingingUpload({bindings:f.store.persistence.sessions,singing:f.store.persistence.singingState},f.binding),false);
+  const f=await fixture(t);await f.call({action:'prepare'});assert.equal(hasPendingSingingUpload({bindings:f.store.sessions,singing:f.store.singingState},f.binding),true);consumeSingingUpload({bindings:f.store.sessions,singing:f.store.singingState},f.binding);assert.equal(hasPendingSingingUpload({bindings:f.store.sessions,singing:f.store.singingState},f.binding),false);
   await assert.rejects(f.call({action:'prepare',candidates:[{title:'bad',url:'http://example.org/a.wav'}]}),/SINGING_SOURCE_INVALID/);
   f.deps.current=()=>({...f.config,tools:['bot_sing']});
   await assert.rejects(f.call({action:'prepare',candidates:[{title:'audio',url:'https://example.org/a.wav'}]}),/SINGING_NETWORK_DISABLED/);
@@ -97,7 +98,7 @@ test('revocation and session switching are rechecked during execution before res
   await assert.rejects(f.call({action:'convert',candidateSet:p.candidateSet,candidate:1,sourceType:'vocals'}),/SINGING_DISABLED/);assert.equal(f.live.assets.length,0);
 });
 
-test('v4 named singing uses the frozen RVC profile and delegates private separation checks to the adapter',async t=>{const f=await fixture(t),profiles=new ProfileStore(),profile=profiles.create({serviceId:'rvc',profileId:'managed',state:'ready',capabilities:['rvc.convert'],displayName:'Managed RVC',managedConfig:{protocol:'rvc_cli_v1',separation:{enabled:true,status:'configured'}}}),v4=configSchema.parse({schemaVersion:4,id:'managed',name:'Managed',personaPrompt:'A',tools:['bot_sing','bot_music'],skills:['singing-conversion','music-download'],media:{singing:{enabled:true,profileRef:{serviceId:'rvc',profileId:'managed'}},music:{enabled:true,profileRef:{serviceId:'music',profileId:'managed'},includeLyrics:false}}});f.store.put('config',v4.id,v4);f.live.snapshot=freezeTurn(v4,f.bot,f.binding.scope,['v4'],profiles);f.deps.current=()=>v4;f.deps.media={run:async(_scope:string,operation:string,_config:any,_inputs:any,parameters:any)=>{assert.equal(operation,'singing_convert');assert.equal(parameters.sourceType,'mixed');const out=await f.assets.save(f.binding.key,{kind:'audio',mime:'audio/mpeg',name:'managed.mp3'},Buffer.from('audio'),'managed-job');return{assetIds:[out.id]};}} as any;const source=await f.assets.save(f.binding.key,{kind:'audio',mime:'audio/mpeg',name:'song.mp3'},Buffer.from('song'),'music-job');(f.deps as any).repos.music.saveAcquisition(f.binding.key,{scope:f.binding.key,sessionId:f.binding.sessionId,generation:f.binding.generation,request:'other',selectionKey:JSON.stringify({song:'Song',includeLyrics:false}),state:'succeeded',sourceAssetId:source.id,track:{source:'MiguMusicClient',id:'id',title:'Song',artist:'Artist'}});const prepared=saveSingingCandidates({bindings:f.store.persistence.sessions,singing:f.store.persistence.singingState},f.binding,[{title:'Song',assetId:source.id}]);const result=JSON.parse(await f.call({action:'convert',candidateSet:prepared.id,candidate:1,sourceType:'mixed',format:'mp3'}));assert.equal(result.status,'succeeded');assert.equal(profile.state,'ready');});
+test('v4 named singing uses the frozen RVC profile and delegates private separation checks to the adapter',async t=>{const f=await fixture(t),profiles=new ProfileStore(),profile=profiles.create({serviceId:'rvc',profileId:'managed',state:'ready',capabilities:['rvc.convert'],displayName:'Managed RVC',managedConfig:{protocol:'rvc_cli_v1',separation:{enabled:true,status:'configured'}}}),v4=configSchema.parse({schemaVersion:4,id:'managed',name:'Managed',personaPrompt:'A',tools:['bot_sing','bot_music'],skills:['singing-conversion','music-download'],media:{singing:{enabled:true,profileRef:{serviceId:'rvc',profileId:'managed'}},music:{enabled:true,profileRef:{serviceId:'music',profileId:'managed'},includeLyrics:false}}});seedAppliedConfig(f.store,v4,false);f.live.snapshot=freezeTurn(v4,f.bot,f.binding.scope,['v4'],profiles);f.deps.current=()=>v4;f.deps.media={run:async(_scope:string,operation:string,_config:any,_inputs:any,parameters:any)=>{assert.equal(operation,'singing_convert');assert.equal(parameters.sourceType,'mixed');const out=await f.assets.save(f.binding.key,{kind:'audio',mime:'audio/mpeg',name:'managed.mp3'},Buffer.from('audio'),'managed-job');return{assetIds:[out.id]};}} as any;const source=await f.assets.save(f.binding.key,{kind:'audio',mime:'audio/mpeg',name:'song.mp3'},Buffer.from('song'),'music-job');(f.deps as any).repos.music.saveAcquisition(f.binding.key,{scope:f.binding.key,sessionId:f.binding.sessionId,generation:f.binding.generation,request:'other',selectionKey:JSON.stringify({song:'Song',includeLyrics:false}),state:'succeeded',sourceAssetId:source.id,track:{source:'MiguMusicClient',id:'id',title:'Song',artist:'Artist'}});const prepared=saveSingingCandidates({bindings:f.store.sessions,singing:f.store.singingState},f.binding,[{title:'Song',assetId:source.id}]);const result=JSON.parse(await f.call({action:'convert',candidateSet:prepared.id,candidate:1,sourceType:'mixed',format:'mp3'}));assert.equal(result.status,'succeeded');assert.equal(profile.state,'ready');});
 
 test('explicit singing intent excludes quoted and webpage content',()=>{
   assert.equal(explicitSingingRequest('请把这段歌声换成你的音色，帮我翻唱'),true);

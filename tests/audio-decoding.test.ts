@@ -4,7 +4,7 @@ import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import path from 'node:path';
 import {encode} from 'silk-wasm';
 import {Assets,MediaService} from '../src/core/media.js';
-import {Store} from '../src/infrastructure/sqlite/store.js';
+import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
 import {botSchema} from '../src/core/types.js';
 import type {MediaWorkerJob,WorkerPort} from '../src/core/worker-port.js';
 
@@ -21,16 +21,16 @@ function wav(){
   return Buffer.concat([header,data]);
 }
 async function fixture(t:TestContext){
-  const home=await mkdtemp(path.resolve('.codex/audio-decoding-')),store=new Store(home,path.join(home,'personas')),assets=new Assets(store.repositories());
+  const home=await mkdtemp(path.resolve('.codex/audio-decoding-')),store=new SqlitePersistence(home,path.join(home,'personas')),assets=new Assets(store.repositories());
   t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
-  store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',enabled:true}));
-  const binding=store.binding({botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'owner',senderId:'owner'});
+  store.bots.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',enabled:true}));
+  const binding=store.sessions.binding({botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'owner',senderId:'owner'});
   let captured:{job:MediaWorkerJob;bytes:Buffer}|undefined;
   const worker:WorkerPort={run:async job=>{captured={job,bytes:await readFile(job.inputs[0].path)};return{text:'{"transcript":"fixture"}'};}};
   const media=new MediaService(store.repositories(),assets,'python',{resolve:async()=>({provider:'fixture',apiKey:'fixture-key',endpoint:{baseUrl:'https://example.invalid/v1',model:'fixture',keyEnv:'FIXTURE_KEY',protocol:'chat_completions'}})},worker);
   const transcribe=async(bytes:Buffer,name:string,mime:string)=>{
     const asset=await assets.save(binding.key,{kind:'audio',name,mime},bytes);
-    await media.run(binding.key,'transcribe',store.config('default'),[asset.id],{},new AbortController().signal);
+    await media.run(binding.key,'transcribe',store.personas.config('default'),[asset.id],{},new AbortController().signal);
     assert.deepEqual(await assets.read(binding.key,asset.id),bytes,'decoding must preserve the received attachment');
     assert.ok(captured);return{...captured,asset};
   };

@@ -4,7 +4,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
 import {qqInbound} from '../src/channels/qq.js';
 import {weixinInbound} from '../src/channels/weixin.js';
-import {Store} from '../src/infrastructure/sqlite/store.js';
+import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
 import {scopeKey} from '../src/core/identity.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {BotRuntime,type HarnessPort} from '../src/core/runtime.js';
@@ -12,8 +12,8 @@ import {botSchema,type ChannelAdapter,type InboundMessage,type Delivery} from '.
 import {fixtureChannels} from './test-channel.js';
 
 async function fixture(t:any,channel:'qq'|'weixin'){
-  const directory=await mkdtemp(path.resolve('.codex/inbound-voice-')),store=new Store(directory),assets=new Assets(store.repositories());
-  const bot=store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel,accountId:'account',configId:'sakura',enabled:true}));
+  const directory=await mkdtemp(path.resolve('.codex/inbound-voice-')),store=new SqlitePersistence(directory),assets=new Assets(store.repositories());
+  const bot=store.bots.saveBot(botSchema.parse({id:'bot',name:'Bot',channel,accountId:'account',configId:'sakura',enabled:true}));
   const seen:InboundMessage[]=[],transcribed:string[]=[],materialized:InboundMessage['attachments'][number][]=[],sent:Delivery[]=[];
   const bytes=Buffer.from('received voice fixture');
   const harness:HarnessPort={run:async(_binding,messages,_signal,options)=>{seen.push(...messages);return{turnId:'reply',outputs:[{type:'text',text:'听到了'}],snapshot:options!.snapshot!};},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async()=>{}};
@@ -25,7 +25,7 @@ async function fixture(t:any,channel:'qq'|'weixin'){
   };
   const runtime=new BotRuntime(store.repositories(),assets,media,harness,fixtureChannels(adapter),{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}},60000);
   t.after(async()=>{await runtime.close();store.close();await rm(directory,{recursive:true,force:true});});
-  const receive=async(message:InboundMessage)=>{await runtime.receive(message);assert.equal(store.messages(scopeKey(message.scope)).length,1,'voice-only messages must be queued for immediate processing');await runtime.process(scopeKey(message.scope));};
+  const receive=async(message:InboundMessage)=>{await runtime.receive(message);assert.equal(store.inbox.messages(scopeKey(message.scope)).length,1,'voice-only messages must be queued for immediate processing');await runtime.process(scopeKey(message.scope));};
   return{store,bot,seen,transcribed,materialized,sent,receive};
 }
 
@@ -35,7 +35,7 @@ test('QQ voice-only messages reach automatic ASR and pass their transcript to th
   await f.receive(message);
   assert.equal(f.materialized.length,1);assert.equal(f.transcribed.length,1);assert.equal(f.seen.length,1);
   assert.equal(f.seen[0].text,'');assert.equal(f.seen[0].attachments[0].transcript,'你好，请问现在几点？');
-  assert.equal(f.seen[0].attachments[0].handle,f.transcribed[0]);assert.equal(f.store.source(scopeKey(message.scope),message.id)?.attachments[0].handle,f.transcribed[0]);
+  assert.equal(f.seen[0].attachments[0].handle,f.transcribed[0]);assert.equal(f.store.inbox.source(scopeKey(message.scope),message.id)?.attachments[0].handle,f.transcribed[0]);
   assert.equal(f.sent.length,1);assert.equal(f.sent[0].output.text,'听到了');
 });
 

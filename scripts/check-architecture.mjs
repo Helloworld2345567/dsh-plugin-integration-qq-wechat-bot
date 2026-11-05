@@ -14,7 +14,6 @@ const INFRASTRUCTURE_PREFIX='src/infrastructure/';
 const SQLITE_ADAPTER_PREFIX='src/infrastructure/sqlite/';
 const PORTS_PREFIX='src/core/ports/';
 const COMPOSITION_ROOT='src/index.ts';
-const STORE_FACADE='src/infrastructure/sqlite/store.ts';
 const LIFECYCLE_SOURCE='packages/bot-lifecycle/src/';
 const LIFECYCLE_CONTRACT='packages/bot-lifecycle/src/contract/';
 
@@ -115,7 +114,6 @@ export function analyzeModules(entries){
         if(dependency.specifier==='node:sqlite'||/@deepseek-ai\/dsh-(?:session|storage|attachment)/.test(dependency.specifier))violations.push(violation('service-adapter-isolation',file,`imports host service ${safeSpecifier(dependency.specifier)}`));
       }
       if(dependency.specifier==='node:sqlite'&&productionModule(file)&&!file.startsWith(SQLITE_ADAPTER_PREFIX))violations.push(violation('sqlite-import',file,'imports node:sqlite outside the SQLite infrastructure adapter'));
-      if(target===STORE_FACADE&&file!==COMPOSITION_ROOT&&!file.startsWith(INFRASTRUCTURE_PREFIX))violations.push(violation('store-facade',file,'imports the infrastructure Store facade; depend on a narrow port instead',target));
       if(target&&target.startsWith(INFRASTRUCTURE_PREFIX)&&file!==COMPOSITION_ROOT&&!file.startsWith(INFRASTRUCTURE_PREFIX)&&!file.startsWith('packages/')){
         if(file.startsWith('src/client/'))violations.push(violation('client-repository',file,'imports a persistence adapter',target));
         else if(file.startsWith('src/channels/'))violations.push(violation('channel-repository',file,'imports a persistence adapter',target));
@@ -238,7 +236,7 @@ export async function checkRepository(root=process.cwd(),options={}){
   }
   if(!build.includes("../packages/bot-lifecycle/scripts/build.mjs"))violations.push(violation('package-entry','scripts/build.mjs','root build must invoke the lifecycle package-owned build'));
   if(await exists(path.join(root,'src/lifecycle')))violations.push(violation('architecture-layout','src/lifecycle','legacy lifecycle source directory must not exist'));
-  if(await exists(path.join(root,'src/core/store.ts')))violations.push(violation('architecture-layout','src/core/store.ts','the Store facade must not live in core; application code depends on narrow ports'));
+  for(const legacy of ['src/core/store.ts','src/infrastructure/sqlite/store.ts'])if(await exists(path.join(root,legacy)))violations.push(violation('architecture-layout',legacy,'Store facades are removed; application and tests depend on narrow repositories'));
   for(const legacy of ['src/core/evolution-contract.ts','src/core/source-integrity.ts'])if(await exists(path.join(root,legacy)))violations.push(violation('architecture-layout',legacy,'lifecycle contract must have a single source under packages/bot-lifecycle/src/contract'));
   for(const [file,declaration,role] of [['package.json',manifest.dshLifecycle,'main'],['packages/bot-lifecycle/package.json',lifecycleManifest.dshLifecycle,'coordinator']])if(declaration?.schemaVersion!==1||declaration?.role!==role)violations.push(violation('lifecycle-contract',file,`${role} versioned lifecycle declaration is missing`));
   for(const directory of REQUIRED_DIRECTORIES){

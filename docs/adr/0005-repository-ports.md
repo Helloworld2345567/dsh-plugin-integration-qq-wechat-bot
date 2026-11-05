@@ -19,8 +19,8 @@
 2. 在 `src/infrastructure/sqlite/` 实现 SQLite adapter，在 `src/infrastructure/files/` 实现人格文件与工作区文件 adapter。SQL、migration、事务与 row mapping 只存在于基础设施层。
 3. 应用服务改为接收 `RuntimeRepositories` 等显式依赖对象中的窄端口；composition root（`src/index.ts`）是唯一创建 adapter 并注入的位置。
 4. 事务边界由 `SqliteDatabase.transaction`／`savepoint` 统一；拆分保持原有原子性，没有把单事务改成多次无保护写入。
-5. `src/infrastructure/sqlite/store.ts` 仅保留为基础设施／测试生命周期 facade，业务层不得持有；退出条件是 contract 测试全部改用 adapter 后删除。
-6. `check:architecture` 增加 `sqlite-import`、`database-ownership`、`record-access`、`store-facade`、`core-repository`、`channel-repository`、`harness-repository`、`client-repository` 规则，并要求 `src/core/store.ts` 不存在。
+5. 迁移期 `src/infrastructure/sqlite/store.ts` facade 已在收尾阶段删除；contract 与集成测试直接构造 `SqlitePersistence` 并使用命名 repository。
+6. `check:architecture` 使用 `sqlite-import`、`database-ownership`、`record-access`、`core-repository`、`channel-repository`、`harness-repository`、`client-repository` 规则，并要求 `src/core/store.ts` 和 `src/infrastructure/sqlite/store.ts` 都不存在。
 
 ## 明确不改变
 

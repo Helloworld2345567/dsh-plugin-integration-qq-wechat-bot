@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
-import {Store} from '../src/infrastructure/sqlite/store.js';
+import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
 import {scopeKey} from '../src/core/identity.js';
 import {assertRemoteUrl} from '../src/core/network.js';
 import {INPUT_LIMITS,validateBatch,validateInboundMessage,validateMediaParameters} from '../src/core/limits.js';
@@ -13,14 +13,14 @@ const message=(overrides:Partial<InboundMessage>={}):InboundMessage=>({id:'messa
 
 async function storeFixture(t: any,secureDefaults=false){
   const home=await mkdtemp(path.resolve('.codex/phase0-guards-'));
-  const store=new Store(home,undefined,{secureDefaults});
+  const store=new SqlitePersistence(home,undefined,{secureDefaults});
   t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
   return store;
 }
 
-test('production Store defaults disable host tools while legacy parsing remains compatible',async t=>{
-  const secure=await storeFixture(t,true);assert.equal(secure.config('default').allowHostTools,false);
-  const legacy=await storeFixture(t,false);assert.equal(legacy.config('default').allowHostTools,true);
+test('production persistence defaults disable host tools while legacy parsing remains compatible',async t=>{
+  const secure=await storeFixture(t,true);assert.equal(secure.personas.config('default').allowHostTools,false);
+  const legacy=await storeFixture(t,false);assert.equal(legacy.personas.config('default').allowHostTools,true);
 });
 
 test('inbound hard caps reject oversized text, attachments and untrusted identities',()=>{
@@ -48,9 +48,9 @@ test('URL policy requires HTTPS, allowed ports and exact host or suffix matches'
 });
 
 test('batch limits include already materialized asset sizes and metrics expose percentiles',async t=>{
-  const store=await storeFixture(t);const key=scopeKey(scope);store.accept(message());const id=`inbox:${key}:message`;
-  store.updateTurnMetric(id,{modelStartedAt:Date.now()});
-  assert.equal(store.metricPercentiles('modelStartedAt').count,1);
+  const store=await storeFixture(t);const key=scopeKey(scope);store.inbox.accept(message());const id=`inbox:${key}:message`;
+  store.turnMetrics.updateTurnMetric(id,{modelStartedAt:Date.now()});
+  assert.equal(store.turnMetrics.metricPercentiles('modelStartedAt').count,1);
   assert.throws(()=>validateBatch([message({attachments:[{kind:'file',name:'old',mime:'application/octet-stream',handle:'asset'}]})],()=>INPUT_LIMITS.batchAttachmentBytes+1),/BATCH_ATTACHMENT_BYTES_LIMIT/);
-  store.mark(key,['message'],'complete');const result=store.retain(Date.now(),{inbox:0,delivery:0,metric:0,failure:0});assert.equal(result.inbox,1);assert.equal(store.get('turn-metric',id),undefined);
+  store.inbox.mark(key,['message'],'complete');const result=store.retain(Date.now(),{inbox:0,delivery:0,metric:0,failure:0});assert.equal(result.inbox,1);assert.equal(store.turnMetrics.findTurnMetric(id),undefined);
 });

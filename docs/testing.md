@@ -28,7 +28,7 @@ Lifecycle 单元/原生/安装测试覆盖：完全兼容、protocol major 不�
 
 ## Repository contract 套件
 
-`tests/repository-contract.test.ts` 除了经由基础设施 facade 验证历史行为，还直接对真实临时 SQLite adapter 运行 contract 套件：重开持久化后配置 revision、binding、asset 与 pending delivery 仍然一致；scope／channel 隔离；persona revision CAS；session generation 与 stale／forged cursor；delivery unknown 不自动重放、retry 复用原 intent；多步写入事务回滚；Profile revision 不可变与验收绑定；删除一个 bot 不影响另一个 bot；teardown 显式关闭数据库。新增 repository 时必须在该套件补一条对应断言，并保持 `npm run check:architecture` 通过。
+`tests/repository-contract.test.ts` 直接对真实临时 SQLite adapter 运行唯一 contract 套件：重开持久化后配置 revision、binding、asset 与 pending delivery 仍然一致；scope／channel 隔离；persona revision CAS；session generation 与 stale／forged cursor；delivery 分页、blocker、unknown 不自动重放、retry 复用原 intent、显式 resend 新 intent；多步写入事务回滚；Profile revision 不可变。Store facade 不再参与测试。新增 repository 时必须在该套件补一条对应断言，并保持 `npm run check:architecture` 通过。
 
 ## 测试环境与变量分类
 

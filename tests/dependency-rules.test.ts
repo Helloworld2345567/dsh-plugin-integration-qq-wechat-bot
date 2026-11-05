@@ -2,29 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import path from 'node:path';
-import ts from 'typescript';
 import {analyzeModules,analyzePythonModules,formatArchitectureResult,normalizeRepoPath} from '../scripts/check-architecture.mjs';
-
-const root=path.resolve('src/core');
-function source(file:string){const text=readFileSync(path.join(root,file),'utf8');return ts.createSourceFile(file,text,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);}
-test('Stats core does not cross SQLite, filesystem or raw-history seams',()=>{
-  const file='stats.ts',node=source(file),errors:string[]=[];
-  for(const statement of node.statements)if(ts.isImportDeclaration(statement)){const value=(statement.moduleSpecifier as ts.StringLiteral).text;if(['node:fs','node:path','./store.js','../infrastructure/sqlite/stats-data.js'].includes(value))errors.push(`forbidden import ${value}`);}
-  const walk=(item:ts.Node)=>{if(ts.isCallExpression(item)&&ts.isPropertyAccessExpression(item.expression)&&['allMessages','deliveries','get','list','put'].includes(item.expression.name.text))errors.push(`forbidden call ${item.expression.name.text}`);item.forEachChild(walk);};walk(node);assert.deepEqual(errors,[]);
-});
-test('business core modules use no raw database, generic records or repository implementation',()=>{
-  for(const file of ['stats.ts','runtime.ts','media.ts','features.ts','skills.ts','management.ts','evolution.ts','failure-context.ts','automation.ts','delivery-worker.ts']){
-    const text=readFileSync(path.join(root,file),'utf8');
-    assert.doesNotMatch(text,/node:sqlite|DatabaseSync|\.db\.prepare\(|database\.records|store\.(?:get|list|put)\(/i,file);
-  }
-});
-test('core dependency direction is ports-only for persistence',()=>{
-  for(const file of ['runtime.ts','media.ts','features.ts','skills.ts','management.ts','evolution.ts','delivery-worker.ts','automation.ts']){
-    const text=readFileSync(path.join(root,file),'utf8');
-    assert.doesNotMatch(text,/from '\.\.\/infrastructure\//,file);
-    assert.doesNotMatch(text,/from '\.\/store\.js'/,file);
-  }
-});
 
 const analyze=(entries:Array<{path:string;source:string}>)=>analyzeModules(entries);
 
@@ -75,32 +53,23 @@ test('only the SQLite infrastructure adapter owns the database and generic recor
   for(const rule of ['sqlite-import','database-ownership','record-access','channel-repository','harness-repository','client-repository'])assert.ok(rules.has(rule),rule);
   assert.ok(!result.violations.some(item=>item.file.startsWith('src/infrastructure/')),'infrastructure adapters own SQL and records');
 });
-test('business layers depend on ports, not on the Store facade or adapters',()=>{
+test('business layers depend on ports while adapters remain infrastructure-owned',()=>{
   const result=analyze([
     {path:'src/core/ports/asset.ts',source:"import type {Asset} from '../types.js'; export interface AssetRepository {asset(scope:string,id:string):Asset|undefined}"},
-    {path:'src/core/media.ts',source:"import type {AssetRepository} from './ports/asset.js'; export const use=(r:AssetRepository)=>r;"},
-    {path:'src/core/legacy.ts',source:"import {Store} from '../infrastructure/sqlite/store.js'; export const use=(store:Store)=>store;"},
-    {path:'src/core/leak.ts',source:"import '../infrastructure/sqlite/store.js'; export const leak=1;"},
-    {path:'src/infrastructure/sqlite/store.ts',source:'export class Store {}'},
-    {path:'src/index.ts',source:"import './infrastructure/sqlite/persistence.js'; import './core/runtime.js';"},
+    {path:'src/core/media.ts',source:"import type {AssetRepository} from './ports/asset.js'; export const use=(repository:AssetRepository)=>repository;"},
+    {path:'src/core/leak.ts',source:"import '../infrastructure/sqlite/database.js'; export const leak=1;"},
+    {path:'src/core/new-service-adapter.ts',source:"import '../infrastructure/sqlite/database.js'; import 'node:sqlite'; export class Adapter implements ServiceAdapter {}"},
+    {path:'src/core/provider.ts',source:'export class Provider implements ServiceAdapter {}'},
+    {path:'src/channels/fixture.ts',source:"import '../infrastructure/sqlite/database.js'; export const channel=1"},
+    {path:'src/infrastructure/sqlite/database.ts',source:'export const database=1'},
+    {path:'src/index.ts',source:"import './infrastructure/sqlite/database.js'; import './core/runtime.js';"},
   ]);
-  assert.ok(result.violations.some(item=>item.rule==='store-facade'&&item.file==='src/core/legacy.ts'));
   assert.ok(result.violations.some(item=>item.rule==='core-repository'&&item.file==='src/core/leak.ts'));
-  assert.ok(!result.violations.some(item=>item.rule==='core-repository'&&item.file==='src/core/media.ts'));
-  assert.ok(!result.violations.some(item=>item.file==='src/index.ts'),'composition root may create adapters');
-});
-test('service adapters and channels cannot own Store, SQLite, Session, identity or delivery',()=>{
-  const result=analyze([
-    {path:'src/core/new-service-adapter.ts',source:"import {Store} from './store.js'; import 'node:sqlite'; export class Adapter { store?:Store }"},
-    {path:'src/core/provider.ts',source:"import './sqlite-stats-data.js'; export class Provider implements ServiceAdapter {}"},
-    {path:'src/core/store.ts',source:'export class Store {}'},
-    {path:'src/core/sqlite-stats-data.ts',source:'export const database=1'},
-    {path:'src/channels/fixture.ts',source:"import '../core/sqlite-stats-data.js'; export const channel=1"},
-  ]);
-  assert.ok(result.violations.some(item=>item.rule==='service-adapter-isolation'&&item.target==='src/core/store.ts'));
-  assert.ok(result.violations.some(item=>item.rule==='service-adapter-isolation'&&item.detail.includes('node:sqlite')));
+  assert.ok(result.violations.some(item=>item.rule==='service-adapter-isolation'&&item.file==='src/core/new-service-adapter.ts'));
   assert.ok(result.violations.some(item=>item.rule==='service-adapter-location'&&item.file==='src/core/provider.ts'));
-  assert.ok(result.violations.some(item=>item.rule==='channel-isolation'&&item.target==='src/core/sqlite-stats-data.ts'));
+  assert.ok(result.violations.some(item=>item.rule==='channel-repository'&&item.file==='src/channels/fixture.ts'));
+  assert.ok(!result.violations.some(item=>item.file==='src/core/media.ts'));
+  assert.ok(!result.violations.some(item=>item.file==='src/index.ts'),'composition root may create adapters');
 });
 
 test('lifecycle source is package-owned and cannot import or send QQ or WeChat messages',()=>{

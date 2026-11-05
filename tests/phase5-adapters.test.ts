@@ -5,7 +5,7 @@ import path from 'node:path';
 import {CapabilityRegistry} from '../src/core/capability-registry.js';
 import {MediaOperationRegistry} from '../src/core/media-operation-registry.js';
 import {MediaService} from '../src/core/media.js';
-import {Store} from '../src/infrastructure/sqlite/store.js';
+import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
 import {validateMediaWorkerJob,MEDIA_WORKER_PROTOCOL,MEDIA_WORKER_PROTOCOL_VERSION,type MediaWorkerJob} from '../src/core/worker-port.js';
 import {lifecycleAvailable,lifecycleRuntime,markLifecycleAvailable,registerLifecycleRuntime,packageIdentity} from '../packages/bot-lifecycle/src/contract/protocol.js';
 import {EvolutionService} from '../src/core/evolution.js';
@@ -40,9 +40,9 @@ test('worker job protocol is versioned and rejects stale jobs',()=>{
   assert.doesNotThrow(()=>validateMediaWorkerJob(job));assert.throws(()=>validateMediaWorkerJob({...job,protocolVersion:99}),/PROTOCOL_UNSUPPORTED/);
 });
 
-test('Store lifecycle stages are explicit and ordered',async()=>{
-  const home=await mkdtemp(path.resolve('.codex/phase5-store-'));
-  const store=Store.open(home,undefined,{secureDefaults:true});
+test('SqlitePersistence lifecycle stages are explicit and ordered',async()=>{
+  const home=await mkdtemp(path.resolve('.codex/phase5-persistence-'));
+  const store=SqlitePersistence.open(home,undefined,{secureDefaults:true});
   try{
     assert.equal(store.lifecycleStage(),'opened');store.initialize();assert.equal(store.lifecycleStage(),'initialized');store.migrate();assert.equal(store.lifecycleStage(),'migrated');store.recover();assert.equal(store.lifecycleStage(),'recovered');store.start();assert.equal(store.lifecycleStage(),'started');
   }finally{store.close();assert.equal(store.lifecycleStage(),'closed');await rm(home,{recursive:true,force:true});}

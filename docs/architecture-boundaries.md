@@ -66,7 +66,7 @@ Python skills    -> python 共享模块和 vendored 命名空间
 - 测试 helper、测试 runner 和证据目录不得成为生产运行时的隐式依赖。
 - 只有 `src/infrastructure/sqlite/` 可以导入 `node:sqlite` 或引用 `DatabaseSync`；SQL 准备、generic record 表与数据库句柄只在 `src/infrastructure/` 内出现。
 - 业务层（`src/core/`、`src/channels/`、`src/harness/`、`src/client/`）不得导入任何 repository 实现或 `src/infrastructure/`；只能依赖 `src/core/ports/` 的窄 contract。
-- 除 composition root 与 `src/infrastructure/` 自身外，任何生产模块不得导入 `src/infrastructure/sqlite/store.ts` 这个迁移期 facade。
+- Store facade 已删除，`src/core/store.ts` 与 `src/infrastructure/sqlite/store.ts` 均不得重新出现；应用和测试直接构造 `SqlitePersistence` 并使用窄 repository。
 - Service Adapter、channel 和 lifecycle 不得导入业务 repository；Harness tool／admin 不得执行 SQL。
 - `packages/bot-lifecycle/` 不得通过越界相对路径依赖根包内部源码；其发布入口必须由声明的构建入口生成。
 - Python 模块 import 不得连接外部服务、监听端口、启动长期进程、修改 profile 或写入运行数据；这些行为只能在显式 `main`、`start` 或 `execute` 之后发生。
@@ -205,8 +205,8 @@ Python skills    -> python 共享模块和 vendored 命名空间
 
 - schema、migration 版本、表名、索引、记录含义、cursor 编码、错误码和运行数据目录均未改变；拆分只改变代码归属与依赖方向。
 - `src/core/store.ts` 的单体实现已拆为 `src/infrastructure/sqlite/` 下的 aggregate adapter；业务代码不再持有 Store 或数据库句柄。
-- `src/infrastructure/sqlite/store.ts` 保留为基础设施／测试专用的生命周期 facade：它只做委托，不被任何业务模块持有，退出条件是 contract 测试改为直接构造 adapter 后删除。
-- `check:architecture` 新增 `sqlite-import`、`database-ownership`、`record-access`、`store-facade`、`core-repository`、`channel-repository`、`harness-repository`、`client-repository` 规则，例外只精确到 `src/index.ts` 与 `src/infrastructure/` 自身。
+- 迁移期 `src/infrastructure/sqlite/store.ts` facade 已删除；contract 与集成测试直接构造 `SqlitePersistence`，普通断言使用命名 repository，只有明确的 legacy／故障注入夹具可访问底层记录。
+- `check:architecture` 使用 `sqlite-import`、`database-ownership`、`record-access`、`core-repository`、`channel-repository`、`harness-repository`、`client-repository` 规则，并禁止两个历史 Store facade 路径重新出现；例外只精确到 `src/index.ts` 与 `src/infrastructure/` 自身。
 
 ## 门禁输出
 

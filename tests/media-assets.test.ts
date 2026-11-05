@@ -2,34 +2,35 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
-import {Store} from '../src/infrastructure/sqlite/store.js';
+import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
 import {scopeKey} from '../src/core/identity.js';
 import {Assets} from '../src/core/media.js';
+import {seedLegacyAssetMetadata} from './sqlite-fixtures.js';
 import {botSchema,type CallerScope} from '../src/core/types.js';
 
 const scope:CallerScope={botId:'one',platform:'qq',accountId:'one',kind:'private',channelId:'alice',senderId:'alice'};
-async function fixture(t:any){const directory=await mkdtemp(path.resolve('.codex/asset-session-'));const store=new Store(directory);store.saveBot(botSchema.parse({id:scope.botId,name:scope.botId,channel:scope.platform}));t.after(async()=>{store.close();await rm(directory,{recursive:true,force:true});});return{store,assets:new Assets(store.repositories())};}
+async function fixture(t:any){const directory=await mkdtemp(path.resolve('.codex/asset-session-'));const store=new SqlitePersistence(directory);store.bots.saveBot(botSchema.parse({id:scope.botId,name:scope.botId,channel:scope.platform}));t.after(async()=>{store.close();await rm(directory,{recursive:true,force:true});});return{store,assets:new Assets(store.repositories())};}
 const media={kind:'image' as const,name:'reference.png',mime:'image/png'};
 
 test('new and resumed sessions select only their own recent assets while explicit same-channel references remain readable',async t=>{
-  const {store,assets}=await fixture(t);const first=store.binding(scope);const original=await assets.save(first.key,media,Buffer.from('first'));
-  const second=store.reset(scope);assert.deepEqual(assets.recent(first.key),[]);const later=await assets.save(first.key,media,Buffer.from('second'));assert.deepEqual(assets.recent(first.key).map(a=>a.id),[later.id]);
-  store.activateSession(scope,first.sessionId);assert.deepEqual(assets.recent(first.key).map(a=>a.id),[original.id]);assert.equal((await assets.read(first.key,later.id)).toString(),'second','an explicitly quoted attachment keeps channel ownership');
-  store.activateSession(scope,second.sessionId);assert.deepEqual(assets.recent(first.key).map(a=>a.id),[later.id]);assert.equal((await assets.read(first.key,original.id)).toString(),'first');
+  const {store,assets}=await fixture(t);const first=store.sessions.binding(scope);const original=await assets.save(first.key,media,Buffer.from('first'));
+  const second=store.sessions.reset(scope);assert.deepEqual(assets.recent(first.key),[]);const later=await assets.save(first.key,media,Buffer.from('second'));assert.deepEqual(assets.recent(first.key).map(a=>a.id),[later.id]);
+  store.sessions.activateSession(scope,first.sessionId);assert.deepEqual(assets.recent(first.key).map(a=>a.id),[original.id]);assert.equal((await assets.read(first.key,later.id)).toString(),'second','an explicitly quoted attachment keeps channel ownership');
+  store.sessions.activateSession(scope,second.sessionId);assert.deepEqual(assets.recent(first.key).map(a=>a.id),[later.id]);assert.equal((await assets.read(first.key,original.id)).toString(),'first');
   await assert.rejects(assets.read(scopeKey({...scope,senderId:'bob',channelId:'bob'}),original.id),/不属于/);
 });
 test('asset persistence captures session ownership before asynchronous file writes',async t=>{
-  const {store,assets}=await fixture(t);const old=store.binding(scope);const saving=assets.save(old.key,media,Buffer.from('old upload'));
-  const next=store.reset(scope);const asset=await saving;assert.equal(asset.sessionId,old.sessionId);assert.notEqual(asset.sessionId,next.sessionId);assert.deepEqual(assets.recent(old.key),[]);
-  store.activateSession(scope,old.sessionId);assert.deepEqual(assets.recent(old.key).map(a=>a.id),[asset.id]);
+  const {store,assets}=await fixture(t);const old=store.sessions.binding(scope);const saving=assets.save(old.key,media,Buffer.from('old upload'));
+  const next=store.sessions.reset(scope);const asset=await saving;assert.equal(asset.sessionId,old.sessionId);assert.notEqual(asset.sessionId,next.sessionId);assert.deepEqual(assets.recent(old.key),[]);
+  store.sessions.activateSession(scope,old.sessionId);assert.deepEqual(assets.recent(old.key).map(a=>a.id),[asset.id]);
 });
 test('unclaimed cleanup resolves the canonical asset and never removes a registered delivery',async t=>{
-  const {store,assets}=await fixture(t),binding=store.binding(scope),asset=await assets.save(binding.key,media,Buffer.from('claimed'),'derived','generated',binding.sessionId,binding.generation);
-  store.enqueue(binding,'source','turn',[{type:'asset',assetId:asset.id}],{});assert.equal(await assets.removeUnclaimed(binding.key,asset.id),false);assert.equal((await assets.read(binding.key,asset.id)).toString(),'claimed');
+  const {store,assets}=await fixture(t),binding=store.sessions.binding(scope),asset=await assets.save(binding.key,media,Buffer.from('claimed'),'derived','generated',binding.sessionId,binding.generation);
+  store.deliveries.enqueue(binding,'source','turn',[{type:'asset',assetId:asset.id}],{});assert.equal(await assets.removeUnclaimed(binding.key,asset.id),false);assert.equal((await assets.read(binding.key,asset.id)).toString(),'claimed');
 });
 
 test('legacy and unassociated assets are excluded from automatic selection without removing explicit access',async t=>{
-  const {store,assets}=await fixture(t);const key=scopeKey(scope);store.binding(scope);const uploaded=await assets.save(key,media,Buffer.from('before binding'));const unassociated={...uploaded,sessionId:undefined};store.put('asset',uploaded.id,unassociated);
-  const associated=await assets.save(key,media,Buffer.from('legacy'));const {sessionId,...legacy}=associated;store.put('asset',legacy.id,legacy);
+  const {store,assets}=await fixture(t);const key=scopeKey(scope);store.sessions.binding(scope);const uploaded=await assets.save(key,media,Buffer.from('before binding'));const unassociated={...uploaded,sessionId:undefined};seedLegacyAssetMetadata(store,unassociated);
+  const associated=await assets.save(key,media,Buffer.from('legacy'));const {sessionId,...legacy}=associated;seedLegacyAssetMetadata(store,legacy);
   assert.deepEqual(assets.recent(key),[]);assert.equal((await assets.read(key,legacy.id)).toString(),'legacy');assert.equal((await assets.read(key,unassociated.id)).toString(),'before binding');
 });

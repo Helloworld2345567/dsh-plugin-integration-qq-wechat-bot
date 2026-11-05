@@ -4,7 +4,7 @@ import fs,{mkdir,mkdtemp,rm,writeFile} from 'node:fs/promises';
 import {syncBuiltinESMExports} from 'node:module';
 import path from 'node:path';
 import {Assets,MediaService} from '../src/core/media.js';
-import {Store} from '../src/infrastructure/sqlite/store.js';
+import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
 import {INPUT_LIMITS,validateBatch,validateInboundMessage} from '../src/core/limits.js';
 import {botSchema,type CallerScope,type InboundMessage,type MediaInput} from '../src/core/types.js';
 import type {WorkerPort} from '../src/core/worker-port.js';
@@ -15,7 +15,7 @@ const video=(handle='video'):MediaInput=>({kind:'video',name:'clip.mp4',mime:'vi
 const message=(overrides:Partial<InboundMessage>={}):InboundMessage=>({id:'message',scope,text:'analyze',attachments:[],reply:{target:'owner'},timestamp:Date.now(),...overrides});
 async function fixture(t:any){
   const base=process.env.BOT_TEST_TMP??path.resolve('.codex');await mkdir(base,{recursive:true});
-  const folder=await mkdtemp(path.join(base,'video-core-'));const store=new Store(folder);store.saveBot(botSchema.parse({id:scope.botId,name:scope.botId,channel:scope.platform}));
+  const folder=await mkdtemp(path.join(base,'video-core-'));const store=new SqlitePersistence(folder);store.bots.saveBot(botSchema.parse({id:scope.botId,name:scope.botId,channel:scope.platform}));
   t.after(async()=>{store.close();await rm(folder,{recursive:true,force:true});});
   return{store,assets:new Assets(store.repositories())};
 }
@@ -28,13 +28,13 @@ test('asset registration accepts video bytes through 500 MiB and preserves image
   const bytes=(size:number)=>Object.defineProperty(Buffer.from('fixture'),'length',{value:size});
   try{
     for(const size of [50*MiB+1,500*MiB]){
-      const binding=store.binding({...scope,channelId:String(size),senderId:String(size)});
+      const binding=store.sessions.binding({...scope,channelId:String(size),senderId:String(size)});
       const asset=await assets.save(binding.key,video(),bytes(size));
-      assert.equal(asset.size,size);assert.equal(store.asset(binding.key,asset.id).size,size);
+      assert.equal(asset.size,size);assert.equal(store.assets.asset(binding.key,asset.id).size,size);
     }
-    await assert.rejects(assets.save(store.binding(scope).key,video(),bytes(500*MiB+1)),/MEDIA_TOO_LARGE/);
+    await assert.rejects(assets.save(store.sessions.binding(scope).key,video(),bytes(500*MiB+1)),/MEDIA_TOO_LARGE/);
     for(const kind of ['image','file'] as const){
-      await assert.rejects(assets.save(store.binding(scope).key,{kind,name:'fixture',mime:'application/octet-stream'},bytes(50*MiB+1)),/MEDIA_TOO_LARGE/);
+      await assert.rejects(assets.save(store.sessions.binding(scope).key,{kind,name:'fixture',mime:'application/octet-stream'},bytes(50*MiB+1)),/MEDIA_TOO_LARGE/);
     }
     assert.equal(writes,2,'oversized inputs must fail before filesystem writes');
   }finally{writing.mock.restore();syncBuiltinESMExports();}
@@ -43,7 +43,7 @@ test('asset registration accepts video bytes through 500 MiB and preserves image
 test('audio input retains its 100 MiB budget and generated audio reaches 200 MiB',async t=>{
   const {store,assets}=await fixture(t);
   const bytes=(size:number)=>Object.defineProperty(Buffer.from('fixture'),'length',{value:size});
-  const binding=store.binding({...scope,channelId:'generated-audio',senderId:'generated-audio'});
+  const binding=store.sessions.binding({...scope,channelId:'generated-audio',senderId:'generated-audio'});
   const received=await assets.save(binding.key,{kind:'audio',name:'upload.mp3',mime:'audio/mpeg'},bytes(100*MiB),'job-input','received');
   assert.equal(received.size,100*MiB);
   const receivedFile=await assets.save(binding.key,{kind:'file',name:'upload.mp3',mime:'application/octet-stream'},bytes(100*MiB),'job-input-file','received');
@@ -55,18 +55,18 @@ test('audio input retains its 100 MiB budget and generated audio reaches 200 MiB
 });
 
 test('worker video output reaches registration at 500 MiB and rejects larger output before reading it',async t=>{
-  const {store,assets}=await fixture(t);const binding=store.binding(scope);let outputSize=500*MiB;let kind:MediaInput['kind']='video';let target='';
-  t.mock.method(store.persistence.quota,'consume',()=>{});
+  const {store,assets}=await fixture(t);const binding=store.sessions.binding(scope);let outputSize=500*MiB;let kind:MediaInput['kind']='video';let target='';
+  t.mock.method(store.quota,'consume',()=>{});
   const worker:WorkerPort={run:async job=>{target=path.join(job.output,'clip.mp4');await writeFile(target,'fixture');return{assets:[{path:target,name:'clip.mp4',kind,mime:'video/mp4'}]};}};
   const media=new MediaService(store.repositories(),assets,undefined,undefined,worker);const originalStat=fs.stat;
   const stated=t.mock.method(fs,'stat',(async(file:any,options:any)=>{const result=await originalStat(file,options);return file===target?Object.assign(result,{size:outputSize}):result;}) as typeof fs.stat);
   syncBuiltinESMExports();
-  const run=()=>media.run(binding.key,'video_download',store.config('default'),[],{url:'https://www.douyin.com/video/1'},new AbortController().signal);
+  const run=()=>media.run(binding.key,'video_download',store.personas.config('default'),[],{url:'https://www.douyin.com/video/1'},new AbortController().signal);
   try{
-    const accepted=await run();assert.equal(accepted.assetIds.length,1);assert.equal(store.asset(binding.key,accepted.assetIds[0]).kind,'video');
+    const accepted=await run();assert.equal(accepted.assetIds.length,1);assert.equal(store.assets.asset(binding.key,accepted.assetIds[0]).kind,'video');
     outputSize=500*MiB+1;await assert.rejects(run(),/OUTPUT_TOO_LARGE/);
     kind='file';outputSize=20*MiB+1;await assert.rejects(run(),/OUTPUT_TOO_LARGE/);
-    assert.equal(store.recentAssets(binding.key,binding.sessionId,undefined,10).length,1);
+    assert.equal(store.assets.recentAssets(binding.key,binding.sessionId,undefined,10).length,1);
   }finally{stated.mock.restore();syncBuiltinESMExports();}
 });
 

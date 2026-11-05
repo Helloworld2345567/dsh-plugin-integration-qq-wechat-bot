@@ -21,7 +21,7 @@
 | workspace／history-location | `Assets`、`NativeHarness`、bot 删除、技能草稿、`Admin.directories` | `records: history-location`；工作区文件 | 历史文件先写临时文件再 rename；位置记录随后写入 | sessionId 为键 | scopeKey；路径由 identity 推导，不接受模型路径 | 无迁移；旧位置在写入时移动 | `HistoryLocationRepository`、`ChatHistoryPort`、`BotHistoryPort`、`WorkspacePort` | `files/workspace-files.ts`、`bot-history.ts` | `BOT_HISTORY_PATH_INVALID`、`SESSION_NOT_FOUND`、`ASSET_CLEANUP_PATH_INVALID`；workspace-storage／bot-history 测试 |
 | channel cursor／reply metadata | 微信 adapter（channel port）、QQ 投递 | `records: cursor`、`channel-cursor`、`reply-sequence` | cursor 读写与 legacy 键双写在同一事务 | cursor 为平台 JSON 值；reply sequence 单调递增 | channelId／botId | 读取优先新键，回退 legacy 键 | `CursorStore`、delivery 内 reply sequence | `channel-cursor-repository.ts`、`delivery-repository.ts` | channel-compat／progress-delivery 测试 |
 | 交互状态（music／singing／voice library） | 音乐／翻唱工具、`BotRuntime` 清理、语音模型库 | `records: music-candidates`、`music-acquisition`、`singing-candidates`、`singing-attempt`、`voice-model-library` | 每条状态单次写入；清除写入显式 null | 状态绑定 session generation；候选集 id 随机 | scopeKey；generation | 状态随 generation 失效，不跨会话复用 | `MusicStateRepository`、`SingingStateRepository`、`VoiceLibrarySettingsRepository` | `session-state-repositories.ts` | `MUSIC_SESSION_CHANGED`、`SINGING_SESSION_CHANGED`；music-host／singing-host 测试 |
-| generic records（迁移期） | 仅基础设施 adapter 与 contract 测试 | `records` 表（固定 kind） | 由所属 adapter 决定 | 不对外暴露 | 由所属 adapter 固定 | 由所属 adapter 负责 | 无公开 Port | `record-table.ts`（内部） | `record-access` 静态门禁 |
+| generic records（基础设施内部） | 仅基础设施 adapter；legacy／故障注入测试统一经 `tests/sqlite-fixtures.ts` | `records` 表（固定 kind） | 由所属 adapter 决定 | 不对外暴露 | 由所属 adapter 固定 | 由所属 adapter 负责 | 无公开 Port | `record-table.ts`（内部） | `record-access` 静态门禁 |
 
 ## 事务与恢复规则
 

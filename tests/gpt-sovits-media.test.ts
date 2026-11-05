@@ -4,7 +4,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
 import type {Context} from '@deepseek-ai/cordis';
 import {Assets,MediaService} from '../src/core/media.js';
-import {Store} from '../src/infrastructure/sqlite/store.js';
+import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
 import {configSchema} from '../src/core/types.js';
 import {HarnessMediaProvider} from '../src/harness/media-provider.js';
 import {VoiceServiceQueue} from '../src/core/voice-service-queue.js';
@@ -14,7 +14,7 @@ const config=(id='a',voice:Record<string,unknown>={})=>configSchema.parse({id,na
 const resolver=new HarnessMediaProvider({} as Context);
 
 async function fixture(t:TestContext,worker:WorkerPort){
-  const home=await mkdtemp(path.resolve('.codex/gpt-media-'));const store=new Store(home,path.join(home,'personas'));
+  const home=await mkdtemp(path.resolve('.codex/gpt-media-'));const store=new SqlitePersistence(home,path.join(home,'personas'));
   t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
   const assets=new Assets(store.repositories());assets.workspace=async scope=>path.join(home,'workspaces',scope);return{store,media:new MediaService(store.repositories(),assets,'python',resolver,worker)};
 }

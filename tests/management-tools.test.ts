@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
 import type {ToolRunContext} from '@deepseek-ai/dsh-tools';
-import {Store} from '../src/infrastructure/sqlite/store.js';
+import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {BotRuntime,type HarnessPort} from '../src/core/runtime.js';
 import {BotFeatures} from '../src/core/features.js';
@@ -12,18 +12,19 @@ import {defineBotSessionTool,defineBotPersonaTool,defineBotSkillsTool} from '../
 import {botSchema,type CallerScope,type SessionBinding} from '../src/core/types.js';
 import {freezeTurn} from '../src/core/policy.js';
 import {defineBotScheduleTool,defineBotProactiveTool} from '../src/harness/automation-tools.js';
+import {seedAppliedConfig} from './sqlite-fixtures.js';
 
 const owner:CallerScope={botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'owner',senderId:'owner'};
 const signal=()=>new AbortController().signal;
 async function fixture(t:any){
-  const directory=await mkdtemp(path.resolve('.codex/management-tools-'));const store=new Store(directory);const assets=new Assets(store.repositories());
+  const directory=await mkdtemp(path.resolve('.codex/management-tools-'));const store=new SqlitePersistence(directory);const assets=new Assets(store.repositories());
   const harness:HarnessPort={run:async()=>{throw Error('NO_MODEL_CALL');},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async()=>{}};
   const runtime=new BotRuntime(store.repositories(),assets,new MediaService(store.repositories(),assets),harness,{} as any,{read:async()=>undefined,write:async()=>{},remove:async()=>{}},60000);const features=new BotFeatures(runtime);const management=new BotManagement(runtime,features);
-  const previous=store.config('sakura');store.saveConfig({...previous,allowHostTools:false,model:{provider:'fixture',model:'chat'}},previous.revision);
-  store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',configId:'sakura',enabled:true,trustedUsers:['owner']}));
+  const previous=store.personas.config('sakura');store.personas.saveConfig({...previous,allowHostTools:false,model:{provider:'fixture',model:'chat'}},previous.revision);
+  store.bots.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',configId:'sakura',enabled:true,trustedUsers:['owner']}));
   const queued:Array<{binding:SessionBinding;action:unknown}>=[];
   Object.defineProperty(runtime,'queueSessionAction',{value:(binding:SessionBinding,_snapshot:unknown,action:{action:string})=>{queued.push({binding,action});return{status:'queued',actionId:`queued-${queued.length}`,action:action.action};}});
-  const binding=(scope=owner)=>store.binding(scope);const snapshot=(scope=owner)=>freezeTurn(store.effectiveConfig(binding(scope)),store.bot('bot'),scope,[]);
+  const binding=(scope=owner)=>store.sessions.binding(scope);const snapshot=(scope=owner)=>freezeTurn(store.personas.effectiveConfig(binding(scope)),store.bots.bot('bot'),scope,[]);
   t.after(async()=>{await runtime.close();store.close();await rm(directory,{recursive:true,force:true});});return{store,runtime,features,management,harness,queued,binding,snapshot};
 }
 
@@ -45,7 +46,7 @@ test('chat automation tools create daily tasks, preserve proactive settings and 
   await proactive.execute({action:'on'},exec);const settings=JSON.parse(await proactive.execute({action:'set',dailyLimit:2,quietFrom:'23:00'},exec) as string);
   assert.equal(settings.enabled,true);assert.equal(settings.dailyLimit,2);assert.ok(settings.nextAt);assert.equal(settings.scope,undefined);
   for(const input of [{action:'create',prompt:'oops',delayMs:1000,scope:owner},{action:'create',prompt:'oops',delayMs:1000,dailyAt:'00:00'},{action:'delete',jobId:created.jobId,senderId:'other'}])await assert.rejects(schedule.execute(input,exec));
-  const other={...owner,channelId:'other',senderId:'other'};f.store.saveBot({...f.store.bot('bot'),trustedUsers:['owner','other']});
+  const other={...owner,channelId:'other',senderId:'other'};f.store.bots.saveBot({...f.store.bots.bot('bot'),trustedUsers:['owner','other']});
   assert.deepEqual((await f.management.schedule(f.binding(other),f.snapshot(other),{action:'list'},signal())).jobs,[]);
   await assert.rejects(f.management.schedule(f.binding(other),f.snapshot(other),{action:'delete',jobId:created.jobId},signal()),/SCHEDULE_NOT_FOUND/);
   await schedule.execute({action:'pause',jobId:created.jobId},exec);assert.equal(f.runtime.automation.listJobs()[0].enabled,false);
@@ -58,8 +59,8 @@ test('automation tools reject groups, untrusted callers, revoked trust, stale se
   const calls=(b:SessionBinding,s:any,abort=signal())=>[()=>f.management.schedule(b,s,{action:'create',prompt:'hello',delayMs:1000},abort),()=>f.management.proactive(b,s,{action:'on'},abort)];
   for(const scope of [{...owner,kind:'group' as const},{...owner,senderId:'other',channelId:'other'}])for(const call of calls(f.binding(scope),f.snapshot(scope)))await assert.rejects(call(),/TRUSTED/);
   const cancelled=new AbortController();cancelled.abort();for(const call of calls(binding,snapshot,cancelled.signal))await assert.rejects(call());
-  f.store.saveBot({...f.store.bot('bot'),trustedUsers:[]});for(const call of calls(binding,snapshot))await assert.rejects(call(),/TRUSTED/);
-  f.store.saveBot({...f.store.bot('bot'),trustedUsers:['owner']});f.store.reset(owner);for(const call of calls(binding,snapshot))await assert.rejects(call(),/SESSION_CHANGED/);
+  f.store.bots.saveBot({...f.store.bots.bot('bot'),trustedUsers:[]});for(const call of calls(binding,snapshot))await assert.rejects(call(),/TRUSTED/);
+  f.store.bots.saveBot({...f.store.bots.bot('bot'),trustedUsers:['owner']});f.store.sessions.reset(owner);for(const call of calls(binding,snapshot))await assert.rejects(call(),/SESSION_CHANGED/);
   assert.equal(f.runtime.automation.listJobs().length,0);assert.equal(f.runtime.automation.listProactive().length,0);
 });
 
@@ -91,8 +92,8 @@ test('ordinary and group callers can query only their own session metadata and e
 });
 
 test('trusted catalogs include disabled published skills and project only public metadata',async t=>{
-  const f=await fixture(t);const before=f.store.config('sakura');const staged=f.features.skills.stageFiles(before,'weather-helper',[{path:'SKILL.md',content:'---\nname: weather-helper\ndescription: Weather helper\n---\nUse the helper.'}]);
-  f.store.saveConfig({...staged,skills:['media-analysis']},before.revision);f.store.put('config','hidden',{...f.store.config('sakura'),id:'hidden',name:'Hidden',archived:true});
+  const f=await fixture(t);const before=f.store.personas.config('sakura');const staged=f.features.skills.stageFiles(before,'weather-helper',[{path:'SKILL.md',content:'---\nname: weather-helper\ndescription: Weather helper\n---\nUse the helper.'}]);
+  f.store.personas.saveConfig({...staged,skills:['media-analysis']},before.revision);seedAppliedConfig(f.store,{...f.store.personas.config('sakura'),id:'hidden',name:'Hidden',archived:true},false);
   const skills:any=await f.management.skills(f.binding(),f.snapshot(),{action:'list'},signal());assert.deepEqual(new Set(skills.skills.map((s:any)=>s.name)),new Set(['image-generation','media-analysis','voice-generation','singing-conversion','music-download','weather-helper']));
   assert.equal(skills.skills.find((s:any)=>s.name==='weather-helper').enabled,false);assert.equal(skills.skills.find((s:any)=>s.name==='weather-helper').available,true);assert.equal(skills.skills.find((s:any)=>s.name==='image-generation').builtin,true);
   const persona:any=await f.management.persona(f.binding(),f.snapshot(),{action:'list'},signal());assert.ok(!persona.personas.some((p:any)=>p.id==='hidden'));assert.equal(persona.currentPersonaId,'sakura');
@@ -101,20 +102,20 @@ test('trusted catalogs include disabled published skills and project only public
 });
 
 test('mutations queue host-bound actions without changing the current session or shared persona',async t=>{
-  const f=await fixture(t);const binding=f.binding(),snapshot=f.snapshot();const config=f.store.config('sakura');
+  const f=await fixture(t);const binding=f.binding(),snapshot=f.snapshot();const config=f.store.personas.config('sakura');
   const operations=[()=>f.management.session(binding,snapshot,{action:'new'},signal()),()=>f.management.session(binding,snapshot,{action:'stop'},signal()),()=>f.management.session(binding,snapshot,{action:'compact'},signal()),()=>f.management.session(binding,snapshot,{action:'resume',sessionId:binding.sessionId},signal()),()=>f.management.persona(binding,snapshot,{action:'set',personaId:'default'},signal()),()=>f.management.skills(binding,snapshot,{action:'enable',name:'image-generation'},signal()),()=>f.management.skills(binding,snapshot,{action:'disable',name:'media-analysis'},signal())];
   for(const execute of operations)assert.equal((await execute() as any).status,'queued');
   assert.deepEqual(f.queued.map(item=>item.action),[{action:'new'},{action:'stop'},{action:'compact'},{action:'resume',sessionId:binding.sessionId},{action:'persona',personaId:'default'},{action:'skill',name:'image-generation',enabled:true},{action:'skill',name:'media-analysis',enabled:false}]);
-  assert.equal(f.binding().sessionId,binding.sessionId);assert.deepEqual(f.store.config('sakura'),config);assert.deepEqual(snapshot.config,config);
+  assert.equal(f.binding().sessionId,binding.sessionId);assert.deepEqual(f.store.personas.config('sakura'),config);assert.deepEqual(snapshot.config,config);
   await assert.rejects(f.management.skills(binding,snapshot,{action:'enable',name:'never-published'},signal()),/SKILL_NOT_PUBLISHED/);assert.equal(f.queued.length,7);
 });
 
 test('revocation and newly granted trust deny privileged management while basic reads remain scoped',async t=>{
-  const f=await fixture(t);const binding=f.binding(),old=f.snapshot();f.store.saveBot({...f.store.bot('bot'),trustedUsers:[]});
+  const f=await fixture(t);const binding=f.binding(),old=f.snapshot();f.store.bots.saveBot({...f.store.bots.bot('bot'),trustedUsers:[]});
   await assert.rejects(f.management.persona(binding,old,{action:'set',personaId:'default'},signal()),/TRUSTED/);
   await assert.rejects(f.management.skills(binding,old,{action:'enable',name:'image-generation'},signal()),/TRUSTED/);
   await f.management.session(binding,old,{action:'status'},signal());
-  const untrusted=f.snapshot();f.store.saveBot({...f.store.bot('bot'),trustedUsers:['owner']});
+  const untrusted=f.snapshot();f.store.bots.saveBot({...f.store.bots.bot('bot'),trustedUsers:['owner']});
   await assert.rejects(f.management.persona(binding,untrusted,{action:'list'},signal()),/TRUSTED/);
   await assert.rejects(f.management.skills(binding,untrusted,{action:'disable',name:'image-generation'},signal()),/TRUSTED/);assert.equal(f.queued.length,0);
 });
@@ -124,22 +125,22 @@ test('all management entries reject cancellation, changed generations, inactive 
   const calls=(candidate:SessionBinding,abort:AbortSignal)=>[()=>f.management.session(candidate,snapshot,{action:'status'},abort),()=>f.management.persona(candidate,snapshot,{action:'list'},abort),()=>f.management.skills(candidate,snapshot,{action:'list'},abort)];
   for(const call of calls(binding,stopped.signal))await assert.rejects(call());
   for(const call of calls({...binding,scope:{...binding.scope,senderId:'forged'}},signal()))await assert.rejects(call(),/SESSION_CHANGED/);
-  f.store.updateSession({...binding,generation:binding.generation+1});for(const call of calls(binding,signal()))await assert.rejects(call(),/SESSION_CHANGED/);
-  const current=f.binding();f.store.reset(owner);for(const call of calls(current,signal()))await assert.rejects(call(),/SESSION_CHANGED/);assert.equal(f.queued.length,0);
+  f.store.sessions.updateSession({...binding,generation:binding.generation+1});for(const call of calls(binding,signal()))await assert.rejects(call(),/SESSION_CHANGED/);
+  const current=f.binding();f.store.sessions.reset(owner);for(const call of calls(current,signal()))await assert.rejects(call(),/SESSION_CHANGED/);assert.equal(f.queued.length,0);
 });
 
 test('skill toggle rechecks its captured session, persona, revision, trust and caller authorization after validation',async t=>{
   for(const changed of ['session','persona','revision','trust','authorize'] as const){
     await t.test(changed,async t=>{
-      const f=await fixture(t);const binding=f.binding();const original=f.store.config('sakura');let checks=0;
+      const f=await fixture(t);const binding=f.binding();const original=f.store.personas.config('sakura');let checks=0;
       f.harness.validateModel=async()=>{
-        if(changed==='session')f.store.reset(owner);
-        if(changed==='persona')f.store.updateSession({...binding,personaId:'default'});
-        if(changed==='revision')f.store.saveConfig({...original,name:'newer'},original.revision);
-        if(changed==='trust')f.store.saveBot({...f.store.bot('bot'),trustedUsers:[]});
+        if(changed==='session')f.store.sessions.reset(owner);
+        if(changed==='persona')f.store.sessions.updateSession({...binding,personaId:'default'});
+        if(changed==='revision')f.store.personas.saveConfig({...original,name:'newer'},original.revision);
+        if(changed==='trust')f.store.bots.saveBot({...f.store.bots.bot('bot'),trustedUsers:[]});
       };
       await assert.rejects(f.runtime.commandServices.skills!.toggle(binding,'image-generation',false,()=>{checks++;if(changed==='authorize'&&checks===2)throw Error('CALLER_CANCELLED');}),/CHANGED|TRUSTED|CALLER_CANCELLED/);
-      assert.ok(f.store.config('sakura').skills.includes('image-generation'));assert.equal(f.store.config('default').skills.includes('image-generation'),true);
+      assert.ok(f.store.personas.config('sakura').skills.includes('image-generation'));assert.equal(f.store.personas.config('default').skills.includes('image-generation'),true);
     });
   }
 });

@@ -2,22 +2,23 @@ import {test,type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
-import {Store} from '../src/infrastructure/sqlite/store.js';
+import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
 import {scopeKey} from '../src/core/identity.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {BotRuntime,type HarnessPort} from '../src/core/runtime.js';
 import {botSchema,configSchema,type CallerScope,type ChannelAdapter,type ChannelOutboundContext,type Delivery,type Output} from '../src/core/types.js';
 import {fixtureChannels} from './test-channel.js';
+import {seedAppliedConfig} from './sqlite-fixtures.js';
 
 const scope:CallerScope={botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'owner',senderId:'owner'};
 function deferred(){let resolve!:()=>void;const promise=new Promise<void>(done=>resolve=done);return{promise,resolve};}
 
 async function fixture(t:TestContext){
-  await mkdir(path.resolve('.codex'),{recursive:true});const directory=await mkdtemp(path.resolve('.codex/qq-outbound-runtime-')),store=new Store(directory),assets=new Assets(store.repositories());
-  const initial=store.config('sakura'),config=configSchema.parse({...initial,schemaVersion:4,media:{voice:{enabled:true,protocol:'edge_tts',replyMode:'auto',format:'mp3'}}});
-  store.put('config',config.id,config);store.put('config-version',`${config.id}:${config.revision}`,config);
-  store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',configId:config.id,enabled:true,trustedUsers:['owner']}));
-  const binding=store.binding(scope);store.accept({id:'context',scope,text:'已有上下文',attachments:[],timestamp:Date.now()-3600000,reply:{target:'owner',kind:'private',msgId:'old'}});store.mark(binding.key,['context'],'complete');
+  await mkdir(path.resolve('.codex'),{recursive:true});const directory=await mkdtemp(path.resolve('.codex/qq-outbound-runtime-')),store=new SqlitePersistence(directory),assets=new Assets(store.repositories());
+  const initial=store.personas.config('sakura'),config=configSchema.parse({...initial,schemaVersion:4,media:{voice:{enabled:true,protocol:'edge_tts',replyMode:'auto',format:'mp3'}}});
+  seedAppliedConfig(store,config);
+  store.bots.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',configId:config.id,enabled:true,trustedUsers:['owner']}));
+  const binding=store.sessions.binding(scope);store.inbox.accept({id:'context',scope,text:'已有上下文',attachments:[],timestamp:Date.now()-3600000,reply:{target:'owner',kind:'private',msgId:'old'}});store.inbox.mark(binding.key,['context'],'complete');
   const audio=await assets.save(binding.key,{kind:'audio',name:'song.mp3',mime:'audio/mpeg'},Buffer.from('song'));
   const parts=await Promise.all([1,2].map(index=>assets.save(binding.key,{kind:'audio',name:`part-${index}.silk`,mime:'audio/silk'},Buffer.from(`part-${index}`))));
   const image=await assets.save(binding.key,{kind:'image',name:'image.png',mime:'image/png'},Buffer.from('image'));
@@ -63,8 +64,8 @@ for(const change of ['revoke','new-session','cancel','revoke-and-fail'] as const
   const f=await fixture(t),started=deferred(),finish=deferred();let context!:ChannelOutboundContext;
   f.install(async value=>{context=value;value.authorize();value.signal.addEventListener('abort',finish.resolve,{once:true});started.resolve();await finish.promise;if(change==='revoke-and-fail')throw Error('PREPARE_FAILED');return f.split(value);});
   const work=f.chat();await started.promise;
-  if(change.startsWith('revoke')){const config=f.store.config('sakura');f.store.saveConfig({...config,tools:config.tools.filter(tool=>tool!=='bot_voice')},config.revision);assert.throws(context.authorize,/REPLY_CONTEXT_CHANGED/);}
-  if(change==='new-session'){f.store.reset(scope);assert.throws(context.authorize,/REPLY_CONTEXT_CHANGED/);}
+  if(change.startsWith('revoke')){const config=f.store.personas.config('sakura');f.store.personas.saveConfig({...config,tools:config.tools.filter(tool=>tool!=='bot_voice')},config.revision);assert.throws(context.authorize,/REPLY_CONTEXT_CHANGED/);}
+  if(change==='new-session'){f.store.sessions.reset(scope);assert.throws(context.authorize,/REPLY_CONTEXT_CHANGED/);}
   if(change==='cancel'){await f.runtime.stopSession(scope);assert.equal(context.signal.aborted,true);}
   finish.resolve();await work;assert.equal(f.sent.length,0);
 });
