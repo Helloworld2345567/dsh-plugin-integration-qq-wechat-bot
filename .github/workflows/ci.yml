@@ -42,6 +42,15 @@ jobs:
             requirements-voice-generation-ci.txt
             requirements-audit-ci.txt
 
+      - name: 确认 FFmpeg
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+
       - name: 安装可复现依赖
         run: |
           npm ci --ignore-scripts --registry=https://registry.npmjs.org
@@ -75,6 +84,7 @@ jobs:
           name: quality-test-evidence-${{ github.run_id }}
           path: .codex/**/*-evidence/**
           if-no-files-found: ignore
+          include-hidden-files: true
           retention-days: 7
 
   release-gate:
@@ -188,6 +198,7 @@ jobs:
           name: harness-test-evidence-${{ github.run_id }}
           path: .codex/**/*-evidence/**
           if-no-files-found: ignore
+          include-hidden-files: true
           retention-days: 7
 
   python-compatibility:
