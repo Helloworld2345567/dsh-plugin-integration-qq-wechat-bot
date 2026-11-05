@@ -5,7 +5,7 @@ import time
 
 from PIL import Image, ImageOps, UnidentifiedImageError, features
 
-from transform_common import TransformError, number, result_file, source_file
+from dsh_bot_runtime.skills.media_analysis.transform_common import TransformError, number, result_file, source_file
 
 FORMATS = {'jpeg': ('JPEG', 'image/jpeg', 'jpg'), 'png': ('PNG', 'image/png', 'png'),
            'webp': ('WEBP', 'image/webp', 'webp'), 'avif': ('AVIF', 'image/avif', 'avif')}

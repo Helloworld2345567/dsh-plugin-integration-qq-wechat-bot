@@ -25,19 +25,19 @@
 - 上游仓库：<https://github.com/Helloworld2345567/astr-bot-sakura>
 - tag/commit：当前 checkout 没有可验证的上游 tag 或 commit，不作猜测。
 - 原始许可证：项目既有来源记录标为 MIT；发布者应在确认上游对应文件后补充精确版权行或 commit。
-- 对应路径：`skills/image-generation/`（图片客户端和契约）、`python/social_posts.py`（社交帖子读取）以及 `python/vendor/video_understanding_core/`（视频分析核心）。
+- 对应路径：`python/dsh_bot_runtime/skills/image_generation/`（图片客户端）、`skills/image-generation/`（技能契约）、`python/dsh_bot_runtime/social_posts.py`（社交帖子读取）以及 `python/dsh_bot_runtime/video_understanding/`（视频分析核心）。
 - 是否修改：是。当前项目拆除了 AstrBot 导入，改为框架无关的 worker/service 接口，并增加会话、配额、URL 校验、媒体限制、错误分类和 Harness 受管配置。
 - 这些目录实际随 npm 包发布，因此本声明随包保留；上游未确认的 commit 不应被宣传为已验证来源。
 
 ### 图片客户端
 
-- `skills/image-generation/scripts/image_api.py` 是本项目发布的 canonical 图片 HTTP 客户端；`python/worker.py` 通过它执行图片操作。
+- `python/dsh_bot_runtime/skills/image_generation/image_api.py` 是本项目发布的 canonical 图片 HTTP 客户端；命名空间 worker 通过固定模块入口执行图片操作。
 - 上游参考和许可证按上述 astr-bot-sakura 记录处理；本项目的 API contract 位于 `skills/image-generation/references/`，不是对第三方服务协议的再许可。
 - 图片服务密钥不在代码或包中，由环境变量/受管配置提供。
 
-### 视频分析代码
+### 视频分析代码（原 video_understanding_core）
 
-- `python/vendor/video_understanding_core/` 是随本项目发布的框架无关视频分析核心，供 `skills/media-analysis/` 和 singing worker 使用。
+- `python/dsh_bot_runtime/video_understanding/` 是随本项目发布的框架无关视频分析核心，供 media-analysis 和 singing worker 使用。
 - 上游参考按 astr-bot-sakura 的既有来源记录；没有可确认的 tag/commit 就不填写。
 - 当前改动包括下载地址和公网地址校验、FFmpeg 媒体探测、大小/时长/并发限制、模型输入输出 schema、错误脱敏和凭据不落盘。
 - 它不包含 AstrBot 的 AGPL 实现，也不授予任何外部平台或模型的使用权。

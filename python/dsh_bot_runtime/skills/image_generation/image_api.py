@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import base64
 import getpass
-import hashlib
 import io
 import ipaddress
 import json
@@ -21,9 +20,6 @@ import sys
 import time
 from pathlib import Path
 from urllib.parse import urlparse
-
-import requests
-from PIL import Image, ImageOps
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_MODEL = "gpt-image-2"
@@ -53,10 +49,6 @@ def read_api_key(env_name: str) -> str:
     if not key:
         raise ValueError(f"{env_name} is required")
     return key
-
-
-def redact(value: object, secret: str) -> str:
-    return str(value).replace(secret, "[REDACTED]") if secret else str(value)
 
 
 def public_image_url(value: str) -> str:
@@ -159,6 +151,7 @@ def request_with_retry(session: requests.Session, method: str, url: str, *, head
 
 def _as_jpeg(data: bytes, quality: int) -> bytes:
     """Normalize a provider response to a real JPEG, even if it returned PNG."""
+    from PIL import Image, ImageOps
     with Image.open(io.BytesIO(data)) as source:
         source.load()
         image = ImageOps.exif_transpose(source)
@@ -226,36 +219,59 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _emit(value: dict, record: Path | None = None) -> None:
+    if record:
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+    print(json.dumps(value, ensure_ascii=False))
+
+
+def _failure(code: str, record: Path | None = None, exit_code: int = 1) -> int:
+    _emit({"verdict": "FAIL", "error": {"code": code}}, record)
+    return exit_code
+
+
 def main() -> int:
     args = parse_args()
-    if not 1 <= args.n <= 10:
-        print("n must be between 1 and 10", file=sys.stderr)
-        return 2
-    if args.output_compression is not None and not 0 <= args.output_compression <= 100:
-        print("output-compression must be between 0 and 100", file=sys.stderr)
-        return 2
-    if args.output_format == "png" and args.output_compression is not None:
-        print("output-compression is supported only for JPEG or WebP", file=sys.stderr)
-        return 2
     try:
+        if not 1 <= args.n <= 10:
+            raise ValueError()
+        if args.output_compression is not None and not 0 <= args.output_compression <= 100:
+            raise ValueError()
+        if args.output_format == "png" and args.output_compression is not None:
+            raise ValueError()
         base_url = normalize_base_url(args.base_url)
-        api_key = read_api_key(args.api_key_env) if not args.dry_run else "[DRY-RUN]"
         if args.operation == "edit":
             for path in args.image:
                 input_content_type(path)
-            if args.mask:
-                if input_content_type(args.mask) != "image/png":
-                    raise ValueError("mask must be PNG")
+            if args.mask and input_content_type(args.mask) != "image/png":
+                raise ValueError()
             total_input_bytes = sum(path.stat().st_size for path in args.image)
             if args.mask:
                 total_input_bytes += args.mask.stat().st_size
             if total_input_bytes > MAX_MULTIPART_BYTES:
-                raise ValueError("combined multipart inputs exceed the 22 MiB compatibility limit")
+                raise ValueError()
         if args.background == "transparent" and args.output_format == "jpeg":
-            raise ValueError("transparent background requires PNG or WebP")
-    except (OSError, ValueError) as exc:
-        print(f"configuration error: {exc}", file=sys.stderr)
-        return 2
+            raise ValueError()
+    except (OSError, ValueError):
+        return _failure("IMAGE_CONFIGURATION_INVALID", args.record, 2)
+
+    dry_record = {"verdict": "PASS", "dry_run": True, "requested_count": args.n}
+    if args.operation == "edit":
+        dry_record["multipart_image_fields"] = len(args.image)
+    if args.dry_run:
+        _emit(dry_record, args.record)
+        return 0
+
+    global requests
+    try:
+        import requests
+    except ModuleNotFoundError:
+        return _failure("MEDIA_DEPENDENCY_MISSING", args.record)
+    try:
+        api_key = read_api_key(args.api_key_env)
+    except (OSError, ValueError):
+        return _failure("IMAGE_CONFIGURATION_INVALID", args.record, 2)
 
     body = {"model": args.model, "prompt": args.prompt, "n": args.n}
     for key in ("output_format", "background"):
@@ -263,43 +279,22 @@ def main() -> int:
         if value is not None:
             body[key] = value
     if args.output_format in ("jpeg", "webp"):
-        body["output_compression"] = (
-            args.output_compression if args.output_compression is not None else 96
-        )
+        body["output_compression"] = args.output_compression if args.output_compression is not None else 96
     endpoint = f"{base_url}/images/generations" if args.operation == "generate" else f"{base_url}/images/edits"
-    record: dict[str, object] = {
-        "operation": args.operation,
-        "endpoint": endpoint,
-        "api_key_env": args.api_key_env,
-        "model": args.model,
-        "prompt": args.prompt,
-        "options": body,
-        "requested_count": args.n,
-        "images": [str(path) for path in getattr(args, "image", [])],
-        "mask": str(args.mask) if getattr(args, "mask", None) else None,
-    }
-    if args.dry_run:
-        if args.operation == "edit":
-            record["multipart_image_fields"] = len(args.image)
-        dry_record = {"verdict": "PASS", "dry_run": True, **record}
-        if args.record:
-            args.record.parent.mkdir(parents=True, exist_ok=True)
-            args.record.write_text(json.dumps(dry_record, indent=2), encoding="utf-8")
-        print(json.dumps(dry_record, indent=2))
-        return 0
-
     headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
-    session = requests.Session()
-    opened = []
-    usage_call = None
-    usage_job = None
+    opened, usage_call, usage_job = [], None, None
+    try:
+        session = requests.Session()
+    except Exception:
+        return _failure("IMAGE_PROVIDER_FAILED", args.record)
     if args.usage_record:
-        sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'python'))
-        from model_usage import journal
-        usage_job = {'usagePath': str(args.usage_record), 'output': str(args.output_dir), 'endpoint': {'model': args.model}}
+        from dsh_bot_runtime.model_usage import journal
+        usage_job = {"usagePath": str(args.usage_record), "output": str(args.output_dir), "endpoint": {"model": args.model}}
+    record: dict[str, object] = {"verdict": "FAIL", "error": {"code": "IMAGE_PROVIDER_FAILED"}}
     try:
         if args.operation == "generate":
-            if usage_job: usage_call = journal(usage_job)
+            if usage_job:
+                usage_call = journal(usage_job)
             response = request_with_retry(session, "POST", endpoint, headers={**headers, "Content-Type": "application/json"}, timeout=args.timeout or None, json=body)
         else:
             data = {key: str(value) for key, value in body.items()}
@@ -309,50 +304,32 @@ def main() -> int:
                 mask_handle = args.mask.open("rb")
                 opened.append((mask_handle, args.mask))
                 multipart.append(("mask", (args.mask.name, mask_handle, "image/png")))
-            if usage_job: usage_call = journal(usage_job)
+            if usage_job:
+                usage_call = journal(usage_job)
             response = request_with_retry(session, "POST", endpoint, headers=headers, timeout=args.timeout or None, data=data, files=multipart)
-        record["http_status"] = response.status_code
         try:
             accounting = response.json()
-            if usage_job: journal(usage_job, usage_call, accounting)
-            if isinstance(accounting, dict):
-                record['response_model'] = accounting.get('model')
-                record['usage'] = accounting.get('usage')
+            if usage_job:
+                journal(usage_job, usage_call, accounting)
         except ValueError:
-            pass  # Binary image responses have unknown token usage.
+            pass
         if response.status_code != 200:
-            try:
-                error_payload = response.json()
-                record["error"] = redact(error_payload, api_key)
-            except ValueError:
-                record["error_bytes"] = len(response.content)
-            record["verdict"] = "BLOCKED" if response.status_code >= 500 or response.status_code in (401, 429, 504) else "FAIL"
-            print(json.dumps(record, indent=2))
-            return 1
+            return _failure("IMAGE_PROVIDER_FAILED", args.record)
         images = response_items(response, session)
-        paths = save_images(
-            images,
-            args.output_dir,
-            args.model,
-            output_format=args.output_format,
-            output_compression=args.output_compression,
-        )
-        record["outputs"] = [str(path.resolve()) for path in paths]
-        record["returned_count"] = len(paths)
-        record["verdict"] = "PASS"
-        print(json.dumps(record, indent=2))
+        paths = save_images(images, args.output_dir, args.model, output_format=args.output_format,
+                            output_compression=args.output_compression)
+        record = {"verdict": "PASS", "outputs": [path.name for path in paths],
+                  "returned_count": len(paths)}
+        _emit({"verdict": "PASS", "returned_count": len(paths)})
         return 0
-    except (OSError, ValueError, requests.RequestException) as exc:
-        record["verdict"] = "BLOCKED" if isinstance(exc, requests.RequestException) else "FAIL"
-        record["error"] = redact(f"{type(exc).__name__}: {exc}", api_key)
-        print(json.dumps(record, indent=2))
-        return 1
+    except (OSError, ValueError, requests.RequestException):
+        return _failure("IMAGE_PROVIDER_FAILED", args.record)
     finally:
         for handle, _ in opened:
             handle.close()
-        if args.record:
+        if args.record and record.get("verdict") == "PASS":
             args.record.parent.mkdir(parents=True, exist_ok=True)
-            args.record.write_text(json.dumps(record, indent=2), encoding="utf-8")
+            args.record.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
 
 
 if __name__ == "__main__":

@@ -22,6 +22,6 @@ export interface ArchitectureResult {
 export function normalizeRepoPath(value:string):string;
 export function parseModuleImports(file:string,source:string):{imports:Array<{specifier:string;runtime:boolean;dynamic:boolean}>;skippedDynamicImports:Array<{file:string;line:number}>};
 export function analyzeModules(entries:ModuleFixture[]):ModuleAnalysis;
-export function analyzePythonModules(entries:ModuleFixture[]):{imports:Array<{file:string;module:string;line:number}>;importSideEffects:Array<{file:string;line:number}>};
+export function analyzePythonModules(entries:ModuleFixture[]):{imports:Array<{file:string;module:string;line:number}>;importSideEffects:Array<{file:string;line:number}>;violations:ArchitectureViolation[]};
 export function checkRepository(root?:string,options?:{inventory?:boolean}):Promise<ArchitectureResult&{dependencyInventory?:{modules:string[];imports:ModuleAnalysis['edges'];pythonImports:Array<{file:string;module:string;line:number}>}}>;
 export function formatArchitectureResult(result:ArchitectureResult|ModuleAnalysis|unknown):string;

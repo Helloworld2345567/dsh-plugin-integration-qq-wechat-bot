@@ -16,6 +16,7 @@ try {
   const env = safeSubprocessEnv({
     HOME: home, USERPROFILE: home, APPDATA: path.join(home, 'appdata'), LOCALAPPDATA: path.join(home, 'localappdata'),
     TEMP: temp, TMP: temp, BOT_TEST_TMP: path.join(temporary, 'fixtures'),
+    PYTHONPATH: path.join(root, 'python'),
     XDG_CONFIG_HOME: path.join(home, 'config'), PIP_CONFIG_FILE: path.join(home, 'empty-pip.ini'),
   });
   await mkdir(env.BOT_TEST_TMP, {recursive: true});

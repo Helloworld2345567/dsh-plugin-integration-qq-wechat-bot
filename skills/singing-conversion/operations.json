@@ -1,6 +1,6 @@
 {
   "skill": "singing-conversion",
-  "worker": "scripts/entry.py",
+  "entry": "dsh_bot_runtime.skills.singing_conversion.entry",
   "operations": [{"id":"singing_convert","quotaUnits":10,"inputKinds":["audio","file"],"deliver":true}],
   "tools": [{
     "permissionTool":"bot_sing",

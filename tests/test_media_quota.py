@@ -1,25 +1,18 @@
 import asyncio
 from dataclasses import replace
-import importlib.util
 import os
 from pathlib import Path
-import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'python/vendor'))
-sys.path.insert(0, str(ROOT / 'skills/media-analysis/scripts'))
 
-import media_api
-from video_understanding_core.models import CallerContext, Limits, VideoError
-from video_understanding_core.sources import SourceResolver
-from video_understanding_core.store import JobStore
-
-spec = importlib.util.spec_from_file_location('quota_worker', ROOT / 'python/worker.py')
-worker = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(worker)
+from dsh_bot_runtime.skills.media_analysis import media_api
+from dsh_bot_runtime.video_understanding.models import CallerContext, Limits, VideoError
+from dsh_bot_runtime.video_understanding.sources import SourceResolver
+from dsh_bot_runtime.video_understanding.store import JobStore
+from dsh_bot_runtime import worker
 
 
 class MediaQuotaTests(unittest.TestCase):
@@ -108,7 +101,7 @@ class MediaQuotaTests(unittest.TestCase):
         self.assertNotIn('dailyQuotaExempt', job)
 
     def test_media_api_uses_host_flag_and_ignores_forged_parameter(self):
-        import video_understanding_core
+        from dsh_bot_runtime import video_understanding
         for index, flag in enumerate((None, False, True)):
             with self.subTest(host_flag=flag):
                 output = self.root / str(index)
@@ -141,7 +134,7 @@ class MediaQuotaTests(unittest.TestCase):
                 job['parameters']['dailyQuotaExempt'] = True
                 if flag is not None:
                     job['dailyQuotaExempt'] = flag
-                with patch.dict(os.environ, {'TEST_QUOTA_KEY': 'fixture'}), patch.object(video_understanding_core, 'VideoService', Service):
+                with patch.dict(os.environ, {'TEST_QUOTA_KEY': 'fixture'}), patch.object(video_understanding, 'VideoService', Service):
                     if flag is True:
                         result = asyncio.run(media_api.analyze_video(job))
                         self.assertFalse(result['incomplete'])

@@ -1,6 +1,6 @@
 {
   "skill": "media-analysis",
-  "worker": "scripts/media_api.py",
+  "entry": "dsh_bot_runtime.skills.media_analysis.media_api",
   "operations": [
     {
       "id": "image_download",

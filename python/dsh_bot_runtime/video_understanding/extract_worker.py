@@ -8,19 +8,15 @@ import http.client
 import io
 import json
 import os
-from pathlib import Path
 import socket
 import ssl
 import sys
 import urllib.error
 import urllib.request
 
-if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from video_understanding_core.models import VideoError
-from video_understanding_core.network import public_addresses, validate_url
-from video_understanding_core.sources import platform_source
+from dsh_bot_runtime.video_understanding.models import VideoError
+from dsh_bot_runtime.video_understanding.network import public_addresses, validate_url
+from dsh_bot_runtime.video_understanding.sources import platform_source
 
 
 class PinnedHTTPS(http.client.HTTPSConnection):

@@ -11,6 +11,7 @@ import sys
 import time
 from urllib.parse import parse_qs, urlsplit
 
+from dsh_bot_runtime.errors import validated_error_code
 from .models import VideoError
 from .network import download, validate_url
 from .process import run_process
@@ -168,21 +169,21 @@ class SourceResolver:
             record = self.attachments[source["ref"]]
             return {"paths": [record.path], "attachment": record, "source": source}
         # All extractor networking is replaced by the guarded HTTPS handler in the worker.
-        worker = Path(__file__).with_name("extract_worker.py")
-        args = [sys.executable, worker, source["ref"]]
+        worker = Path(__file__).resolve().parents[2] / "extract_worker.py"
+        args = [sys.executable, "-B", worker, source["ref"]]
         if self.cookie_file:
             args.extend(["--cookies", self.cookie_file])
         env = {k: v for k, v in os.environ.items() if k.upper() in (
             "PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "LANG", "SSL_CERT_FILE", "SSL_CERT_DIR")}
-        # Desktop hosts may install plugin dependencies into a private site-packages
-        # directory added to sys.path, rather than the interpreter's default site.
-        env["PYTHONPATH"] = os.pathsep.join(str(Path(entry).resolve()) for entry in sys.path
-                                          if entry and Path(entry).exists())
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONNOUSERSITE"] = "1"
         raw = await run_process(args, self.limits.resolve_timeout, env=env)
         try:
             result = json.loads(raw)
             if result.get("error"):
-                raise VideoError(result["error"])
+                raise VideoError(validated_error_code(result["error"], "RESOLVE_FAILED"))
             stable = platform_source(result["source"])
             if stable["kind"] != source["kind"] or (source.get("work_id") and
                     source["work_id"] != stable.get("work_id")) or (

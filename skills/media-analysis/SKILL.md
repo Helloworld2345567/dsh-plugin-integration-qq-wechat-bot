@@ -33,13 +33,13 @@ GIF 默认保留整段视频，12 fps、最长边 480 像素。只有用户明�
 
 ## 执行与回复
 
-宿主运行 [media_api.py](scripts/media_api.py)。[platform_links.py](scripts/platform_links.py) 通过公开免登录解析服务获取抖音/B站媒体地址，再下载真实媒体字节；不读取浏览器配置，不需要用户登录、Cookie 或解析密钥。该服务会接收用户要求处理的公开分享链接，来源见 [解析说明](references/platform-links.md)。
+宿主运行固定模块 `dsh_bot_runtime.skills.media_analysis.media_api`；其中 `platform_links` 模块通过公开免登录解析服务获取抖音/B站媒体地址，再下载真实媒体字节。它不读取浏览器配置，不需要用户登录、Cookie 或解析密钥。该服务会接收用户要求处理的公开分享链接，来源见 [解析说明](references/platform-links.md)。
 
-工具参数、操作路由、模型角色和附件交付由技能内的 [operations.json](operations.json) 声明。`tools` 分别声明分析、转换工具；新增操作在该声明和脚本中实现，宿主据此注册和执行。
+工具参数、操作路由、模型角色、固定命名空间 entry 和附件交付由技能内的 [operations.json](operations.json) 声明。`tools` 分别声明分析、转换工具；新增操作在该声明和 `dsh_bot_runtime.skills.media_analysis` 包中实现。宿主不接受模型、人格或工作区提供的模块／脚本路径。
 
 分析复用本轮选定模型提供商的 URL、凭据和视频/语音模型配置，凭据仅在子进程环境中传入。视频发送完整 MP4 画面与音轨；只有取得真实模型结果后才能说已分析。语音按模型选择兼容载荷：Gemini 系列通过 `image_url` 传入带音频 MIME 的数据 URL，其他模型使用 `input_audio`；也支持已配置的转写接口。模型未收到音频时明确报错，不自动换载荷重试。
 
-下载原图由 [image_download.py](scripts/image_download.py) 执行。图集采用解析服务返回的图片列表；普通网页优先明确的原图链接和最大 srcset。原始下载字节不重新编码，下载的图片和视频自动登记为平台回复附件。文字回复不要输出图片 Markdown、`asset://` 地址或附件 ID。
+下载原图由命名空间内的 `image_download` 模块执行。图集采用解析服务返回的图片列表；普通网页优先明确的原图链接和最大 srcset。原始下载字节不重新编码，下载的图片和视频自动登记为平台回复附件。文字回复不要输出图片 Markdown、`asset://` 地址或附件 ID。
 
 根据结果区分原话、画面观察、推断与不确定性。`incomplete=true` 时明确说明只完成了一部分；视频封面不等于图集原图，页面标题不等于视频内容。工具失败应简述实际错误，不编造已下载或已理解，也不自动重试可能已计费的模型请求。
 

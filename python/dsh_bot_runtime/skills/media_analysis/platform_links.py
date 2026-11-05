@@ -5,9 +5,9 @@ from urllib.parse import urlsplit
 
 import aiohttp
 
-from video_understanding_core.models import VideoError
-from video_understanding_core.network import PublicResolver, validate_url
-from video_understanding_core.sources import SourceResolver, platform_source
+from dsh_bot_runtime.video_understanding.models import VideoError
+from dsh_bot_runtime.video_understanding.network import PublicResolver, validate_url
+from dsh_bot_runtime.video_understanding.sources import SourceResolver, platform_source
 
 # Public website's JSON endpoint; see its frontend and docs/references.md.
 MEDIA_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
@@ -89,8 +89,8 @@ class PublicLinkResolver(SourceResolver):
 
 async def download_video(job):
     from pathlib import Path
-    from video_understanding_core.models import Limits, CallerContext
-    from video_understanding_core.media import MediaProcessor
+    from dsh_bot_runtime.video_understanding.models import Limits, CallerContext
+    from dsh_bot_runtime.video_understanding.media import MediaProcessor
     directory = Path(job['output'])
     limits = Limits(max_download_bytes=500 * 1024 * 1024, download_timeout=None, resolve_timeout=None, process_timeout=None)
     resolver = PublicLinkResolver(directory / 'sources', limits)

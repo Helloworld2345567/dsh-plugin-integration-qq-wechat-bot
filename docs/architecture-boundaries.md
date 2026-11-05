@@ -92,13 +92,15 @@ Python skills    -> python 共享模块和 vendored 命名空间
 
 ### 新增 Python worker
 
-- 放在 `python/` 或对应 `skills/*/scripts/`，通过固定协议和宿主分配目录执行。
-- import 必须无网络、server、timer、child process 和写盘副作用；入口使用显式 `main`／`execute`。
-- 不得接受模型提供的脚本路径、可信路径或 credential 持久化位置。
+- 所有可复用实现只能放在唯一公共包 `python/dsh_bot_runtime/`；`python/*.py` 仅允许架构门禁列出的薄 CLI 入口，`skills/` 不保存 Python 实现。
+- 包内 import 使用 `dsh_bot_runtime...` 或明确相对 import；禁止修改 `sys.path`、`PYTHONPATH`、使用裸内部 basename，或用文件路径动态制造 module key。
+- import 必须无网络、server、timer、thread、child process、SQLite、目录／文件写入和 profile 修改；入口使用显式 `main`／`execute`，长期任务只在 main guard 后启动。
+- 宿主以固定包根设置最小 `PYTHONPATH` 并使用 `-P -m` 启动 worker，不继承调用方的 `PYTHONPATH`，也不从 cwd 推测仓库根。
+- 不得接受模型提供的模块、脚本、包、可信资源路径或 credential 持久化位置；异常跨层时只返回稳定、脱敏 code。
 
 ### 新增技能
 
-- 修改技能目录的声明、说明和受控脚本，并由既有 operation registry 加载。
+- 修改技能目录的 `operations.json` 和说明，在 `python/dsh_bot_runtime/skills/<skill_name>/` 实现受控入口，并由既有 operation registry 加载。
 - 不得从技能代码访问 Store、渠道身份、Harness profile 或真实投递；能力缺失继续返回 `missing`／`blocked`。
 
 ### 新增 lifecycle 能力
@@ -118,7 +120,7 @@ Python skills    -> python 共享模块和 vendored 命名空间
 
 ## 当前依赖清单与审计基线
 
-生产依赖清单由 `scripts/check-architecture.mjs` 使用 TypeScript parser 和 Node 标准库从以下范围即时生成：`src/**/*.ts`、`packages/**/*.{ts,mjs,js}` 与 `scripts/*.mjs`。它记录显式 import、export-from、可确定字符串目标的动态 import；不可静态确定的动态目标只报告文件和相对行号、不猜测目标，并令门禁失败，避免用变量 import／require 绕过边界。Python 显式 import 由审计覆盖 `python/**/*.py` 与 `skills/**/*.py`，且 worker／服务入口必须由 main guard 或显式调用启动。
+生产依赖清单由 `scripts/check-architecture.mjs` 使用 TypeScript parser 和 Node 标准库从以下范围即时生成：`src/**/*.ts`、`packages/**/*.{ts,mjs,js}` 与 `scripts/*.mjs`。它记录显式 import、export-from、可确定字符串目标的动态 import；不可静态确定的动态目标只报告文件和相对行号、不猜测目标，并令门禁失败，避免用变量 import／require 绕过边界。Python 显式 import 由审计覆盖 `python/**/*.py` 与 `skills/**/*.py`，包含绝对和相对 import；门禁同时拒绝路径修改、裸内部 import、文件型动态 module key、skill 脚本副本和无 main guard 的 CLI 入口。
 
 阶段 5 初始基线为 115 个生产 TypeScript 模块、30 个 Python／技能模块、541 条 runtime import 和 286 条 Python import；lifecycle 源码迁移后数量会随中立 contract 与包内构建脚本变化。未发现 TypeScript runtime cycle、不可确定的动态 import 或 import 时启动 server／数据库／child process。门禁每次从工作树重新计算，不把这些数量作为固定阈值。
 
@@ -131,7 +133,7 @@ Python skills    -> python 共享模块和 vendored 命名空间
 | `src/harness/` | core contract／应用服务、Harness 包 | Node 进程、worker、credentials 和管理 API 的实现边界 |
 | `packages/bot-lifecycle/src/` | 同包内 coordinator、integrity、protocol、bundle entry 与中立 contract | 不导入根 `src/`，也不导入渠道、投递、人格或业务发送实现 |
 | `scripts/` | scripts helper、Node 标准库和构建依赖 | `runtime.mjs` import 已只读；start/install 显式准备目录 |
-| `python/`、`skills/` | 标准库、已声明 Python 依赖、共享 worker 模块 | 显式 import 有清单；skill manifest 延迟到首次 skill 执行加载 |
+| `python/dsh_bot_runtime/`、`skills/` | 标准库、已声明 Python 依赖、唯一公共命名空间；skills 只含声明／文档 | 显式 import 有清单；Host 使用构建期固定 registry；Python manifest 延迟到首次 skill 执行加载 |
 
 本阶段审计确认的实际层次是 composition → Harness／channel／lifecycle adapters → core contracts／应用服务 → 受控 Node／Python 资源。合法例外只有上述 composition root 和 lifecycle 专用 contract。此前未静态执行的约束包括 client server-import、core 反向依赖、生产对测试目录的依赖、TypeScript runtime cycle、子 bundle 越界和入口漂移；现由 `check:architecture` 执行。
 
@@ -147,7 +149,7 @@ Python skills    -> python 共享模块和 vendored 命名空间
 
 ### 未混入本阶段的语义性问题
 
-Python skill 的命名空间重整、数据库 repository 全面拆分和外部 Service Adapter ABI 仍需要独立方案。lifecycle 源码交付布局已由 ADR 0004 单独整改：源码现在位于独立子包，安装和回滚使用显式双包兼容协议，不是阶段 5 静态修复的隐含例外。
+数据库 repository 全面拆分和外部 Service Adapter ABI 仍需要独立方案。Python skill 已在本次独立整改中迁入 `dsh_bot_runtime`，不是上述边界的例外。lifecycle 源码交付布局已由 ADR 0004 单独整改：源码现在位于独立子包，安装和回滚使用显式双包兼容协议，不是阶段 5 静态修复的隐含例外。
 
 ## 门禁输出
 
@@ -155,7 +157,7 @@ Python skill 的命名空间重整、数据库 repository 全面拆分和外部 
 
 - 生产 TypeScript runtime import 无循环；
 - client、core、channel、lifecycle、Service Adapter、生产／测试和 package 边界；
-- Python 显式 import 清单和 import-time 长期进程／server／数据库启动；
+- Python 绝对／相对 import 清单、单一命名空间、内部 import 解析、固定 skill entry，以及 import-time 网络／线程／进程／server／数据库／写盘副作用；
 - composition root 例外没有扩散；
 - 主包 export 与三个构建入口仍存在，其中 lifecycle 必须由 `packages/bot-lifecycle/src/index.ts` 经子包自己的构建脚本生成；
 - lifecycle 子包无越界 import、旧 `src/lifecycle/` 不得复活、共享 contract 只有一个来源；

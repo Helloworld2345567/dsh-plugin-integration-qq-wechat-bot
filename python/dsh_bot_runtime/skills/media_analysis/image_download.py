@@ -7,9 +7,9 @@ import aiohttp
 from urllib.parse import urljoin, urlsplit
 
 from PIL import Image, UnidentifiedImageError
-from video_understanding_core.network import download
-from video_understanding_core.models import VideoError
-from platform_links import PLATFORM_HOSTS, resolve_link, MEDIA_USER_AGENT
+from dsh_bot_runtime.video_understanding.network import download
+from dsh_bot_runtime.video_understanding.models import VideoError
+from dsh_bot_runtime.skills.media_analysis.platform_links import PLATFORM_HOSTS, resolve_link, MEDIA_USER_AGENT
 
 MAX_IMAGES = 100
 MAX_BYTES = 20 * 1024 * 1024

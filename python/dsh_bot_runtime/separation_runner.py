@@ -4,7 +4,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from singing_common import SingingError, validate_separation, validate_wav
+from dsh_bot_runtime.singing_common import SingingError, validate_separation, validate_wav
 
 
 def _model_config(value, rvc_root):

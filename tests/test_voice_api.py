@@ -1,14 +1,10 @@
-import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("bot_voice_api", ROOT / "skills/voice-generation/scripts/voice_api.py")
-voice_api = importlib.util.module_from_spec(SPEC)
-assert SPEC.loader is not None
-SPEC.loader.exec_module(voice_api)
+from dsh_bot_runtime.skills.voice_generation import voice_api
 
 
 class VoiceApiTests(unittest.TestCase):

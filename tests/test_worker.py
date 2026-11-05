@@ -1,5 +1,4 @@
 import base64
-import importlib.util
 import io
 import os
 import json
@@ -15,17 +14,10 @@ from unittest.mock import Mock, patch
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def load(name, file):
-    spec = importlib.util.spec_from_file_location(name, file)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-worker = load('bot_worker', ROOT / 'python/worker.py')
+from dsh_bot_runtime import worker
+from dsh_bot_runtime.skills.image_generation import image_api
+from dsh_bot_runtime.skills.media_analysis import media_api
 IMPORTED_SKILL_OPERATIONS = worker.SKILL_OPERATIONS
-image_api = load('bot_image_api', ROOT / 'skills/image-generation/scripts/image_api.py')
-media_api = load('bot_media_analysis', ROOT / 'skills/media-analysis/scripts/media_api.py')
 
 
 class WorkerTests(unittest.TestCase):
@@ -44,25 +36,61 @@ class WorkerTests(unittest.TestCase):
 
     def test_skill_manifest_dispatch_without_worker_switch(self):
         skills = self.root / 'skills'
-        folder = skills / 'fixture'
-        (folder / 'scripts').mkdir(parents=True)
-        (folder / 'scripts/worker.py').write_text("def execute(job):\n    return {'text': job['parameters']['value'], 'coverage': 'FIXTURE'}\n", encoding='utf8')
-        manifest = {'skill': 'fixture', 'worker': 'scripts/worker.py', 'operations': [{'id': 'fixture_extract'}]}
+        folder = skills / 'media-analysis'
+        folder.mkdir(parents=True)
+        manifest = {'skill': 'media-analysis', 'entry': 'dsh_bot_runtime.skills.media_analysis.media_api',
+                    'operations': [{'id': 'fixture_extract'}]}
         (folder / 'operations.json').write_text(json.dumps(manifest), encoding='utf8')
         declarations = worker.load_skill_operations(skills)
         job = self.job('fixture_extract', value='skill-owned-result')
         job['handler'] = 'skill'
-        with patch.object(worker, 'SKILL_OPERATIONS', declarations):
+        module = Mock(execute=lambda value: {'text': value['parameters']['value'], 'coverage': 'FIXTURE'})
+        with patch.object(worker, 'SKILL_OPERATIONS', declarations), patch('importlib.import_module', return_value=module):
             self.assertEqual(worker.execute(job)['text'], 'skill-owned-result')
             with self.assertRaisesRegex(worker.JobError, 'UNKNOWN_MEDIA_OPERATION'):
                 worker.execute({**job, 'operation': 'undeclared'})
             with self.assertRaisesRegex(worker.JobError, 'UNKNOWN_MEDIA_OPERATION'):
                 worker.execute({**job, 'handler': 'typo'})
             self.assertEqual(worker.execute({**job, 'handler': 'fixture_extract'})['text'], 'skill-owned-result')
-        manifest['worker'] = '../../outside.py'
+        manifest['entry'] = 'outside.worker'
         (folder / 'operations.json').write_text(json.dumps(manifest), encoding='utf8')
         with self.assertRaisesRegex(worker.JobError, 'MANIFEST_INVALID'):
             worker.load_skill_operations(skills)
+
+    def test_broken_optional_skill_is_isolated_and_uses_stable_codes(self):
+        skills = self.root / 'skills'
+        good = skills / 'media-analysis'; bad = skills / 'broken'
+        good.mkdir(parents=True); bad.mkdir(parents=True)
+        (good / 'operations.json').write_text(json.dumps({'skill':'media-analysis','entry':'dsh_bot_runtime.skills.media_analysis.media_api','operations':[{'id':'fixture_extract'}]}), encoding='utf8')
+        (bad / 'operations.json').write_text(json.dumps({'skill':'broken','entry':'outside.private','operations':[{'id':'fixture_extract'},{'id':'broken_extract'}]}), encoding='utf8')
+        declarations = worker.load_skill_operations(skills, tolerate_invalid=True)
+        self.assertIn('fixture_extract', declarations); self.assertIn('broken_extract', declarations)
+        self.assertEqual(declarations['fixture_extract'][0], 'media-analysis')
+        with patch.object(worker, 'SKILL_OPERATIONS', declarations):
+            with self.assertRaisesRegex(worker.JobError, '^SKILL_OPERATION_MANIFEST_INVALID$'):
+                worker.execute({**self.job('broken_extract'), 'handler':'skill'})
+            with patch('importlib.import_module', side_effect=RuntimeError('private E:/machine/endpoint?token=secret')):
+                with self.assertRaisesRegex(worker.JobError, '^SKILL_OPERATION_IMPORT_FAILED$'):
+                    worker.execute({**self.job('fixture_extract'), 'handler':'skill'})
+            missing = ModuleNotFoundError("No module named 'edge_tts'", name='edge_tts')
+            with patch('importlib.import_module', side_effect=missing):
+                with self.assertRaisesRegex(worker.JobError, '^SKILL_OPTIONAL_DEPENDENCY_MISSING$'):
+                    worker.execute({**self.job('fixture_extract'), 'handler':'skill'})
+            class ExternalFailure(Exception):
+                code = 'LEAK_PRIVATE_PATH'
+            module = Mock(execute=Mock(side_effect=ExternalFailure('E:/private')))
+            with patch('importlib.import_module', return_value=module):
+                with self.assertRaisesRegex(worker.JobError, '^SKILL_OPERATION_FAILED$'):
+                    worker.execute({**self.job('fixture_extract'), 'handler':'skill'})
+        text = self.root / 'safe.txt'; text.write_text('unrelated capability', encoding='utf8')
+        self.assertEqual(worker.execute(self.job('document_read', text))['text'], 'unrelated capability')
+
+    def test_malformed_optional_manifests_are_quarantined(self):
+        for index, payload in enumerate(('[]', 'null', '7', '{bad', json.dumps({'skill':'broken','entry':'outside.worker','operations':7}))):
+            with self.subTest(payload=payload):
+                skills = self.root / f'malformed-{index}'; folder = skills / 'broken'; folder.mkdir(parents=True)
+                (folder / 'operations.json').write_text(payload, encoding='utf8')
+                self.assertEqual(worker.load_skill_operations(skills, tolerate_invalid=True), {})
 
     def test_shipped_skill_operations_dispatch_declared_entry(self):
         self.assertEqual(set(worker.skill_operations()), {'transcribe', 'video_analyze', 'image_download', 'video_download', 'voice_speak', 'image_convert', 'image_compress', 'image_resize', 'convert_gif', 'singing_convert', 'music_search', 'music_acquire', 'music_delivery'})
@@ -86,15 +114,15 @@ class WorkerTests(unittest.TestCase):
         job.update(timeoutMs=0, deadline=0)
         worker._validate_protocol(job)
         self.assertIsNone(media_api.remaining(job))
-        from video_understanding_core.models import Limits
+        from dsh_bot_runtime.video_understanding.models import Limits
         self.assertIsNone(Limits(job_timeout=None, model_timeout=None).job_timeout)
-        from video_understanding_core.sources import platform_source
+        from dsh_bot_runtime.video_understanding.sources import platform_source
         self.assertEqual(platform_source('https://v.douyin.com/34Ae2yNHPXs/')['kind'], 'douyin')
         self.assertEqual(platform_source('https://www.bilibili.com/video/BV1xx411c7mD?p=2')['page'], 2)
 
     def test_signed_download_preserves_escaped_url(self):
         import asyncio
-        from video_understanding_core import network
+        from dsh_bot_runtime.video_understanding import network
         url = 'https://example.com/image%2Fname.webp?x-signature=abc%2Fdef%3D'
         class Response:
             status = 200
@@ -116,8 +144,8 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(target.read_bytes(), b'image-bytes')
 
     def test_public_link_parser_keeps_identity_and_gallery_originals(self):
-        from platform_links import describe_link, normalize_result
-        from video_understanding_core.models import VideoError
+        from dsh_bot_runtime.skills.media_analysis.platform_links import describe_link, normalize_result
+        from dsh_bot_runtime.video_understanding.models import VideoError
         source = describe_link('https://www.douyin.com/note/7662259898261030499')
         payload = {'succ': True, 'data': {'platform': '抖音', 'video_id': source['work_id'], 'image_list': ['https://example.com/original.webp', {'url': 'https://example.com/second.webp'}]}}
         self.assertEqual(len(normalize_result(payload, source)['images']), 2)
@@ -130,8 +158,7 @@ class WorkerTests(unittest.TestCase):
             describe_link('https://example.com/not-a-platform')
 
     def test_original_image_selection_and_bytes(self):
-        sys.path.insert(0, str(ROOT / 'skills/media-analysis/scripts'))
-        from image_download import page_images, image_file
+        from dsh_bot_runtime.skills.media_analysis.image_download import page_images, image_file
         html = '<img src="thumb.jpg" data-original="full.png"><img srcset="small.jpg 200w, large.jpg 1200w"><a href="original.webp"><img src="preview.jpg"></a>'
         self.assertEqual(page_images(html, 'https://example.com/post/'), ['https://example.com/post/full.png', 'https://example.com/post/large.jpg', 'https://example.com/post/original.webp'])
         from PIL import Image
@@ -145,7 +172,7 @@ class WorkerTests(unittest.TestCase):
         self.assertIsNone(image_file(file, 2))
 
     def test_gallery_download_delivers_100_and_reports_overflow(self):
-        import image_download
+        from dsh_bot_runtime.skills.media_analysis import image_download
         from PIL import Image
         content = io.BytesIO()
         Image.new('RGB', (3, 2), 'green').save(content, format='PNG')
@@ -221,11 +248,11 @@ class WorkerTests(unittest.TestCase):
         file = self.root / 'ref.png'; Image.new('RGB', (20, 20), 'green').save(file)
         job = self.job('image_edit', file, prompt='edit this'); job['inputs'][0]['kind'] = 'image'
         def fake(command, **kwargs):
-            self.assertEqual(Path(command[1]), ROOT / 'skills/image-generation/scripts/image_api.py')
+            self.assertEqual(command[1:3], ['-B', str(ROOT / 'python/image_api.py')])
             self.assertIn('--image', command); self.assertIn(str(file), command)
             self.assertEqual(command[command.index('--api-key-env')+1], 'TEST_PROVIDER_KEY')
             output = self.root / 'generated.jpg'; Image.new('RGB',(10,10),'blue').save(output)
-            (self.root / 'image-result.json').write_text(json.dumps({'outputs':[str(output)]}),encoding='utf-8')
+            (self.root / 'image-result.json').write_text(json.dumps({'outputs':[output.name]}),encoding='utf-8')
             return Mock(returncode=0)
         with patch.object(worker.subprocess, 'run', side_effect=fake): self.assertEqual(len(worker.execute(job)['assets']), 1)
 
@@ -243,6 +270,19 @@ class WorkerTests(unittest.TestCase):
             return Mock(returncode=0)
         with patch.object(worker.subprocess, 'run', side_effect=missing):
             with self.assertRaisesRegex(worker.JobError, 'IMAGE_OUTPUT_RECORD_MISSING'): worker.execute(job)
+
+    def test_image_cli_failure_stdout_and_record_are_redacted(self):
+        record = self.root / 'private-record.json'
+        env = dict(os.environ); env['PYTHONPATH'] = str(ROOT / 'python'); env['SECRET_IMAGE_KEY'] = 'private-secret'
+        result = subprocess.run([sys.executable, '-B', '-P', '-m', 'dsh_bot_runtime.skills.image_generation.image_api',
+            'generate', '--prompt', 'private prompt', '--base-url', 'https://127.0.0.1:1/v1',
+            '--api-key-env', 'SECRET_IMAGE_KEY', '--output-dir', str(self.root), '--record', str(record)],
+            env=env, cwd=self.root, text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 1)
+        combined = result.stdout + result.stderr + record.read_text(encoding='utf8')
+        self.assertNotIn('private prompt', combined); self.assertNotIn('private.invalid', combined)
+        self.assertNotIn('private-secret', combined); self.assertNotIn(str(self.root), combined)
+        self.assertEqual(json.loads(result.stdout)['error']['code'], 'IMAGE_PROVIDER_FAILED')
 
     def test_image_client_normalizes_jpeg_and_does_not_replay_paid_requests(self):
         from PIL import Image
@@ -319,7 +359,7 @@ class WorkerTests(unittest.TestCase):
 
     def test_usage_journal_survives_failure_and_captures_actual_model_without_content(self):
         import requests
-        from model_usage import journal
+        from dsh_bot_runtime.model_usage import journal
         job = self.job('transcribe'); job['usagePath'] = str(self.root/'usage.json')
         session=Mock();session.__enter__=Mock(return_value=session);session.__exit__=Mock(return_value=False)
         session.post.side_effect=requests.Timeout('fixture')
@@ -340,8 +380,8 @@ class WorkerTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('ffmpeg'), 'ffmpeg not installed')
     def test_video_payload_contains_actual_mp4_and_checks_reported_media(self):
-        from video_understanding_core.backend import BackendConfig,ChatCompletionsGemini,validate_result
-        from video_understanding_core.models import Limits,MediaProbe,PreparedMedia,VideoError
+        from dsh_bot_runtime.video_understanding.backend import BackendConfig,ChatCompletionsGemini,validate_result
+        from dsh_bot_runtime.video_understanding.models import Limits,MediaProbe,PreparedMedia,VideoError
         source=self.root/'clip.mp4'
         subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=c=red:s=96x96:d=1','-c:v','libx264',str(source)],check=True,capture_output=True)
         prepared=PreparedMedia(source,MediaProbe(1,True,False,source.stat().st_size),1,0,1)

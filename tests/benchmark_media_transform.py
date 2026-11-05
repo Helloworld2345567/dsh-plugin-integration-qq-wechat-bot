@@ -5,16 +5,13 @@ import json
 from pathlib import Path
 import statistics
 import subprocess
-import sys
 import tempfile
 import time
 
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'skills/media-analysis/scripts'))
-import image_transform
-import video_transform
+from dsh_bot_runtime.skills.media_analysis import image_transform, video_transform
 
 
 def main():

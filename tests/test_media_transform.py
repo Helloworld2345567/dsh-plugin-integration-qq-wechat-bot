@@ -11,10 +11,8 @@ from unittest.mock import patch
 from PIL import Image, features
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'skills/media-analysis/scripts'))
-import image_transform
-import video_transform
-from transform_common import TransformError
+from dsh_bot_runtime.skills.media_analysis import image_transform, video_transform
+from dsh_bot_runtime.skills.media_analysis.transform_common import TransformError
 
 
 class TransformFixture(unittest.TestCase):

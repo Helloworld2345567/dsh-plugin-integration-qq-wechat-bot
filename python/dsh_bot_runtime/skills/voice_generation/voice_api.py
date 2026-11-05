@@ -16,10 +16,7 @@ import time
 import wave
 from urllib.parse import urlparse
 
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "python" / "vendor"))
-sys.path.insert(0, str(ROOT / "python"))
-from model_usage import journal
+from dsh_bot_runtime.model_usage import journal
 
 MAX_TEXT_BYTES = 32 * 1024
 MAX_STYLE_BYTES = 8 * 1024
@@ -319,13 +316,19 @@ def execute(job: dict) -> dict:
         "incomplete": False,
     }
 
-if __name__ == "__main__":
+def main() -> int:
     try:
         job = json.loads(sys.stdin.buffer.read(1024 * 1024))
         with contextlib.redirect_stdout(io.StringIO()):
             result = execute(job)
         print(json.dumps(result, ensure_ascii=False))
+        return 0
     except Exception as error:
-        code = error.code if isinstance(error, VoiceError) else getattr(error, "code", type(error).__name__)
+        from dsh_bot_runtime.errors import public_error_code, validated_error_code
+        code = validated_error_code(error.code, "VOICE_SYNTHESIS_FAILED") if isinstance(error, VoiceError) else public_error_code(error, "VOICE_SYNTHESIS_FAILED")
         print(json.dumps({"error": {"code": code}}, ensure_ascii=False))
-        sys.exit(1)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

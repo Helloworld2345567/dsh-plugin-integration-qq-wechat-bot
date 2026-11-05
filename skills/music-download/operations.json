@@ -1,6 +1,6 @@
 {
   "skill":"music-download",
-  "worker":"scripts/entry.py",
+  "entry":"dsh_bot_runtime.skills.music_download.entry",
   "operations":[
     {"id":"music_search","quotaUnits":50,"inputKinds":[],"deliver":false},
     {"id":"music_acquire","quotaUnits":10,"inputKinds":[],"deliver":false},

@@ -12,11 +12,7 @@ import subprocess
 import sys
 import time
 
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / 'python' / 'vendor'))
-sys.path.insert(0, str(ROOT / 'python'))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from model_usage import journal
+from dsh_bot_runtime.model_usage import journal
 
 
 class AnalysisError(Exception):
@@ -142,14 +138,14 @@ def analyze_audio(job):
 
 
 async def analyze_video(job):
-    from video_understanding_core import VideoService, CallerContext, AnalysisRequest, Limits
-    from video_understanding_core.backend import BackendConfig, ChatCompletionsGemini
+    from dsh_bot_runtime.video_understanding import VideoService, CallerContext, AnalysisRequest, Limits
+    from dsh_bot_runtime.video_understanding.backend import BackendConfig, ChatCompletionsGemini
     endpoint = job['endpoint']
     limits = Limits(job_timeout=remaining(job, 150), model_timeout=remaining(job),
                     resolve_timeout=remaining(job), download_timeout=remaining(job), process_timeout=remaining(job))
     backend = ChatCompletionsGemini(BackendConfig(endpoint['baseUrl'], os.environ[endpoint['keyEnv']], endpoint['model'], headers=endpoint.get('headers', {})), limits,
                                     usage_observer=lambda call=None, response=None: journal(job, call, response))
-    from platform_links import PublicLinkResolver
+    from dsh_bot_runtime.skills.media_analysis.platform_links import PublicLinkResolver
     root = Path(job['output']) / 'video'
     service = VideoService(root, backend, limits=limits,
                            resolver=PublicLinkResolver(root / 'attachments', limits))
@@ -172,18 +168,18 @@ async def analyze_video(job):
 def execute(job):
     remaining(job)
     if job.get('operation') in ('image_convert', 'image_compress', 'image_resize'):
-        from image_transform import execute as transform_image
+        from dsh_bot_runtime.skills.media_analysis.image_transform import execute as transform_image
         return transform_image(job)
     if job.get('operation') == 'convert_gif':
-        from video_transform import execute as transform_video
+        from dsh_bot_runtime.skills.media_analysis.video_transform import execute as transform_video
         return transform_video(job)
     if not isinstance(job.get('inputs'), list) or len(job['inputs']) > 1:
         raise AnalysisError('ONE_MEDIA_INPUT_REQUIRED')
     if job.get('operation') == 'image_download':
-        from image_download import execute as download_images
+        from dsh_bot_runtime.skills.media_analysis.image_download import execute as download_images
         return asyncio.run(download_images(job))
     if job.get('operation') == 'video_download':
-        from platform_links import download_video
+        from dsh_bot_runtime.skills.media_analysis.platform_links import download_video
         return asyncio.run(download_video(job))
     if job.get('operation') == 'transcribe':
         return analyze_audio(job)
@@ -192,12 +188,19 @@ def execute(job):
     raise AnalysisError('UNKNOWN_ANALYSIS_OPERATION')
 
 
-if __name__ == '__main__':
+def main() -> int:
     try:
         job = json.loads(sys.stdin.buffer.read(1024 * 1024))
         with contextlib.redirect_stdout(io.StringIO()):
             result = execute(job)
         print(json.dumps(result, ensure_ascii=False))
+        return 0
     except Exception as error:
-        print(json.dumps({'error': {'code': str(error) if isinstance(error, AnalysisError) else getattr(error, 'code', type(error).__name__)}}))
-        sys.exit(1)
+        from dsh_bot_runtime.errors import public_error_code, validated_error_code
+        code = validated_error_code(error.code, 'MEDIA_ANALYSIS_FAILED') if isinstance(error, AnalysisError) else public_error_code(error, 'MEDIA_ANALYSIS_FAILED')
+        print(json.dumps({'error': {'code': code}}))
+        return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

@@ -35,7 +35,7 @@ flowchart LR
 - **BotRuntime**：协调接收、排队、命令、Harness turn、权限和投递。
 - **配置快照**：每轮开始时冻结人格、模型、工具、技能和媒体能力；后续修改从下一轮生效。
 - **Store**：保存 bot、人格版本、会话绑定、任务、投递、媒体记录和统计事件。
-- **媒体 worker**：只接受宿主解析后的附件和固定操作，凭据按任务注入，不写入配置或结果。
+- **媒体 worker**：实现统一位于 `python/dsh_bot_runtime/`，只接受宿主解析后的附件和固定操作；宿主以受控包根和 `-P -m` 启动，凭据按任务注入，不写入配置或结果。
 - **管理 API**：提供摘要、分页查询和受保护命令；面板只使用 API，不直接访问存储层。
 - **生命周期协调器**：是独立 bundle，不是主插件内部服务。其可构建源码、integrity、protocol 和入口位于 `packages/bot-lifecycle/src/`；主插件只连接中立 runtime port。双方按 runtime protocol、coordinator API、package version range、capabilities、instance 与 artifact identity 双向握手；不兼容组合 fail closed，不把生命周期状态交给可变插件逻辑。
 
@@ -65,7 +65,7 @@ bot 可以共享人格，但身份、会话、附件、记忆和投递始终按�
 
 ### Skill 操作声明
 
-`media-analysis/operations.json` 是该技能的工具参数、参数到操作的映射、模型角色、配额、来源约束和自动附件交付的唯一声明。框架启动时读取随安装包发布的 `skills/*/operations.json`，注册工具与媒体操作；Python worker 从同一声明找到技能内的 `execute(job)` 入口。任务只传操作 ID，不接受调用方提供脚本路径。
+`media-analysis/operations.json` 是该技能的工具参数、参数到操作的映射、模型角色、配额、来源约束和自动附件交付的唯一声明。构建时从 `skills/*/operations.json` 生成带摘要的不可变 Host registry，框架启动只导入该内存 registry，不扫描 skill 文件；Python worker 在首次 skill 操作时验证已安装声明中的固定 `dsh_bot_runtime.skills...` entry，再用唯一包名导入 `execute(job)`。任务只传操作 ID，不接受调用方提供模块、脚本或包路径；人格、聊天输入和工作区文件均不参与 Python 代码发现。
 
 新增媒体操作时，修改对应技能的声明、Python 实现与说明即可。每个技能的 `tools` 数组声明一个或多个工具，各自包含 `tool`、`routes`、`defaults`，以及可选的 `enabledRoles` 和 `permissionTool`。`routes` 按顺序匹配参数，`defaults` 补充省略的选择参数；操作上的 `role` 选择 `asr`、`video` 或 `tts` 模型连接，未声明则不注入模型凭据；`deliver` 将结果附件登记到本轮回复。一个操作归属一个工具，可由该工具的多个路由指向；兼容工具 `bot_media` 复用操作的来源约束、权限和附件交付行为。
 
@@ -83,9 +83,9 @@ GPT-SoVITS 适配器按服务地址串行执行，每个请求完整执行 `set_
 
 自动语音在成功取得最终回复后、分段入投递队列前生成，正常聊天和自动化使用同一处理方式。`HarnessResult.voiceAttempted` 记录本轮显式语音尝试，失败也不会自动再合成。投递队列只重发已登记资产；普通合成失败保留正文，权限撤销或上下文失效终止投递。管理状态把配置完整性与当前人格修订版本的合成验收记录分别展示。
 
-脚本提供 `execute(job)`，返回统一的文本、附件和覆盖范围结果；可报告异常的 `code` 字段，其他异常只暴露类型名。框架不依赖技能内的异常类名。
+命名空间 skill 模块提供 `execute(job)`，返回统一的文本、附件和覆盖范围结果。只有 `dsh_bot_runtime` 自身定义且格式有效的业务 `code` 可跨进程；未知异常统一映射到稳定 fallback，不输出类型名、traceback、解释器路径、endpoint、credential、模型路径或下载 locator。
 
-框架继续负责轮次权限交集、会话附件 ID 解析、模型凭据、音频格式适配、配额、取消、产物路径校验及投递。人格自定义技能目录不参与可执行入口发现；已安装声明在进程启动时加载，更新后重启生效。图片生成的每轮一次规则、原生图片理解、文档和 MP4 转码仍保留其现有宿主实现；`convert_gif` 由技能提供。
+框架继续负责轮次权限交集、会话附件 ID 解析、模型凭据、音频格式适配、配额、取消、产物路径校验及投递。人格自定义技能目录不参与可执行入口发现；Python 只发现随包 `operations.json` 声明的固定 entry。损坏的可选声明只使其自身操作返回稳定错误，不阻断 document、image 或其他 skill；更新后重启生效。图片生成的每轮一次规则、原生图片理解、文档和 MP4 转码仍保留其现有宿主实现；`convert_gif` 由技能提供。
 
 ### GPT-SoVITS Limitations / Known Issues
 

@@ -4,18 +4,14 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-import sys
 import tempfile
 import time
 from urllib.parse import urlsplit
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "python" / "vendor"))
-sys.path.insert(0, str(ROOT / "skills" / "media-analysis" / "scripts"))
-from singing_common import (ERROR_CODES, MAX_INTERMEDIATE_BYTES, MAX_OUTPUT_BYTES, MAX_SOURCE_BYTES,
-                            SingingError, decode_audio, validate_parameters, validate_wav)
-from model_usage import journal
-from audio_output import AudioOutputError, encode_delivery_mp3
+from dsh_bot_runtime.singing_common import (ERROR_CODES, MAX_INTERMEDIATE_BYTES, MAX_OUTPUT_BYTES, MAX_SOURCE_BYTES,
+                                            SingingError, decode_audio, validate_parameters, validate_wav)
+from dsh_bot_runtime.model_usage import journal
+from dsh_bot_runtime.audio_output import AudioOutputError, encode_delivery_mp3
 
 
 def remaining(job, maximum=None):
@@ -43,10 +39,10 @@ def endpoint_for(job):
 
 
 async def _download_source(job, directory):
-    from platform_links import PLATFORM_HOSTS, PublicLinkResolver
-    from video_understanding_core.media import MediaProcessor
-    from video_understanding_core.models import CallerContext, Limits
-    from video_understanding_core.network import download, validate_url
+    from dsh_bot_runtime.skills.media_analysis.platform_links import PLATFORM_HOSTS, PublicLinkResolver
+    from dsh_bot_runtime.video_understanding.media import MediaProcessor
+    from dsh_bot_runtime.video_understanding.models import CallerContext, Limits
+    from dsh_bot_runtime.video_understanding.network import download, validate_url
 
     url = job["parameters"].get("url")
     try:

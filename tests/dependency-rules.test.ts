@@ -100,4 +100,21 @@ test('Python inventory includes relative imports and rejects nested import-time 
   ]);
   assert.deepEqual(result.imports.map(item=>item.module),['.models','..network']);
   assert.deepEqual(result.importSideEffects,[{file:'python/unsafe.py',line:2}]);
+  assert.ok(result.violations.some(item=>item.rule==='python-namespace-layout'&&item.file==='python/package/module.py'));
+});
+
+test('production skill registry is generated and module import does not scan manifests',()=>{
+  const source=readFileSync(path.resolve('src/core/skill-operations.ts'),'utf8');
+  assert.match(source,/PUBLISHED_SKILL_OPERATIONS/);
+  assert.doesNotMatch(source,/skillOperationManifests\s*=\s*loadSkillOperations\s*\(/);
+});
+
+test('Python architecture rejects path mutation, bare internal imports, dynamic file modules and skill scripts',()=>{
+  const result=analyzePythonModules([
+    {path:'python/dsh_bot_runtime/good.py',source:'from dsh_bot_runtime.audio_output import encode_delivery_mp3\n'},
+    {path:'python/dsh_bot_runtime/model_usage.py',source:'def journal(): pass\n'},
+    {path:'python/dsh_bot_runtime/unsafe.py',source:'import sys\nsys.path.insert(0,"python")\nfrom model_usage import journal\nimport importlib.util\nimportlib.util.spec_from_file_location("same", "worker.py")\n'},
+    {path:'skills/example/scripts/entry.py',source:'def execute(job): return job\n'},
+  ]);
+  assert.deepEqual(new Set(result.violations.map(item=>item.rule)),new Set(['python-path-mutation','python-bare-internal-import','python-dynamic-module-key','python-namespace-layout']));
 });

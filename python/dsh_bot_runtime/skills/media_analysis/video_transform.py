@@ -8,7 +8,7 @@ import struct
 import tempfile
 import time
 
-from transform_common import TransformError, number, result_file, run, source_file
+from dsh_bot_runtime.skills.media_analysis.transform_common import TransformError, number, result_file, run, source_file
 
 MAX_BYTES = 10_000_000
 SPLIT_SECONDS = 30

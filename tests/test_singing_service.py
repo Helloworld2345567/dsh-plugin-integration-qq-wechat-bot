@@ -1,5 +1,6 @@
 import io
 import json
+import os
 from pathlib import Path
 import struct
 import sys
@@ -8,11 +9,11 @@ import threading
 import time
 import unittest
 import wave
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "python"))
-from singing_common import SingingError, validate_parameters, validate_wav
-from rvc_service import JobManager, create_server
+from dsh_bot_runtime.singing_common import SingingError, validate_parameters, validate_wav
+from dsh_bot_runtime.rvc_service import JobManager, create_server, runner_environment
 
 
 def wav_bytes():
@@ -60,6 +61,15 @@ class SingingServiceTests(unittest.TestCase):
                 return
             time.sleep(0.025)
         self.fail("Job did not reach the expected state")
+
+    def test_runner_environment_drops_parent_paths_credentials_and_profiles(self):
+        with patch.dict(os.environ, {"PYTHONPATH":"poison", "PYTHONHOME":"poison", "OPENAI_API_KEY":"secret", "APPDATA":"real", "TEMP":"real"}, clear=False):
+            env = runner_environment(self.directory)
+        for key in ("PYTHONPATH", "PYTHONHOME", "OPENAI_API_KEY"):
+            self.assertNotIn(key, env)
+        for key in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP"):
+            self.assertEqual(env[key], str(self.directory))
+        self.assertEqual(env["PYTHONNOUSERSITE"], "1")
 
     def test_job_id_is_idempotent_and_conflicting_config_is_rejected(self):
         first = self.manager.submit(parameters(), wav_bytes())

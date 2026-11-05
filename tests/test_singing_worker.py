@@ -2,16 +2,14 @@ import io
 import json
 from pathlib import Path
 import struct
-import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 import wave
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "python"))
-import singing_worker
-from singing_common import SingingError, validate_wav
+from dsh_bot_runtime import singing_worker
+from dsh_bot_runtime.singing_common import SingingError, validate_wav
 
 
 def audio_data():

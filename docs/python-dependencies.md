@@ -9,7 +9,9 @@ python -m pip install -r requirements.txt
 python -m pip check
 ```
 
-基础依赖提供 HTTP、URL 校验、图片、PDF、Office、PDFium 和媒体下载能力。`yarl` 由 vendored 网络边界直接导入，因此作为直接依赖声明，不依赖 `aiohttp` 的传递安装。FFmpeg/ffprobe 是独立系统前置条件，不由 pip 安装。
+基础依赖提供 HTTP、URL 校验、图片、PDF、Office、PDFium 和媒体下载能力。`yarl` 由 `dsh_bot_runtime.video_understanding.network` 直接导入，因此作为直接依赖声明，不依赖 `aiohttp` 的传递安装。FFmpeg/ffprobe 是独立系统前置条件，不由 pip 安装。
+
+所有生产模块统一位于 `python/dsh_bot_runtime/`；宿主只把该目录的父级 `python/` 作为受信包根。HTTP/Pillow、文档解析、Edge TTS、yt-dlp、Faiss 与 RVC 等依赖在对应能力首次执行或对应叶子模块加载时才需要；核心 worker 导入不探测网络、模型、SQLite 或外部服务。基础命名空间缺失会 fail closed；某个可选 skill 的 entry 或依赖损坏只返回稳定的 skill／能力错误，不阻断 document、image 或其他 skill。
 
 ## 可选语音生成
 

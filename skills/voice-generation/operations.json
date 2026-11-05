@@ -1,6 +1,6 @@
 {
   "skill": "voice-generation",
-  "worker": "scripts/voice_api.py",
+  "entry": "dsh_bot_runtime.skills.voice_generation.voice_api",
   "operations": [
     {
       "id": "voice_speak",

@@ -1,4 +1,3 @@
-import importlib.util
 import json
 from pathlib import Path
 import struct
@@ -10,12 +9,8 @@ from unittest.mock import patch
 import wave
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "python"))
-import audio_output
-
-spec = importlib.util.spec_from_file_location("music_delivery_entry", ROOT / "skills/music-download/scripts/entry.py")
-music_delivery = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(music_delivery)
+from dsh_bot_runtime import audio_output
+from dsh_bot_runtime.skills.music_download import entry as music_delivery
 
 
 class AudioOutputTests(unittest.TestCase):

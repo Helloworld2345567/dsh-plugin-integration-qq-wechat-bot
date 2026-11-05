@@ -5,7 +5,7 @@ description: Generate images or edit user-selected reference images through a co
 
 # Image generation and reference editing
 
-In this Harness plugin, call `image_generation` with an English `prompt`, `operation=generate` or `edit`, and `inputs` containing current-session reference attachment IDs. The tool directly runs this skill's bundled [Python client](scripts/image_api.py) in the managed worker and automatically registers the resulting image for delivery. It inherits the persona's image connection settings and host defaults. Do not run scripts or supply local paths from a chat. `bot_media(image_generate/image_edit)` remains an equivalent compatibility entry point.
+在 Harness 插件中调用 `image_generation`：`prompt` 使用英文，`operation` 为 `generate` 或 `edit`，`inputs` 只填当前会话的参考附件 ID。宿主通过固定模块 `dsh_bot_runtime.skills.image_generation.image_api` 执行图片客户端并自动登记成品；人格图片连接设置与宿主默认值保持原有优先级。聊天输入不得运行脚本、指定 Python 模块或提供本机路径。`bot_media(image_generate/image_edit)` 仍是等价兼容入口。
 
 ## Decide whether to run
 
@@ -23,23 +23,23 @@ Credentials come from `IMAGE_ACCESS_KEY` by default; existing `SAKURA_IMAGE_API_
 
 The plugin and standalone client use the same environment contract. Optional per-persona overrides take precedence over the environment; absent values inherit, rather than disable, the skill. The UI has an explicit disable switch. Custom provider defaults belong in the operator's runtime environment, never in this portable source. Only the selected image key is forwarded to the media worker.
 
-Locate this skill using the `SKILL.md` path supplied by the host, then resolve `scripts/image_api.py` relative to that directory. Do not assume the host's installation path, operating system or working directory. Commands below run from this skill directory, in the Python environment that has `requests` installed.
+生产 worker 只接受发布包中的固定模块 entry，不从 `SKILL.md`、人格、聊天内容、cwd 或工作区发现 Python 代码。下面命令仅供运营者在已知发布包 Python 根且安装 `requests` 的环境中独立验证客户端；模型不得自行运行。
 
 ## Generate one image
 
 ```sh
-python scripts/image_api.py generate --prompt "An adult silver-haired catgirl maid greeting the viewer, expressive emerald eyes, soft light, simple background, anime illustration, 3:2 framing" --model gpt-image-2 --n 1 --output-format jpeg --output-compression 96 --output-dir assets
+python -B -P -m dsh_bot_runtime.skills.image_generation.image_api generate --prompt "An adult silver-haired catgirl maid greeting the viewer, expressive emerald eyes, soft light, simple background, anime illustration, 3:2 framing" --model gpt-image-2 --n 1 --output-format jpeg --output-compression 96 --output-dir assets
 ```
 
 ## Edit the selected reference image
 
 ```sh
-python scripts/image_api.py edit --prompt "Use the attached pose reference. Replace the main subject with adult Sakura, a silver-haired catgirl maid with emerald eyes. Preserve the action and camera framing; change only the character identity." --image reference.png --model gpt-image-2 --n 1 --output-format jpeg --output-dir assets
+python -B -P -m dsh_bot_runtime.skills.image_generation.image_api edit --prompt "Use the attached pose reference. Replace the main subject with adult Sakura, a silver-haired catgirl maid with emerald eyes. Preserve the action and camera framing; change only the character identity." --image reference.png --model gpt-image-2 --n 1 --output-format jpeg --output-dir assets
 ```
 
 Repeat `--image` for additional user-selected references. State the role of each input in the prompt. `n` is the output count, not the number of inputs. Use `--mask mask.png` for an optional PNG mask. Paths in examples are placeholders for user-provided files.
 
-Use `--dry-run` to validate options without sending a request or requiring a key. Input files must still exist for edit validation. `--record assets/request.json` optionally saves a key-redacted request/result record; it can contain private prompts and local paths, so keep it out of shared repositories.
+`--dry-run` 只验证参数，不发送请求也不读取密钥；编辑模式仍要求输入文件存在。`--record assets/request.json` 只保存稳定状态、错误码、输出路径和计数，不保存 prompt、endpoint、credential、输入路径或 provider 正文；该文件仍属于作业私有产物，不应提交。
 
 ## Validate and deliver
 

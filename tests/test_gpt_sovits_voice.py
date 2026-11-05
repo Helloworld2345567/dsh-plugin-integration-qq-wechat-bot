@@ -1,4 +1,3 @@
-import importlib.util
 import io
 import json
 from pathlib import Path
@@ -13,15 +12,8 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def load(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-voice_api = load("gpt_sovits_voice_api", ROOT / "skills/voice-generation/scripts/voice_api.py")
-worker = load("gpt_sovits_worker", ROOT / "python/worker.py")
+from dsh_bot_runtime.skills.voice_generation import voice_api
+from dsh_bot_runtime import worker
 
 
 def wav_bytes(pcm=b"\x01\x00" * 100):

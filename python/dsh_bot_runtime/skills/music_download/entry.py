@@ -1,10 +1,8 @@
 """Local final delivery encoding; catalog access belongs to the host adapter."""
 from pathlib import Path
-import sys
 import time
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "python"))
-from audio_output import AudioOutputError, encode_delivery_mp3
+from dsh_bot_runtime.audio_output import AudioOutputError, encode_delivery_mp3
 
 
 class MusicError(Exception):

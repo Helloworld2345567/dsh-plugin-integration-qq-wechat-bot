@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from pathlib import Path
 import sys
@@ -8,14 +9,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'python/vendor'))
-sys.path.insert(0, str(ROOT / 'skills/media-analysis/scripts'))
 
-import platform_links
-from video_understanding_core import network
-from video_understanding_core.media import MediaProcessor
-from video_understanding_core.models import AnalysisRequest, CallerContext, Limits, MediaProbe, VideoError
-from video_understanding_core.sources import SourceResolver
+from dsh_bot_runtime.skills.media_analysis import platform_links
+from dsh_bot_runtime.video_understanding import network, sources
+from dsh_bot_runtime.video_understanding.media import MediaProcessor
+from dsh_bot_runtime.video_understanding.models import AnalysisRequest, CallerContext, Limits, MediaProbe, VideoError
+from dsh_bot_runtime.video_understanding.sources import SourceResolver
 
 
 class VideoLimitTests(unittest.TestCase):
@@ -102,6 +101,21 @@ class VideoLimitTests(unittest.TestCase):
                 else:
                     reference = resolver.register_file(source, caller)
                     self.assertEqual(resolver.attachments[reference].path.read_bytes(), b'video-fixture')
+
+    def test_extractor_subprocess_uses_fixed_shim_and_minimal_environment(self):
+        resolver = SourceResolver(self.root / 'resolver', Limits())
+        caller = CallerContext('bot', 'user', 'session')
+        source = resolver.describe('https://www.douyin.com/video/123', caller)
+        payload = json.dumps({'source':'https://www.douyin.com/video/123','streams':[{'url':'https://example.com/media.mp4'}]})
+        async def run_process(args, timeout, env):
+            self.assertEqual(args[:2], [sys.executable, '-B'])
+            self.assertEqual(Path(args[2]), ROOT / 'python/extract_worker.py')
+            self.assertNotIn('PYTHONPATH', env); self.assertNotIn('PYTHONHOME', env)
+            self.assertEqual(env['PYTHONNOUSERSITE'], '1')
+            return payload
+        with patch.object(sources, 'run_process', side_effect=run_process):
+            resolved = asyncio.run(resolver.resolve(source, caller))
+        self.assertEqual(resolved['source']['work_id'], '123')
 
     def test_video_analysis_duration_remains_300_seconds(self):
         processor = MediaProcessor(Limits())

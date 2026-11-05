@@ -79,7 +79,8 @@ export function spawnCapture(file, args, options = {}) {
   const timeoutMs = options.timeoutMs ?? 120_000;
   const env = options.env ?? safeSubprocessEnv();
   return new Promise((resolve, reject) => {
-    const child = spawn(file, args, {cwd: options.cwd, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe']});
+    const child = spawn(file, args, {cwd: options.cwd, env, windowsHide: true, detached: process.platform !== 'win32', stdio: [options.input===undefined?'ignore':'pipe', 'pipe', 'pipe']});
+    if(options.input!==undefined){child.stdin?.on('error',()=>{});child.stdin?.end(options.input);}
     const output = {value: ''};
     child.stdout?.on('data', chunk => boundedOutput(output, chunk, options.maxOutputBytes));
     child.stderr?.on('data', chunk => boundedOutput(output, chunk, options.maxOutputBytes));

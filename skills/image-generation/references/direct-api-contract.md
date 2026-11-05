@@ -1,12 +1,12 @@
 # Bundled image client contract
 
-This describes `scripts/image_api.py` shipped with this skill, rather than a promise about every compatible provider. Both the Sakura plugin and standalone skill use this client.
+本文描述随插件发布的 `dsh_bot_runtime.skills.image_generation.image_api` 客户端，并不承诺所有兼容提供商都支持相同能力。插件和运营者的独立验证使用同一客户端。
 
 ## Connection and credentials
 
 - Default base URL: `https://api.openai.com/v1`; override through `--base-url` or `OPENAI_BASE_URL`.
 - Default model: `gpt-image-2`; override through `--model` for the chosen provider.
-- Default credential variable: `SAKURA_IMAGE_API_KEY`; select another with `--api-key-env VARIABLE_NAME`.
+- 默认凭据变量为 `IMAGE_ACCESS_KEY`；已有 `SAKURA_IMAGE_API_KEY` 环境时兼容使用该变量，也可通过 `--api-key-env VARIABLE_NAME` 显式选择。
 - Credentials are read from the environment and sent as a Bearer header. Only HTTPS API URLs without embedded credentials, query or fragment are accepted. Redirects are disabled.
 - Standalone CLI use can prompt for a missing key; the plugin preflights the variable before starting the client. Configure unattended jobs with a process environment variable.
 
@@ -43,4 +43,4 @@ Providers must support the parameters being sent. Use an actual provider-support
 
 The client accepts an image body or JSON `data` items containing `b64_json` or an HTTPS image URL. It validates file signatures and caps downloads. It reports `requested_count` and `returned_count`, and preserves completed outputs.
 
-There is at most one retry for HTTP 502/503. Do not silently retry authentication or rate-limit errors. Network/credential blockers and API failures must be reported separately from output inspection and platform delivery. Request records omit the API key but can include private prompts, response error text and file paths.
+付费或结果不确定的请求不会自动重放；认证、限流或网络错误也不静默重试。CLI 失败只输出稳定错误码，record 不保存 endpoint、credential、prompt、输入路径或 provider 正文；模型调用、输出检查和平台投递仍分别报告。

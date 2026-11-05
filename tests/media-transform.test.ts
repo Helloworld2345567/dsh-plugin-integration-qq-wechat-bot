@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm,writeFile,readdir,readFile} from 'node:fs/promises';
+import {mkdtemp,rm,writeFile,readdir} from 'node:fs/promises';
 import path from 'node:path';
 import {MediaService} from '../src/core/media.js';
 import {TransformSlots} from '../src/core/transform-slots.js';
@@ -9,9 +9,9 @@ import {mediaOperationRegistry} from '../src/core/media-operation-registry.js';
 import {skillToolManifests,resolveSkillOperation} from '../src/core/skill-operations.js';
 import {allowedNow,freezeTurn} from '../src/core/policy.js';
 import {configSchema,botSchema} from '../src/core/types.js';
-import type {WorkerPort,MediaWorkerJob} from '../src/core/worker-port.js';
-import {ProcessWorker} from '../src/harness/process-worker.js';
-import {MEDIA_WORKER_PROTOCOL,MEDIA_WORKER_PROTOCOL_VERSION} from '../src/core/worker-port.js';
+import type {WorkerPort} from '../src/core/worker-port.js';
+import {ProcessWorker,safeWorkerErrorCode} from '../src/harness/process-worker.js';
+import {jobEnvironment} from '../src/harness/process-environment.js';
 
 const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
 async function until(predicate:()=>boolean){for(let i=0;i<1000;i++){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,5));}assert.fail('operation did not reach expected state');}
@@ -94,18 +94,10 @@ test('cancelScope cancels running and queued transforms before delivering assets
   assert.equal(started,1);assert.equal(f.media.active.size,0);assert.equal(f.saved.length,0);
 });
 
-test('ProcessWorker cancellation terminates encoder descendants before cleanup',async t=>{
-  const root=await mkdtemp(path.resolve('.codex/transform-process-'));t.after(()=>rm(root,{recursive:true,force:true}));
-  const script=path.join(root,'fixture.py');
-  await writeFile(script,`import json, pathlib, subprocess, sys\njob=json.load(sys.stdin)\nchild=subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\npathlib.Path(job['output'], 'child.pid').write_text(str(child.pid))\nchild.wait()\n`);
-  const controller=new AbortController();
-  const worker=new ProcessWorker(process.env.BOT_PYTHON||'python',script);
-  const job:MediaWorkerJob={protocol:MEDIA_WORKER_PROTOCOL,protocolVersion:MEDIA_WORKER_PROTOCOL_VERSION,id:'fixture',scope:'fixture',operation:'convert_gif',handler:'skill',inputs:[],parameters:{},output:root,usagePath:path.join(root,'usage.json'),deadline:0,timeoutMs:0,quotaUnits:1,processingSlots:2};
-  const running=assert.rejects(worker.run(job,controller.signal),/MEDIA_CANCELLED_OR_TIMEOUT/);
-  let childPid=0;
-  for(let i=0;i<1000&&!childPid;i++){try{childPid=Number(await readFile(path.join(root,'child.pid'),'utf8'));}catch{await new Promise(resolve=>setTimeout(resolve,5));}}
-  t.after(()=>{if(childPid){try{process.kill(childPid);}catch{}}});
-  assert.ok(childPid,'fixture child must be running before cancellation');
-  controller.abort(Error('cancelled'));await running;
-  await until(()=>{try{process.kill(childPid,0);return false;}catch{return true;}});
+test('ProcessWorker rejects caller-selected scripts and uses one trusted Python root',()=>{
+  assert.throws(()=>new ProcessWorker('python','forged-worker.py' as never),/MEDIA_WORKER_PATH_OVERRIDE_FORBIDDEN/);
+  assert.equal(safeWorkerErrorCode('JOB_EXPIRED'),'JOB_EXPIRED');assert.equal(safeWorkerErrorCode('E:/private?token=secret'),'MEDIA_WORKER_FAILED');
+  const poisoned=process.env.PYTHONPATH;process.env.PYTHONPATH='untrusted-parent';
+  try{const env=jobEnvironment('job-output',path.resolve('python'));assert.equal(env.PYTHONPATH,path.resolve('python'));assert.equal(env.PYTHONNOUSERSITE,'1');assert.equal(env.PYTHONDONTWRITEBYTECODE,'1');}
+  finally{if(poisoned===undefined)delete process.env.PYTHONPATH;else process.env.PYTHONPATH=poisoned;}
 });

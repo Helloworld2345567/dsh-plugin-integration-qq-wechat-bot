@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import {builtinModules} from 'node:module';
 import {readdir,readFile,stat} from 'node:fs/promises';
 import path from 'node:path';
@@ -151,10 +152,27 @@ function pythonImportSideEffects(file,source){
   }return findings;
 }
 
+const PYTHON_CLI_SHIMS=new Set(['python/worker.py','python/rvc_service.py','python/rvc_runner.py','python/rvc_output.py','python/extract_worker.py','python/image_api.py']);
+const LEGACY_INTERNAL_PYTHON=new Set(['video_understanding_core']);
 export function analyzePythonModules(entries){
-  const imports=entries.flatMap(({path:file,source})=>pythonImports(normalizeRepoPath(file),source));
-  const importSideEffects=entries.flatMap(({path:file,source})=>pythonImportSideEffects(normalizeRepoPath(file),source));
-  return{imports,importSideEffects};
+  const normalized=entries.map(entry=>({...entry,path:normalizeRepoPath(entry.path)}));
+  const imports=normalized.flatMap(({path:file,source})=>pythonImports(file,source));
+  const importSideEffects=normalized.flatMap(({path:file,source})=>pythonImportSideEffects(file,source));
+  const internalNames=new Set(LEGACY_INTERNAL_PYTHON);
+  for(const {path:file} of normalized)if(file.startsWith('python/dsh_bot_runtime/')){const parts=file.slice('python/dsh_bot_runtime/'.length).replace(/\.py$/,'').split('/');for(const part of parts)if(part!=='__init__')internalNames.add(part);}
+  const violations=[];
+  for(const {path:file,source} of normalized){
+    const production=file.startsWith('python/')||file.startsWith('skills/');
+    if(!production)continue;
+    if(file.startsWith('skills/')&&file.endsWith('.py'))violations.push(violation('python-namespace-layout',file,'skill Python implementations must live under python/dsh_bot_runtime'));
+    if(file.startsWith('python/')&&!file.startsWith('python/dsh_bot_runtime/')&&!PYTHON_CLI_SHIMS.has(file))violations.push(violation('python-namespace-layout',file,'production Python must live in dsh_bot_runtime or an approved thin CLI shim'));
+    if(/\bsys\.path\s*\.\s*(?:insert|append)\s*\(|\bsite\.addsitedir\s*\(|(?:os\.environ|os\.putenv)\s*(?:\[|\()[^\n]*['"]PYTHONPATH['"]/.test(source))violations.push(violation('python-path-mutation',file,'production Python must not mutate sys.path or PYTHONPATH'));
+    if(/\bimportlib\.util\.spec_from_file_location\s*\(|\bmodule_from_spec\s*\(/.test(source))violations.push(violation('python-dynamic-module-key',file,'file-based dynamic module loading is forbidden; use one canonical package module name'));
+    const fileImports=imports.filter(item=>item.file===file);
+    for(const item of fileImports){const root=item.module.replace(/^\.+/,'').split('.')[0];if(!item.module.startsWith('.')&&internalNames.has(root))violations.push(violation('python-bare-internal-import',file,`imports internal basename ${root}`));}
+    if(PYTHON_CLI_SHIMS.has(file)&&(!/if\s+__name__\s*==\s*['"]__main__['"]\s*:/.test(source)||!/\bmain\s*\(/.test(source)))violations.push(violation('python-entry-guard',file,'CLI shim must call main only under a __main__ guard'));
+  }
+  return{imports,importSideEffects,violations:violations.sort((a,b)=>a.file.localeCompare(b.file)||a.rule.localeCompare(b.rule)||a.detail.localeCompare(b.detail))};
 }
 
 async function exists(file){return stat(file).then(value=>value.isFile()||value.isDirectory(),()=>false);}
@@ -169,7 +187,23 @@ export async function checkRepository(root=process.cwd(),options={}){
   const pythonFiles=[...await walk(root,'python',file=>file.endsWith('.py')),...await walk(root,'skills',file=>file.endsWith('.py'))];
   const pythonSources=await Promise.all(pythonFiles.map(async file=>({path:file,source:await readFile(path.join(root,file),'utf8')}))),pythonAnalysis=analyzePythonModules(pythonSources);
   const explicitPythonImports=pythonAnalysis.imports,pythonSideEffects=pythonAnalysis.importSideEffects;
+  violations.push(...pythonAnalysis.violations);
   for(const finding of pythonSideEffects)violations.push(violation('python-import-side-effect',finding.file,`starts a process, network server or database at import line ${finding.line}`));
+  const operationFiles=(await walk(root,'skills',file=>file.endsWith('/operations.json'))).sort(),publishedSkillEntries={
+    'media-analysis':'dsh_bot_runtime.skills.media_analysis.media_api','music-download':'dsh_bot_runtime.skills.music_download.entry',
+    'singing-conversion':'dsh_bot_runtime.skills.singing_conversion.entry','voice-generation':'dsh_bot_runtime.skills.voice_generation.voice_api',
+  },normalizedSkills=new Set(),skillDigest=createHash('sha256');
+  for(const file of operationFiles){
+    const text=await readFile(path.join(root,file),'utf8');skillDigest.update(file).update('\0').update(text).update('\0');
+    let descriptor;try{descriptor=JSON.parse(text);}catch{violations.push(violation('python-skill-entry',file,'skill operation manifest must be valid JSON'));continue;}
+    const skill=normalizeRepoPath(file).split('/').at(-2),normalized=skill.replaceAll('-','_'),moduleBase=path.join(root,'python',...String(descriptor.entry??'').split('.'));
+    if(normalizedSkills.has(normalized))violations.push(violation('python-skill-entry',file,'normalized skill package name collides with another published skill'));normalizedSkills.add(normalized);
+    if(descriptor.skill!==skill||descriptor.entry!==publishedSkillEntries[skill]||'worker'in descriptor||!await exists(`${moduleBase}.py`)&&!await exists(path.join(moduleBase,'__init__.py')))violations.push(violation('python-skill-entry',file,'manifest must select its fixed existing published dsh_bot_runtime entry'));
+  }
+  const generatedSkills=await readFile(path.join(root,'src/core/published-skill-operations.ts'),'utf8'),recordedSkillDigest=/PUBLISHED_SKILL_MANIFEST_DIGEST=\"([a-f0-9]{64})\"/.exec(generatedSkills)?.[1];
+  if(recordedSkillDigest!==skillDigest.digest('hex'))violations.push(violation('python-skill-entry','src/core/published-skill-operations.ts','generated published skill registry is stale'));
+  const pythonErrors=await readFile(path.join(root,'python/dsh_bot_runtime/errors.py'),'utf8'),generatedErrors=await readFile(path.join(root,'src/core/python-worker-errors.ts'),'utf8'),recordedErrorDigest=/PYTHON_ERROR_CODE_DIGEST=\"([a-f0-9]{64})\"/.exec(generatedErrors)?.[1];
+  if(recordedErrorDigest!==createHash('sha256').update(pythonErrors).digest('hex'))violations.push(violation('python-error-contract','src/core/python-worker-errors.ts','generated Python worker error registry is stale'));
   const manifest=JSON.parse(await readFile(path.join(root,'package.json'),'utf8')),lifecycleManifest=JSON.parse(await readFile(path.join(root,'packages/bot-lifecycle/package.json'),'utf8')),build=await readFile(path.join(root,'scripts/build.mjs'),'utf8'),architecture=await readFile(path.join(root,'docs/architecture-boundaries.md'),'utf8');
   const requiredExports={'.':'./dist/index.js','./client':'./dist/client.js'};
   for(const [name,target] of Object.entries(requiredExports))if(manifest.exports?.[name]!==target)violations.push(violation('package-entry','package.json',`export ${name} must remain ${target}`));

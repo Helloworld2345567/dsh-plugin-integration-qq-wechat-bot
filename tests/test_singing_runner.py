@@ -11,10 +11,9 @@ import os
 from dataclasses import dataclass
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "python"))
-from rvc_runner import validate_model
-from singing_common import SingingError, validate_wav
-from separation_runner import mix_audio, _model_config
+from dsh_bot_runtime.rvc_runner import validate_model
+from dsh_bot_runtime.singing_common import SingingError, validate_wav
+from dsh_bot_runtime.separation_runner import mix_audio, _model_config
 
 
 class SingingRunnerTests(unittest.TestCase):
@@ -143,14 +142,14 @@ class SingingRunnerTests(unittest.TestCase):
         def fake_convert(parameters, source_path, output_path, rvc_root, device, source_duration=None, validate_duration=True):
             calls.append("convert")
             Path(output_path).write_bytes(Path(source_path).read_bytes())
-        with patch("rvc_runner.separate_audio", side_effect=fake_separate), patch("rvc_runner.convert", side_effect=fake_convert):
-            from rvc_runner import convert_mixed
+        with patch("dsh_bot_runtime.rvc_runner.separate_audio", side_effect=fake_separate), patch("dsh_bot_runtime.rvc_runner.convert", side_effect=fake_convert):
+            from dsh_bot_runtime.rvc_runner import convert_mixed
             convert_mixed(parameters, source, output, self.root, "cpu")
         self.assertEqual(calls, ["separate", "convert"])
         self.assertAlmostEqual(validate_wav(output, expected_duration=1), 1, places=2)
 
     def test_runner_bounds_attention_memory_and_disables_global_cuda_graph(self):
-        import rvc_runner
+        from dsh_bot_runtime import rvc_runner
         source = self.root / "vocals.wav"
         source.write_bytes(b"source")
         @dataclass
@@ -181,9 +180,9 @@ class SingingRunnerTests(unittest.TestCase):
                    "rvc.vc.engine": SimpleNamespace(VoiceConverter=Converter)}
         parameters = {"speakerId": 0, "pitchShift": 0, "indexRate": 0}
         with patch.dict(os.environ, {"RVC_CUDA_GRAPH": "1"}), patch.dict(sys.modules, modules), \
-             patch("rvc_runner.validate_parameters", return_value=parameters), \
-             patch("rvc_runner.validate_model", return_value=(self.model, {})), \
-             patch("rvc_runner.validate_wav", return_value=1):
+             patch("dsh_bot_runtime.rvc_runner.validate_parameters", return_value=parameters), \
+             patch("dsh_bot_runtime.rvc_runner.validate_model", return_value=(self.model, {})), \
+             patch("dsh_bot_runtime.rvc_runner.validate_wav", return_value=1):
             rvc_runner.convert(parameters, source, self.root / "output.wav", self.root, "cuda", source_duration=1)
 
 
