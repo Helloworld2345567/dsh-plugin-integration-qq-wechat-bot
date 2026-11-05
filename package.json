@@ -157,7 +157,7 @@
   },
   "devDependencies": {
     "@types/json-bigint": "^1.0.4",
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.6.6",
     "@types/qrcode": "^1.5.5",
     "@types/ws": "^8.18.1",
     "esbuild": "^0.28.2",
