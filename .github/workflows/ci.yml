@@ -151,6 +151,12 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
 
+      - name: 安装 pnpm
+        shell: pwsh
+        run: |
+          npm install --global pnpm@12.16.1
+          pnpm --version
+
       - name: 安装 Python
         uses: actions/setup-python@v5
         with:
