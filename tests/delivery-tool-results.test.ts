@@ -1,7 +1,7 @@
 import {testServiceProfiles} from './test-service-profiles.js';
 import {test,type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
 import path from 'node:path';
 import {NativeHarness} from '../src/harness/bridge.js';
 import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
@@ -13,8 +13,8 @@ import {seedAppliedConfig} from './sqlite-fixtures.js';
 async function fixture(t:TestContext){
   const home=await mkdtemp(path.resolve('.codex/delivery-tool-')),store=new SqlitePersistence(home,path.join(home,'personas'));
   t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
-  const config=configSchema.parse({schemaVersion:4,id:'voice-test',name:'Voice',personaPrompt:'Test',tools:['bot_media','bot_voice','bot_sing','bot_music','bot_send_file'],skills:['voice-generation','singing-conversion','music-download'],media:{voice:{enabled:true,protocol:'edge_tts'},music:{enabled:true,profileRef:{serviceId:'music',profileId:'default'}},singing:{enabled:true,profileRef:{serviceId:'rvc',profileId:'default'}}}});seedAppliedConfig(store,config);
-  const bot=store.bots.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',configId:config.id,enabled:true}));
+  const config=configSchema.parse({schemaVersion:4,id:'voice-test',name:'Voice',personaPrompt:'Test',tools:['bot_media','bot_voice','bot_sing','bot_music','bot_send_file'],allowHostTools:true,skills:['voice-generation','singing-conversion','music-download','media-analysis'],media:{voice:{enabled:true,protocol:'edge_tts'},music:{enabled:true,profileRef:{serviceId:'music',profileId:'default'}},singing:{enabled:true,profileRef:{serviceId:'rvc',profileId:'default'}}}});seedAppliedConfig(store,config);
+  const bot=store.bots.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',configId:config.id,enabled:true,trustedUsers:['fixture']}));
   const scope:CallerScope={botId:bot.id,platform:'qq',accountId:'fixture',kind:'private',channelId:'fixture',senderId:'fixture'};
   const binding=store.sessions.binding(scope),assets=new Assets(store.repositories());assets.workspace=async()=>path.join(home,'workspace');
   const audio=await assets.save(binding.key,{kind:'audio',name:'generated.mp3',mime:'audio/mpeg'},Buffer.from('fixture bytes'),'generated-job');
@@ -26,8 +26,51 @@ async function fixture(t:TestContext){
   (bridge as any).scoped.set(agent,live);(bridge as any).tools(ctx,live);
   const call=async(name:string,args:any)=>JSON.parse(await tools.get(name).execute(args,{agent,signal:new AbortController().signal}));
   const claim=(state:Delivery['state'])=>{store.deliveries.enqueue(binding,'request','original-turn',[{type:'asset',assetId:audio.id}],{});const delivery=store.deliveries.deliveries()[0];store.deliveries.deliveryState(delivery,state,state==='sent'?'receipt':undefined);return delivery;};
-  return{store,binding,audio,live,call,claim,generated:()=>generated};
+  return{store,binding,audio,assets,media,live,call,claim,generated:()=>generated};
 }
+
+for(const [sourceMime,targetMime,operation,format] of [['image/jpeg','image/png','image_convert','png'],['video/mp4','image/gif','convert_gif',undefined],['image/png','image/jpeg','image_compress','jpeg']] as const)test(`${operation} sends only its selected output and preserves unrelated attachments`,async t=>{
+  const f=await fixture(t),source=await f.assets.save(f.binding.key,{kind:sourceMime.startsWith('video')?'video':'image',name:'source',mime:sourceMime},Buffer.from('source'),'source-job');
+  const target=await f.assets.save(f.binding.key,{kind:'image',name:'target',mime:targetMime},Buffer.from('target'),'target-job');
+  f.live.assets.push({type:'asset',assetId:source.id},{type:'asset',assetId:f.audio.id});
+  f.media.run=async()=>({assetIds:[target.id]});
+  const result=await f.call('media_transform',{operation,inputs:[source.id],...format?{format}:{}});
+  assert.equal(result.registeredForDelivery,true);assert.deepEqual(f.live.assets.map((o:any)=>o.assetId),[f.audio.id,target.id]);
+  f.store.deliveries.enqueue(f.binding,'request','final-turn',f.live.assets,{});
+  assert.deepEqual(f.store.deliveries.deliveries().map(d=>d.output.assetId).sort(),[f.audio.id,target.id].sort());
+  assert.equal(f.store.repositories().media.assets.asset(f.binding.key,source.id).id,source.id,'replacing delivery preserves the original asset');
+});
+
+test('transform retains both versions only on request, and stages intermediate results without delivery',async t=>{
+  const f=await fixture(t),target=await f.assets.save(f.binding.key,{kind:'image',name:'result.gif',mime:'image/gif'},Buffer.from('gif'),'transform-job');
+  f.live.assets.push({type:'asset',assetId:f.audio.id});f.media.run=async()=>({assetIds:[target.id]});
+  await f.call('media_transform',{operation:'convert_gif',inputs:[f.audio.id],keepInputs:true});
+  assert.deepEqual(f.live.assets.map((o:any)=>o.assetId),[f.audio.id,target.id]);
+  f.live.assets.splice(1);const staged=await f.call('media_transform',{operation:'convert_gif',inputs:[f.audio.id],deliver:false});
+  assert.equal(staged.registeredForDelivery,false);assert.deepEqual(f.live.assets,[{type:'asset',assetId:f.audio.id}]);
+  f.media.run=async()=>{throw Error('TRANSFORM_FAILED');};
+  await assert.rejects(()=>f.call('media_transform',{operation:'convert_gif',inputs:[f.audio.id]}),/TRANSFORM_FAILED/);
+  assert.deepEqual(f.live.assets,[{type:'asset',assetId:f.audio.id}]);
+});
+
+test('manually compressed speech replaces automatic audio once and recognizes later path registrations',async t=>{
+  const f=await fixture(t);await f.call('bot_voice',{text:'Complete speech'});
+  await mkdir(f.live.cwd,{recursive:true});const file=path.join(f.live.cwd,'compressed.mp3');await writeFile(file,'compressed bytes');
+  const selected=await f.call('bot_send_file',{path:file});
+  assert.notEqual(selected.assetId,f.audio.id);assert.equal(f.live.assets.length,1);assert.equal(f.live.assets[0].assetId,selected.assetId);
+  await f.call('bot_send_file',{path:file});assert.equal(f.live.assets.length,1);
+  f.store.deliveries.enqueue(f.binding,'request','final-turn',f.live.assets,{});assert.equal(f.store.deliveries.deliveries().length,1);
+});
+
+test('explicit file selections preserve requested originals, additional versions, and original-file delivery',async t=>{
+  const f=await fixture(t);await f.call('bot_voice',{text:'Complete speech'});
+  await f.call('bot_send_file',{assetId:f.audio.id});await mkdir(f.live.cwd,{recursive:true});
+  const file=path.join(f.live.cwd,'compressed.mp3');await writeFile(file,'compressed bytes');
+  await f.call('bot_send_file',{path:file});assert.equal(f.live.assets.length,2,'explicitly selected original is retained');
+  const image=await f.assets.save(f.binding.key,{kind:'image',name:'original.png',mime:'image/png'},Buffer.from('pixels'),'image-job');f.live.assets.push({type:'asset',assetId:image.id});
+  await f.call('bot_send_file',{assetId:image.id,asFile:true});
+  assert.deepEqual(f.live.assets.filter((o:any)=>o.assetId===image.id),[{type:'asset',assetId:image.id,asFile:true}]);
+});
 
 test('voice success reports registration before any durable delivery and send_file reuses its generated asset',async t=>{
   const f=await fixture(t),voice=await f.call('bot_voice',{text:'The complete long reading'});

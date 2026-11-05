@@ -8,7 +8,7 @@
 
 - Node.js 24 或更高版本；
 - Python 3.12 或 3.13；
-- DeepSeek Harness `0.2.1-rc.2`（由 `package.json` 的 engine 和依赖固定）；
+- DeepSeek Harness `0.2.1-rc.5`（由 `package.json` 的 engine 和依赖固定）；
 - 可从同一 PowerShell 调用的 `ffmpeg` 与 `ffprobe`；
 - 可访问 npm registry 的网络（仅安装依赖时需要）。
 

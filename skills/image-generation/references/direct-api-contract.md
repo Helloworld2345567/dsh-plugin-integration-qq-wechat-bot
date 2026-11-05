@@ -30,12 +30,14 @@ Do not collapse these fields into a dictionary. Input count is independent of `n
 ## Parameters and limits
 
 - `n`: 1–10; Sakura automatic illustration requests exactly 1 output.
-- `output_format`: `png`, `jpeg`, or `webp`. JPEG is the default.
-- `output_compression`: 0–100 for JPEG/WebP; default 96. Do not send it for PNG.
-- `background`: optional `auto`, `opaque`, or `transparent`; transparency cannot use JPEG.
+- `output_format`: `png`, `jpeg`, `webp`, `svg`, or `gif`. JPEG is the default. SVG and GIF are generation-only formats; SVG requires `n=1`.
+- `output_compression`: 0–100 for JPEG/WebP; default 96. Do not send it for PNG, SVG, or GIF.
+- `background`: optional `auto`, `opaque`, or `transparent`; transparency is only sent with PNG/WebP.
+- `complexity`: optional `low`, `medium`, or `high` for GPT Image 2.6 providers.
+- `frame_count`: 2–64 and `frame_duration_ms`: 20–2000 for GIF generation only.
 - The client omits `quality` and `size`; describe composition and framing in the prompt.
 - Each input must be a non-empty PNG/JPEG/WebP file no larger than 10 MiB. Masks must be PNG. Combined input bytes must not exceed 22 MiB.
-- Combined outputs are capped at 24 MiB. When `output_format=jpeg`, the script decodes and re-encodes every successful output as JPEG, even if a compatible provider returns PNG or WebP. Other formats retain their requested format.
+- Combined outputs are capped at 24 MiB. When `output_format=jpeg`, the script decodes and re-encodes every successful output as JPEG, even if a compatible provider returns PNG or WebP. Other formats retain their requested format; SVG/GIF fail closed if the provider returns a different signature.
 
 Providers must support the parameters being sent. Use an actual provider-supported model; do not infer availability from its name or from another service's documentation.
 

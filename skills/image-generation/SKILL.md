@@ -41,6 +41,8 @@ Repeat `--image` for additional user-selected references. State the role of each
 
 `--dry-run` 只验证参数，不发送请求也不读取密钥；编辑模式仍要求输入文件存在。`--record assets/request.json` 只保存稳定状态、错误码、输出路径和计数，不保存 prompt、endpoint、credential、输入路径或 provider 正文；该文件仍属于作业私有产物，不应提交。
 
+GPT Image 2.6 的生成请求可以使用 `--output-format svg` 或 `--output-format gif`。SVG 只支持生成、`n=1`，保存为 UTF-8 XML；GIF 只支持生成，可用 `--frame-count 2..64` 与 `--frame-duration-ms 20..2000` 控制动画。GIF/SVG 返回的实际签名必须与请求格式一致，provider 忽略格式时客户端会失败并不会把 PNG 冒充成目标格式。`--complexity low|medium|high` 可传递 GPT Image 2.6 的规划复杂度。
+
 ## Validate and deliver
 
 Translate descriptive prompts into clear English, preserving exact requested lettering verbatim. Keep the requested subject, pose, style and edit invariants; do not add unrelated changes. The client uses only the options described in its contract, and makes no guarantee that a provider supports a particular model or parameter.

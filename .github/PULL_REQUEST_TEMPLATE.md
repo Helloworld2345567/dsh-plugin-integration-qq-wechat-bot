@@ -33,7 +33,7 @@ npm run verify:release
 ## 依赖和许可证（如适用）
 
 - 依赖名称、版本范围、运行时/开发时范围：
-- 升级原因和 Node 24 / Harness `0.2.1-rc.2` / Windows 兼容性证据：
+- 升级原因和 Node 24 / Harness `0.2.1-rc.5` / Windows 兼容性证据：
 - 上游地址、许可证和第三方声明变化：
 - 是否需要回滚或暂缓处理：
 

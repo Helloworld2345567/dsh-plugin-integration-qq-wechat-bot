@@ -59,7 +59,7 @@ export class WeixinAdapter implements ChannelAdapter{
     let item:any={type:1,text_item:{text:delivery.output.text??''}};
     if(asset){
       const maxBytes=asset.kind==='video'?VIDEO_LIMITS.deliveryBytes:20*1024*1024;if(asset.size>maxBytes)throw new Error('ILINK_OUTPUT_TOO_LARGE');
-      const data=await readFile(asset.path);if(data.length>maxBytes)throw new Error('ILINK_OUTPUT_TOO_LARGE');const isImage=asset.kind==='image';const isVideo=asset.kind==='video';const attempt=delivery.attempt;
+      const data=await readFile(asset.path);if(data.length>maxBytes)throw new Error('ILINK_OUTPUT_TOO_LARGE');const isImage=asset.kind==='image'&&!delivery.output.asFile;const isVideo=asset.kind==='video'&&!delivery.output.asFile;const attempt=delivery.attempt;
       const reusable=attempt?.assetId===asset.id&&!!attempt.uploadQuery&&!!attempt.aesKey;
       let media:{encrypt_query_param:string;aes_key:string;encrypt_type:number};let encryptedSize=attempt?.encryptedSize??data.length;
       if(reusable){

@@ -111,7 +111,7 @@ export function evaluateEnvironment({platform, nodeVersion, harness, packageLock
   const nodeMajor = Number(String(nodeVersion).split('.')[0]);
   const baseInvalid = python.packages.filter(item => !item.optional && (item.missing || !item.satisfies)).map(item => `${item.name}${item.version ? `@${item.version}` : ''}`);
   const optional = python.packages.filter(item => item.optional && (item.missing || !item.satisfies)).map(item => item.name);
-  const harnessValid = harness.engine === '0.2.1-rc.2' && harness.dependency === '0.2.1-rc.2' && harness.installed === '0.2.1-rc.2';
+  const harnessValid = harness.engine === '0.2.1-rc.5' && harness.dependency === '0.2.1-rc.5' && harness.installed === '0.2.1-rc.5';
   const checks = [
     {name: 'os', status: platform === 'win32' ? 'PASS' : 'OPTIONAL', detail: platform},
     {name: 'node', status: nodeMajor >= 24 ? 'PASS' : 'FAIL', detail: `Node ${nodeMajor}`},

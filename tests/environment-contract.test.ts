@@ -12,7 +12,7 @@ test('environment evaluator blocks unsupported versions and missing tools', asyn
 
 test('environment evaluator passes base tools while optional voice is explicit', async () => {
   const {evaluateEnvironment} = await import('../scripts/test-environment.mjs' as string);
-  const result = evaluateEnvironment({platform: 'win32', nodeVersion: '24.17.0', harness: {engine: '0.2.1-rc.2', dependency: '0.2.1-rc.2', installed: '0.2.1-rc.2'}, packageLock: true, ffmpeg: true, ffprobe: true, python: {validVersion: true, version: 'Python 3.13.0', packages: [{name: 'requests', version: '2.34.2', requirement: '<3,>=2.32', optional: false, satisfies: true}, {name: 'edge-tts', requirement: '<8,>=7', optional: true, missing: true, satisfies: false}], pip: true}});
+  const result = evaluateEnvironment({platform: 'win32', nodeVersion: '24.17.0', harness: {engine: '0.2.1-rc.5', dependency: '0.2.1-rc.5', installed: '0.2.1-rc.5'}, packageLock: true, ffmpeg: true, ffprobe: true, python: {validVersion: true, version: 'Python 3.13.0', packages: [{name: 'requests', version: '2.34.2', requirement: '<3,>=2.32', optional: false, satisfies: true}, {name: 'edge-tts', requirement: '<8,>=7', optional: true, missing: true, satisfies: false}], pip: true}});
   assert.equal(result.status, 'PASS');
   assert.deepEqual(result.failures, []);
   assert.deepEqual(result.python.optionalMissing, ['edge-tts']);
@@ -22,12 +22,12 @@ test('environment check is read-only and its result contains no secret or absolu
   const {checkEnvironment} = await import('../scripts/test-environment.mjs' as string);
   await mkdir(path.resolve('.codex'), {recursive: true});
   const root = await mkdtemp(path.resolve('.codex/environment-pure-')); t.after(() => rm(root, {recursive: true, force: true}));
-  await writeFile(path.join(root, 'package.json'), JSON.stringify({engines: {node: '>=24.0.0', dsh: '0.2.1-rc.2'}, dependencies: {'@deepseek-ai/dsh': '0.2.1-rc.2'}}));
+  await writeFile(path.join(root, 'package.json'), JSON.stringify({engines: {node: '>=24.0.0', dsh: '0.2.1-rc.5'}, dependencies: {'@deepseek-ai/dsh': '0.2.1-rc.5'}}));
   await writeFile(path.join(root, 'package-lock.json'), '{}');
   await writeFile(path.join(root, 'requirements.txt'), 'requests>=2.32,<3\n');
   await writeFile(path.join(root, 'requirements-voice-generation.txt'), 'edge-tts>=7,<8\n');
   await mkdir(path.join(root, 'node_modules', '@deepseek-ai', 'dsh'), {recursive: true});
-  await writeFile(path.join(root, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), JSON.stringify({version: '0.2.1-rc.2'}));
+  await writeFile(path.join(root, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), JSON.stringify({version: '0.2.1-rc.5'}));
   await writeFile(path.join(root, 'sentinel'), 'unchanged'); const before = await readdir(root);
   const previous = process.env.OPENAI_API_KEY; process.env.OPENAI_API_KEY = 'must-not-leak';
   try {

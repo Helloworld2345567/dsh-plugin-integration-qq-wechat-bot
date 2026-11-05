@@ -42,7 +42,10 @@ const commonConfigFields={
   skills:z.array(skillNameSchema).max(100).refine(value=>new Set(value).size===value.length,'技能名称不得重复').default(['image-generation','media-analysis','voice-generation']),
   skillVersions:z.record(skillNameSchema,z.string().regex(/^[a-f0-9]{64}$/)).default({}),
   allowHostTools:z.boolean().default(true),hostTools:z.array(z.string().max(100)).max(100).default([]),
-  imageStyle:z.string().max(4000).default(''),archived:z.boolean().default(false),
+  imageStyle:z.string().max(4000).default(''),
+  /** Private-chat heartbeat while a foreground task is still running. */
+  progressReply:z.object({enabled:z.boolean().default(true),intervalSeconds:z.number().int().min(10).max(3600).default(60)}).strict().default({enabled:true,intervalSeconds:60}),
+  archived:z.boolean().default(false),
 };
 
 const v4ImageSchema=imageSkillOverrideSchema.strict();

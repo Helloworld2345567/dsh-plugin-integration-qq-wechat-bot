@@ -38,7 +38,8 @@ test('native voice selector filters service types, applies choices, and disables
   assert.equal(tree.find(node=>node.type==='option'&&node.props.value==='gpt-sovits/incomplete').props.disabled,true);
   assert.equal(tree.find(node=>node.type==='option'&&node.props.value==='gpt-sovits/klee').children[0],'可莉 · v4');
   assert.equal(tree.some(node=>node.type==='button'),false);
-  for(const patch of [{dirty:true},{existing:false},{busy:true}])assert.equal(nodes(voiceModelPicker(React.createElement,ui,{...options,...patch})).find(node=>node.type==='select').props.disabled,true);
+  for(const patch of [{dirty:true},{existing:false}])assert.equal(nodes(voiceModelPicker(React.createElement,ui,{...options,...patch})).find(node=>node.type==='select').props.disabled,false);
+  assert.equal(nodes(voiceModelPicker(React.createElement,ui,{...options,busy:true})).find(node=>node.type==='select').props.disabled,true);
 });
 
 test('native voice selector preserves missing selections and labels built-in voices and model variants',()=>{

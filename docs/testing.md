@@ -24,7 +24,7 @@
 
 Lifecycle 单元/原生/安装测试覆盖：完全兼容、protocol major 不兼容、coordinator 太旧、主包太旧、compatible minor capability 协商、缺失/伪造元数据、capability-free 旧组合、允许的主包热替换、必须离线双包升级的拒绝、启动 identity/version/hash 检查、排空后的监督重启、激活失败恢复 previous artifact、离线双包中途失败的一次回滚、源码/output 摘要漂移和 identity pattern 越界。测试不导入或发送 QQ／微信消息。
 
-`npm run check:environment` 是测试前的只读预检，不替代上述门禁。它检查操作系统、Node 24+、Harness `0.2.1-rc.2`、Python 3.12/3.13、ffmpeg/ffprobe、基础 Python 依赖和 lockfile；voice-generation 缺失显示 `OPTIONAL`，不阻止基础流程。
+`npm run check:environment` 是测试前的只读预检，不替代上述门禁。它检查操作系统、Node 24+、Harness `0.2.1-rc.5`、Python 3.12/3.13、ffmpeg/ffprobe、基础 Python 依赖和 lockfile；voice-generation 缺失显示 `OPTIONAL`，不阻止基础流程。
 
 ## Repository contract 套件
 
@@ -61,7 +61,7 @@ Lifecycle 单元/原生/安装测试覆盖：完全兼容、protocol major 不�
 | --- | --- |
 | Linux `quality` | Node 24 下显式静态架构门禁、纯逻辑、Python 3.12、依赖/许可证/文档/发布门禁与依赖审计 |
 | Windows `release-gate` | Node 24、FFmpeg/ffprobe、Python 3.12、Windows 发布门禁和实际 `release:pack` |
-| Windows `harness-integration` | Harness `0.2.1-rc.2` 原生插件与 lifecycle 测试，以及独立安装 smoke |
+| Windows `harness-integration` | Harness `0.2.1-rc.5` 原生插件与 lifecycle 测试，以及独立安装 smoke |
 | Windows `python-compatibility` | Python 3.12/3.13 的可复现依赖安装和 `pip check` |
 
 CI 当前只上传脱敏后的依赖审计 JSON；Windows `release:pack` 在日志中输出归档名、SHA-256 和条目摘要，并在验证后删除临时 `.tgz`，不上传归档本体。任何 CI 证据都不能包含凭据、Authorization、Cookie、用户/群 ID、运行数据、数据库、完整日志、本机绝对路径或模型权重。

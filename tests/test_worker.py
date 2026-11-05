@@ -256,6 +256,19 @@ class WorkerTests(unittest.TestCase):
             return Mock(returncode=0)
         with patch.object(worker.subprocess, 'run', side_effect=fake): self.assertEqual(len(worker.execute(job)['assets']), 1)
 
+    def test_image_worker_forwards_native_format_options_and_returns_matching_mime(self):
+        job = self.job('image_generate', prompt='vector icon', output_format='svg', complexity='medium')
+        def fake(command, **kwargs):
+            self.assertIn('--output-format', command); self.assertEqual(command[command.index('--output-format') + 1], 'svg')
+            self.assertIn('--complexity', command); self.assertEqual(command[command.index('--complexity') + 1], 'medium')
+            output = self.root / 'generated.svg'; output.write_text('<svg width="8" height="8" xmlns="http://www.w3.org/2000/svg"><circle cx="4" cy="4" r="3"/></svg>', encoding='utf-8')
+            (self.root / 'image-result.json').write_text(json.dumps({'outputs': [output.name]}), encoding='utf-8')
+            return Mock(returncode=0)
+        with patch.object(worker.subprocess, 'run', side_effect=fake):
+            result = worker.execute(job)
+        self.assertEqual(result['assets'][0]['mime'], 'image/svg+xml')
+        self.assertEqual(result['assets'][0]['name'], 'generated.svg')
+
     def test_image_requires_exact_output_record_without_directory_scan_fallback(self):
         from PIL import Image
         job = self.job('image_generate', prompt='recorded')
@@ -293,6 +306,23 @@ class WorkerTests(unittest.TestCase):
         session = Mock(); session.request.side_effect=TimeoutError('uncertain upstream outcome')
         with self.assertRaises(TimeoutError): image_api.request_with_retry(session,'POST','https://example.invalid',headers={},timeout=1)
         self.assertEqual(session.request.call_count,1)
+
+    def test_image_client_preserves_gif_and_svg_and_rejects_provider_format_mismatch(self):
+        gif = b'GIF89a' + b'\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff' + b'\x21\xf9\x04\x01\x00\x00\x00\x00' + b'\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
+        svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="16" height="12"><rect width="16" height="12" fill="red"/></svg>'
+        self.assertEqual(image_api.detect_content_type(gif), 'image/gif')
+        self.assertEqual(image_api.detect_content_type(svg), 'image/svg+xml')
+        gif_path = image_api.save_images([(gif, 'image/gif')], self.root, 'fixture', output_format='gif')[0]
+        svg_path = image_api.save_images([(svg, 'image/svg+xml')], self.root, 'fixture-svg', output_format='svg')[0]
+        self.assertEqual(gif_path.suffix, '.gif'); self.assertEqual(gif_path.read_bytes(), gif)
+        self.assertEqual(svg_path.suffix, '.svg'); self.assertEqual(svg_path.read_bytes(), svg)
+        with self.assertRaisesRegex(ValueError, 'provider returned'):
+            image_api.save_images([(b'\x89PNG\r\n\x1a\n', 'image/png')], self.root, 'mismatch', output_format='svg')
+
+    def test_image_cli_accepts_native_animation_options(self):
+        with patch.object(sys, 'argv', ['image_api.py', 'generate', '--prompt', 'test', '--output-format', 'gif', '--frame-count', '4', '--frame-duration-ms', '120', '--complexity', 'medium', '--dry-run']):
+            args = image_api.parse_args()
+            self.assertEqual((args.output_format, args.frame_count, args.frame_duration_ms, args.complexity), ('gif', 4, 120, 'medium'))
 
     def test_shared_image_cli_inherits_extension_variables(self):
         with patch.dict(os.environ,dict(BOT_IMAGE_BASE_URL='https://example.com/v1',BOT_IMAGE_MODEL='custom-model',BOT_IMAGE_KEY_ENV='CUSTOM_IMAGE_KEY'),clear=True),patch.object(sys,'argv',['image_api.py','generate','--prompt','test','--dry-run']):

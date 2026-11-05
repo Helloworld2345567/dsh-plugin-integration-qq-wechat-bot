@@ -8,7 +8,7 @@
 
 - Node.js 24 或更高版本；
 - Python 3.12 或 3.13；
-- DeepSeek Harness `0.2.1-rc.2`；
+- DeepSeek Harness `0.2.1-rc.5`；
 - 可从 PowerShell 直接调用的 `ffmpeg` 和 `ffprobe`；
 - 可访问项目所需的 npm registry。`package-lock.json` 使用 npm 公共 registry 的完整性校验。
 

@@ -23,6 +23,7 @@ export function abortable<T>(work:Promise<T>,signal:AbortSignal):Promise<T>{
 export interface ProgressOptions {
   signal:AbortSignal;
   active:()=>boolean;
+  intervalMs?:number;
   format:(facts:ProgressFacts,signal:AbortSignal)=>Promise<string>;
   deliver:(text:string,runId:string,sequence:number,expiresAt:number)=>Promise<void>;
   cancel:(runId:string)=>void;
@@ -33,6 +34,7 @@ export class TaskProgress {
   private readonly controller=new AbortController();
   private readonly startedAt=Date.now();
   private readonly timer:ReturnType<typeof setInterval>;
+  private readonly intervalMs:number;
   private stage:ProgressStage='attachments';
   private version=0;
   private sequence=0;
@@ -40,7 +42,8 @@ export class TaskProgress {
   private previousText?:string;
   private readonly abort=()=>this.stop();
   constructor(private readonly options:ProgressOptions){
-    this.timer=setInterval(()=>{void this.tick();},PROGRESS_INTERVAL_MS);
+    this.intervalMs=options.intervalMs??PROGRESS_INTERVAL_MS;
+    this.timer=setInterval(()=>{void this.tick();},this.intervalMs);
     this.timer.unref?.();
     options.signal.addEventListener('abort',this.abort,{once:true});
     if(options.signal.aborted)this.stop();
@@ -54,7 +57,7 @@ export class TaskProgress {
   private async tick():Promise<void>{
     if(this.busy||!this.active())return;
     this.busy=true;
-    const expiresAt=Date.now()+PROGRESS_INTERVAL_MS,version=this.version;
+    const expiresAt=Date.now()+this.intervalMs,version=this.version;
     const deadline=new AbortController();const timeout=setTimeout(()=>deadline.abort(new Error('PROGRESS_GENERATION_TIMEOUT')),PROGRESS_GENERATION_MS);
     const signal=AbortSignal.any([this.controller.signal,this.options.signal,deadline.signal]);
     let text:string|undefined;

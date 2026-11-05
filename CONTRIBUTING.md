@@ -9,7 +9,7 @@
 ## 开发环境（Windows）
 
 - Windows 10/11，PowerShell 7。
-- Node.js 24 或更高版本；`package.json` 中的 Harness 运行时固定为 `0.2.1-rc.2`。
+- Node.js 24 或更高版本；`package.json` 中的 Harness 运行时固定为 `0.2.1-rc.5`。
 - Python 3.12 或 3.13。基础媒体依赖安装自 `requirements.txt`，Edge TTS 是可选依赖，安装自 `requirements-voice-generation.txt`。
 - `ffmpeg` 和 `ffprobe` 可从 PowerShell 直接调用。
 - QQ、微信、Music、RVC、GPT-SoVITS、CUDA 和模型权重不是开发依赖，不应加入主包或 CI。

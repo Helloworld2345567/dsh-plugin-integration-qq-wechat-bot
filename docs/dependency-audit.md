@@ -26,7 +26,7 @@ npm outdated --json
 
 | 范围 | 结果 | 处理 |
 | --- | --- | --- |
-| DeepSeek Harness `@deepseek-ai/dsh` 及其 `0.2.1-rc.2` 子包 | 高危报告项，直接运行时依赖和大量固定间接包 | 暂缓。当前插件的扩展行为和 peer 契约绑定 `0.2.1-rc.2`；升级候选至少涉及兼容性变化，不能用 `audit fix --force` 代替原生验收。 |
+| DeepSeek Harness `@deepseek-ai/dsh` 及其 `0.2.1-rc.5` 子包 | 高危报告项，直接运行时依赖和大量固定间接包 | 暂缓。当前插件的扩展行为和 peer 契约绑定 `0.2.1-rc.5`；升级候选至少涉及兼容性变化，不能用 `audit fix --force` 代替原生验收。 |
 | `undici` | 由 Harness/其 LLM 依赖引入的运行时高危报告项 | 暂缓到兼容的 Harness 版本；不是本项目直接声明依赖。 |
 | `zod` < 4.6.6 | 仅出现在 Harness 子树中的旧嵌套版本；顶层直接版本为 4.6.7 | 暂缓到 Harness 兼容升级；不能强行 override 破坏 Harness 的 peer/运行时契约。 |
 | `@modelcontextprotocol/client` 2.2.0 | Harness MCP 子树中的中危报告项 | 暂缓到 Harness 兼容升级；本项目不直接调用它的业务 API。 |
@@ -38,7 +38,7 @@ npm outdated --json
 
 - `ws` 从 `8.22.0` 更新到 `8.22.1`，仍在 Node 24 支持的同一 major 内，许可证为 MIT，lockfile integrity 已更新。已运行类型检查、TypeScript/Python 测试、构建和发布检查。
 - `yaml`、`zod`、`json-bigint`、`qrcode`、`silk-wasm` 和开发工具没有在本次审计中发现需要强制升级的直接漏洞。大版本 TypeScript、esbuild、Node types 或 Harness 候选不因 outdated 输出而盲目升级。
-- `@deepseek-ai/dsh`、Cordis 及其 Harness peer 包保持 `0.2.1-rc.2` / `~4.0.5`；本阶段没有证明更高版本兼容，因此不升级。
+- `@deepseek-ai/dsh`、Cordis 及其 Harness peer 包保持 `0.2.1-rc.5` / `~4.0.5`；本阶段没有证明更高版本兼容，因此不升级。
 
 ## Python 审计
 
@@ -67,6 +67,6 @@ pip-licenses --from=mixed --format=table
 ## 决策原则
 
 1. 不直接执行 `npm audit fix` 或 `npm audit fix --force`。
-2. 每次直接依赖升级都必须说明原因、许可证和上游来源，并通过 Node 24、Harness `0.2.1-rc.2`、Windows、完整测试和发布检查。
+2. 每次直接依赖升级都必须说明原因、许可证和上游来源，并通过 Node 24、Harness `0.2.1-rc.5`、Windows、完整测试和发布检查。
 3. Harness 固定版本的风险记录为“不可独立升级的已知暂缓项”；在上游兼容版本可验证前，不通过 override、patch 或删除审计结果来降低数量。
 4. lockfile 变更必须使用公共 registry、保留 integrity，并在受限网络中由缓存/镜像配置显式控制，而不是提交隐含镜像地址。

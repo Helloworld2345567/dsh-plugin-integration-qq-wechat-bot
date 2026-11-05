@@ -326,8 +326,9 @@ export class BotRuntime {
           return !this.closed&&!signal.aborted&&this.processing.get(key)?.controller===controller&&current?.sessionId===binding.sessionId&&current.generation===binding.generation&&!permissionsRevoked(snapshot,this.effectiveConfig(current),this.repos.bots.bot(bot.id),binding.scope,this.profiles);
         };
         signal.throwIfAborted();
-        if(binding.scope.kind==='private'){
+        if(binding.scope.kind==='private'&&config.progressReply.enabled){
           progress=new TaskProgress({signal,active,
+            intervalMs:config.progressReply.intervalSeconds*1000,
             format:(facts,progressSignal)=>this.harness.formatProgress?.(binding,snapshot,facts,progressSignal)??Promise.resolve(progressFallback(facts.stage)),
             deliver:async(text,runId,sequence,expiresAt)=>{
               if(!active())return;

@@ -6,7 +6,7 @@
 
 | 项目 | 上游仓库/来源 | tag 或 commit | 原始许可证 | 本项目路径/用途 | 是否修改 |
 | --- | --- | --- | --- | --- | --- |
-| DeepSeek Harness | <https://github.com/deepseek-ai/deepseek-harness> | npm `0.2.1-rc.2`；上游源码 commit 未在本 checkout 确认 | MIT | npm 运行时 `@deepseek-ai/dsh` 及其 peer/传递包 | 否；本项目只通过公开插件契约接入 |
+| DeepSeek Harness | <https://github.com/deepseek-ai/deepseek-harness> | npm `0.2.1-rc.5`；上游源码 commit 未在本 checkout 确认 | MIT | npm 运行时 `@deepseek-ai/dsh` 及其 peer/传递包 | 否；本项目只通过公开插件契约接入 |
 | Cordis | 同上游 Harness 发行依赖 | npm `~4.0.5`；上游源码 commit 未在本 checkout 确认 | MIT（依赖元数据） | Harness peer/runtime closure | 否 |
 | `json-bigint` | <https://www.npmjs.com/package/json-bigint> | npm `1.0.0`（lockfile） | MIT | 运行时 JSON 数字处理 | 否 |
 | `qrcode` | <https://www.npmjs.com/package/qrcode> | npm `1.5.4`（lockfile） | MIT | 运行时二维码 | 否 |

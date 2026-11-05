@@ -125,7 +125,7 @@ for (const file of workflows) {
     else {
       const jobs = document.jobs;
       for (const job of ['quality', 'release-gate', 'harness-integration', 'python-compatibility']) if (!jobs?.[job]) failures.push(`.github/workflows/ci.yml: missing job ${job}`);
-      if (document.env?.NODE_VERSION !== '24' || document.env?.HARNESS_VERSION !== '0.2.1-rc.2') failures.push('.github/workflows/ci.yml: Node/Harness version contract changed');
+      if (document.env?.NODE_VERSION !== '24' || document.env?.HARNESS_VERSION !== '0.2.1-rc.5') failures.push('.github/workflows/ci.yml: Node/Harness version contract changed');
       const pythonMatrix=jobs?.['python-compatibility']?.strategy?.matrix?.['python-version']?.map(String)??[];
       if (!pythonMatrix.includes('3.12') || !pythonMatrix.includes('3.13')) failures.push('.github/workflows/ci.yml: Python 3.12/3.13 matrix missing');
       for (const command of ['npm run verify:release', 'npm run release:pack', 'npm run test:native', 'npm run test:lifecycle-native', 'npm run test:install-smoke']) if (!text.includes(command)) failures.push(`.github/workflows/ci.yml: missing ${command}`);

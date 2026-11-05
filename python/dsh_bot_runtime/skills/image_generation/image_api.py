@@ -28,7 +28,21 @@ MAX_MULTIPART_BYTES = 22 * 1024 * 1024
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 TRANSIENT_STATUSES = {502, 503}
 SUPPORTED_INPUT_TYPES = {"image/png", "image/jpeg", "image/webp"}
-EXTENSIONS = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
+SUPPORTED_OUTPUT_TYPES = SUPPORTED_INPUT_TYPES | {"image/gif", "image/svg+xml"}
+EXTENSIONS = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "image/svg+xml": ".svg",
+}
+OUTPUT_MIME_TYPES = {
+    "png": "image/png",
+    "jpeg": "image/jpeg",
+    "webp": "image/webp",
+    "gif": "image/gif",
+    "svg": "image/svg+xml",
+}
 
 
 def normalize_base_url(value: str) -> str:
@@ -75,7 +89,15 @@ def detect_content_type(data: bytes) -> str:
         return "image/jpeg"
     if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
-    raise ValueError("response is not PNG, JPEG, or WebP")
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    try:
+        text = data[:64 * 1024].decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = ""
+    if re.match(r"\s*(?:<\?xml\b[^>]*>\s*)?(?:<!DOCTYPE\s+svg\b[^>]*>\s*)?<svg(?:\s|>)", text, re.IGNORECASE):
+        return "image/svg+xml"
+    raise ValueError("response is not PNG, JPEG, WebP, GIF, or SVG")
 
 
 def input_content_type(path: Path) -> str:
@@ -129,7 +151,7 @@ def decode_item(item: object, session: requests.Session) -> tuple[bytes, str]:
 
 def response_items(response: requests.Response, session: requests.Session) -> list[tuple[bytes, str]]:
     content_type = (response.headers.get("content-type") or "").split(";", 1)[0].lower()
-    if content_type in SUPPORTED_INPUT_TYPES or response.content[:12].startswith((b"\x89PNG", b"\xff\xd8\xff", b"RIFF")):
+    if content_type in SUPPORTED_OUTPUT_TYPES or response.content[:12].startswith((b"\x89PNG", b"\xff\xd8\xff", b"RIFF", b"GIF87a", b"GIF89a")):
         data = response.content
         if len(data) > MAX_IMAGE_BYTES:
             raise ValueError("response image exceeds the 24 MiB limit")
@@ -181,6 +203,9 @@ def save_images(
     stamp = time.strftime("%Y%m%d-%H%M%S")
     paths: list[Path] = []
     for index, (data, content_type) in enumerate(images, 1):
+        expected_type = OUTPUT_MIME_TYPES.get(output_format)
+        if output_format in ("gif", "svg") and expected_type and content_type != expected_type:
+            raise ValueError(f"provider returned {content_type} for requested {output_format}")
         if output_format == "jpeg":
             data = _as_jpeg(data, output_compression if output_compression is not None else 96)
             content_type = "image/jpeg"
@@ -197,9 +222,12 @@ def common_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--base-url", default=os.environ.get("BOT_IMAGE_BASE_URL") or os.environ.get("SAKURA_IMAGE_BASE_URL") or os.environ.get("OPENAI_BASE_URL") or DEFAULT_BASE_URL)
     parser.add_argument("--api-key-env", default=os.environ.get("BOT_IMAGE_KEY_ENV") or ("IMAGE_ACCESS_KEY" if "IMAGE_ACCESS_KEY" in os.environ or not os.environ.get("SAKURA_IMAGE_API_KEY") else "SAKURA_IMAGE_API_KEY"), help="environment variable containing the image provider API key")
     parser.add_argument("--output-dir", type=Path, default=Path("assets"))
-    parser.add_argument("--output-format", choices=("png", "jpeg", "webp"), default="jpeg")
+    parser.add_argument("--output-format", choices=("png", "jpeg", "webp", "gif", "svg"), default="jpeg")
     parser.add_argument("--output-compression", type=int)
     parser.add_argument("--background", choices=("auto", "opaque", "transparent"))
+    parser.add_argument("--complexity", choices=("low", "medium", "high"))
+    parser.add_argument("--frame-count", type=int)
+    parser.add_argument("--frame-duration-ms", type=int)
     parser.add_argument("--n", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=300.0)
     parser.add_argument("--record", type=Path, help="optional JSON request/result record")
@@ -238,7 +266,17 @@ def main() -> int:
             raise ValueError()
         if args.output_compression is not None and not 0 <= args.output_compression <= 100:
             raise ValueError()
-        if args.output_format == "png" and args.output_compression is not None:
+        if args.output_format not in ("jpeg", "webp") and args.output_compression is not None:
+            raise ValueError()
+        if args.output_format != "gif" and (args.frame_count is not None or args.frame_duration_ms is not None):
+            raise ValueError()
+        if args.frame_count is not None and not 2 <= args.frame_count <= 64:
+            raise ValueError()
+        if args.frame_duration_ms is not None and not 20 <= args.frame_duration_ms <= 2000:
+            raise ValueError()
+        if args.operation == "edit" and args.output_format in ("gif", "svg"):
+            raise ValueError()
+        if args.output_format == "svg" and args.n != 1:
             raise ValueError()
         base_url = normalize_base_url(args.base_url)
         if args.operation == "edit":
@@ -251,7 +289,7 @@ def main() -> int:
                 total_input_bytes += args.mask.stat().st_size
             if total_input_bytes > MAX_MULTIPART_BYTES:
                 raise ValueError()
-        if args.background == "transparent" and args.output_format == "jpeg":
+        if args.background == "transparent" and args.output_format not in ("png", "webp"):
             raise ValueError()
     except (OSError, ValueError):
         return _failure("IMAGE_CONFIGURATION_INVALID", args.record, 2)
@@ -274,7 +312,7 @@ def main() -> int:
         return _failure("IMAGE_CONFIGURATION_INVALID", args.record, 2)
 
     body = {"model": args.model, "prompt": args.prompt, "n": args.n}
-    for key in ("output_format", "background"):
+    for key in ("output_format", "background", "complexity", "frame_count", "frame_duration_ms"):
         value = getattr(args, key)
         if value is not None:
             body[key] = value

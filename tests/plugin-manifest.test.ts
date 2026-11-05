@@ -22,7 +22,7 @@ test('Chinese client locale resolves every declared key and parameter',()=>{
 test('plugin manifests export localized metadata and bounded original SVG icons',async()=>{
   for(const directory of ['.','packages/bot-lifecycle']){
     const manifest=JSON.parse(await readFile(path.resolve(directory,'package.json'),'utf8'));
-    assert.equal(manifest.engines.dsh,'0.2.1-rc.2');assert.equal(manifest.exports['./locale/*.json'],'./locale/*.json');assert.equal(manifest.exports['./icon'],'./icon.svg');
+    assert.equal(manifest.engines.dsh,'0.2.1-rc.5');assert.equal(manifest.exports['./locale/*.json'],'./locale/*.json');assert.equal(manifest.exports['./icon'],'./icon.svg');
     assert.ok(manifest.files.includes('locale/*.json'));assert.ok(manifest.files.includes('icon.svg'));
     const locale=JSON.parse(await readFile(path.resolve(directory,'locale/zh.json'),'utf8'));assert.ok(locale.meta.title);assert.ok(locale.meta.description);
     const icon=await readFile(path.resolve(directory,'icon.svg'),'utf8');assert.ok(Buffer.byteLength(icon)<=256*1024);assert.match(icon,/^<svg\b/);assert.match(icon,/viewBox="0 0 64 64"/);assert.doesNotMatch(icon,/<script|(?:xlink:)?href=/i);

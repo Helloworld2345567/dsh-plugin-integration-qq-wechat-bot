@@ -199,7 +199,7 @@ export async function apply(ctx:Context){
       const single=await bridge.run(binding,[msg('single-image-delivery','生成一张图片并发给我')],AbortSignal.timeout(30000));
       assert.deepEqual(single.outputs,[{type:'text',text:'FINAL_ONLY'},{type:'asset',assetId:asset.id}],'automatic registration followed by path delivery must produce exactly one image');
       const different=Buffer.from(pixels);different[different.length-1]^=1;await writeFile(copyPath,different);
-      const distinct=toolJson(await ctx.tools.execute({name:'bot_send_file',arguments:{path:copyPath},callId:ToolCallId('distinct-file-same-size'),agent:bridge.live.get(binding.sessionId)!.handle.agent,signal:AbortSignal.timeout(5000)}));
+      const distinct=toolJson(await ctx.tools.execute({name:'bot_send_file',arguments:{path:copyPath,append:true},callId:ToolCallId('distinct-file-same-size'),agent:bridge.live.get(binding.sessionId)!.handle.agent,signal:AbortSignal.timeout(5000)}));
       assert.notEqual(distinct.assetId,asset.id,'different bytes with the same size must remain a separate attachment');
       assert.equal(bridge.live.get(binding.sessionId)!.assets.length,2);
     }finally{runtime.media.run=mediaRun;beforeFinal=undefined;runtime.saveBot({...bots.bot('fixture'),trustedUsers:[]});}

@@ -13,7 +13,7 @@
 
 **症状**：设置中没有“机器人面板”，或启动日志没有加载主 bundle。
 
-**安全检查**：确认使用的是预期的 Harness profile，Harness 版本为 `0.2.1-rc.2`，并且当前进程已经停止后再重新安装；不要通过日志分享 profile 目录或 credentials 内容。
+**安全检查**：确认使用的是预期的 Harness profile，Harness 版本为 `0.2.1-rc.5`，并且当前进程已经停止后再重新安装；不要通过日志分享 profile 目录或 credentials 内容。
 
 **可能原因**：没有执行 Plugin Manager 安装、安装到另一个 profile、构建/发布门禁失败、主 bundle 未被 profile 的 bundle 列表加载，或运行时版本不兼容。
 

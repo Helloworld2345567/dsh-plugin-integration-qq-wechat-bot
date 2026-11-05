@@ -11,7 +11,7 @@
 - Windows 10/11、PowerShell 7
 - Node.js 24+
 - Python 3.12 或 3.13
-- DeepSeek Harness 0.2.1-rc.2
+- DeepSeek Harness 0.2.1-rc.5
 - `ffmpeg` 与 `ffprobe`
 - 一个可以停止并重新启动的 Harness profile
 - 基础安装不要求 CUDA、RVC、GPT-SoVITS、Music 或模型权重
@@ -44,7 +44,7 @@ python -m pip install -r requirements-voice-generation.txt
 4. 在机器人面板创建人格和机器人，完成 QQ 或微信授权。
 5. 启动机器人并发送一条测试消息。
 
-若插件没有显示，先检查 profile 是否加载了 `dsh-plugin-integration-qq-wechat-bot`，以及 Harness 版本是否为 `0.2.1-rc.2`。
+若插件没有显示，先检查 profile 是否加载了 `dsh-plugin-integration-qq-wechat-bot`，以及 Harness 版本是否为 `0.2.1-rc.5`。
 
 ## 能力边界
 

@@ -18,6 +18,15 @@ test('image validator rejects oversized dimensions and truncated payloads',async
   await assert.rejects(()=>validator.validate({kind:'image',jobDirectory:root,file:huge}),/服务输出未通过宿主校验/);await assert.rejects(()=>validator.validate({kind:'image',jobDirectory:root,file:truncated}),/服务输出未通过宿主校验/);
 });
 
+test('image validator accepts static SVG output and rejects unsafe external content',async t=>{
+  const root=await fixture(t),safe=path.join(root,'safe.svg'),unsafe=path.join(root,'unsafe.svg');
+  await writeFile(safe,'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 16"><rect width="24" height="16"/></svg>');
+  await writeFile(unsafe,'<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16"><script>alert(1)</script></svg>');
+  const result=await new OutputValidatorRegistry().validate({kind:'image',jobDirectory:root,file:'safe.svg'});
+  assert.equal(result.mime,'image/svg+xml');assert.deepEqual(result.metadata,{width:24,height:16});
+  await assert.rejects(()=>new OutputValidatorRegistry().validate({kind:'image',jobDirectory:root,file:'unsafe.svg'}),/服务输出未通过宿主校验/);
+});
+
 test('file validator rejects ZIP traversal and expansion bombs',async t=>{
   const root=await fixture(t),file=path.join(root,'bad.zip'),entry=Buffer.from('../outside.txt');const header=Buffer.alloc(46);header.writeUInt32LE(0x02014b50,0);header.writeUInt32LE(1_000_000,24);header.writeUInt16LE(entry.length,28);await writeFile(file,Buffer.concat([Buffer.from([0x50,0x4b,0x03,0x04]),Buffer.alloc(8),header,entry]));
   await assert.rejects(()=>new OutputValidatorRegistry({maxArchiveExpandedBytes:1000}).validate({kind:'file',jobDirectory:root,file}),/服务输出未通过宿主校验/);

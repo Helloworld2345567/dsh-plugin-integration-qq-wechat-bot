@@ -25,7 +25,7 @@
 
 - Node.js 24+
 - Python 3.12 或 3.13
-- DeepSeek Harness 0.2.1-rc.2
+- DeepSeek Harness 0.2.1-rc.5
 - 音频和视频处理需要 `ffmpeg` 与 `ffprobe`
 
 ## 快速开始

@@ -11,7 +11,7 @@
 - Windows 10/11、PowerShell 7
 - Node.js 24+
 - Python 3.12 或 3.13
-- DeepSeek Harness 0.2.1-rc.2
+- DeepSeek Harness 0.2.1-rc.5
 - `ffmpeg` 与 `ffprobe`
 - 基础安装不要求 CUDA、RVC、GPT-SoVITS、Music 或模型权重
 - 可选：`uv`，未安装时回退到 Python `venv` 和 `pip`

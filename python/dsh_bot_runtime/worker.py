@@ -56,11 +56,29 @@ def image(job):
         raise JobError("REFERENCE_IMAGE_REQUIRED")
     endpoint = job["endpoint"]
     record = Path(job["output"]) / "image-result.json"
+    output_format = params.get("output_format", "jpeg")
+    if not isinstance(output_format, str) or output_format not in {"png", "jpeg", "webp", "gif", "svg"}:
+        raise JobError("IMAGE_OUTPUT_FORMAT_INVALID")
+    complexity = params.get("complexity")
+    if complexity is not None and (not isinstance(complexity, str) or complexity not in {"low", "medium", "high"}):
+        raise JobError("IMAGE_COMPLEXITY_INVALID")
+    frame_count = params.get("frame_count")
+    if frame_count is not None and (isinstance(frame_count, bool) or not isinstance(frame_count, int) or not 2 <= frame_count <= 64):
+        raise JobError("IMAGE_FRAME_COUNT_INVALID")
+    frame_duration_ms = params.get("frame_duration_ms")
+    if frame_duration_ms is not None and (isinstance(frame_duration_ms, bool) or not isinstance(frame_duration_ms, int) or not 20 <= frame_duration_ms <= 2000):
+        raise JobError("IMAGE_FRAME_DURATION_INVALID")
     command = [sys.executable, "-B", str(RELEASE_ROOT / "python" / "image_api.py"), operation,
                "--prompt", str(params.get("prompt", "")), "--model", endpoint["model"],
                "--base-url", endpoint["baseUrl"], "--api-key-env", endpoint["keyEnv"],
-               "--output-dir", job["output"], "--output-format", "jpeg", "--n", "1",
+               "--output-dir", job["output"], "--output-format", output_format, "--n", "1",
                "--timeout", str(job.get("timeoutMs", 0) / 1000), "--record", str(record)]
+    if complexity is not None:
+        command.extend(["--complexity", complexity])
+    if frame_count is not None:
+        command.extend(["--frame-count", str(frame_count)])
+    if frame_duration_ms is not None:
+        command.extend(["--frame-duration-ms", str(frame_duration_ms)])
     if job.get('usagePath'):
         command.extend(['--usage-record', job['usagePath']])
     if operation == "edit":
@@ -86,7 +104,11 @@ def image(job):
     asset = (output_root / files[0]).resolve()
     if not asset.is_relative_to(output_root) or not asset.is_file():
         raise JobError("IMAGE_OUTPUT_RECORD_INVALID")
-    return {"assets": [{"path": str(asset), "name": "image.jpg", "mime": "image/jpeg", "kind": "image"}]}
+    suffix = asset.suffix.lower()
+    mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".svg": "image/svg+xml"}.get(suffix)
+    if mime is None:
+        raise JobError("IMAGE_OUTPUT_FORMAT_INVALID")
+    return {"assets": [{"path": str(asset), "name": asset.name, "mime": mime, "kind": "image"}]}
 
 
 PUBLISHED_SKILL_ENTRIES = {

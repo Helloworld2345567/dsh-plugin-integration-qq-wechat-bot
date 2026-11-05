@@ -4,7 +4,7 @@ import {spawn} from 'node:child_process';
 import {readFileSync,mkdirSync} from 'node:fs';
 
 const require=createRequire(import.meta.url);
-export const HARNESS_VERSION='0.2.1-rc.2';
+export const HARNESS_VERSION='0.2.1-rc.5';
 
 function savedWorkspace(home){
   try{
