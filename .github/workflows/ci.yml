@@ -68,6 +68,15 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: 上传失败测试证据
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-test-evidence-${{ github.run_id }}
+          path: .codex/**/*-evidence/**
+          if-no-files-found: ignore
+          retention-days: 7
+
   release-gate:
     name: Windows 发布门禁
     runs-on: windows-latest
@@ -171,6 +180,15 @@ jobs:
         run: |
           $env:BOT_TEST_PYTHON = (Get-Command python).Source
           npm run test:install-smoke
+
+      - name: 上传失败集成证据
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-test-evidence-${{ github.run_id }}
+          path: .codex/**/*-evidence/**
+          if-no-files-found: ignore
+          retention-days: 7
 
   python-compatibility:
     name: Python ${{ matrix.python-version }} 依赖检查

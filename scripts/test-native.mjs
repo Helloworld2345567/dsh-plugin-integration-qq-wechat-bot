@@ -2,7 +2,7 @@ import {mkdir, writeFile, readFile, realpath} from 'node:fs/promises';
 import path from 'node:path';
 import {createRequire} from 'node:module';
 import {spawn} from 'node:child_process';
-import {safeSubprocessEnv, validateTestPython} from './test-environment.mjs';
+import {redactEvidence, safeSubprocessEnv, validateTestPython} from './test-environment.mjs';
 import {createTestRoot, killProcessTree, boundedOutput, finalizeTestRoot, runEsbuild, spawnCapture} from './test-process.mjs';
 
 const root = process.cwd();
@@ -80,6 +80,8 @@ await writeFile(env.npm_config_userconfig, '');
 } catch (error) {
   failed = true; process.exitCode = 1;
   failureEvidence = {'host.log': logs.value, 'error.txt': error.stack ?? error};
+  console.error(redactEvidence(error.stack ?? error));
+  if (logs.value) console.error(redactEvidence(logs.value));
 }
 if (host) {
   try { await killProcessTree(host); }

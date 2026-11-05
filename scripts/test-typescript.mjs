@@ -31,6 +31,8 @@ try {
 } catch (error) {
   failed = true;
   evidence = {'test-output.log': error.result?.output ?? error.message};
+  const diagnostic = error.result?.output ?? error.stack ?? error.message;
+  if (diagnostic) console.error(redactEvidence(diagnostic));
   process.exitCode = 1;
 }
 await finalizeTestRoot(temporary, {failed, evidence});

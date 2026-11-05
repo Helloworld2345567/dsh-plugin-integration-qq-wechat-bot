@@ -86,6 +86,9 @@ export const name='bot-integration';export function apply(ctx){const trace=value
   failed = true;
   process.exitCode = 1;
   failureEvidence = {'host.log': logs.value, 'error.txt': redactEvidence(error.stack ?? error), 'subprocess.log': error.result?.output ?? ''};
+  console.error(redactEvidence(error.stack ?? error));
+  if (error.result?.output) console.error(redactEvidence(error.result.output));
+  if (logs.value) console.error(redactEvidence(logs.value));
 }
 if (!failed) {
   try {
