@@ -67,7 +67,7 @@ export class Assets {
     }
     for(const job of this.store.jobs().filter(job=>!scope||job.scope===scope)){
       const legacy=path.join(this.store.home,'jobs',job.id);if(!await exists(legacy))continue;
-      const workspace=await this.workspace(job.scope),directory=path.join(workspace,'.bot','jobs',job.scope,job.id);
+      const workspace=await this.workspace(job.scope!),directory=path.join(workspace,'.bot','jobs',job.scope!,job.id);
       await mkdir(path.dirname(directory),{recursive:true});try{await rename(legacy,directory);}catch(error){if((error as NodeJS.ErrnoException).code!=='EXDEV')throw error;await cp(legacy,directory,{recursive:true,errorOnExist:true,force:false});await rm(legacy,{recursive:true});}
       this.store.patchJob(job.id,{directory,workspace});
     }
