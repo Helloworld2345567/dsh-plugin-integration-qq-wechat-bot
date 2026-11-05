@@ -3,6 +3,7 @@ import {existsSync} from 'node:fs';
 import {mkdir, mkdtemp, readFile, rm, rmdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {tmpdir} from 'node:os';
 import {spawn} from 'node:child_process';
 import {validatePackageArchive} from './archive-validation.mjs';
 import {safeSubprocessEnv, redactEvidence, relativeEvidencePath} from './test-environment.mjs';
@@ -13,6 +14,10 @@ export async function createTestRoot(root, prefix) {
   const parent = path.join(root, '.codex');
   await mkdir(parent, {recursive: true});
   return mkdtemp(path.join(parent, `${prefix}-`));
+}
+
+export async function createShortTempRoot(prefix) {
+  return mkdtemp(path.join(tmpdir(), `${prefix}-`));
 }
 
 export function boundedOutput(state, chunk, maxBytes = MAX_OUTPUT_BYTES) {

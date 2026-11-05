@@ -1,5 +1,6 @@
-import {mkdir, writeFile, readFile, realpath} from 'node:fs/promises';
+import {mkdir, mkdtemp, readFile, realpath, rm, writeFile} from 'node:fs/promises';
 import path from 'node:path';
+import {tmpdir} from 'node:os';
 import {createRequire} from 'node:module';
 import {spawn} from 'node:child_process';
 import {redactEvidence, safeSubprocessEnv, validateTestPython} from './test-environment.mjs';
@@ -11,7 +12,7 @@ const fixture = path.join(folder, 'fixture');
 const home = path.join(folder, 'home');
 const workspaceRoot = path.join(folder, 'workspaces');
 const processHome = path.join(workspaceRoot, '.runtime', 'home');
-const processTemp = path.join(workspaceRoot, '.runtime', 'tmp');
+const processTemp = await mkdtemp(path.join(tmpdir(), 'dsh-native-'));
 let env;
 let host;
 let logs = {value: ''};
@@ -88,3 +89,4 @@ if (host) {
   catch (error) { failed = true; process.exitCode = 1; failureEvidence = {...failureEvidence, 'cleanup-error.txt': error.stack ?? error}; }
 }
 await finalizeTestRoot(folder, {failed, evidence: failureEvidence, result});
+await rm(processTemp, {recursive: true, force: true});

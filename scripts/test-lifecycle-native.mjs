@@ -1,5 +1,6 @@
-import {mkdir, writeFile, readFile, access} from 'node:fs/promises';
+import {access, mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import path from 'node:path';
+import {tmpdir} from 'node:os';
 import {createRequire} from 'node:module';
 import {spawn} from 'node:child_process';
 import {identity, atomicJson} from './installation.mjs';
@@ -12,7 +13,7 @@ const home = path.join(folder, 'home');
 const profile = path.join(home, 'profiles', 'bots');
 const workspaceRoot = path.join(folder, 'workspaces');
 const processHome = path.join(workspaceRoot, '.runtime', 'home');
-const processTemp = path.join(workspaceRoot, '.runtime', 'tmp');
+const processTemp = await mkdtemp(path.join(tmpdir(), 'dsh-lifecycle-'));
 let env;
 let host;
 const logs = {value: ''};
@@ -109,3 +110,4 @@ if (failed && host && !await waitForClose(host, 1000)) {
   catch (error) { failureEvidence = {...failureEvidence, 'cleanup.log': redactEvidence(error.stack ?? error)}; }
 }
 await finalizeTestRoot(folder, {failed, evidence: failureEvidence, result});
+await rm(processTemp, {recursive: true, force: true});

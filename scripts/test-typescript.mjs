@@ -1,7 +1,8 @@
 import {globSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
-import {mkdir, writeFile} from 'node:fs/promises';
+import {mkdir, mkdtemp, rm, writeFile} from 'node:fs/promises';
 import path from 'node:path';
+import {tmpdir} from 'node:os';
 import {spawnCapture, createTestRoot, finalizeTestRoot} from './test-process.mjs';
 import {redactEvidence, safeSubprocessEnv} from './test-environment.mjs';
 
@@ -11,7 +12,7 @@ const cli = fileURLToPath(import.meta.resolve('tsx/cli'));
 const root = process.cwd();
 const temporary = await createTestRoot(root, 'typescript');
 const processHome = path.join(temporary, 'home');
-const processTemp = path.join(temporary, 'tmp');
+const processTemp = await mkdtemp(path.join(tmpdir(), 'dsh-ts-'));
 let failed = false;
 let evidence;
 try {
@@ -36,3 +37,4 @@ try {
   process.exitCode = 1;
 }
 await finalizeTestRoot(temporary, {failed, evidence});
+await rm(processTemp, {recursive: true, force: true});
