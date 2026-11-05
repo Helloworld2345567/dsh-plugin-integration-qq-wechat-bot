@@ -124,7 +124,7 @@
     "check:contracts": "node scripts/check-contracts.mjs",
     "check:architecture": "node scripts/check-architecture.mjs",
     "audit:dependencies": "node scripts/audit-dependencies.mjs",
-    "verify:release": "npm run check:architecture && npm run typecheck && npm test && npm run test:python && npm run check:python-dependencies && npm run build && npm run check:docs && npm run check:contracts && npm run check:licenses && npm run check:release",
+    "verify:release": "npm run check:architecture && npm run typecheck && npm run build && npm test && npm run test:python && npm run check:python-dependencies && npm run check:docs && npm run check:contracts && npm run check:licenses && npm run check:release",
     "release:pack": "npm run verify:release && node scripts/release-pack.mjs",
     "prepublishOnly": "npm run verify:release",
     "start": "node scripts/start.mjs",

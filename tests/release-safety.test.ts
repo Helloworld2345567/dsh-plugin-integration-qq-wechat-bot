@@ -44,6 +44,7 @@ test('release packaging and publishing cannot bypass the complete verification g
   assert.ok(!manifest.files.some((file:string)=>/(?:^|\/)(?:tests?|fixtures?)(?:\/|$)/i.test(file)),'test doubles and fixtures must not be declared for npm pack');
   assert.equal(manifest.scripts['check:architecture'],'node scripts/check-architecture.mjs');
   assert.match(manifest.scripts['verify:release'],/^npm run check:architecture && /);
+  assert.match(manifest.scripts['verify:release'],/npm run build && npm test/);
   assert.equal(manifest.scripts['prepublishOnly'],'npm run verify:release');
   assert.match(manifest.scripts['release:pack'],/^npm run verify:release && node scripts\/release-pack\.mjs$/);
   assert.doesNotMatch(manifest.scripts['verify:release'],/npm pack(?!.*--ignore-scripts)/);
