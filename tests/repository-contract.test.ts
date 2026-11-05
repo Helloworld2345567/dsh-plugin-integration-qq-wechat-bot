@@ -55,7 +55,7 @@ test('automatic asset registration reuses a durable claim while explicit resend 
 
 /** Contract suite: every assertion below runs against a real temporary SQLite database. */
 import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
-import {type CallerScope} from '../src/core/identity.js';
+import type {CallerScope} from '../src/core/types.js';
 import {capabilityAcceptanceSchema} from '../src/core/service-contract.js';
 import type {Asset} from '../src/core/types.js';
 
