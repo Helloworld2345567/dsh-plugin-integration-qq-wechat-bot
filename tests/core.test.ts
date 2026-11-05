@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { Store, ConflictError, scopeKey } from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
+import {ConflictError} from '../src/core/errors.js';
+import {scopeKey} from '../src/core/identity.js';
 import { Assets, MediaService } from '../src/core/media.js';
 import { BotRuntime, type HarnessPort } from '../src/core/runtime.js';
 import { configSchema, botSchema, type CallerScope, type InboundMessage, type ChannelAdapter } from '../src/core/types.js';
@@ -17,10 +19,10 @@ function message(id:string,text:string,s=scope()):InboundMessage{return{id,text,
 function bot(store:Store,id='one'){return store.saveBot(botSchema.parse({id,name:id,channel:'qq',accountId:id,enabled:true}));}
 function gate(){let resolve!:()=>void;const promise=new Promise<void>(r=>resolve=r);return{promise,resolve};}
 async function runtimeFixture(t:any,run:HarnessPort['run'],send:ChannelAdapter['send']=async()=> 'receipt'){
-  const store=await fixture(t);bot(store);const assets=new Assets(store);const media=new MediaService(store,assets);
+  const store=await fixture(t);bot(store);const assets=new Assets(store.repositories());const media=new MediaService(store.repositories(),assets);
   const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async()=>Buffer.from('pixels'),send};
   const harness:HarnessPort={run,cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async c=>{if(c.model?.model==='invalid')throw new Error('UNKNOWN_MODEL');}};
-  const runtime=new BotRuntime(store,assets,media,harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),{read:async id=>({accountId:id}),write:async()=>{},remove:async()=>{}},60000);
+  const runtime=new BotRuntime(store.repositories(),assets,media,harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),{read:async id=>({accountId:id}),write:async()=>{},remove:async()=>{}},60000);
   t.after(()=>runtime.close());return{store,runtime,assets,media};
 }
 

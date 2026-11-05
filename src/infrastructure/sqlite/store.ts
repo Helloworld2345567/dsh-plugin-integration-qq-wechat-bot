@@ -10,6 +10,7 @@ import type {SqliteStatsProjection} from './stats-projection.js';
 import type {SessionActionRecord} from '../../core/ports/telemetry.js';
 import type {MediaJobRecord} from '../../core/ports/media.js';
 import type {DeliveryPageRequest, DeliveryQueueRepository} from '../../core/ports/delivery.js';
+import type {RuntimeRepositories} from '../../core/ports/application.js';
 
 /**
  * Infrastructure-only convenience facade over `SqlitePersistence`.
@@ -145,9 +146,11 @@ export class Store {
   releaseRuntime(owner: string): void {this.persistence.ownership.release(owner);}
 
   // Statistics ownership
-  statsSessionExists(id: string): boolean {return Boolean(this.get('stats-session', id));}
-  statsOwnedStart(id: string): number {return this.get<number>('stats-owned-start', id) ?? 0;}
-  saveStatsOwnedStart(id: string, value: number): void {this.put('stats-owned-start', id, value);}
+  statsSessionExists(id: string): boolean {return this.persistence.statsSessions.sessionExists(id);}
+  statsOwnedStart(id: string): number {return this.persistence.statsSessions.ownedStart(id);}
+  saveStatsOwnedStart(id: string, value: number): void {this.persistence.statsSessions.saveOwnedStart(id, value);}
+  /** Narrow application bundle; the composition root and fixtures wire services with it. */
+  repositories(): RuntimeRepositories {return this.persistence.repositories();}
 
   // Delivery
   enqueue(binding: SessionBinding, sourceId: string, turnId: string, outputs: Output[], reply: Record<string, string>, replyEnvelope?: Delivery['replyEnvelope'], progress?: NonNullable<Delivery['progress']>, snapshot?: TurnSnapshot): void {

@@ -2,15 +2,16 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,rm,writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {Store,scopeKey} from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
+import {scopeKey} from '../src/core/identity.js';
 import {StatsService,normalizeProviderUsage,statsWindow,shanghaiDay} from '../src/core/stats.js';
 import {botSchema,type CallerScope,type ChannelAdapter} from '../src/core/types.js';
 import {createChannelRegistry} from '../src/core/channel-registry.js';
-import {SqliteStatsData} from '../src/core/sqlite-stats-data.js';
+
 
 const now=Date.parse('2026-10-22T12:00:00+08:00');
 const adapter={} as ChannelAdapter;const channels=createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'微信',adapter,capabilities:{conversations:['private'],login:[],groupSupport:'unsupported'}}]);
-async function fixture(t:any){const dir=await mkdtemp(path.resolve('.codex/stats-test-'));const store=new Store(dir);t.after(async()=>{store.close();await rm(dir,{recursive:true,force:true});});for(const channel of ['qq','weixin'] as const)store.saveBot(botSchema.parse({id:channel,name:channel,channel,accountId:channel}));const stats=new StatsService(new SqliteStatsData(store),()=>new Map([['qq','connected'],['weixin','connecting']]),()=>store.bots(),()=>now,channels);return{store,stats};}
+async function fixture(t:any){const dir=await mkdtemp(path.resolve('.codex/stats-test-'));const store=new Store(dir);t.after(async()=>{store.close();await rm(dir,{recursive:true,force:true});});for(const channel of ['qq','weixin'] as const)store.saveBot(botSchema.parse({id:channel,name:channel,channel,accountId:channel}));const stats=new StatsService(store.persistence.statsData,()=>new Map([['qq','connected'],['weixin','connecting']]),()=>store.bots(),()=>now,channels);return{store,stats};}
 const usage=(inputTokens:number,outputTokens=5)=>({inputTokens,outputTokens,cacheReadTokens:3,cacheWriteTokens:2,reasoningTokens:2});
 test('native replay deduplicates and a retry opens a new metered attempt',async t=>{
   const {stats}=await fixture(t);stats.observeSession('session','qq');
@@ -97,7 +98,7 @@ test('legacy group messages backfill only observed membership evidence',async t=
   const dir=await mkdtemp(path.resolve('.codex/stats-backfill-'));const store=new Store(dir);t.after(async()=>{store.close();await rm(dir,{recursive:true,force:true});});
   store.saveBot(botSchema.parse({id:'qq',name:'QQ',channel:'qq',accountId:'qq'}));
   store.accept({id:'old',scope:{botId:'qq',platform:'qq',accountId:'qq',kind:'group',channelId:'old-room',senderId:'member'},text:'old',attachments:[],reply:{},timestamp:now-86400000});
-  const stats=new StatsService(new SqliteStatsData(store),undefined,()=>store.bots(),()=>now,channels);const result=stats.query({range:'all'});
+  const stats=new StatsService(store.persistence.statsData,undefined,()=>store.bots(),()=>now,channels);const result=stats.query({range:'all'});
   assert.equal(result.groups[0].groupId,'old-room');assert.equal(result.groups[0].state,'observed');assert.equal(result.groups[0].complete,false);
 });
 

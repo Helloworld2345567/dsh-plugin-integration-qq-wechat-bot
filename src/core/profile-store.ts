@@ -1,14 +1,8 @@
 import {serviceProfileRevisionSchema,serviceProfileDiscoverySchema,type ServiceProfileDiscovery,type ProfileState,type ResolvedServiceProfileRevision,type ServiceProfileRef,type ServiceProfileRevision,type TurnServiceSnapshot} from './service-contract.js';
 import {canonicalJsonHash,immutableJson} from './canonical-json.js';
-import type {Store} from './store.js';
+import type {ProfileRecord,ProfileRepository} from './ports/service.js';
 
-export interface ProfileRecord extends ResolvedServiceProfileRevision {}
-export interface ProfileRepository {
-  get(serviceId:string,profileId:string,revision:number):ProfileRecord|undefined;
-  latest(serviceId:string,profileId:string):ProfileRecord|undefined;
-  list(serviceId?:string):readonly ProfileRecord[];
-  save(record:ProfileRecord):void;
-}
+export type {ProfileRecord,ProfileRepository};
 
 export function profileContentHash(managedConfig:Readonly<Record<string,unknown>>,discovery?:Readonly<ServiceProfileDiscovery>):string{return canonicalJsonHash(discovery?{managedConfig,resourceHash:discovery.resourceHash}:managedConfig);}
 export function profileKey(ref:ServiceProfileRef):string{return`${ref.serviceId}/${ref.profileId}`;}
@@ -21,15 +15,6 @@ export class InMemoryProfileRepository implements ProfileRepository {
   latest(serviceId:string,profileId:string):ProfileRecord|undefined{return this.list(serviceId).filter(record=>record.profileId===profileId).sort((a,b)=>b.revision-a.revision)[0];}
   list(serviceId?:string):readonly ProfileRecord[]{return [...this.records.values()].filter(record=>!serviceId||record.serviceId===serviceId).sort((a,b)=>a.serviceId.localeCompare(b.serviceId)||a.profileId.localeCompare(b.profileId)||a.revision-b.revision);}
   save(record:ProfileRecord):void{const key=recordKey(record.serviceId,record.profileId,record.revision);if(this.records.has(key))throw new Error('PROFILE_REVISION_IMMUTABLE');this.records.set(key,freezeRecord(record));}
-}
-
-/** Durable repository keeps every immutable revision; records never enter persona files. */
-export class StoreProfileRepository implements ProfileRepository {
-  constructor(private readonly store:Store){}
-  get(serviceId:string,profileId:string,revision:number):ProfileRecord|undefined{return this.store.get<ProfileRecord>('service-profile',recordKey(serviceId,profileId,revision));}
-  latest(serviceId:string,profileId:string):ProfileRecord|undefined{return this.list(serviceId).filter(record=>record.profileId===profileId).sort((a,b)=>b.revision-a.revision)[0];}
-  list(serviceId?:string):readonly ProfileRecord[]{return this.store.list<ProfileRecord>('service-profile').filter(record=>!serviceId||record.serviceId===serviceId).sort((a,b)=>a.serviceId.localeCompare(b.serviceId)||a.profileId.localeCompare(b.profileId)||a.revision-b.revision);}
-  save(record:ProfileRecord):void {const key=recordKey(record.serviceId,record.profileId,record.revision);if(this.store.get('service-profile',key))throw new Error('PROFILE_REVISION_IMMUTABLE');this.store.put('service-profile',key,record);}
 }
 
 export interface ProfileSnapshotStatus {state:ProfileState;current?:ResolvedServiceProfileRevision}

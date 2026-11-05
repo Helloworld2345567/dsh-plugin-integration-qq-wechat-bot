@@ -29,6 +29,7 @@ export class SqlitePersonaConfigRepository implements PersonaConfigRepository {
   }
   findConfig(id: string): BotConfig | undefined {return this.database.records.get<BotConfig>('config', id);}
   configVersions(): readonly BotConfig[] {return this.database.records.list<BotConfig>('config-version').map(config => configSchema.parse(config));}
+  configVersion(personaId: string, revision: number): BotConfig | undefined {return this.database.records.get<BotConfig>('config-version', `${personaId}:${revision}`);}
   effectiveConfig(binding: SessionBinding): BotConfig {
     const config = this.config(binding.personaId ?? this.bots().bot(binding.scope.botId).configId);
     return binding.modelOverride ? {...config, model:{...binding.modelOverride}} : config;

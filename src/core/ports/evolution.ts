@@ -20,8 +20,8 @@ export interface EvolutionRepository {
   readonly home: string;
   evolutionTasks(): EvolutionTask[];
   saveEvolutionTask(id: string, value: EvolutionTask): void;
-  contentChanges(): ContentChangeRecord[];
-  findContentChange(id: string): ContentChangeRecord | undefined;
+  contentChanges<T extends ContentChangeRecord = ContentChangeRecord>(): T[];
+  findContentChange<T extends ContentChangeRecord = ContentChangeRecord>(id: string): T | undefined;
   saveContentChange(id: string, value: ContentChangeRecord): void;
 }
 

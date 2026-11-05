@@ -2,7 +2,9 @@ import path from 'node:path';
 import {lstat,realpath} from 'node:fs/promises';
 import {z} from 'zod';
 import {canonicalJsonHash} from './canonical-json.js';
-import {ConflictError,type Store} from './store.js';
+import {ConflictError} from './errors.js';
+import type {VoiceLibrarySettingsRepository} from './ports/media.js';
+
 import {ReadOnlyServiceDiscovery,type DiscoveryCandidate,type ServiceDiscoveryStatus} from './service-discovery.js';
 import type {ProfileStore} from './profile-store.js';
 import {profileIdSchema,sha256Schema} from './service-contract.js';
@@ -44,18 +46,18 @@ export class VoiceModelLibrary {
   private reports:Record<VoiceService,VoiceLibraryReport>={rvc:emptyReport(),'gpt-sovits':emptyReport()};
   private pending:Promise<unknown>=Promise.resolve();
   private scanning:Promise<void>|undefined;
-  constructor(readonly store:Store,readonly profiles:ProfileStore,readonly scanner:VoiceModelScanner,readonly defaults:Partial<VoiceLibrarySettings>={}){
+  constructor(readonly settingsRepository:VoiceLibrarySettingsRepository,readonly home:string,readonly profiles:ProfileStore,readonly scanner:VoiceModelScanner,readonly defaults:Partial<VoiceLibrarySettings>={}){
     this.discovery=new ReadOnlyServiceDiscovery(profiles,new Map());
   }
-  private settings():VoiceLibrarySettings{return voiceLibrarySettingsSchema.parse(this.store.get('voice-model-library','settings')??{modelsRoot:this.defaults.modelsRoot??process.env.BOT_VOICE_MODELS_ROOT??'',gptSovitsUrl:this.defaults.gptSovitsUrl??'http://127.0.0.1:9880'});}
+  private settings():VoiceLibrarySettings{return voiceLibrarySettingsSchema.parse(this.settingsRepository.read()??{modelsRoot:this.defaults.modelsRoot??process.env.BOT_VOICE_MODELS_ROOT??'',gptSovitsUrl:this.defaults.gptSovitsUrl??'http://127.0.0.1:9880'});}
   view():VoiceLibraryView {const settings=this.settings();return{...settings,revision:revision(settings),reports:structuredClone(this.reports)};}
   private exclusive<T>(action:()=>Promise<T>):Promise<T>{const current=this.pending.then(action,action);this.pending=current.catch(()=>{});return current;}
   async save(input:unknown,signal:AbortSignal):Promise<VoiceLibraryView>{
     const {expectedRevision,...settings}=voiceLibrarySettingsInputSchema.parse(input);
     return this.exclusive(async()=>{
       signal.throwIfAborted();const current=this.settings();
-      if(expectedRevision!==revision(current)&&(expectedRevision!==undefined||this.store.get('voice-model-library','settings')!==undefined))throw new ConflictError('模型服务配置已变化，请刷新后重试');
-      this.store.put('voice-model-library','settings',settings);
+      if(expectedRevision!==revision(current)&&(expectedRevision!==undefined||this.settingsRepository.read()!==undefined))throw new ConflictError('模型服务配置已变化，请刷新后重试');
+      this.settingsRepository.write(settings);
       await this.refreshNow(signal);return this.view();
     });
   }
@@ -122,7 +124,7 @@ export class VoiceModelLibrary {
     await this.resource(python,'项目 Python 环境',diagnostics,identities);await this.resource(script,'模型扫描入口',diagnostics,identities);
     if(diagnostics.length){this.unavailable(rootExists?'blocked':'missing',diagnostics.join(' '));return;}
     try{
-      const root=await realpath(settings.modelsRoot),context:VoiceScannerContext={modelsRoot:root,projectRoot,python,script,cache:path.join(this.store.home,'voice-model-cache','catalog.json'),signal:AbortSignal.any([signal,AbortSignal.timeout(120_000)])};
+      const root=await realpath(settings.modelsRoot),context:VoiceScannerContext={modelsRoot:root,projectRoot,python,script,cache:path.join(this.home,'voice-model-cache','catalog.json'),signal:AbortSignal.any([signal,AbortSignal.timeout(120_000)])};
       const result=scannerResultSchema.parse(await this.scanner.scan(context));context.signal.throwIfAborted();const device=await this.scanner.device?.(context)??'cpu';
       const grouped=new Map<string,ScannerModel[]>();
       for(const model of result.models){const key=`${model.serviceId}/${model.id}`,group=grouped.get(key)??[];group.push(model);grouped.set(key,group);}

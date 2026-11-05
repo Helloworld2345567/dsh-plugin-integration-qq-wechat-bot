@@ -4,13 +4,13 @@ import {mkdtemp,rm,writeFile,readFile,mkdir} from 'node:fs/promises';
 import path from 'node:path';
 import fs from 'node:fs';
 import {syncBuiltinESMExports} from 'node:module';
-import {Store} from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
 import {DynamicSkills} from '../src/core/skills.js';
 import {parseStatsArguments,renderStats} from '../src/core/features.js';
 import {StatsService} from '../src/core/stats.js';
-import {SqliteStatsData} from '../src/core/sqlite-stats-data.js';
 
-async function fixture(t:any){const root=await mkdtemp(path.resolve('.codex/skills-test-'));const store=new Store(root);t.after(async()=>{store.close();await rm(root,{recursive:true,force:true});});return{root,store,skills:new DynamicSkills(store)};}
+
+async function fixture(t:any){const root=await mkdtemp(path.resolve('.codex/skills-test-'));const store=new Store(root);t.after(async()=>{store.close();await rm(root,{recursive:true,force:true});});return{root,store,skills:new DynamicSkills(store.persistence.personas,store.home)};}
 const files=(value:string)=>[{path:'SKILL.md',content:`---\nname: weather-helper\ndescription: 查询用户指定城市天气\n---\n${value}`},{path:'scripts/weather.py',content:`print(${JSON.stringify(value)})`}];
 test('published skill instructions and script resources remain frozen across revisions',async t=>{
   const {skills,store}=await fixture(t);let config=store.config('sakura');config=store.saveConfig(skills.stageFiles(config,'weather-helper',files('FIRST')),config.revision);
@@ -40,7 +40,7 @@ test('skill validation, disabled reload behavior and copying keep published vers
 test('stats arguments remain bounded and unknown fields remain visible in chat formatting',async t=>{
   const {store}=await fixture(t);assert.deepEqual(parseStatsArguments('7d bot=one model=Example-MODEL groups'),{range:'7d',botId:'one',model:'Example-MODEL',groups:true});
   assert.throws(()=>parseStatsArguments('arbitrary=path'));
-  const text=renderStats(new StatsService(new SqliteStatsData(store),undefined,()=>store.bots()).query({range:'all'}));assert.match(text,/用量未知/);assert.match(text,/未报告/);
+  const text=renderStats(new StatsService(store.persistence.statsData,undefined,()=>store.bots()).query({range:'all'}));assert.match(text,/用量未知/);assert.match(text,/未报告/);
 });
 
 test('combined draft fingerprint keeps file limits per skill',async t=>{

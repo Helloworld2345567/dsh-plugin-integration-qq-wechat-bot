@@ -1,20 +1,13 @@
-import {copyFile, mkdir, rename, rm, stat, writeFile} from 'node:fs/promises';
+import {mkdir, rename, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {prepareWorkingDirectory} from '../../core/workspaces.js';
-import type {Asset} from '../../core/types.js';
+import {assetFolder, exists, mediaFolders, moveFile, type AssetOrigin} from '../../core/media-paths.js';
+import type {ChatHistoryEvent, HistoryLocationRepository, WorkspacePort} from '../../core/ports/workspace.js';
 import type {AutomationRepository} from '../../core/ports/automation.js';
 import type {BotRepository} from '../../core/ports/bot.js';
 import type {BindingRepository, SessionRepository} from '../../core/ports/session.js';
-import type {HistoryLocationRepository, WorkspacePort} from '../../core/ports/workspace.js';
 
-export const mediaFolders = {image:'images', video:'videos', audio:'audio', file:'files'} as const;
-export type AssetOrigin = 'received' | 'generated' | 'sent';
-
-export interface ChatHistoryEvent {
-  type: string;
-  data?: {source?:{kind?:string}; message?:{content:Array<{type?:string}>}; stream?:unknown; [key:string]:unknown};
-  [key:string]:unknown;
-}
+export {assetFolder, exists, mediaFolders, moveFile, type AssetOrigin};
 
 export interface WorkspaceFilesDeps {
   home: string;
@@ -41,6 +34,9 @@ export class WorkspaceFiles implements WorkspacePort {
     if (!owner) throw Error('SESSION_NOT_FOUND');
     return prepareWorkingDirectory(this.deps.bots().bot(owner.scope.botId), scope, this.deps.home);
   }
+  async write(scope: string, sessionId: string, events: readonly unknown[]): Promise<void> {
+    return this.writeChatHistory(scope, sessionId, events as readonly ChatHistoryEvent[]);
+  }
   async writeChatHistory(scope: string, sessionId: string, events: readonly ChatHistoryEvent[]): Promise<void> {
     const workspace = await this.scopeWorkspace(scope), directory = path.join(workspace, 'history', scope);
     await mkdir(directory, {recursive:true});
@@ -57,22 +53,4 @@ export class WorkspaceFiles implements WorkspacePort {
     await rename(temporary, file);
     this.deps.history.save({scopeKey:scope, sessionId, file});
   }
-}
-
-export function assetFolder(workspace: string, asset: Pick<Asset, 'scopeKey'|'id'|'kind'|'createdAt'|'jobId'|'origin'>): string {
-  return path.join(workspace, mediaFolders[asset.kind], asset.origin ?? (asset.jobId ? 'generated' : 'received'), new Date(asset.createdAt).toISOString().slice(0, 10), asset.scopeKey, asset.id);
-}
-export async function moveFile(source: string, target: string): Promise<void> {
-  if (path.resolve(source) === path.resolve(target)) return;
-  await mkdir(path.dirname(target), {recursive:true});
-  try { await rename(source, target); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error;
-    await copyFile(source, target);
-    await rm(source);
-  }
-}
-export async function exists(file: string): Promise<boolean> {
-  try { await stat(file); return true; }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; return false; }
 }

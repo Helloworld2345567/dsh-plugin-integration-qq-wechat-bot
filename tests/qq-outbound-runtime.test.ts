@@ -2,7 +2,8 @@ import {test,type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
-import {Store,scopeKey} from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
+import {scopeKey} from '../src/core/identity.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {BotRuntime,type HarnessPort} from '../src/core/runtime.js';
 import {botSchema,configSchema,type CallerScope,type ChannelAdapter,type ChannelOutboundContext,type Delivery,type Output} from '../src/core/types.js';
@@ -12,7 +13,7 @@ const scope:CallerScope={botId:'bot',platform:'qq',accountId:'account',kind:'pri
 function deferred(){let resolve!:()=>void;const promise=new Promise<void>(done=>resolve=done);return{promise,resolve};}
 
 async function fixture(t:TestContext){
-  await mkdir(path.resolve('.codex'),{recursive:true});const directory=await mkdtemp(path.resolve('.codex/qq-outbound-runtime-')),store=new Store(directory),assets=new Assets(store);
+  await mkdir(path.resolve('.codex'),{recursive:true});const directory=await mkdtemp(path.resolve('.codex/qq-outbound-runtime-')),store=new Store(directory),assets=new Assets(store.repositories());
   const initial=store.config('sakura'),config=configSchema.parse({...initial,schemaVersion:4,media:{voice:{enabled:true,protocol:'edge_tts',replyMode:'auto',format:'mp3'}}});
   store.put('config',config.id,config);store.put('config-version',`${config.id}:${config.revision}`,config);
   store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',configId:config.id,enabled:true,trustedUsers:['owner']}));
@@ -24,8 +25,8 @@ async function fixture(t:TestContext){
   const sent:Delivery[]=[],voiceCalls:AbortSignal[]=[],contexts:ChannelOutboundContext[]=[];
   const harness:HarnessPort={run:async(_binding,_messages,_signal,options)=>({turnId:'reply',outputs:original,snapshot:options!.snapshot!,singingAttempted:true}),cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async()=>{}};
   const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async()=>Buffer.alloc(0),send:async(_bot,_credential,delivery)=>{sent.push(delivery);return'receipt';}};
-  const media=new MediaService(store,assets);media.run=async(_scope,operation,_config,_inputs,_parameters,signal,authorize)=>{assert.equal(operation,'voice_speak');authorize?.();voiceCalls.push(signal);return{assetIds:[audio.id]};};
-  const runtime=new BotRuntime(store,assets,media,harness,fixtureChannels(adapter),{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}},60000);
+  const media=new MediaService(store.repositories(),assets);media.run=async(_scope,operation,_config,_inputs,_parameters,signal,authorize)=>{assert.equal(operation,'voice_speak');authorize?.();voiceCalls.push(signal);return{assetIds:[audio.id]};};
+  const runtime=new BotRuntime(store.repositories(),assets,media,harness,fixtureChannels(adapter),{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}},60000);
   const chat=async()=>{await runtime.receive({id:'incoming',scope,text:'唱歌',attachments:[],reply:{target:'owner',kind:'private',msgId:'incoming'},timestamp:Date.now()});await runtime.process(scopeKey(scope));};
   const install=(prepare:(context:ChannelOutboundContext)=>Promise<Output[]>)=>{adapter.prepareOutbound=async context=>{contexts.push(context);return prepare(context);};};
   const split=(context:ChannelOutboundContext):Output[]=>[...context.outputs.filter(output=>output.type==='text'),...parts.map(part=>({type:'asset' as const,assetId:part.id})),{type:'asset',assetId:audio.id,asFile:true}];

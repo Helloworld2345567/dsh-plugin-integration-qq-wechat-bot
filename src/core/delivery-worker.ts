@@ -1,4 +1,4 @@
-import type {Store} from './store.js';
+import type {DeliveryWorkerRepositories} from './ports/application.js';
 import type {Credentials} from './runtime-ports.js';
 import type {BotConfig,Delivery,TurnSnapshot} from './types.js';
 import type {ProfileStore} from './profile-store.js';
@@ -63,15 +63,15 @@ export class DurableDeliveryWorker implements DeliveryWorker {
   private readonly outbound=new Map<string,{botId:string;scopeKey:string;runId?:string;controller:AbortController}>();
   private readonly progressRuns=new Map<string,()=>boolean>();
   private closed=false;
-  constructor(readonly store:Store,readonly channels:ChannelRegistry,readonly credentials:Credentials,readonly wait:(milliseconds:number,signal:AbortSignal)=>Promise<void>=async(milliseconds,signal)=>{await delay(milliseconds,undefined,{signal});},readonly profiles?:ProfileStore){}
+  constructor(readonly repos:DeliveryWorkerRepositories,readonly channels:ChannelRegistry,readonly credentials:Credentials,readonly wait:(milliseconds:number,signal:AbortSignal)=>Promise<void>=async(milliseconds,signal)=>{await delay(milliseconds,undefined,{signal});},readonly profiles?:ProfileStore){}
   async flush(filter?:{botId?:string}):Promise<void>{
     if(this.closed)return;
-    const ids=filter?.botId?[filter.botId]:this.store.deliveryRepository().pendingBotIds();
+    const ids=filter?.botId?[filter.botId]:this.repos.deliveries.pendingBotIds();
     await Promise.all(ids.map(botId=>this.startLane(botId)));
   }
   async retry(deliveryId:string):Promise<void>{
     if(this.closed)return;
-    const delivery=this.store.retryDelivery(deliveryId);
+    const delivery=this.repos.deliveries.retry(deliveryId);
     if(delivery)await this.flush({botId:delivery.botId});
   }
   cancelScope(scopeKey:string,_reason='任务已取消'):void{for(const item of this.outbound.values())if(item.scopeKey===scopeKey)item.controller.abort();}
@@ -80,51 +80,51 @@ export class DurableDeliveryWorker implements DeliveryWorker {
   cancelProgress(runId:string):void{
     this.progressRuns.delete(runId);
     for(const item of this.outbound.values())if(item.runId===runId)item.controller.abort();
-    for(const delivery of this.store.deliveries(['pending']))if(delivery.purpose==='progress'&&delivery.progress?.runId===runId)this.store.deliveryState(delivery,'cancelled');
+    for(const delivery of this.repos.deliveries.deliveries(['pending']))if(delivery.purpose==='progress'&&delivery.progress?.runId===runId)this.repos.deliveries.deliveryState(delivery,'cancelled');
   }
   private progressActive(delivery:Delivery):boolean{
     if(delivery.purpose!=='progress')return true;
-    const progress=delivery.progress,binding=this.store.findBinding(delivery.scopeKey);
+    const progress=delivery.progress,binding=this.repos.sessions.findBinding(delivery.scopeKey);
     return !!progress&&progress.expiresAt>Date.now()&&binding?.sessionId===delivery.sessionId&&binding.generation===progress.generation&&this.progressRuns.get(progress.runId)?.()===true;
   }
   private contextActive(delivery:Delivery):boolean {
-    const binding=this.store.findBinding(delivery.scopeKey);if(!binding||binding.sessionId!==delivery.sessionId||delivery.sessionGeneration!==undefined&&binding.generation!==delivery.sessionGeneration)return false;
-    if(delivery.turnContext){const frozen=this.store.get<BotConfig>('config-version',`${delivery.turnContext.personaId}:${delivery.turnContext.personaRevision}`);let current:BotConfig|undefined;try{current=this.store.effectiveConfig(binding);}catch{}if(!frozen||!current||permissionsRevoked({config:frozen,personaId:delivery.turnContext.personaId,personaRevision:delivery.turnContext.personaRevision,services:{},botId:delivery.botId,trusted:delivery.turnContext.trusted,sourceIds:[delivery.sourceId],startedAt:delivery.createdAt??0} satisfies TurnSnapshot,current,this.store.bot(delivery.botId),binding.scope,this.profiles))return false;}
-    const snapshots=[...(delivery.turnContext?.serviceSnapshots??[])];if(delivery.output.type==='asset'){const asset=this.store.asset(delivery.scopeKey,delivery.output.assetId!);if(asset.serviceSnapshot&&!snapshots.some(item=>item.serviceId===asset.serviceSnapshot!.serviceId&&item.profileId===asset.serviceSnapshot!.profileId&&item.profileRevision===asset.serviceSnapshot!.profileRevision&&item.profileContentHash===asset.serviceSnapshot!.profileContentHash))snapshots.push(asset.serviceSnapshot);}
+    const binding=this.repos.sessions.findBinding(delivery.scopeKey);if(!binding||binding.sessionId!==delivery.sessionId||delivery.sessionGeneration!==undefined&&binding.generation!==delivery.sessionGeneration)return false;
+    if(delivery.turnContext){const frozen=this.repos.personas.configVersion(delivery.turnContext.personaId,delivery.turnContext.personaRevision);let current:BotConfig|undefined;try{current=this.repos.personas.effectiveConfig(binding);}catch{}if(!frozen||!current||permissionsRevoked({config:frozen,personaId:delivery.turnContext.personaId,personaRevision:delivery.turnContext.personaRevision,services:{},botId:delivery.botId,trusted:delivery.turnContext.trusted,sourceIds:[delivery.sourceId],startedAt:delivery.createdAt??0} satisfies TurnSnapshot,current,this.repos.bots.bot(delivery.botId),binding.scope,this.profiles))return false;}
+    const snapshots=[...(delivery.turnContext?.serviceSnapshots??[])];if(delivery.output.type==='asset'){const asset=this.repos.media.assets.asset(delivery.scopeKey,delivery.output.assetId!);if(asset.serviceSnapshot&&!snapshots.some(item=>item.serviceId===asset.serviceSnapshot!.serviceId&&item.profileId===asset.serviceSnapshot!.profileId&&item.profileRevision===asset.serviceSnapshot!.profileRevision&&item.profileContentHash===asset.serviceSnapshot!.profileContentHash))snapshots.push(asset.serviceSnapshot);}
     return !this.profiles||snapshots.every(snapshot=>['ready','partial'].includes(this.profiles!.snapshotStatus(snapshot).state));
   }
   activity():DeliveryWorkerActivity{return{activeLanes:this.lanes.size,inFlight:this.outbound.size};}
   private startLane(botId:string):Promise<void>{const active=this.lanes.get(botId);if(active)return active;const task=this.flushBot(botId).finally(()=>{if(this.lanes.get(botId)===task)this.lanes.delete(botId);});this.lanes.set(botId,task);return task;}
   private async flushBot(botId:string):Promise<void>{
     while(!this.closed){
-      const repository=this.store.deliveryRepository();const batch=repository.nextSendable(botId,100);if(!batch.length)return;
+      const repository=this.repos.deliveries;const batch=repository.nextSendable(botId,100);if(!batch.length)return;
       for(const delivery of batch){
         if(this.closed)return;
         if(repository.hasEarlierBlocker(delivery))continue;
         const current=repository.find(delivery.id,'pending');if(!current)continue;
-        if(!this.progressActive(delivery)){this.store.deliveryState(delivery,'cancelled');continue;}
+        if(!this.progressActive(delivery)){this.repos.deliveries.deliveryState(delivery,'cancelled');continue;}
         const controller=new AbortController();
         const progressTimer=delivery.purpose==='progress'?setTimeout(()=>controller.abort(new Error('PROGRESS_SEND_TIMEOUT')),Math.min(PROGRESS_SEND_MS,delivery.progress!.expiresAt-Date.now())):undefined;
         this.outbound.set(delivery.id,{botId,scopeKey:delivery.scopeKey,runId:delivery.progress?.runId,controller});
         try{
-          const bot=this.store.bot(delivery.botId);if(!bot.enabled||bot.archived){for(const item of batch){const pending=repository.find(item.id,'pending');if(pending)this.store.deliveryState(pending,'cancelled');}return;}
-          if(!this.contextActive(delivery)){this.store.deliveryState(delivery,'cancelled');continue;}
+          const bot=this.repos.bots.bot(delivery.botId);if(!bot.enabled||bot.archived){for(const item of batch){const pending=repository.find(item.id,'pending');if(pending)this.repos.deliveries.deliveryState(pending,'cancelled');}return;}
+          if(!this.contextActive(delivery)){this.repos.deliveries.deliveryState(delivery,'cancelled');continue;}
           const credentialRead=this.credentials.read(bot.id);
           const rawCredential=await (delivery.purpose==='progress'?abortable(credentialRead,controller.signal):credentialRead);if(!rawCredential)return;
           const definition=this.channels.require(bot.channel);const normalized=definition.normalizeCredential?.(rawCredential);const credential=normalized?.credential as any??rawCredential;
           if((normalized?.accountId??credential.accountId)!==bot.accountId)throw Error('CHANNEL_CREDENTIAL_ACCOUNT_MISMATCH');
           if(this.closed||!repository.find(delivery.id,'pending'))continue;
-          const currentBot=this.store.bot(delivery.botId);if(!currentBot.enabled||currentBot.archived){this.store.deliveryState(delivery,'cancelled');for(const item of batch){const pending=repository.find(item.id,'pending');if(pending)this.store.deliveryState(pending,'cancelled');}return;}
-          if(!this.contextActive(delivery)){this.store.deliveryState(delivery,'cancelled');continue;}
-          if(!this.progressActive(delivery)||controller.signal.aborted){this.store.deliveryState(delivery,'cancelled');continue;}
-          const asset=delivery.output.type==='asset'?this.store.asset(delivery.scopeKey,delivery.output.assetId!):undefined;
+          const currentBot=this.repos.bots.bot(delivery.botId);if(!currentBot.enabled||currentBot.archived){this.repos.deliveries.deliveryState(delivery,'cancelled');for(const item of batch){const pending=repository.find(item.id,'pending');if(pending)this.repos.deliveries.deliveryState(pending,'cancelled');}return;}
+          if(!this.contextActive(delivery)){this.repos.deliveries.deliveryState(delivery,'cancelled');continue;}
+          if(!this.progressActive(delivery)||controller.signal.aborted){this.repos.deliveries.deliveryState(delivery,'cancelled');continue;}
+          const asset=delivery.output.type==='asset'?this.repos.media.assets.asset(delivery.scopeKey,delivery.output.assetId!):undefined;
           const envelope=definition.normalizeReply?.(delivery.replyEnvelope??delivery.reply);
           let sending:Delivery={...delivery,...(envelope?{replyEnvelope:envelope,reply:envelope.payload}: {}),...(delivery.attempt?{attempt:{...delivery.attempt,autoRetryCount:undefined}}:{})};
           const resultDelivery=delivery.purpose!=='progress';
-          const metricId=`inbox:${delivery.scopeKey}:${delivery.sourceId}`;if(resultDelivery&&this.store.findTurnMetric(metricId))this.store.updateTurnMetric(metricId,{deliveryStartedAt:Date.now()});
+          const metricId=`inbox:${delivery.scopeKey}:${delivery.sourceId}`;if(resultDelivery&&this.repos.telemetry.metrics.findTurnMetric(metricId))this.repos.telemetry.metrics.updateTurnMetric(metricId,{deliveryStartedAt:Date.now()});
           while(true){
             const attempt:NonNullable<Delivery['attempt']>={...sending.attempt,number:(sending.attempt?.number??0)+1,phase:'prepare',assetId:asset?.id,startedAt:Date.now()};
-            sending={...sending,attempt};this.store.deliveryState(sending,'sending');
+            sending={...sending,attempt};this.repos.deliveries.deliveryState(sending,'sending');
             try{
               // Multipart media can exceed 90 seconds at normal upload speeds.
               // Each adapter request still has its own shorter network timeout.
@@ -133,21 +133,21 @@ export class DurableDeliveryWorker implements DeliveryWorker {
               if(!this.contextActive(delivery))throw Error('DELIVERY_CONTEXT_REVOKED');
               const send=definition.adapter.send(bot,credential,sending,asset,sendSignal);
               const receipt=await (resultDelivery?send:abortable(send,sendSignal));
-              this.store.deliveryState(sending,'sent',receipt);if(resultDelivery){if(this.store.findTurnMetric(metricId))this.store.updateTurnMetric(metricId,{sentAt:Date.now()});this.store.updateTurnMetricsByTurn(delivery.scopeKey,delivery.turnId,{sentAt:Date.now()});}break;
+              this.repos.deliveries.deliveryState(sending,'sent',receipt);if(resultDelivery){if(this.repos.telemetry.metrics.findTurnMetric(metricId))this.repos.telemetry.metrics.updateTurnMetric(metricId,{sentAt:Date.now()});this.repos.telemetry.metrics.updateTurnMetricsByTurn(delivery.scopeKey,delivery.turnId,{sentAt:Date.now()});}break;
             }catch(error){
               const {message,...detail}=failure(error);attempt.lastError=message;Object.assign(attempt,detail);
               const retryCount=attempt.autoRetryCount??0;
               if(!controller.signal.aborted&&!this.closed&&retryCount<AUTO_RETRY_LIMIT&&mayAutoRetry(error,sending)){
-                attempt.autoRetryCount=retryCount+1;this.store.deliveryState(sending,'sending',undefined,attempt.lastError);
-                try{await this.wait(AUTO_RETRY_DELAYS[retryCount]??AUTO_RETRY_DELAYS.at(-1)!,controller.signal);}catch{this.store.deliveryState(sending,terminalState(error,sending),undefined,attempt.lastError);break;}
+                attempt.autoRetryCount=retryCount+1;this.repos.deliveries.deliveryState(sending,'sending',undefined,attempt.lastError);
+                try{await this.wait(AUTO_RETRY_DELAYS[retryCount]??AUTO_RETRY_DELAYS.at(-1)!,controller.signal);}catch{this.repos.deliveries.deliveryState(sending,terminalState(error,sending),undefined,attempt.lastError);break;}
                 continue;
               }
-              this.store.deliveryState(sending,terminalState(error,sending),undefined,attempt.lastError);break;
+              this.repos.deliveries.deliveryState(sending,terminalState(error,sending),undefined,attempt.lastError);break;
             }
           }
         }catch(error){
           const pending=repository.find(delivery.id,'pending');if(!pending)continue;
-          this.store.deliveryState(pending,'failed',undefined,failure(error).message);
+          this.repos.deliveries.deliveryState(pending,'failed',undefined,failure(error).message);
         }finally{if(progressTimer)clearTimeout(progressTimer);this.outbound.delete(delivery.id);}
       }
     }

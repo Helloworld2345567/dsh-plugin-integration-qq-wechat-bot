@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {existsSync,mkdirSync,copyFileSync,realpathSync,writeFileSync,lstatSync,readFileSync} from 'node:fs';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
-import type {Store} from './store.js';
+import type {EvolutionRepository} from './ports/evolution.js';
 import {LifecycleJournal,defaultProductHome,readInstallation,packageIdentity,sha256,verifyArtifact,type EvolutionTask} from '../../packages/bot-lifecycle/src/contract/evolution-contract.js';
 import type {EvolutionJournalPort,LifecyclePort} from './runtime-ports.js';
 import {sourceFiles,sourceDigest} from '../../packages/bot-lifecycle/src/contract/source-integrity.js';
@@ -38,7 +38,7 @@ async function run(command:ValidationCommand,cwd:string,env:NodeJS.ProcessEnv,si
 export class EvolutionService {
   readonly journal:EvolutionJournalPort;readonly productHome:string;
   private validating=new Set<string>();
-  constructor(readonly store:Pick<Store,'home'|'saveEvolutionTask'>,readonly installedPackageRoot:string,readonly options:EvolutionOptions={}){
+  constructor(readonly store:Pick<EvolutionRepository,'home'|'saveEvolutionTask'>,readonly installedPackageRoot:string,readonly options:EvolutionOptions={}){
     this.productHome=options.productHome??defaultProductHome(store.home);this.journal=options.lifecycle?.journal?.(this.productHome)??new LifecycleJournal(this.productHome);
     for(const task of this.journal.list())if(task.phase==='validating'){
       let alive=false;if(task.validationPid)try{process.kill(task.validationPid,0);alive=true;}catch{}

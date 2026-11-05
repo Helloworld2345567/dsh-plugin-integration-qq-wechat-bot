@@ -2,7 +2,8 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
-import {Store,scopeKey} from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
+import {scopeKey} from '../src/core/identity.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {BotRuntime,type HarnessPort} from '../src/core/runtime.js';
 import {createChannelRegistry} from '../src/core/channel-registry.js';
@@ -17,7 +18,7 @@ test('attachment download failure sends an explicit durable failure instead of s
   const message:InboundMessage={id:'new-reference',scope,text:'参考此图生成图片，将人物换成你',attachments:[{kind:'image',name:'reference.jpg',mime:'image/jpeg',url:'https://example.invalid/image'}],reply:{target:'alice'},timestamp:Date.now()};
   const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async()=>{throw Error('Invalid IP address: undefined');},send:async(_bot,_credential,delivery)=>{sent.push(delivery.output.text!);return'receipt';}};
   const harness:HarnessPort={run:async()=>{calls++;throw Error('model must not run');},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async()=>{}};
-  const assets=new Assets(store);const runtime=new BotRuntime(store,assets,new MediaService(store,assets),harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),{read:async()=>({accountId:'one'}),write:async()=>{},remove:async()=>{}},60000);
+  const assets=new Assets(store.repositories());const runtime=new BotRuntime(store.repositories(),assets,new MediaService(store.repositories(),assets),harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),{read:async()=>({accountId:'one'}),write:async()=>{},remove:async()=>{}},60000);
   t.after(async()=>{await runtime.close();store.close();await rm(root,{recursive:true,force:true});});
   await runtime.receive(message);await runtime.process(scopeKey(scope));
   assert.equal(calls,0);assert.equal(sent.length,1,'the failed image request must not disappear without feedback');
@@ -25,10 +26,10 @@ test('attachment download failure sends an explicit durable failure instead of s
   assert.equal(store.deliveries(['sent'])[0].sourceId,message.id);
   const failure=store.list<any>('failure')[0];assert.equal(failure.stage,'attachments');assert.deepEqual(failure.sourceIds,[message.id]);
   const followup={...message,id:'followup',text:'调用失败了吗',attachments:[],timestamp:failure.at+1};
-  const binding=store.binding(scope);const context=recentFailureContext(store,binding,[followup]);assert.match(context!,/未生成新图片/);assert.match(context!,/参考此图/);
-  assert.equal(recentFailureContext(store,{...binding,sessionId:'different-session'},[followup]),undefined);
-  assert.equal(recentFailureContext(store,{...binding,key:'different-scope'},[followup]),undefined);
-  assert.equal(recentFailureContext(store,binding,[followup],failure.at+600001),undefined);
+  const binding=store.binding(scope);const context=recentFailureContext({failures:store.persistence.failures,deliveries:store.persistence.deliveries,inbox:store.persistence.inbox},binding,[followup]);assert.match(context!,/未生成新图片/);assert.match(context!,/参考此图/);
+  assert.equal(recentFailureContext({failures:store.persistence.failures,deliveries:store.persistence.deliveries,inbox:store.persistence.inbox},{...binding,sessionId:'different-session'},[followup]),undefined);
+  assert.equal(recentFailureContext({failures:store.persistence.failures,deliveries:store.persistence.deliveries,inbox:store.persistence.inbox},{...binding,key:'different-scope'},[followup]),undefined);
+  assert.equal(recentFailureContext({failures:store.persistence.failures,deliveries:store.persistence.deliveries,inbox:store.persistence.inbox},binding,[followup],failure.at+600001),undefined);
   await runtime.receive(message);await runtime.process(scopeKey(scope));assert.equal(sent.length,1,'duplicate platform event cannot duplicate failure feedback');
 });
 
@@ -39,7 +40,7 @@ test('model provider failures preserve an actionable error code in the user-faci
   const message:InboundMessage={id:'model-failure',scope,text:'为什么没有回复',attachments:[],reply:{target:'alice'},timestamp:Date.now()};
   const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async()=>Buffer.from(''),send:async(_bot,_credential,delivery)=>{sent.push(delivery.output.text!);return'receipt';}};
   const harness:HarnessPort={run:async()=>{throw Error('INVALID_REQUEST: upstream model rejected the request');},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async()=>{}};
-  const assets=new Assets(store);const runtime=new BotRuntime(store,assets,new MediaService(store,assets),harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),{read:async()=>({accountId:'one'}),write:async()=>{},remove:async()=>{}},0);
+  const assets=new Assets(store.repositories());const runtime=new BotRuntime(store.repositories(),assets,new MediaService(store.repositories(),assets),harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),{read:async()=>({accountId:'one'}),write:async()=>{},remove:async()=>{}},0);
   t.after(async()=>{await runtime.close();store.close();await rm(root,{recursive:true,force:true});});
   await runtime.receive(message);await runtime.process(scopeKey(scope));
   assert.equal(sent.length,1);assert.match(sent[0],/模型请求失败/);assert.match(sent[0],/INVALID_REQUEST/);assert.match(sent[0],/重置模型/);
@@ -47,7 +48,7 @@ test('model provider failures preserve an actionable error code in the user-faci
 });
 
 test('another bot credential failure cannot relabel a completed request or its accepted delivery',async t=>{
-  const root=await mkdtemp(path.resolve('.codex/process-failure-'));const store=new Store(root);const assets=new Assets(store);
+  const root=await mkdtemp(path.resolve('.codex/process-failure-'));const store=new Store(root);const assets=new Assets(store.repositories());
   for(const id of ['good','bad'])store.saveBot(botSchema.parse({id,name:id,channel:'qq',accountId:id,enabled:true}));
   const scope:CallerScope={botId:'good',platform:'qq',accountId:'good',kind:'private',channelId:'alice',senderId:'alice'};
   const other=store.binding({...scope,botId:'bad',accountId:'bad'});store.enqueue(other,'other-request','other-turn',[{type:'text',text:'other reply'},{type:'text',text:'later chunk'}],{});
@@ -55,7 +56,7 @@ test('another bot credential failure cannot relabel a completed request or its a
   let acceptOwn!:()=>void;const ownAccepted=new Promise<void>(resolve=>acceptOwn=resolve);const sent:string[]=[];
   const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async()=>{throw Error('unused');},send:async(bot)=>{sent.push(bot.id);acceptOwn();return'accepted-receipt';}};
   const harness:HarnessPort={run:async(binding,messages)=>({turnId:'successful-turn',outputs:[{type:'text',text:'accepted reply'}],snapshot:freezeTurn(store.effectiveConfig(binding),store.bot('good'),scope,messages.map(m=>m.id))}),cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async()=>{}};
-  const runtime=new BotRuntime(store,assets,new MediaService(store,assets),harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),{read:async id=>{if(id==='bad'){await ownAccepted;await new Promise<void>(resolve=>setImmediate(resolve));throw Error('OTHER_BOT_CREDENTIAL_FAILURE');}return{accountId:id};},write:async()=>{},remove:async()=>{}},60000);
+  const runtime=new BotRuntime(store.repositories(),assets,new MediaService(store.repositories(),assets),harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),{read:async id=>{if(id==='bad'){await ownAccepted;await new Promise<void>(resolve=>setImmediate(resolve));throw Error('OTHER_BOT_CREDENTIAL_FAILURE');}return{accountId:id};},write:async()=>{},remove:async()=>{}},60000);
   t.after(async()=>{await runtime.close();store.close();await rm(root,{recursive:true,force:true});});
   await runtime.receive(message);await runtime.process(scopeKey(scope));
   assert.deepEqual(sent,['good']);assert.equal(store.deliveries(['sent'])[0].receipt,'accepted-receipt');
@@ -63,7 +64,7 @@ test('another bot credential failure cannot relabel a completed request or its a
   assert.equal(store.list<any>('failure').filter(f=>f.sessionId===store.binding(scope).sessionId).length,0);
   const rejected=store.deliveries().find(d=>d.botId==='bad')!;assert.equal(rejected.state,'failed');assert.equal(rejected.error,'OTHER_BOT_CREDENTIAL_FAILURE');
   assert.deepEqual(store.deliveries().filter(d=>d.botId==='bad').map(d=>d.state),['failed','failed'],'later chunks proceed after a failed delivery without relabelling the accepted request');
-  assert.equal(recentFailureContext(store,store.binding(scope),[{...message,id:'followup',timestamp:Date.now()+1}]),undefined);
+  assert.equal(recentFailureContext({failures:store.persistence.failures,deliveries:store.persistence.deliveries,inbox:store.persistence.inbox},store.binding(scope),[{...message,id:'followup',timestamp:Date.now()+1}]),undefined);
 });
 
 test('a queued followup sees failures recorded after its arrival and current request IDs are excluded',async t=>{
@@ -74,9 +75,9 @@ test('a queued followup sees failures recorded after its arrival and current req
   const photo:InboundMessage={id:'photo',scope,text:'edit my photo',attachments:[],reply:{},timestamp:now-300};store.accept(photo);
   store.put('failure','photo-failure',{sessionId:binding.sessionId,scope:binding.key,state:'failed',stage:'attachments',sourceIds:[photo.id],at:now-100,code:'DOWNLOAD_FAILED'});
   const followup={...photo,id:'queued-followup',text:'was it generated?',timestamp:now-200};
-  assert.match(recentFailureContext(store,binding,[followup],now)!,/edit my photo/);
-  assert.equal(recentFailureContext(store,binding,[photo],now),undefined,'a current request cannot also be represented as a prior failed request');
-  assert.equal(recentFailureContext(store,binding,[followup],now+600001),undefined);
+  assert.match(recentFailureContext({failures:store.persistence.failures,deliveries:store.persistence.deliveries,inbox:store.persistence.inbox},binding,[followup],now)!,/edit my photo/);
+  assert.equal(recentFailureContext({failures:store.persistence.failures,deliveries:store.persistence.deliveries,inbox:store.persistence.inbox},binding,[photo],now),undefined,'a current request cannot also be represented as a prior failed request');
+  assert.equal(recentFailureContext({failures:store.persistence.failures,deliveries:store.persistence.deliveries,inbox:store.persistence.inbox},binding,[followup],now+600001),undefined);
 });
 
 test('historical delivery failure context yields to accepted outputs but not to a sent failure notice',async t=>{
@@ -88,11 +89,11 @@ test('historical delivery failure context yields to accepted outputs but not to 
   const failure={sessionId:binding.sessionId,scope:binding.key,state:'failed',stage:'delivery',sourceIds:[source.id],at:now-100,code:'FLUSH_FAILED'};store.put('failure','historical',failure);
   const followup={...source,id:'followup',timestamp:now};
   store.enqueue(binding,source.id,'failure:original',[{type:'text',text:'could not process'}],{});store.deliveryState(store.deliveries()[0],'sent','failure-receipt');
-  assert.match(recentFailureContext(store,binding,[followup],now)!,/发送状态未确认/);
+  assert.match(recentFailureContext({failures:store.persistence.failures,deliveries:store.persistence.deliveries,inbox:store.persistence.inbox},binding,[followup],now)!,/发送状态未确认/);
   store.enqueue(binding,source.id,'model-turn',[{type:'text',text:'result'},{type:'text',text:'second chunk'}],{});const [output,second]=store.deliveries(['pending']);
-  assert.match(recentFailureContext(store,binding,[followup],now)!,/发送状态未确认/);
-  store.deliveryState(output,'sent','result-receipt');assert.match(recentFailureContext(store,binding,[followup],now)!,/发送状态未确认/,'a partial send cannot supersede a delivery failure');
-  store.deliveryState(second,'sent','second-receipt');assert.equal(recentFailureContext(store,binding,[followup],now),undefined,'successful original output supersedes stale delivery failure');
+  assert.match(recentFailureContext({failures:store.persistence.failures,deliveries:store.persistence.deliveries,inbox:store.persistence.inbox},binding,[followup],now)!,/发送状态未确认/);
+  store.deliveryState(output,'sent','result-receipt');assert.match(recentFailureContext({failures:store.persistence.failures,deliveries:store.persistence.deliveries,inbox:store.persistence.inbox},binding,[followup],now)!,/发送状态未确认/,'a partial send cannot supersede a delivery failure');
+  store.deliveryState(second,'sent','second-receipt');assert.equal(recentFailureContext({failures:store.persistence.failures,deliveries:store.persistence.deliveries,inbox:store.persistence.inbox},binding,[followup],now),undefined,'successful original output supersedes stale delivery failure');
 });
 
 test('uncertain delivery state is visible to the next turn without triggering a duplicate resend',async t=>{
@@ -102,7 +103,7 @@ test('uncertain delivery state is visible to the next turn without triggering a 
   const scope:CallerScope={botId:'one',platform:'qq',accountId:'one',kind:'private',channelId:'alice',senderId:'alice'};const binding=store.binding(scope);const now=Date.now();
   const source:InboundMessage={id:'unknown-image',scope,text:'生成一张图片',attachments:[],reply:{},timestamp:now-100};store.accept(source);
   store.enqueue(binding,source.id,'image-turn',[{type:'asset',assetId:'asset-one'}],{});const delivery=store.deliveries()[0];store.deliveryState(delivery,'unknown',undefined,'receipt lost');
-  const followup={...source,id:'ask-status',text:'图片发来了吗',timestamp:now};const context=recentFailureContext(store,binding,[followup],Date.now()+1);
+  const followup={...source,id:'ask-status',text:'图片发来了吗',timestamp:now};const context=recentFailureContext({failures:store.persistence.failures,deliveries:store.persistence.deliveries,inbox:store.persistence.inbox},binding,[followup],Date.now()+1);
   assert.match(context!,/平台投递状态未知/);assert.match(context!,/asset-one/);assert.match(context!,/不要自行重复发送/);assert.match(context!,/已排队说成已送达/);
 });
 
@@ -113,7 +114,7 @@ for(const phase of ['prepare','upload'] as const)test(`failed ${phase} rejection
   const source:InboundMessage={id:'long-reading',scope,text:'朗读完整文章',attachments:[],reply:{},timestamp:now-100};store.accept(source);
   store.enqueue(binding,source.id,'voice-turn',[{type:'asset',assetId:'long-audio'}],{});const delivery=store.deliveries()[0];
   store.deliveryState({...delivery,attempt:{number:1,phase,assetId:'long-audio',startedAt:now-50}},'failed',undefined,'REMOTE_HTTP_400');
-  const context=recentFailureContext(store,binding,[{...source,id:'followup',text:'没有收到语音',timestamp:now}],Date.now()+1)!;
+  const context=recentFailureContext({failures:store.persistence.failures,deliveries:store.persistence.deliveries,inbox:store.persistence.inbox},binding,[{...source,id:'followup',text:'没有收到语音',timestamp:now}],Date.now()+1)!;
   assert.match(context,/消息尚未提交，未送达/);assert.match(context,/等待用户明确要求重试/);assert.match(context,/long-audio/);
   assert.doesNotMatch(context,/可能已经送达|队列继续处理|自动重试/);assert.equal(store.deliveries()[0].state,'failed');
 });
@@ -126,7 +127,7 @@ for(const phase of ['prepare','upload'] as const)test(`crash recovery with a per
   store.enqueue(binding,source.id,'voice-turn',[{type:'asset',assetId:'long-audio'}],{});const delivery=store.deliveries()[0];
   store.deliveryState({...delivery,attempt:{number:1,phase,assetId:'long-audio',startedAt:now-50}},'sending');
   store.recover();
-  const context=recentFailureContext(store,binding,[{...source,id:'followup',text:'没有收到语音',timestamp:now}],Date.now()+1)!;
+  const context=recentFailureContext({failures:store.persistence.failures,deliveries:store.persistence.deliveries,inbox:store.persistence.inbox},binding,[{...source,id:'followup',text:'没有收到语音',timestamp:now}],Date.now()+1)!;
   assert.match(context,/平台投递状态未知，尚未确认送达/);assert.match(context,/可能已经送达，不要自行重复发送/);assert.match(context,/long-audio/);
   assert.doesNotMatch(context,/消息尚未提交|未送达|队列继续处理|自动重试/);assert.equal(store.deliveries()[0].state,'unknown');
 });
@@ -137,7 +138,7 @@ test('failed delivery context asks for explicit recovery instead of promising a 
   const scope:CallerScope={botId:'one',platform:'qq',accountId:'one',kind:'private',channelId:'alice',senderId:'alice'},binding=store.binding(scope),now=Date.now();
   const source:InboundMessage={id:'original',scope,text:'发送音频',attachments:[],reply:{},timestamp:now-100};store.accept(source);
   store.enqueue(binding,source.id,'voice-turn',[{type:'asset',assetId:'audio'}],{});store.deliveryState(store.deliveries()[0],'failed',undefined,'DELIVERY_PREPARATION_FAILED');
-  const context=recentFailureContext(store,binding,[{...source,id:'followup',timestamp:now}],Date.now()+1)!;
+  const context=recentFailureContext({failures:store.persistence.failures,deliveries:store.persistence.deliveries,inbox:store.persistence.inbox},binding,[{...source,id:'followup',timestamp:now}],Date.now()+1)!;
   assert.match(context,/平台投递失败，未送达/);assert.match(context,/等待用户明确要求重试/);assert.doesNotMatch(context,/队列继续处理|自动重试/);
 });
 
@@ -150,7 +151,7 @@ test('failed progress never enters model failure context or masks a failed resul
   const source:InboundMessage={id:'task',scope,text:'处理任务',attachments:[],reply:{},timestamp:now-100};store.accept(source);
   store.enqueue(binding,source.id,'progress:run:1',[{type:'text',text:'任务还在进行中'}],{},undefined,{runId:'run',generation:binding.generation,expiresAt:now+60000});
   const delivery=store.deliveries()[0];store.deliveryState(delivery,'unknown',undefined,'receipt lost');const followup={...source,id:'followup',text:'结果呢'};
-  assert.equal(recentFailureContext(store,binding,[followup]),undefined);
+  assert.equal(recentFailureContext({failures:store.persistence.failures,deliveries:store.persistence.deliveries,inbox:store.persistence.inbox},binding,[followup]),undefined);
   store.deliveryState(delivery,'sent','receipt');store.put('failure','failed-result',{sessionId:binding.sessionId,scope:binding.key,state:'failed',stage:'delivery',sourceIds:[source.id],at:now,code:'RESULT_FAILED'});
-  assert.match(recentFailureContext(store,binding,[followup])!,/发送状态未确认/);
+  assert.match(recentFailureContext({failures:store.persistence.failures,deliveries:store.persistence.deliveries,inbox:store.persistence.inbox},binding,[followup])!,/发送状态未确认/);
 });

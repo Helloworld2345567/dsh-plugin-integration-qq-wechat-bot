@@ -5,7 +5,7 @@ import {HarnessMediaProvider} from '../src/harness/media-provider.js';
 import {configSchema,botSchema} from '../src/core/types.js';
 import {allowedNow,freezeTurn,mediaConfigNow} from '../src/core/policy.js';
 import {MediaService,type Assets} from '../src/core/media.js';
-import type {Store} from '../src/core/store.js';
+
 
 function fixture(){
   let secret='stored-key';let reference='CHAT_KEY';let api='openai-completions';
@@ -40,7 +40,7 @@ test('analysis model stays frozen during turn; permission additions wait and rol
   const disabled=configSchema.parse({...next,media:{asr:{enabled:false},video:{enabled:false}}});assert.equal(allowedNow('media_analysis',snapshot,disabled,owner,scope),false);assert.equal(mediaConfigNow(snapshot,disabled).media.asr?.enabled,false);
 });
 test('media status reports readiness without leaking resolved secrets or provider endpoint',async()=>{
-  const f=fixture();const media=new MediaService({} as Store,{} as Assets,undefined,f.resolver);
+  const f=fixture();const media=new MediaService({} as never,{} as Assets,undefined,f.resolver);
   const status=await media.analysisStatus(config(),'video');assert.equal(status.keyConfigured,true);assert.equal(status.model,'chat-model');const json=JSON.stringify(status);assert.ok(!json.includes('stored-key'));assert.ok(!json.includes('https://'));
   const disabled=await media.analysisStatus({...config(),skills:[]},'video');assert.equal(disabled.enabled,false);assert.equal(disabled.keyConfigured,false);
 });

@@ -3,7 +3,7 @@ import {test,type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,rm,writeFile,readdir} from 'node:fs/promises';
 import path from 'node:path';
-import {Store} from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {botSchema,configSchema,type CallerScope} from '../src/core/types.js';
 import {freezeTurn} from '../src/core/policy.js';
@@ -21,7 +21,7 @@ async function fixture(t:TestContext){
   t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
   const config=configSchema.parse({schemaVersion:4,id:'music',name:'Music',personaPrompt:'Hello',skills:['music-download','singing-conversion'],tools:['bot_music','bot_sing'],media:{music:{enabled:true,profileRef:{serviceId:'music',profileId:'default'}},singing:{enabled:true,profileRef:{serviceId:'rvc',profileId:'default'}}}});store.put('config',config.id,config);store.put('config-version',`${config.id}:${config.revision}`,config);
   const bot=store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',enabled:true,configId:config.id})),scope:CallerScope={botId:'bot',platform:'qq',accountId:'bot',kind:'private',channelId:'alice',senderId:'alice'},binding=store.binding(scope);
-  const assets=new Assets(store);assets.workspace=async key=>path.join(home,'workspaces',key);
+  const assets=new Assets(store.repositories());assets.workspace=async key=>path.join(home,'workspaces',key);
   const live:MusicContext&{singing:{attempted:boolean}}={binding,snapshot:freezeTurn(config,bot,scope,['request'],testServiceProfiles()),assets:[],singing:{attempted:false}};
   const calls:string[]=[],jobs:MediaWorkerJob[]=[];let format='mp3',hook:((job:MediaWorkerJob)=>Promise<void>)|undefined;
   const worker={run:async(job:MediaWorkerJob)=>{calls.push(job.operation);jobs.push(job);await hook?.(job);
@@ -36,7 +36,7 @@ async function fixture(t:TestContext){
     const result=await worker.run({protocol:'dsh.media-worker',protocolVersion:1,id:'fixture',scope:request.scopeKey,operation,handler:'skill',inputs:request.resolvedInputs,parameters:request.parameters,output:request.outputDirectory,usagePath:path.join(request.outputDirectory,'usage.json'),deadline:request.deadline,timeoutMs:240000,quotaUnits:1} as MediaWorkerJob);
     return {outputs:result.assets?.map(file=>({kind:file.kind,path:file.path,relativePath:file.name,mime:file.mime}))??[],observations:{music:result.music}};
   }};
-  const media=new MediaService(store,assets,undefined,undefined,worker,undefined,undefined,serviceRuntime as any),deps={store,assets,media,current:()=>config,bot:()=>bot};
+  const media=new MediaService(store.repositories(),assets,undefined,undefined,worker,undefined,undefined,serviceRuntime as any),deps={repos:{bindings:store.persistence.sessions,music:store.persistence.musicState,singing:store.persistence.singingState,personas:store.persistence.personas,capabilities:store.persistence.capability,assets:store.persistence.assets},assets,media,current:()=>config,bot:()=>bot};
   const call=(args:Record<string,unknown>,signal=new AbortController().signal)=>executeMusicTool(live,args,signal,deps);
   return {home,store,assets,config,bot,binding,live,media,deps,call,calls,jobs,setFormat:(value:string)=>{format=value;},setHook:(value:typeof hook)=>{hook=value;}};
 }
@@ -45,7 +45,7 @@ test('music search exposes scoped choices without provider URLs or identifiers',
   const f=await fixture(t),result=JSON.parse(await f.call({action:'search',song:'晴天',artist:'周杰伦'}));
   assert.equal(result.candidates.length,2);assert.equal(result.candidates[0].number,1);assert.equal(result.candidates[0].artist,'周杰伦');
   assert.doesNotMatch(JSON.stringify(result),/private|locator|song-1/);assert.equal(f.live.assets.length,0);
-  assert.ok(musicCandidates(f.store,f.binding)?.candidates[0].locator);
+  assert.ok(musicCandidates({bindings:f.store.persistence.sessions,music:f.store.persistence.musicState},f.binding)?.candidates[0].locator);
   const replaced=JSON.parse(await f.call({action:'search',song:'晴天'}));assert.notEqual(result.candidateSet,replaced.candidateSet);
   await assert.rejects(f.call({action:'download',candidateSet:result.candidateSet,candidate:1}),/MUSIC_CANDIDATES_STALE/);
   f.store.reset(f.binding.scope);await assert.rejects(f.call({action:'download',candidateSet:replaced.candidateSet,candidate:1}),/MUSIC_SESSION_CHANGED/);
@@ -108,7 +108,7 @@ test('asset ownership is rechecked after asynchronous writes and generation chan
 });
 test('a new request can retry failed acquisition, while a successful current-session source is reused',async t=>{
   const f=await fixture(t);await f.call({action:'download',song:'晴天'});f.live.snapshot=freezeTurn(f.config,f.bot,f.binding.scope,['request-2'],testServiceProfiles());await f.call({action:'download',song:'晴天'});assert.deepEqual(f.calls,['music_acquire']);
-  clearMusicState(f.store,f.binding.key);assert.equal(f.store.get('music-acquisition',f.binding.key),null);
+  clearMusicState(f.store.persistence.musicState,f.binding.key);assert.equal(f.store.get('music-acquisition',f.binding.key),null);
 });
 test('named singing reuses the downloaded original and never makes a delivery MP3 before RVC',async t=>{
   const f=await fixture(t);f.setFormat('flac');await f.call({action:'download',song:'晴天'});const acquired=f.store.get<any>('music-acquisition',f.binding.key);

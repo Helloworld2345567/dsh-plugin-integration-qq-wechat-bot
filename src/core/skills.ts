@@ -3,7 +3,7 @@ import {existsSync,lstatSync,mkdirSync,readFileSync,readdirSync,renameSync,write
 import path from 'node:path';
 import YAML from 'yaml';
 import {z} from 'zod';
-import type {Store} from './store.js';
+import type {PersonaConfigRepository} from './ports/persona.js';
 import {packageRoot} from './paths.js';
 import type {BotConfig} from './types.js';
 
@@ -44,10 +44,10 @@ function definition(name:string,tree:Tree,root:string,version:string):FrozenSkil
 
 /** Drafts are editable; the configuration points to immutable, content-addressed releases. */
 export class DynamicSkills {
-  constructor(readonly store:Store,readonly bundledRoot=path.join(packageRoot(),'skills')){}
-  private draftRoot(configId:string):string {const root=path.join(this.store.personaDirectory(configId),'skills');directory(root);return root;}
+  constructor(readonly personas:PersonaConfigRepository,readonly home:string,readonly bundledRoot=path.join(packageRoot(),'skills')){}
+  private draftRoot(configId:string):string {const root=path.join(this.personas.personaDirectory(configId),'skills');directory(root);return root;}
   private draft(configId:string,name:string):string {nameSchema.parse(name);segment(name);const root=this.draftRoot(configId);const collision=readdirSync(root).find(n=>n.toLowerCase()===name.toLowerCase()&&n!==name);if(collision)throw new Error('SKILL_CASE_COLLISION');const result=path.join(root,name);if(existsSync(result))directory(result);return result;}
-  private releaseRoot(configId:string,name:string,version:string):string {this.store.personaDirectory(configId);nameSchema.parse(name);if(!/^[a-f0-9]{64}$/.test(version))throw new Error('SKILL_VERSION_INVALID');const base=path.join(this.store.home,'skill-versions');directory(base);const owner=path.join(base,configId);directory(owner);const skill=path.join(owner,name);directory(skill);return path.join(skill,version);}
+  private releaseRoot(configId:string,name:string,version:string):string {this.personas.personaDirectory(configId);nameSchema.parse(name);if(!/^[a-f0-9]{64}$/.test(version))throw new Error('SKILL_VERSION_INVALID');const base=path.join(this.home,'skill-versions');directory(base);const owner=path.join(base,configId);directory(owner);const skill=path.join(owner,name);directory(skill);return path.join(skill,version);}
   private stage(configId:string,name:string,tree:Tree):string {
     if(Object.hasOwn(packagedSkills,name))throw new Error('BUILTIN_SKILL_REQUIRES_CODE_UPDATE');
     const version=fingerprint(tree);const target=this.releaseRoot(configId,name,version);definition(name,tree,target,version);
@@ -77,7 +77,7 @@ export class DynamicSkills {
     const version=this.stage(config.id,name,tree);
     // Replace the whole draft so removed scripts cannot remain accidentally executable.
     const temporary=folder+'.'+randomUUID()+'.tmp';directory(temporary);for(const [file,data] of tree){const target=path.join(temporary,file);mkdirSync(path.dirname(target),{recursive:true});writeFileSync(target,data,{flag:'wx'});}
-    if(existsSync(folder)){const archive=path.join(this.store.home,'skill-draft-archives');directory(archive);renameSync(folder,path.join(archive,randomUUID()));}renameSync(temporary,folder);
+    if(existsSync(folder)){const archive=path.join(this.home,'skill-draft-archives');directory(archive);renameSync(folder,path.join(archive,randomUUID()));}renameSync(temporary,folder);
     return {...config,skills:[...new Set([...config.skills,name])],skillVersions:{...config.skillVersions,[name]:version}};
   }
   copy(config:BotConfig,newId:string):void {
@@ -99,7 +99,7 @@ export class DynamicSkills {
       const folder=this.draft(after.id,name);if(existsSync(folder)&&fingerprint(readTree(folder))!==after.skillVersions[name])throw Error('SKILL_DRAFT_CONFLICT: 回退前请保留或处理手工修改');
       const version=before.skillVersions[name];changes.push({name,folder,version,tree:version?readTree(this.releaseRoot(before.id,name,version)):undefined});
     }
-    const archive=path.join(this.store.home,'skill-draft-archives');directory(archive);
+    const archive=path.join(this.home,'skill-draft-archives');directory(archive);
     try{
       for(const change of changes){
         // Prepare a complete replacement before touching the editable draft. Failed

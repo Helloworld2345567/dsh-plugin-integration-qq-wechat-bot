@@ -5,7 +5,7 @@ import path from 'node:path';
 import {decode,encode,getDuration,isSilk} from 'silk-wasm';
 import {createQQAudioPreparer} from '../src/channels/qq-audio.js';
 import {Assets} from '../src/core/media.js';
-import {Store} from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
 import {botSchema,type Asset,type ChannelOutboundContext} from '../src/core/types.js';
 import {TransformSlots} from '../src/core/transform-slots.js';
 import {NodeControlledProcessPort,type ControlledProcessPort} from '../src/harness/controlled-process.js';
@@ -13,7 +13,7 @@ import {NodeControlledProcessPort,type ControlledProcessPort} from '../src/harne
 function pcm(samples:number){const bytes=Buffer.alloc(samples*2);for(let sample=0;sample<samples;sample++)bytes.writeInt16LE(Math.round(5000*Math.sin(sample*2*Math.PI*440/24000)),sample*2);return bytes;}
 function wav(data:Buffer){const header=Buffer.alloc(44);header.write('RIFF');header.writeUInt32LE(data.length+36,4);header.write('WAVEfmt ',8);header.writeUInt32LE(16,16);header.writeUInt16LE(1,20);header.writeUInt16LE(1,22);header.writeUInt32LE(24000,24);header.writeUInt32LE(48000,28);header.writeUInt16LE(2,32);header.writeUInt16LE(16,34);header.write('data',36);header.writeUInt32LE(data.length,40);return Buffer.concat([header,data]);}
 async function fixture(t:TestContext){
-  await mkdir(path.resolve('.codex'),{recursive:true});const home=await mkdtemp(path.resolve('.codex/qq-audio-')),store=new Store(home,path.join(home,'personas')),assets=new Assets(store);assets.workspace=async()=>path.join(home,'workspace');
+  await mkdir(path.resolve('.codex'),{recursive:true});const home=await mkdtemp(path.resolve('.codex/qq-audio-')),store=new Store(home,path.join(home,'personas')),assets=new Assets(store.repositories());assets.workspace=async()=>path.join(home,'workspace');
   t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});store.saveBot(botSchema.parse({id:'qq-audio',name:'QQ audio',channel:'qq',accountId:'account',enabled:true}));
   const binding=store.binding({botId:'qq-audio',platform:'qq',accountId:'account',kind:'private',channelId:'owner',senderId:'owner'}),controller=new AbortController();let allowed=true;
   const context=(source:Asset):ChannelOutboundContext=>({binding,outputs:[{type:'asset',assetId:source.id}],signal:controller.signal,authorize:()=>{if(!allowed)throw Error('REVOKED');}});

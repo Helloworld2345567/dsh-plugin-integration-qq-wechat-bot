@@ -4,25 +4,26 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
 import {qqInbound} from '../src/channels/qq.js';
 import {weixinInbound} from '../src/channels/weixin.js';
-import {Store,scopeKey} from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
+import {scopeKey} from '../src/core/identity.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {BotRuntime,type HarnessPort} from '../src/core/runtime.js';
 import {botSchema,type ChannelAdapter,type InboundMessage,type Delivery} from '../src/core/types.js';
 import {fixtureChannels} from './test-channel.js';
 
 async function fixture(t:any,channel:'qq'|'weixin'){
-  const directory=await mkdtemp(path.resolve('.codex/inbound-voice-')),store=new Store(directory),assets=new Assets(store);
+  const directory=await mkdtemp(path.resolve('.codex/inbound-voice-')),store=new Store(directory),assets=new Assets(store.repositories());
   const bot=store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel,accountId:'account',configId:'sakura',enabled:true}));
   const seen:InboundMessage[]=[],transcribed:string[]=[],materialized:InboundMessage['attachments'][number][]=[],sent:Delivery[]=[];
   const bytes=Buffer.from('received voice fixture');
   const harness:HarnessPort={run:async(_binding,messages,_signal,options)=>{seen.push(...messages);return{turnId:'reply',outputs:[{type:'text',text:'听到了'}],snapshot:options!.snapshot!};},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async()=>{}};
   const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async input=>{materialized.push(input);return bytes;},send:async(_bot,_credential,delivery)=>{sent.push(delivery);return'receipt';}};
-  const media=new MediaService(store,assets);media.run=async(key,operation,_config,inputs,_parameters,_signal,authorize)=>{
+  const media=new MediaService(store.repositories(),assets);media.run=async(key,operation,_config,inputs,_parameters,_signal,authorize)=>{
     assert.equal(operation,'transcribe');assert.equal(inputs.length,1);authorize?.();
     const asset=await assets.resolve(key,inputs[0]);assert.equal(asset.kind,'audio');assert.deepEqual(await assets.read(key,asset.id),bytes);
     transcribed.push(asset.id);return{text:JSON.stringify({transcript:'你好，请问现在几点？'}),assetIds:[]};
   };
-  const runtime=new BotRuntime(store,assets,media,harness,fixtureChannels(adapter),{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}},60000);
+  const runtime=new BotRuntime(store.repositories(),assets,media,harness,fixtureChannels(adapter),{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}},60000);
   t.after(async()=>{await runtime.close();store.close();await rm(directory,{recursive:true,force:true});});
   const receive=async(message:InboundMessage)=>{await runtime.receive(message);assert.equal(store.messages(scopeKey(message.scope)).length,1,'voice-only messages must be queued for immediate processing');await runtime.process(scopeKey(message.scope));};
   return{store,bot,seen,transcribed,materialized,sent,receive};

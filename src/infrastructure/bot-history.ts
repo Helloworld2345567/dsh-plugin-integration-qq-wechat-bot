@@ -7,6 +7,7 @@ import type {DeliveryRepository} from '../core/ports/delivery.js';
 import type {InboxRepository} from '../core/ports/inbox.js';
 import type {SqliteDatabase} from './sqlite/database.js';
 import {assetFolder, mediaFolders, type WorkspaceFiles} from './files/workspace-files.js';
+import type {BotHistorySnapshot as PortBotHistorySnapshot} from '../core/ports/bot-history.js';
 
 export interface BotHistoryDeps {
   database: SqliteDatabase;
@@ -30,7 +31,7 @@ export interface BotHistorySnapshot {
  */
 export class BotHistoryService {
   constructor(private readonly deps: BotHistoryDeps) {}
-  history(botId: string): BotHistorySnapshot {
+  snapshot(botId: string): BotHistorySnapshot {
     const rows = this.deps.database.records.entries().map(row => ({...row, value:JSON.parse(row.json) as Record<string, unknown>}));
     const scopes = new Set<string>(), sessions = new Set<string>(), jobs = new Set<string>(), automations = new Set<string>();
     const scopeOf = (value: Record<string, unknown> | undefined): CallerScope | undefined => {
@@ -57,7 +58,8 @@ export class BotHistoryService {
       (row.kind === 'reply-sequence' && (JSON.parse(row.id) as unknown[])[0] === botId)));
     return {scopes, sessions, jobs, records};
   }
-  async deleteFiles(assetsRoot: string, history: BotHistorySnapshot): Promise<void> {
+  async deleteFiles(assetsRoot: string, snapshot: PortBotHistorySnapshot): Promise<void> {
+    const history = snapshot as BotHistorySnapshot;
     for (const row of history.records) if (row.kind === 'asset') {
       const asset = row.value as unknown as Asset;
       if (asset.workspace) {
@@ -91,7 +93,8 @@ export class BotHistoryService {
       }
     }
   }
-  deleteRecords(botId: string, history: BotHistorySnapshot): void {
+  deleteRecords(botId: string, snapshot: PortBotHistorySnapshot): void {
+    const history = snapshot as BotHistorySnapshot;
     this.deps.database.transaction(() => {
       const db = this.deps.database.db;
       for (const row of history.records) db.prepare('DELETE FROM records WHERE kind=? AND id=?').run(row.kind, row.id);

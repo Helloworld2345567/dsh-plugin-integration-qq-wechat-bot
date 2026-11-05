@@ -4,7 +4,7 @@ import type {} from '@deepseek-ai/dsh-llm';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import Schema from '@deepseek-ai/schemastery';
-import { Store } from './core/store.js';
+import { SqlitePersistence } from './infrastructure/sqlite/persistence.js';
 import { Assets, MediaService } from './core/media.js';
 import { BotRuntime } from './core/runtime.js';
 import {createBotCredentials} from './harness/credentials.js';
@@ -22,11 +22,10 @@ import {packageRoot} from './core/paths.js';
 import {registerLifecycleRuntime,handleLifecycleShutdown,createLifecyclePort,packageIdentity} from '../packages/bot-lifecycle/src/contract/protocol.js';
 import {SessionId} from '@deepseek-ai/dsh-session';
 import {ServicePluginHost} from './core/service-plugin-host.js';
-import {ProfileStore,StoreProfileRepository} from './core/profile-store.js';
+import {ProfileStore} from './core/profile-store.js';
 import {OutputValidatorRegistry} from './core/output-validator.js';
 import {ServiceRuntime,type ApprovedServicePolicy} from './core/service-runtime.js';
 import {mediaOperationRegistry} from './core/media-operation-registry.js';
-import {StoreServiceStateRepository} from './core/service-state-store.js';
 import {BUILTIN_SERVICE_POLICIES} from './core/builtin-service-adapters.js';
 import {ServiceManagement} from './core/service-management.js';
 import {createBuiltinServiceAdapters,createVoiceModelLibrary} from './harness/service-adapter-runtime.js';
@@ -45,26 +44,29 @@ declare module '@deepseek-ai/cordis' {interface Context {botIntegration:BotRunti
 const HOST_SERVICE_POLICIES:ReadonlyMap<string,ApprovedServicePolicy>=BUILTIN_SERVICE_POLICIES;
 export async function apply(ctx:Context,config:Config={}):Promise<void>{
   const home=config.dataDir??process.env.BOT_DATA_HOME??path.join(process.env.DSH_HOME??path.join(process.cwd(),'.runtime','bot-data'),'storages','bot-integration');
-  const store=Store.open(home,undefined,{secureDefaults:true}).initialize().migrate();
-  let serviceHost:ServicePluginHost|undefined,serviceRuntime:ServiceRuntime|undefined;const profiles=new ProfileStore(new StoreProfileRepository(store));
+  // The composition root is the only place that opens storage, builds adapters
+  // and injects them into application services.
+  const persistence=SqlitePersistence.open(home,undefined,{secureDefaults:true}).initialize().migrate();
+  const repos=persistence.repositories();
+  let serviceHost:ServicePluginHost|undefined,serviceRuntime:ServiceRuntime|undefined;const profiles=new ProfileStore(persistence.profiles);
   try{
     // Validate every fixed source and create the immutable catalog before any
     // executable operation or Harness tool is exposed.
     serviceHost=await ServicePluginHost.createBuiltin(createBuiltinServiceAdapters(config.python));
     const validators=new OutputValidatorRegistry();
-    serviceRuntime=new ServiceRuntime(serviceHost,profiles,validators,HOST_SERVICE_POLICIES,new StoreServiceStateRepository(store),path.join(store.home,'.tmp','service-health'));
+    serviceRuntime=new ServiceRuntime(serviceHost,profiles,validators,HOST_SERVICE_POLICIES,persistence.serviceState,path.join(persistence.home,'.tmp','service-health'));
     serviceRuntime.assertApprovedMediaOperations(mediaOperationRegistry);
-  }catch(error){await serviceHost?.dispose().catch(()=>{});store.close();throw error;}
-  const assets=new Assets(store);const media=new MediaService(store,assets,config.python,new HarnessMediaProvider(ctx),new ProcessWorker(config.python),mediaOperationRegistry,undefined,serviceRuntime);
+  }catch(error){await serviceHost?.dispose().catch(()=>{});persistence.close();throw error;}
+  const assets=new Assets(repos);const media=new MediaService(repos,assets,config.python,new HarnessMediaProvider(ctx),new ProcessWorker(config.python),mediaOperationRegistry,undefined,serviceRuntime);
   const credentials=createBotCredentials(ctx.credentials);
-  const extensions:HarnessExtensions={};const harness=new NativeHarness(ctx,store,assets,media,extensions);let disposeMode;try{disposeMode=await harness.registerMode();}catch(error){await serviceHost.dispose().catch(()=>{});store.close();throw error;}
-  const channels=createChannelRegistry([qqChannel(new QQAdapter(undefined,{emit:event=>extensions.stats?.observeGroup({botId:event.botId,groupId:event.groupId,name:event.name,event:event.type==='group.joined'?'joined':event.type==='group.left'?'left':'observed',at:event.at,eventId:event.eventId})},undefined,undefined,createQQAudioPreparer(assets,{processes:new NodeControlledProcessPort()}))),weixinChannel(new WeixinAdapter(store.cursorStore()))]);
-  const runtime=new BotRuntime(store,assets,media,harness,channels,credentials,config.debounceMs,0,profiles);
+  const extensions:HarnessExtensions={};const harness=new NativeHarness(ctx,repos,assets,media,extensions);let disposeMode;try{disposeMode=await harness.registerMode();}catch(error){await serviceHost.dispose().catch(()=>{});persistence.close();throw error;}
+  const channels=createChannelRegistry([qqChannel(new QQAdapter(undefined,{emit:event=>extensions.stats?.observeGroup({botId:event.botId,groupId:event.groupId,name:event.name,event:event.type==='group.joined'?'joined':event.type==='group.left'?'left':'observed',at:event.at,eventId:event.eventId})},undefined,undefined,createQQAudioPreparer(assets,{processes:new NodeControlledProcessPort()}))),weixinChannel(new WeixinAdapter(persistence.cursors))]);
+  const runtime=new BotRuntime(repos,assets,media,harness,channels,credentials,config.debounceMs,0,profiles);
   const features=new BotFeatures(runtime,createLifecyclePort());extensions.stats=features.stats;extensions.model=(binding,snapshot,args,signal)=>features.model(binding,snapshot,args,signal);extensions.evolve=(binding,snapshot,args,signal)=>features.execute(binding,snapshot,args,signal);
   extensions.management=new BotManagement(runtime,features);
-  const voiceLibrary=createVoiceModelLibrary(store,profiles);
+  const voiceLibrary=createVoiceModelLibrary(persistence.voiceLibrarySettings,persistence.home,profiles);
   await voiceLibrary.initialize();
-  const services=new ServiceManagement(store,profiles,serviceRuntime,{models:()=>harness.models()},new Map(),voiceLibrary);
+  const services=new ServiceManagement({personas:persistence.personas,capabilities:persistence.capability,health:persistence.capability},profiles,serviceRuntime,{models:()=>harness.models()},new Map(),voiceLibrary);
   const token=randomBytes(32).toString('base64url');const admin=new Admin(ctx,runtime,token,undefined,features,services);
   ctx.on('webserver/index-inject',rows=>{rows.push({kind:'global',name:'__BOT_INTEGRATION__',value:{endpoint:'/api/bot-integration',token}});});
   ctx.effect(()=>ctx.webServer.register({kind:'exact',path:'/api/bot-integration',handler:(req,res)=>admin.http(req,res)}));
@@ -73,13 +75,13 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
     detachLifecycle?.();serviceRuntime.stopAccepting();
     let shutdownError:unknown;
     try{await serviceRuntime.cancelAndDrain();}catch(error){shutdownError=error;}
-    try{await runtime.close();await serviceHost.dispose();await disposeMode();}finally{store.close();}
+    try{await runtime.close();await serviceHost.dispose();await disposeMode();}finally{persistence.close();}
     if(shutdownError)throw shutdownError;
   });
   const shutdown=(message:unknown)=>{handleLifecycleShutdown(message);};
   process.on('message',shutdown);ctx.effect(()=>()=>process.off('message',shutdown));
   if(features.evolution.history().some(task=>['queued','draining','applying','restarting','reconnecting','rolling-back'].includes(task.phase)))runtime.pauseProcessing();
-  await assets.migrate();await harness.exportHistory();await features.backfill({readSession:id=>ctx.sessionQuery.readSession(SessionId(id))});await runtime.initialize();store.start();
+  await assets.migrate();await harness.exportHistory();await features.backfill({readSession:id=>ctx.sessionQuery.readSession(SessionId(id))});await runtime.initialize();persistence.start();
   const runtimePackageRoot=packageRoot();
   const runtimeIdentity=packageIdentity(runtimePackageRoot);
   detachLifecycle=registerLifecycleRuntime({packageRoot:runtimePackageRoot,quiesce:()=>runtime.quiesce(),resumeProcessing:()=>runtime.resumeProcessing(),health:()=>runtime.health()},runtimeIdentity);

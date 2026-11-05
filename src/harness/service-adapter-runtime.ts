@@ -11,7 +11,7 @@ import {RvcHttpCompatibilityAdapter} from '../core/rvc-http-adapter.js';
 import {RvcServiceAdapter} from '../core/rvc-adapter.js';
 import {VoiceModelLibrary,type VoiceModelScanner,type VoiceScannerContext} from '../core/voice-model-library.js';
 import type {ProfileStore} from '../core/profile-store.js';
-import type {Store} from '../core/store.js';
+import type {VoiceLibrarySettingsRepository} from '../core/ports/media.js';
 import {BUILTIN_SERVICE_MANIFESTS} from '../core/builtin-service-adapters.js';
 
 export class ProcessMusicFacade implements MusicFacadePort {
@@ -53,6 +53,6 @@ export function createBuiltinServiceAdapters(python?:string){
   ]);
 }
 
-export function createVoiceModelLibrary(store:Store,profiles:ProfileStore):VoiceModelLibrary{
-  return new VoiceModelLibrary(store,profiles,new ProcessVoiceModelScanner());
+export function createVoiceModelLibrary(settings:VoiceLibrarySettingsRepository,home:string,profiles:ProfileStore):VoiceModelLibrary{
+  return new VoiceModelLibrary(settings,home,profiles,new ProcessVoiceModelScanner());
 }

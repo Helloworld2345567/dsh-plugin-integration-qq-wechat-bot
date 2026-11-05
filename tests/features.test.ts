@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm,writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {Store} from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {BotRuntime,type HarnessPort} from '../src/core/runtime.js';
 import {BotFeatures} from '../src/core/features.js';
@@ -11,10 +11,10 @@ import {freezeTurn} from '../src/core/policy.js';
 import type {ChannelAdapter,CallerScope} from '../src/core/types.js';
 
 async function fixture(t:any){
-  const root=await mkdtemp(path.resolve('.codex/features-test-'));const store=new Store(root);const assets=new Assets(store);const media=new MediaService(store,assets);
+  const root=await mkdtemp(path.resolve('.codex/features-test-'));const store=new Store(root);const assets=new Assets(store.repositories());const media=new MediaService(store.repositories(),assets);
   const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'pending'}),connect:async()=>{},materialize:async()=>Buffer.alloc(0),send:async()=>{throw Error('NO_PLATFORM_SEND');}};
   const harness:HarnessPort={run:async()=>{throw Error('NO_MODEL_CALL');},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async()=>{}};
-  const runtime=new BotRuntime(store,assets,media,harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),{read:async()=>undefined,write:async()=>{},remove:async()=>{}});
+  const runtime=new BotRuntime(store.repositories(),assets,media,harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),{read:async()=>undefined,write:async()=>{},remove:async()=>{}});
   const features=new BotFeatures(runtime);const scope:CallerScope={botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'owner',senderId:'owner'};
   store.saveBot({id:'bot',name:'Bot',accountId:'account',channel:'qq',enabled:true,trustedUsers:['owner'],configId:'sakura'});const binding=store.binding(scope);
   const execute=(args:Record<string,unknown>)=>features.execute(binding,freezeTurn(store.config('sakura'),store.bot('bot'),scope,[]),args,new AbortController().signal);

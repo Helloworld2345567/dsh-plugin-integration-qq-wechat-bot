@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
-import {Store} from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
 import {publicPersonaConfig,v4ConfigSchema} from '../src/core/types.js';
 import {resolveImageSkill} from '../src/core/image-skill.js';
 

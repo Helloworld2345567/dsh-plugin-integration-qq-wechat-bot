@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
 import type {ToolRunContext} from '@deepseek-ai/dsh-tools';
-import {Store} from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {BotRuntime,type HarnessPort} from '../src/core/runtime.js';
 import {BotFeatures} from '../src/core/features.js';
@@ -16,9 +16,9 @@ import {defineBotScheduleTool,defineBotProactiveTool} from '../src/harness/autom
 const owner:CallerScope={botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'owner',senderId:'owner'};
 const signal=()=>new AbortController().signal;
 async function fixture(t:any){
-  const directory=await mkdtemp(path.resolve('.codex/management-tools-'));const store=new Store(directory);const assets=new Assets(store);
+  const directory=await mkdtemp(path.resolve('.codex/management-tools-'));const store=new Store(directory);const assets=new Assets(store.repositories());
   const harness:HarnessPort={run:async()=>{throw Error('NO_MODEL_CALL');},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async()=>{}};
-  const runtime=new BotRuntime(store,assets,new MediaService(store,assets),harness,{} as any,{read:async()=>undefined,write:async()=>{},remove:async()=>{}},60000);const features=new BotFeatures(runtime);const management=new BotManagement(runtime,features);
+  const runtime=new BotRuntime(store.repositories(),assets,new MediaService(store.repositories(),assets),harness,{} as any,{read:async()=>undefined,write:async()=>{},remove:async()=>{}},60000);const features=new BotFeatures(runtime);const management=new BotManagement(runtime,features);
   const previous=store.config('sakura');store.saveConfig({...previous,allowHostTools:false,model:{provider:'fixture',model:'chat'}},previous.revision);
   store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',configId:'sakura',enabled:true,trustedUsers:['owner']}));
   const queued:Array<{binding:SessionBinding;action:unknown}>=[];

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,existsSync,rmSync,symlinkSync} from 'node:fs';
 import path from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
-import {Store,ConflictError} from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
+import {ConflictError} from '../src/core/errors.js';
 import {defaultPersonasRoot} from '../src/core/personas.js';
 import {BotRuntime} from '../src/core/runtime.js';
 import {Assets,MediaService} from '../src/core/media.js';
@@ -18,9 +19,9 @@ function fixture(t:any){
   const folder=store.personas.directory('sakura');
   const settings=()=>JSON.parse(readFileSync(path.join(folder,'config.json'),'utf8'));
   const edit=(patch:any)=>writeFileSync(path.join(folder,'config.json'),JSON.stringify({...settings(),...patch},null,2));
-  const assets=new Assets(store);let validations=0,cancellations=0;let validate:((c:BotConfig)=>Promise<void>)|undefined;
+  const assets=new Assets(store.repositories());let validations=0,cancellations=0;let validate:((c:BotConfig)=>Promise<void>)|undefined;
   const adapter={beginLogin:async()=>({status:'pending' as const}),pollLogin:async()=>({status:'expired' as const}),connect:async()=>{},materialize:async()=>Buffer.alloc(0),send:async()=> 'receipt'};
-  const runtime=new BotRuntime(store,assets,new MediaService(store,assets),{run:async()=>{throw Error('unused');},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async c=>{validations++;if(c.model?.model==='invalid')throw Error('UNKNOWN_MODEL');await validate?.(c);},recheckPermissions:()=>{cancellations++;}},fixtureChannels(adapter),{} as any);
+  const runtime=new BotRuntime(store.repositories(),assets,new MediaService(store.repositories(),assets),{run:async()=>{throw Error('unused');},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async c=>{validations++;if(c.model?.model==='invalid')throw Error('UNKNOWN_MODEL');await validate?.(c);},recheckPermissions:()=>{cancellations++;}},fixtureChannels(adapter),{} as any);
   t.after(()=>runtime.close());
   return{root,home,store,folder,settings,edit,runtime,validations:()=>validations,cancellations:()=>cancellations,setValidate:(fn:(c:BotConfig)=>Promise<void>)=>{validate=fn;}};
 }

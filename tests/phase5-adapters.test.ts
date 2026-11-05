@@ -5,7 +5,7 @@ import path from 'node:path';
 import {CapabilityRegistry} from '../src/core/capability-registry.js';
 import {MediaOperationRegistry} from '../src/core/media-operation-registry.js';
 import {MediaService} from '../src/core/media.js';
-import {Store} from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
 import {validateMediaWorkerJob,MEDIA_WORKER_PROTOCOL,MEDIA_WORKER_PROTOCOL_VERSION,type MediaWorkerJob} from '../src/core/worker-port.js';
 import {lifecycleAvailable,lifecycleRuntime,markLifecycleAvailable,registerLifecycleRuntime,packageIdentity} from '../packages/bot-lifecycle/src/contract/protocol.js';
 import {EvolutionService} from '../src/core/evolution.js';
@@ -28,7 +28,7 @@ test('MediaService dispatches a registered native operation handler',async()=>{
   const home=await mkdtemp(path.resolve('.codex/phase5-media-'));
   try{
     const registry=new MediaOperationRegistry([{id:'fixture',handler:'fixture',timeoutMs:1000,quotaUnits:1,execute:async(job:any)=>{assert.equal(job.operation,'fixture');return{text:'fixture-result'};}}]);
-    const store={home,patchJob:()=>{},consumeMediaQuota:()=>{}} as any;
+    const store={storage:{home},sessions:{findBinding:()=>undefined},bots:{bot:()=>({})},media:{jobs:{patchJob:()=>{}},quota:{consume:()=>{}}},stats:{projection:{upsertMediaCalls:()=>{}}}} as any;
     const assets={workspace:async()=>home,resolve:async()=>{throw new Error('unexpected asset lookup');}} as any;
     const media=new MediaService(store,assets,'python',undefined,undefined,registry);
     assert.deepEqual(await media.run('scope','fixture',{} as any,[],{},AbortSignal.timeout(1000)),{text:'fixture-result',coverage:undefined,assetIds:[],contextAssetIds:[],incomplete:undefined});

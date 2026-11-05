@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
-import {Store} from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
 import {DurableDeliveryWorker} from '../src/core/delivery-worker.js';
 import {createChannelRegistry} from '../src/core/channel-registry.js';
 import type {ChannelAdapter} from '../src/core/types.js';
@@ -17,7 +17,7 @@ async function fixture(t:any,send:ChannelAdapter['send']=async()=> 'receipt'){
   const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async()=>Buffer.from(''),send};
   const channels=createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private'],login:[],groupSupport:'unsupported'}}]);
   const credentials={read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}};
-  const worker=new DurableDeliveryWorker(store,channels,credentials);worker.registerProgress('run',()=>true);
+  const worker=new DurableDeliveryWorker(store.repositories(),channels,credentials);worker.registerProgress('run',()=>true);
   t.after(async()=>{await worker.close();store.close();await rm(home,{recursive:true,force:true});});
   const reply={target:'user',kind:'private',msgId:'message'};
   const progress=(sequence:number,expiresAt=Date.now()+60000)=>store.enqueue(binding,'source',`progress:run:${sequence}`,[{type:'text',text:`progress ${sequence}`}],reply,undefined,{runId:'run',generation:binding.generation,expiresAt});

@@ -2,7 +2,7 @@ import {z} from 'zod';
 import type {BotRuntime} from './runtime.js';
 import type {BotFeatures} from './features.js';
 import {idSchema,skillNameSchema,type SessionBinding,type TurnSnapshot} from './types.js';
-import {scopeKey} from './store.js';
+import {scopeKey} from './identity.js';
 import {trusted} from './policy.js';
 import {commandHelp} from './commands.js';
 import {packagedSkills} from './skills.js';
@@ -63,9 +63,9 @@ export class BotManagement {
   }
 
   private current(binding:SessionBinding,snapshot:TurnSnapshot,signal:AbortSignal,privileged=false):SessionBinding {
-    signal.throwIfAborted();const current=this.runtime.store.findBinding(binding.key);
+    signal.throwIfAborted();const current=this.runtime.repos.sessions.findBinding(binding.key);
     if(!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation||scopeKey(binding.scope)!==binding.key||scopeKey(current.scope)!==binding.key||snapshot.botId!==current.scope.botId)throw Error('MANAGEMENT_SESSION_CHANGED');
-    const bot=this.runtime.store.bot(current.scope.botId);this.runtime.effectiveConfig(current);
+    const bot=this.runtime.repos.bots.bot(current.scope.botId);this.runtime.effectiveConfig(current);
     if(!bot.enabled||bot.archived)throw Error('BOT_UNAVAILABLE');
     if(privileged&&(!snapshot.trusted||!trusted(bot,current.scope)))throw Error('TRUSTED_PRIVATE_REQUIRED');
     return current;
@@ -74,27 +74,27 @@ export class BotManagement {
   async session(binding:SessionBinding,snapshot:TurnSnapshot,input:unknown,signal:AbortSignal){
     const current=this.current(binding,snapshot,signal);const args=botSessionArgumentsSchema.parse(input);const busResult=await this.busSession(current,snapshot,args,signal);if(busResult)return busResult;const config=this.runtime.effectiveConfig(current);
     switch(args.action){
-      case 'help':return{action:args.action,text:commandHelp(snapshot.trusted&&trusted(this.runtime.store.bot(current.scope.botId),current.scope),snapshot.config.allowHostTools&&config.allowHostTools)};
+      case 'help':return{action:args.action,text:commandHelp(snapshot.trusted&&trusted(this.runtime.repos.bots.bot(current.scope.botId),current.scope),snapshot.config.allowHostTools&&config.allowHostTools)};
       case 'status':return{action:args.action,sessionId:current.sessionId,persona:{id:config.id,name:config.name},model:config.model,modelOverride:!!current.modelOverride,currentTurnPersonaId:snapshot.config.id,currentTurnModel:snapshot.config.model,state:this.runtime.sessionStatus(current.scope)};
       case 'list':{
-        const page=args.page??1;const all=this.runtime.store.sessions(current.scope);const sessions=all.slice((page-1)*10,page*10).map(record=>({sessionId:record.id,current:record.id===current.sessionId,persisted:record.persisted,createdAt:record.createdAt,updatedAt:record.updatedAt,...record.personaId?{personaId:record.personaId}:{}}));
+        const page=args.page??1;const all=this.runtime.repos.sessions.sessions(current.scope);const sessions=all.slice((page-1)*10,page*10).map(record=>({sessionId:record.id,current:record.id===current.sessionId,persisted:record.persisted,createdAt:record.createdAt,updatedAt:record.updatedAt,...record.personaId?{personaId:record.personaId}:{}}));
         return{action:args.action,page,pages:Math.max(1,Math.ceil(all.length/10)),sessions};
       }
-      case 'resume':this.runtime.store.session(current.scope,args.sessionId!);return this.runtime.queueSessionAction(current,snapshot,{action:'resume',sessionId:args.sessionId!},signal);
+      case 'resume':this.runtime.repos.sessions.session(current.scope,args.sessionId!);return this.runtime.queueSessionAction(current,snapshot,{action:'resume',sessionId:args.sessionId!},signal);
       default:return this.runtime.queueSessionAction(current,snapshot,{action:args.action},signal);
     }
   }
 
   async persona(binding:SessionBinding,snapshot:TurnSnapshot,input:unknown,signal:AbortSignal){
     const current=this.current(binding,snapshot,signal,true);const args=botPersonaArgumentsSchema.parse(input);const config=this.runtime.effectiveConfig(current);
-    if(args.action==='list')return{action:args.action,sessionId:current.sessionId,currentPersonaId:config.id,currentTurnPersonaId:snapshot.config.id,personas:this.runtime.store.configs().filter(item=>!item.archived).map(item=>({id:item.id,name:item.name,revision:item.revision,current:item.id===config.id}))};
-    this.runtime.store.config(args.personaId!);const command=managementCommand({name:'persona',args:args.personaId!})!;const result=await this.runtime.commandBus.execute({source:'tool',binding:current,snapshot,signal,authorize:()=>this.current(binding,snapshot,signal,true)},command);return result.kind==='queued'?result.value:result;
+    if(args.action==='list')return{action:args.action,sessionId:current.sessionId,currentPersonaId:config.id,currentTurnPersonaId:snapshot.config.id,personas:this.runtime.repos.personas.configs().filter(item=>!item.archived).map(item=>({id:item.id,name:item.name,revision:item.revision,current:item.id===config.id}))};
+    this.runtime.repos.personas.config(args.personaId!);const command=managementCommand({name:'persona',args:args.personaId!})!;const result=await this.runtime.commandBus.execute({source:'tool',binding:current,snapshot,signal,authorize:()=>this.current(binding,snapshot,signal,true)},command);return result.kind==='queued'?result.value:result;
   }
 
   async skills(binding:SessionBinding,snapshot:TurnSnapshot,input:unknown,signal:AbortSignal){
     const args=botSkillsArgumentsSchema.parse(input);const current=this.current(binding,snapshot,signal,args.action!=='list');const config=this.runtime.effectiveConfig(current);
     if(args.action==='list'){
-      const privileged=snapshot.trusted&&trusted(this.runtime.store.bot(current.scope.botId),current.scope);
+      const privileged=snapshot.trusted&&trusted(this.runtime.repos.bots.bot(current.scope.botId),current.scope);
       const names=privileged?[...new Set([...config.skills,...Object.keys(packagedSkills),...Object.keys(config.skillVersions)])]:[...config.skills];
       const skills=names.map(name=>{
         const base={name,enabled:config.skills.includes(name),builtin:Object.hasOwn(packagedSkills,name)};

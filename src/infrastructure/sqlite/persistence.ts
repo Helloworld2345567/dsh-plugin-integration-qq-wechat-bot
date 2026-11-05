@@ -1,5 +1,5 @@
 import {configForWrite, type BotConfig} from '../../core/types.js';
-import {sameConfig} from '../../core/personas.js';
+import {defaultPersonasRoot,sameConfig} from '../../core/personas.js';
 import {PersonaFiles} from '../files/persona-files.js';
 import {WorkspaceFiles} from '../files/workspace-files.js';
 import {BotHistoryService} from '../bot-history.js';
@@ -7,6 +7,7 @@ import {SqliteDatabase} from './database.js';
 import {initializeSchema} from './schema.js';
 import {SqliteStatsProjection} from './stats-projection.js';
 import {SqliteStatsData} from './stats-data.js';
+import {SqliteStatsSessionRepository} from './stats-session-repository.js';
 import {SqliteBotRepository} from './bot-repository.js';
 import {SqlitePersonaConfigRepository} from './persona-repository.js';
 import {SqliteSessionRepository} from './session-repository.js';
@@ -24,6 +25,7 @@ import {SqliteRuntimeOwnershipRepository} from './runtime-ownership-repository.j
 import {SqliteChannelCursorRepository} from './channel-cursor-repository.js';
 import {SqliteHistoryLocationRepository, SqliteMusicStateRepository, SqliteSingingStateRepository, SqliteVoiceLibrarySettingsRepository} from './session-state-repositories.js';
 import {SqliteFailureRepository, SqliteSessionActionRepository, SqliteTurnMetricRepository, SqliteTurnSnapshotRepository} from './telemetry-repositories.js';
+import type {RuntimeRepositories} from '../../core/ports/application.js';
 
 export type PersistenceStage = 'opened' | 'initialized' | 'migrated' | 'recovered' | 'started' | 'closed';
 
@@ -68,10 +70,15 @@ export class SqlitePersistence {
   readonly sessionActions: SqliteSessionActionRepository;
   readonly workspaceFiles: WorkspaceFiles;
   readonly botHistory: BotHistoryService;
+  readonly statsSessions: SqliteStatsSessionRepository;
   private stats: SqliteStatsProjection | undefined;
   private statsDataValue: SqliteStatsData | undefined;
   private stage: PersistenceStage = 'opened';
 
+  /** Composition-root entry point: opening allocates the database; later stages own schema and recovery. */
+  static open(home: string, personasRoot = defaultPersonasRoot(home), options: {secureDefaults?:boolean} = {}): SqlitePersistence {
+    return new SqlitePersistence(home, personasRoot, {...options, defer:true});
+  }
   constructor(readonly home: string, personasRoot: string, readonly options: PersistenceOptions = {}) {
     this.database = new SqliteDatabase(home);
     this.personaFiles = PersonaFiles.forHome(home, personasRoot);
@@ -100,6 +107,7 @@ export class SqlitePersistence {
     this.singingState = new SqliteSingingStateRepository(this.database);
     this.voiceLibrarySettings = new SqliteVoiceLibrarySettingsRepository(this.database);
     this.workspaceFiles = new WorkspaceFiles({home, bindings:() => this.sessions, sessions:() => this.sessions, automation:() => this.automation, bots:() => this.bots, history:this.history});
+    this.statsSessions = new SqliteStatsSessionRepository(this.database);
     this.botHistory = new BotHistoryService({database:this.database, bots:() => this.bots, inbox:() => this.inbox, deliveries:() => this.deliveries, workspace:() => this.workspaceFiles});
     if (!options.defer) this.initializeStorage(options.secureDefaults === true);
   }
@@ -200,4 +208,42 @@ export class SqlitePersistence {
 
   /** Default persona written on a fresh install, exported for bootstrap tests. */
   bootstrapConfigs(): readonly BotConfig[] {return this.personas.configs();}
+
+  /**
+   * Explicit application dependency bundle.  Every field is a narrow port; the
+   * runtime and its services never receive this composition object itself.
+   */
+  repositories(): RuntimeRepositories {
+    return {
+      storage:{home:this.home},
+      unitOfWork:{transaction:fn => this.database.transaction(fn)},
+      lifecycle:{
+        claim:owner => this.ownership.claim(owner),
+        release:owner => this.ownership.release(owner),
+        recover:() => this.recover(),
+        retain:(now, windows) => this.retain(now, windows),
+      },
+      bots:this.bots,
+      personas:this.personas,
+      sessions:this.sessions,
+      inbox:this.inbox,
+      memory:this.memory,
+      media:{assets:this.assets, jobs:this.jobs, quota:this.quota, music:this.musicState, singing:this.singingState},
+      deliveries:this.deliveries,
+      automation:this.automation,
+      evolution:this.evolution,
+      telemetry:{metrics:this.turnMetrics, snapshots:this.turnSnapshots, failures:this.failures, actions:this.sessionActions},
+      stats:this.statsData,
+      statsSessions:this.statsSessions,
+      capabilities:this.capability,
+      historyLocations:this.history,
+      chatHistory:{write:(scope, sessionId, events) => this.workspaceFiles.write(scope, sessionId, events)},
+      workspace:this.workspaceFiles,
+      botHistory:{
+        snapshot:botId => this.botHistory.snapshot(botId),
+        deleteFiles:(assetsRoot, snapshot) => this.botHistory.deleteFiles(assetsRoot, snapshot),
+        deleteRecords:(botId, snapshot) => this.botHistory.deleteRecords(botId, snapshot),
+      },
+    };
+  }
 }

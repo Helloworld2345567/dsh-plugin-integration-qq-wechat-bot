@@ -11,14 +11,49 @@ import {PiAiAdapter,type ResolvedPiAiProviderProfile} from '@deepseek-ai/dsh-llm
 import {fauxProvider,fauxAssistantMessage,InMemoryCredentialStore} from '@earendil-works/pi-ai';
 import type {} from '../src/index.js';
 import type {NativeHarness} from '../src/harness/bridge.js';
-import {scopeKey} from '../src/core/store.js';
+import {scopeKey} from '../src/core/identity.js';
 import {freezeTurn} from '../src/core/policy.js';
 import {botSchema,type InboundMessage} from '../src/core/types.js';
 export const inject=['botIntegration','llm','settings','credentials','sessionQuery','agents','agentPresets','tools','skills','systemPrompt','attachments','permissionPresets','sessions','sessionPersistence','storageDomain','workingDirectory'];
 export const name='bot-native-fixture';
 export const Config=z.object({baseURL:z.string().default('https://fixture.invalid/v1').volatile(),apiKeyEnv:z.string().default('BOT_TEST_ANALYSIS_KEY').volatile(),api:z.string().default('openai-completions').volatile()});
 export async function apply(ctx:Context){
-  const runtime=ctx.botIntegration;const store=runtime.store;const bridge=runtime.harness as NativeHarness;
+  const runtime=ctx.botIntegration;const repos=runtime.repos;const bridge=runtime.harness as NativeHarness;
+  // Fixture-only view over the narrow repositories: the native test inspects a
+  // few durable facts by their historical record names.
+  const store={
+    home:repos.storage.home,
+    personas:{directory:(id?:string)=>repos.personas.personaDirectory(id)},
+    accept:repos.inbox.accept.bind(repos.inbox),
+    mark:repos.inbox.mark.bind(repos.inbox),
+    allMessages:repos.inbox.allMessages.bind(repos.inbox),
+    binding:repos.sessions.binding.bind(repos.sessions),
+    findSession:repos.sessions.findSession.bind(repos.sessions),
+    sessionsAll:repos.sessions.sessionsAll.bind(repos.sessions),
+    bot:repos.bots.bot.bind(repos.bots),
+    saveBot:repos.bots.saveBot.bind(repos.bots),
+    config:repos.personas.config.bind(repos.personas),
+    deliveries:repos.deliveries.deliveries.bind(repos.deliveries),
+    memories:repos.memory.memories.bind(repos.memory),
+    asset:repos.media.assets.asset.bind(repos.media.assets),
+    get:<T>(kind:string,id:string):T|undefined=>{
+      if(kind==='session-action')return repos.telemetry.actions.findSessionAction(id) as T|undefined;
+      return undefined;
+    },
+    list:<T>(kind:string):T[]=>{
+      if(kind==='session-action')return repos.telemetry.actions.sessionActions() as T[];
+      if(kind==='failure')return [...repos.telemetry.failures.failures()] as T[];
+      if(kind==='stats-session')return [...repos.statsSessions.listOwners()] as T[];
+      if(kind==='history-location')return [...repos.historyLocations.list()] as T[];
+      if(kind==='asset')return repos.media.assets.allAssets() as T[];
+      return [];
+    },
+    put:(kind:string,id:string,value:unknown)=>{
+      if(kind==='failure')return repos.telemetry.failures.saveFailure(id,value);
+      if(kind==='session-action')return repos.telemetry.actions.saveSessionAction(id,value as never);
+      return undefined;
+    },
+  };
   const progressRequests:GenerateOptions[]=[];let progressFails=false;
   const requests:GenerateOptions[]=[];let phase=0;let compactions=0;let finalText="FINAL_ONLY";let mediaCall:{name:string;args:Record<string,unknown>}|undefined;let beforeTool:(()=>Promise<void>)|undefined;let beforeFinal:((options:GenerateOptions)=>void|Promise<void>)|undefined;
   class Fixture extends LlmAdapter{

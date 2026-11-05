@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import type {BotInstance} from './types.js';
 import type {ChannelRegistry} from './channel-registry.js';
-import type {StatsDataPort,StatsProjectionCall} from './repositories.js';
+import type {StatsDataPort,StatsProjectionCall} from './ports/stats.js';
 export {normalizeNativeUsage,normalizeProviderUsage} from './usage.js';
 import {normalizeNativeUsage,type UsageKind,type NativeUsageFact,type AuxiliaryUsageCall} from './usage.js';
 export type {UsageKind,TokenUsage,MediaUsageCall} from './usage.js';

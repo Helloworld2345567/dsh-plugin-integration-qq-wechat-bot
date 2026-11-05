@@ -7,7 +7,7 @@ export class SqliteEvolutionRepository implements EvolutionRepository {
   get home(): string {return this.database.home;}
   evolutionTasks(): EvolutionTask[] {return this.database.records.list<EvolutionTask>('evolution');}
   saveEvolutionTask(id: string, value: EvolutionTask): void {this.database.records.put('evolution', id, value);}
-  contentChanges(): ContentChangeRecord[] {return this.database.records.list<ContentChangeRecord>('evolution-content');}
-  findContentChange(id: string): ContentChangeRecord | undefined {return this.database.records.get<ContentChangeRecord>('evolution-content', id);}
+  contentChanges<T extends ContentChangeRecord = ContentChangeRecord>(): T[] {return this.database.records.list<T>('evolution-content');}
+  findContentChange<T extends ContentChangeRecord = ContentChangeRecord>(id: string): T | undefined {return this.database.records.get<T>('evolution-content', id);}
   saveContentChange(id: string, value: ContentChangeRecord): void {this.database.records.put('evolution-content', id, value);}
 }

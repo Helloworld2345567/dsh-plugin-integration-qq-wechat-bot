@@ -1,7 +1,5 @@
 import type {Asset} from '../types.js';
 import type {MediaUsageCall} from '../usage.js';
-import type {MusicAcquisition, MusicCandidate, MusicCandidates} from '../music-state.js';
-import type {SingingAttempt, SingingCandidate, SingingCandidates} from '../singing-state.js';
 
 export interface AssetUsage {
   scope: number;
@@ -50,6 +48,10 @@ export interface MediaQuotaRepository {
   consume(key: string, limit: number): void;
 }
 
+export interface MusicCandidate {source:string;id:string;title:string;artist:string;album?:string;duration?:number;format?:string;size?:number;version?:string;locator?:unknown}
+export interface MusicCandidates {id:string;scope:string;sessionId:string;generation:number;candidates:MusicCandidate[];createdAt:number}
+export interface MusicAcquisition {scope:string;sessionId:string;generation:number;request:string;selectionKey:string;state:'running'|'succeeded'|'failed';sourceAssetId?:string;lyricAssetId?:string;track?:MusicCandidate;deliveryState?:'running'|'succeeded'|'failed';deliveryAssetIds?:string[];deliveryCode?:string;code?:string}
+
 /** Session-bound music candidates and acquisition state. */
 export interface MusicStateRepository {
   candidates(scope: string): MusicCandidates | null | undefined;
@@ -58,6 +60,10 @@ export interface MusicStateRepository {
   saveAcquisition(scope: string, value: MusicAcquisition): void;
   clear(scope: string): void;
 }
+
+export interface SingingCandidate {number:number;title:string;assetId?:string;url?:string;source?:string;license?:string}
+export interface SingingCandidates {id:string;scope:string;sessionId:string;generation:number;waiting:boolean;candidates:SingingCandidate[];createdAt:number}
+export interface SingingAttempt {request:string;state:'running'|'succeeded'|'failed';assetIds?:string[];code?:string;format?:string;music?:{selectionKey:string;track:MusicCandidate}}
 
 /** Session-bound singing candidates and attempt state. */
 export interface SingingStateRepository {
@@ -72,5 +78,3 @@ export interface VoiceLibrarySettingsRepository {
   read(): unknown;
   write(settings: unknown): void;
 }
-
-export type {MusicCandidate, MusicCandidates, MusicAcquisition, SingingCandidate, SingingCandidates, SingingAttempt};

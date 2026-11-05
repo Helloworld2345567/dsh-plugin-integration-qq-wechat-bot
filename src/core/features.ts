@@ -6,9 +6,9 @@ import {allowedNow,freezeTurn} from './policy.js';
 import {DynamicSkills} from './skills.js';
 import {EvolutionService} from './evolution.js';
 import {StatsService,statsQuerySchema,type StatsQueryInput,type StatsResult} from './stats.js';
-import {SqliteStatsData} from './sqlite-stats-data.js';
+
 import {packageRoot} from './paths.js';
-import {scopeKey} from './store.js';
+import {scopeKey} from './identity.js';
 import {managementCommand} from './command-bus.js';
 import type {LifecyclePort,SessionHistoryPort} from './runtime-ports.js';
 
@@ -40,31 +40,31 @@ export function renderStats(value:StatsResult):string {
 export class BotFeatures {
   readonly skills:DynamicSkills;readonly stats:StatsService;readonly evolution:EvolutionService;
   constructor(readonly runtime:BotRuntime,lifecycle?:LifecyclePort){
-    this.skills=new DynamicSkills(runtime.store);this.stats=new StatsService(new SqliteStatsData(runtime.store),()=>runtime.states,()=>runtime.store.bots(),Date.now,runtime.channels);this.evolution=new EvolutionService(runtime.store,packageRoot(),{lifecycle});
-    for(const record of runtime.store.contentChanges<ContentChange>())if(record.phase==='preparing'){
-      const current=(()=>{try{return runtime.store.config(record.configId);}catch{return undefined;}})();
-      record.phase=current&&record.after&&JSON.stringify(current)===JSON.stringify(record.after)?'succeeded':'failed';record.error=record.phase==='failed'?'发布被中断，请核对当前版本和草稿':undefined;runtime.store.saveContentChange(record.id,record);
+    const repos=runtime.repos;this.skills=new DynamicSkills(repos.personas,repos.storage.home);this.stats=new StatsService(repos.stats,()=>runtime.states,()=>repos.bots.bots(),Date.now,runtime.channels);this.evolution=new EvolutionService(repos.evolution,packageRoot(),{lifecycle});
+    for(const record of runtime.repos.evolution.contentChanges<ContentChange>())if(record.phase==='preparing'){
+      const current=(()=>{try{return runtime.repos.personas.config(record.configId);}catch{return undefined;}})();
+      record.phase=current&&record.after&&JSON.stringify(current)===JSON.stringify(record.after)?'succeeded':'failed';record.error=record.phase==='failed'?'发布被中断，请核对当前版本和草稿':undefined;runtime.repos.evolution.saveContentChange(record.id,record);
     }
     runtime.commandServices={...runtime.commandServices,
       skills:{list:async b=>this.skills.list(runtime.effectiveConfig(b)).map(s=>`${s.name}：${s.description}`).join('\n')||'当前未启用技能。',toggle:async(b,name,enabled,authorize?:()=>void)=>{
         const current=this.config(b);
         const check=()=>{
-          const binding=runtime.store.findBinding(b.key);
+          const binding=runtime.repos.sessions.findBinding(b.key);
           if(!binding||binding.sessionId!==b.sessionId||binding.generation!==b.generation||scopeKey(b.scope)!==b.key||scopeKey(binding.scope)!==b.key)throw Error('SKILL_SESSION_CHANGED');
           this.authorize(binding);const config=this.config(binding);
           if(config.id!==current.id||config.revision!==current.revision)throw Error('SKILL_PERSONA_CHANGED');
           authorize?.();
         };
         check();const next={...current,skills:enabled?[...new Set([...current.skills,name])]:current.skills.filter(n=>n!==name)};
-        await runtime.harness.validateModel(next);check();runtime.store.saveConfig(next,current.revision);runtime.harness.recheckPermissions?.();return `技能 ${name} 已${enabled?'启用':'停用'}。`;
+        await runtime.harness.validateModel(next);check();runtime.repos.personas.saveConfig(next,current.revision);runtime.harness.recheckPermissions?.();return `技能 ${name} 已${enabled?'启用':'停用'}。`;
       },reload:async b=>{this.authorize(b);const result=await this.reload(b);return `已应用 ${result.after!.name} v${result.after!.revision}，下一轮生效。`; }},
       evolution:{request:async(b,goal)=>{this.authorize(b,undefined,true);return `用户要求修改小樱自身：${goal}\n请完成修改和验证。人格修改使用 bot_evolve(persona)，技能新增或更新使用 skill_write。插件代码使用 create 获取隔离 candidateRoot，编辑后 validate，再 apply 排队生效。记录真实结果，不要直接重启或修改线上安装文件。`;},status:async(b,id)=>{this.authorize(b,undefined,true);return JSON.stringify(id?this.task(b,id):this.history(b)[0]??{status:'暂无改进任务'});},history:async b=>{this.authorize(b,undefined,true);return JSON.stringify(this.history(b));},rollback:async(b,id)=>{this.authorize(b,undefined,true);return JSON.stringify(await this.rollback(b,id));},restart:async b=>{this.authorize(b,undefined,true);return JSON.stringify(this.evolution.queueRestart(b.key,this.config(b).id));}},
       stats:async(b,args)=>{this.authorize(b);return renderStats(this.stats.query(parseStatsArguments(args)));},
     };
   }
-  private config(binding:SessionBinding):BotConfig {return this.runtime.store.config(this.runtime.store.effectiveConfig(this.runtime.store.findBinding(binding.key)??binding).id);}
+  private config(binding:SessionBinding):BotConfig {return this.runtime.repos.personas.config(this.runtime.repos.personas.effectiveConfig(this.runtime.repos.sessions.findBinding(binding.key)??binding).id);}
   private authorize(binding:SessionBinding,snapshot?:TurnSnapshot,host=false):void {
-    const bot=this.runtime.store.bot(binding.scope.botId);const config=this.config(binding);const before=snapshot??freezeTurn(config,bot,binding.scope,[],this.runtime.profiles);
+    const bot=this.runtime.repos.bots.bot(binding.scope.botId);const config=this.config(binding);const before=snapshot??freezeTurn(config,bot,binding.scope,[],this.runtime.profiles);
     // Persona and skill maintenance only changes the configured bot data. Shell,
     // candidate activation and lifecycle operations remain host-authorized.
     const permission=host?'bot_evolve':'bot_stats';
@@ -76,35 +76,35 @@ export class BotFeatures {
   }
   async model(binding:SessionBinding,snapshot:TurnSnapshot,input:unknown,signal:AbortSignal):Promise<BotModelResult>{
     const authorize=():void=>{
-      signal.throwIfAborted();const current=this.runtime.store.findBinding(binding.key);
+      signal.throwIfAborted();const current=this.runtime.repos.sessions.findBinding(binding.key);
       if(!current||current.sessionId!==binding.sessionId||scopeKey(current.scope)!==binding.key||scopeKey(binding.scope)!==binding.key||snapshot.botId!==current.scope.botId)throw Error('MODEL_SESSION_CHANGED');
-      const bot=this.runtime.store.bot(current.scope.botId);if(!allowedNow('bot_model',snapshot,this.runtime.effectiveConfig(current),bot,current.scope))throw Error('TRUSTED_PRIVATE_REQUIRED');
+      const bot=this.runtime.repos.bots.bot(current.scope.botId);if(!allowedNow('bot_model',snapshot,this.runtime.effectiveConfig(current),bot,current.scope))throw Error('TRUSTED_PRIVATE_REQUIRED');
     };
     authorize();const args=botModelArgumentsSchema.parse(input);const command=managementCommand({name:'model',args:args.action==='list'?'':args.action==='reset'?'reset':`${args.provider} ${args.model}`})!;const result=await this.runtime.commandBus.execute({source:'tool',binding,snapshot,signal,authorize},command);if(result.kind!=='reply'||!result.data)throw Error('MODEL_CONTROL_FAILED');return result.data as BotModelResult;
   }
-  history(binding?:SessionBinding){return [...this.evolution.history(),...this.runtime.store.contentChanges<ContentChange>()].filter(t=>!binding||t.scopeKey===binding.key).sort((a,b)=>b.createdAt-a.createdAt);}
-  task(binding:SessionBinding,id:string){const result=this.runtime.store.findContentChange<ContentChange>(id)??this.evolution.inspect(id);if(result.scopeKey!==binding.key)throw Error('EVOLUTION_TASK_NOT_OWNED');return result;}
+  history(binding?:SessionBinding){return [...this.evolution.history(),...this.runtime.repos.evolution.contentChanges<ContentChange>()].filter(t=>!binding||t.scopeKey===binding.key).sort((a,b)=>b.createdAt-a.createdAt);}
+  task(binding:SessionBinding,id:string){const result=this.runtime.repos.evolution.findContentChange<ContentChange>(id)??this.evolution.inspect(id);if(result.scopeKey!==binding.key)throw Error('EVOLUTION_TASK_NOT_OWNED');return result;}
   private async publish(binding:SessionBinding,kind:ContentChange['kind'],goal:string,next:BotConfig,before:BotConfig,fileDigest?:string,snapshot?:TurnSnapshot,restoreDrafts=false):Promise<ContentChange>{
     this.authorize(binding,snapshot);const record:ContentChange={id:randomUUID(),kind,scopeKey:binding.key,configId:before.id,goal,before,after:{...next,revision:before.revision+1},phase:'preparing',createdAt:Date.now(),updatedAt:Date.now()};
     if(kind!=='persona'&&!restoreDrafts)this.skills.assertDrafts(next);
     const draftFingerprint=kind==='persona'?undefined:this.skills.draftFingerprint(before.id);
-    this.runtime.store.saveContentChange(record.id,record);
+    this.runtime.repos.evolution.saveContentChange(record.id,record);
     try{
       await this.runtime.harness.validateModel(next);this.authorize(binding,snapshot);
       if(draftFingerprint!==undefined&&draftFingerprint!==this.skills.draftFingerprint(before.id))throw Error('SKILL_DRAFT_CHANGED: 技能文件在校验期间发生变化');
       // Revision and persona-file fingerprints are checked again after async model validation.
-      const commit=()=>this.runtime.store.saveConfig(next,before.revision,fileDigest);
+      const commit=()=>this.runtime.repos.personas.saveConfig(next,before.revision,fileDigest);
       record.after=restoreDrafts?this.skills.restoreDrafts(next,before,commit):commit();
-      this.runtime.harness.recheckPermissions?.();record.phase='succeeded';record.updatedAt=Date.now();this.runtime.store.saveContentChange(record.id,record);return record;
-    }catch(error){record.phase='failed';record.error=error instanceof Error?error.message:String(error);this.runtime.store.saveContentChange(record.id,record);throw error;}
+      this.runtime.harness.recheckPermissions?.();record.phase='succeeded';record.updatedAt=Date.now();this.runtime.repos.evolution.saveContentChange(record.id,record);return record;
+    }catch(error){record.phase='failed';record.error=error instanceof Error?error.message:String(error);this.runtime.repos.evolution.saveContentChange(record.id,record);throw error;}
   }
   async reload(binding:SessionBinding,snapshot?:TurnSnapshot):Promise<ContentChange>{
-    this.authorize(binding,snapshot);const current=this.config(binding);const file=this.runtime.store.readPersonaDraft(current.id);if(file.config.revision!==current.revision)throw Error('PERSONA_REVISION_CONFLICT');
+    this.authorize(binding,snapshot);const current=this.config(binding);const file=this.runtime.repos.personas.readPersonaDraft(current.id);if(file.config.revision!==current.revision)throw Error('PERSONA_REVISION_CONFLICT');
     const next=this.skills.stageDrafts(file.config);return this.publish(binding,'reload','应用人格与技能文件',next,current,file.digest,snapshot);
   }
   private async rollback(binding:SessionBinding,id:string,snapshot?:TurnSnapshot){
     this.authorize(binding,snapshot);const task=this.task(binding,id);
-    if('before'in task){const current=this.runtime.store.config(task.configId);if(task.phase!=='succeeded'||current.revision!==task.after?.revision)throw Error('已有后续修改，不能覆盖回退');const result=await this.publish(binding,task.kind,`回退 ${id}`,{...task.before,revision:current.revision},current,undefined,snapshot,true);task.phase='rolled-back';this.runtime.store.saveContentChange(task.id,task);return result;}
+    if('before'in task){const current=this.runtime.repos.personas.config(task.configId);if(task.phase!=='succeeded'||current.revision!==task.after?.revision)throw Error('已有后续修改，不能覆盖回退');const result=await this.publish(binding,task.kind,`回退 ${id}`,{...task.before,revision:current.revision},current,undefined,snapshot,true);task.phase='rolled-back';this.runtime.repos.evolution.saveContentChange(task.id,task);return result;}
     return this.evolution.rollback(id);
   }
   async execute(binding:SessionBinding,snapshot:TurnSnapshot,args:Record<string,unknown>,signal:AbortSignal):Promise<unknown>{
@@ -132,7 +132,7 @@ export class BotFeatures {
   }
   async backfill(history:SessionHistoryPort):Promise<void>{
     const sessions:string[]=[];
-    for(const record of this.runtime.store.sessionsAll()){
+    for(const record of this.runtime.repos.sessions.sessionsAll()){
       if(!record.persisted)continue;this.stats.observeSession(record.id,record.scope.botId,record.id,'agent');sessions.push(record.id);
       try{const log=await history.readSession(record.id);for(const event of log.events)this.stats.recordNative(record.id,event,{refresh:false});}catch{/* Missing history is not zero usage and is never assigned to a guessed owner. */}
     }

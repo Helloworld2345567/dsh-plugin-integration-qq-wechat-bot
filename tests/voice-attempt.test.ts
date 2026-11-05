@@ -6,8 +6,8 @@ function fixture(){
   const handlers=new Map<string,Function>();
   const parent={id:'parent'},child={id:'child'};
   const ctx:any={on:(event:string,handler:Function)=>handlers.set(event,handler),agents:{list:()=>[parent,child]},tools:{guard:()=>{}}};
-  const store:any={statsSessionExists:()=>false,findBinding:()=>undefined,effectiveConfig:()=>{throw Error('CONFIG_UNAVAILABLE');},bot:()=>({})};
-  const bridge=new NativeHarness(ctx,store,{} as any,{} as any,{skills:{} as any});
+  const repos:any={statsSessions:{sessionExists:()=>false},sessions:{findBinding:()=>undefined},personas:{effectiveConfig:()=>{throw Error('CONFIG_UNAVAILABLE');}},bots:{bot:()=>({})},media:{assets:{asset:()=>({})}},telemetry:{metrics:{findTurnMetric:()=>undefined,updateTurnMetric:()=>{}}},memory:{memories:()=>[]}};
+  const bridge=new NativeHarness(ctx,repos,{} as any,{} as any,{skills:{} as any});
   const root:any={binding:{key:'scope',sessionId:'parent',scope:{botId:'bot'}},voice:{attempted:false},singing:{attempted:false}};
   const descendant={...root};
   (bridge as any).scoped.set(parent,root);(bridge as any).scoped.set(child,descendant);

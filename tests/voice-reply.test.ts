@@ -2,7 +2,8 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
-import {Store,scopeKey} from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
+import {scopeKey} from '../src/core/identity.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {BotRuntime,type HarnessPort} from '../src/core/runtime.js';
 import {botSchema,configSchema,type CallerScope,type Delivery,type Output} from '../src/core/types.js';
@@ -13,7 +14,7 @@ const scope:CallerScope={botId:'bot',platform:'qq',accountId:'account',kind:'pri
 function deferred(){let resolve!:()=>void;const promise=new Promise<void>(done=>resolve=done);return{promise,resolve};}
 
 async function fixture(t:any){
-  const directory=await mkdtemp(path.resolve('.codex/voice-reply-')),store=new Store(directory),assets=new Assets(store);
+  const directory=await mkdtemp(path.resolve('.codex/voice-reply-')),store=new Store(directory),assets=new Assets(store.repositories());
   const initial=store.config('sakura'),currentConfig=configSchema.parse({...initial,schemaVersion:4,media:{voice:{enabled:true,protocol:'edge_tts',replyMode:'auto',voice:'first',format:'mp3'}}});store.put('config','sakura',currentConfig);store.put('config-version',`sakura:${currentConfig.revision}`,currentConfig);
   store.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',configId:'sakura',enabled:true,trustedUsers:['owner']}));
   const binding=store.binding(scope);
@@ -22,10 +23,10 @@ async function fixture(t:any){
   const sent:Delivery[]=[];const calls:Array<{config:any;parameters:any;signal:AbortSignal}>=[];
   const harness:HarnessPort={run:async(_b,_m,_s,options)=>({turnId:'reply',outputs:[{type:'text',text:'你好'}],snapshot:options!.snapshot!}),cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async()=>{}};
   const adapter={beginLogin:async()=>({status:'pending' as const}),pollLogin:async()=>({status:'expired' as const}),connect:async()=>{},materialize:async()=>Buffer.alloc(0),send:async(_b:any,_c:any,delivery:Delivery)=>{sent.push(delivery);return'receipt';}};
-  const media=new MediaService(store,assets);media.run=async(_scope,operation,config,inputs,parameters,signal,authorize)=>{
+  const media=new MediaService(store.repositories(),assets);media.run=async(_scope,operation,config,inputs,parameters,signal,authorize)=>{
     assert.equal(operation,'voice_speak');assert.deepEqual(inputs,[]);authorize?.();calls.push({config,parameters,signal});return{assetIds:[audio.id]};
   };
-  const runtime=new BotRuntime(store,assets,media,harness,fixtureChannels(adapter),{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}},60000);
+  const runtime=new BotRuntime(store.repositories(),assets,media,harness,fixtureChannels(adapter),{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}},60000);
   const chat=async()=>{await runtime.receive({id:'incoming',scope,text:'请回答',attachments:[],reply:{target:'owner',kind:'private',msgId:'incoming'},timestamp:Date.now()});await runtime.process(scopeKey(scope));};
   t.after(async()=>{await runtime.close();store.close();await rm(directory,{recursive:true,force:true});});
   return{runtime,store,assets,media,harness,sent,calls,audio,binding,chat};

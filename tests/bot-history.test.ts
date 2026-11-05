@@ -2,15 +2,15 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile,readFile,rm,stat} from 'node:fs/promises';
 import path from 'node:path';
-import {Store} from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
 import {Assets} from '../src/core/media.js';
 import {botSchema,type CallerScope} from '../src/core/types.js';
-import {botHistory,deleteBotFiles,deleteBotRecords} from '../src/core/bot-history.js';
+
 import {deleteNativeSessions} from '../src/harness/session-deletion.js';
 import {SessionQueryError} from '@deepseek-ai/dsh-session-query';
 
 test('history purge removes old sessions, memories, media, automation and stats only for its owner',async t=>{
-  const home=await mkdtemp(path.resolve('.codex/history-'));const store=new Store(home),assets=new Assets(store);
+  const home=await mkdtemp(path.resolve('.codex/history-'));const store=new Store(home),assets=new Assets(store.repositories());
   t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
   for(const id of ['one','two'])store.saveBot(botSchema.parse({id,name:id,channel:'qq'}));
   const scope=(botId:string):CallerScope=>({botId,platform:'qq',accountId:botId,kind:'private',channelId:'alice',senderId:'alice'});
@@ -27,9 +27,9 @@ test('history purge removes old sessions, memories, media, automation and stats 
     store.enqueue(b,'source','turn',[{type:'text',text:'private reply'}],{kind:'private',target:'alice',msgId:'source'});
     store.saveJob(b.sessionId,{id:b.sessionId,scope:b.key});await mkdir(path.join(home,'jobs',b.sessionId),{recursive:true});await writeFile(path.join(home,'jobs',b.sessionId,'input.json'),'private input');
   }
-  const history=botHistory(store,'one');assert.deepEqual(history.sessions,new Set([old.sessionId,fresh.sessionId]));
+  const history=store.persistence.botHistory.snapshot('one');assert.deepEqual(history.sessions,new Set([old.sessionId,fresh.sessionId]));
   const ownedPaths=store.list<any>('asset').filter(item=>item.scopeKey===old.key).map(item=>item.path),otherPath=store.list<any>('asset').find(item=>item.scopeKey===other.key).path;
-  await deleteBotFiles(store,assets.root,history);deleteBotRecords(store,'one',history);
+  await store.persistence.botHistory.deleteFiles(assets.root,history);store.persistence.botHistory.deleteRecords('one',history);
   assert.deepEqual(store.sessionsAll().map(item=>item.id),[other.sessionId]);
   assert.equal(store.bindings().length,1);assert.equal(store.allMessages().length,1);
   assert.equal(store.db.prepare('SELECT COUNT(*) n FROM memory').get()!.n,1);

@@ -2,12 +2,13 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
-import {Store,scopeKey} from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
+import {scopeKey} from '../src/core/identity.js';
 import {Assets} from '../src/core/media.js';
 import {botSchema,type CallerScope} from '../src/core/types.js';
 
 const scope:CallerScope={botId:'one',platform:'qq',accountId:'one',kind:'private',channelId:'alice',senderId:'alice'};
-async function fixture(t:any){const directory=await mkdtemp(path.resolve('.codex/asset-session-'));const store=new Store(directory);store.saveBot(botSchema.parse({id:scope.botId,name:scope.botId,channel:scope.platform}));t.after(async()=>{store.close();await rm(directory,{recursive:true,force:true});});return{store,assets:new Assets(store)};}
+async function fixture(t:any){const directory=await mkdtemp(path.resolve('.codex/asset-session-'));const store=new Store(directory);store.saveBot(botSchema.parse({id:scope.botId,name:scope.botId,channel:scope.platform}));t.after(async()=>{store.close();await rm(directory,{recursive:true,force:true});});return{store,assets:new Assets(store.repositories())};}
 const media={kind:'image' as const,name:'reference.png',mime:'image/png'};
 
 test('new and resumed sessions select only their own recent assets while explicit same-channel references remain readable',async t=>{

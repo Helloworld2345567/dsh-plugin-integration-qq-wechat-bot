@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
 import {Assets,MediaService} from '../src/core/media.js';
-import {Store} from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
 import {freezeTurn} from '../src/core/policy.js';
 import {botSchema,type CallerScope,type TurnSnapshot} from '../src/core/types.js';
 import {mediaOperationRegistry} from '../src/core/media-operation-registry.js';
@@ -18,7 +18,7 @@ async function fixture(t:TestContext,options:{trusted?:boolean;kind?:'private'|'
   const scope:CallerScope={botId:'fixture',platform:'qq',accountId:'bot',kind:options.kind??'private',channelId:'conversation',senderId:'alice'};
   const binding=store.binding(scope);const config=store.config('default');const snapshot=freezeTurn(config,store.bot('fixture'),scope,['source']);
   const jobs:MediaWorkerJob[]=[];const worker:WorkerPort={run:async job=>{jobs.push(structuredClone(job));return{text:'fixture',assets:[]};}};
-  const media=new MediaService(store,new Assets(store),'python',options.provider,worker);
+  const media=new MediaService(store.repositories(),new Assets(store.repositories()),'python',options.provider,worker);
   const quotaKey=(operation='image_download')=>`${new Date().toISOString().slice(0,10)}:${binding.key}:${operation}`;
   const exhaust=(operation='image_download')=>store.put('media-quota',quotaKey(operation),mediaOperationRegistry.get(operation).quotaUnits);
   const run=(turn:TurnSnapshot|undefined=snapshot,parameters:Record<string,unknown>={url:'https://www.douyin.com/video/1'},operation='image_download')=>media.run(binding.key,operation,config,[],parameters,new AbortController().signal,undefined,turn);

@@ -4,7 +4,7 @@ import fs,{mkdir,mkdtemp,rm,writeFile} from 'node:fs/promises';
 import {syncBuiltinESMExports} from 'node:module';
 import path from 'node:path';
 import {Assets,MediaService} from '../src/core/media.js';
-import {Store} from '../src/core/store.js';
+import {Store} from '../src/infrastructure/sqlite/store.js';
 import {INPUT_LIMITS,validateBatch,validateInboundMessage} from '../src/core/limits.js';
 import {botSchema,type CallerScope,type InboundMessage,type MediaInput} from '../src/core/types.js';
 import type {WorkerPort} from '../src/core/worker-port.js';
@@ -17,7 +17,7 @@ async function fixture(t:any){
   const base=process.env.BOT_TEST_TMP??path.resolve('.codex');await mkdir(base,{recursive:true});
   const folder=await mkdtemp(path.join(base,'video-core-'));const store=new Store(folder);store.saveBot(botSchema.parse({id:scope.botId,name:scope.botId,channel:scope.platform}));
   t.after(async()=>{store.close();await rm(folder,{recursive:true,force:true});});
-  return{store,assets:new Assets(store)};
+  return{store,assets:new Assets(store.repositories())};
 }
 
 test('asset registration accepts video bytes through 500 MiB and preserves image/file inputs at 50 MiB',async t=>{
@@ -56,9 +56,9 @@ test('audio input retains its 100 MiB budget and generated audio reaches 200 MiB
 
 test('worker video output reaches registration at 500 MiB and rejects larger output before reading it',async t=>{
   const {store,assets}=await fixture(t);const binding=store.binding(scope);let outputSize=500*MiB;let kind:MediaInput['kind']='video';let target='';
-  t.mock.method(store,'consumeMediaQuota',()=>{});
+  t.mock.method(store.persistence.quota,'consume',()=>{});
   const worker:WorkerPort={run:async job=>{target=path.join(job.output,'clip.mp4');await writeFile(target,'fixture');return{assets:[{path:target,name:'clip.mp4',kind,mime:'video/mp4'}]};}};
-  const media=new MediaService(store,assets,undefined,undefined,worker);const originalStat=fs.stat;
+  const media=new MediaService(store.repositories(),assets,undefined,undefined,worker);const originalStat=fs.stat;
   const stated=t.mock.method(fs,'stat',(async(file:any,options:any)=>{const result=await originalStat(file,options);return file===target?Object.assign(result,{size:outputSize}):result;}) as typeof fs.stat);
   syncBuiltinESMExports();
   const run=()=>media.run(binding.key,'video_download',store.config('default'),[],{url:'https://www.douyin.com/video/1'},new AbortController().signal);
