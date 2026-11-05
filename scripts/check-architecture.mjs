@@ -6,10 +6,15 @@ import {pathToFileURL} from 'node:url';
 import ts from 'typescript';
 
 const NODE_BUILTINS=new Set([...builtinModules,...builtinModules.map(name=>`node:${name}`)]);
-const REQUIRED_DIRECTORIES=['src/client','src/core','src/channels','src/harness','packages/bot-lifecycle/src','packages/bot-lifecycle/src/contract','python','skills','scripts','tests'];
+const REQUIRED_DIRECTORIES=['src/client','src/core','src/core/ports','src/infrastructure','src/infrastructure/sqlite','src/infrastructure/files','src/channels','src/harness','packages/bot-lifecycle/src','packages/bot-lifecycle/src/contract','python','skills','scripts','tests'];
 const HOST_OWNED_MODULE=/^src\/core\/(?:store|runtime|delivery-worker|channel-registry|channel-ports|session-actions|repositories)\.ts$/;
 const CHANNEL_HOST_OWNED_MODULE=/^src\/core\/(?:store|runtime|delivery-worker|session-actions|repositories|sqlite-[^/]+|[^/]+-store)\.ts$/;
 const ADAPTER_HOST_OWNED_MODULE=/^src\/core\/(?:[^/]*(?:store|session|delivery|sqlite|repositories|runtime)[^/]*)\.ts$/;
+const INFRASTRUCTURE_PREFIX='src/infrastructure/';
+const SQLITE_ADAPTER_PREFIX='src/infrastructure/sqlite/';
+const PORTS_PREFIX='src/core/ports/';
+const COMPOSITION_ROOT='src/index.ts';
+const STORE_FACADE='src/infrastructure/sqlite/store.ts';
 const LIFECYCLE_SOURCE='packages/bot-lifecycle/src/';
 const LIFECYCLE_CONTRACT='packages/bot-lifecycle/src/contract/';
 
@@ -109,12 +114,28 @@ export function analyzeModules(entries){
         if(target&&ADAPTER_HOST_OWNED_MODULE.test(target))violations.push(violation('service-adapter-isolation',file,'imports host-owned Store, Session, channel, delivery, SQLite or runtime implementation',target));
         if(dependency.specifier==='node:sqlite'||/@deepseek-ai\/dsh-(?:session|storage|attachment)/.test(dependency.specifier))violations.push(violation('service-adapter-isolation',file,`imports host service ${safeSpecifier(dependency.specifier)}`));
       }
+      if(dependency.specifier==='node:sqlite'&&productionModule(file)&&!file.startsWith(SQLITE_ADAPTER_PREFIX))violations.push(violation('sqlite-import',file,'imports node:sqlite outside the SQLite infrastructure adapter'));
+      if(target===STORE_FACADE&&file!==COMPOSITION_ROOT&&!file.startsWith(INFRASTRUCTURE_PREFIX))violations.push(violation('store-facade',file,'imports the infrastructure Store facade; depend on a narrow port instead',target));
+      if(target&&target.startsWith(INFRASTRUCTURE_PREFIX)&&file!==COMPOSITION_ROOT&&!file.startsWith(INFRASTRUCTURE_PREFIX)&&!file.startsWith('packages/')){
+        if(file.startsWith('src/client/'))violations.push(violation('client-repository',file,'imports a persistence adapter',target));
+        else if(file.startsWith('src/channels/'))violations.push(violation('channel-repository',file,'imports a persistence adapter',target));
+        else if(file.startsWith('src/harness/'))violations.push(violation('harness-repository',file,'imports a persistence adapter; receive ports from the composition root',target));
+        else if(file.startsWith('src/core/')&&!file.startsWith(PORTS_PREFIX))violations.push(violation('core-repository',file,'core imports a persistence adapter; depend on a port',target));
+        if(serviceAdapter)violations.push(violation('service-adapter-isolation',file,'imports a persistence adapter',target));
+      }
       const owner=packageRoot(file);
       if(owner&&dependency.specifier.startsWith('.')){const requested=normalizeRepoPath(path.posix.join(path.posix.dirname(file),dependency.specifier));if(!requested.startsWith(`${owner}/`))violations.push(violation('package-isolation',file,'relative import escapes the package source boundary',target??requested));}
       if(owner&&dependency.specifier.startsWith('.')&&target&&!target.startsWith(`${owner}/`))violations.push(violation('package-isolation',file,'resolved import escapes the package source boundary',target));
     }
   }
   for(const skipped of skippedDynamicImports)if(productionModule(skipped.file))violations.push(violation('dynamic-import-target',skipped.file,`cannot determine import or require target at line ${skipped.line}`));
+  for(const [file,source] of files){
+    if(!productionModule(file)||file.startsWith(INFRASTRUCTURE_PREFIX))continue;
+    if(!/\.m?ts$/.test(file))continue;
+    if(/\bDatabaseSync\b/.test(source))violations.push(violation('database-ownership',file,'references DatabaseSync outside the SQLite infrastructure adapter'));
+    if(/\b(?:this\.)?db\.prepare\s*\(/.test(source))violations.push(violation('database-ownership',file,'prepares SQL outside the SQLite infrastructure adapter'));
+    if(/\b(?:database|persistence)\.(?:records|db)\b/.test(source))violations.push(violation('record-access',file,'uses the generic record table or database handle outside the infrastructure adapter'));
+  }
   const cycles=stronglyConnected(graph);
   for(const cycle of cycles)violations.push(violation('typescript-cycle',cycle[0],`runtime cycle: ${cycle.join(' -> ')}`));
   return{files:[...files.keys()].sort(),edges,cycles,violations:violations.sort((a,b)=>a.file.localeCompare(b.file)||a.rule.localeCompare(b.rule)||a.detail.localeCompare(b.detail)),skippedDynamicImports:skippedDynamicImports.sort((a,b)=>a.file.localeCompare(b.file)||a.line-b.line)};
@@ -217,6 +238,7 @@ export async function checkRepository(root=process.cwd(),options={}){
   }
   if(!build.includes("../packages/bot-lifecycle/scripts/build.mjs"))violations.push(violation('package-entry','scripts/build.mjs','root build must invoke the lifecycle package-owned build'));
   if(await exists(path.join(root,'src/lifecycle')))violations.push(violation('architecture-layout','src/lifecycle','legacy lifecycle source directory must not exist'));
+  if(await exists(path.join(root,'src/core/store.ts')))violations.push(violation('architecture-layout','src/core/store.ts','the Store facade must not live in core; application code depends on narrow ports'));
   for(const legacy of ['src/core/evolution-contract.ts','src/core/source-integrity.ts'])if(await exists(path.join(root,legacy)))violations.push(violation('architecture-layout',legacy,'lifecycle contract must have a single source under packages/bot-lifecycle/src/contract'));
   for(const [file,declaration,role] of [['package.json',manifest.dshLifecycle,'main'],['packages/bot-lifecycle/package.json',lifecycleManifest.dshLifecycle,'coordinator']])if(declaration?.schemaVersion!==1||declaration?.role!==role)violations.push(violation('lifecycle-contract',file,`${role} versioned lifecycle declaration is missing`));
   for(const directory of REQUIRED_DIRECTORIES){

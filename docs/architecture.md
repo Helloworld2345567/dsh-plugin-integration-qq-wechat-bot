@@ -18,10 +18,11 @@ flowchart LR
   Harness --> Tools[工具与技能]
   Harness --> Media[媒体操作]
   Media --> Worker[Python worker]
-  Runtime --> Store[SQLite Store]
-  Store --> Delivery[投递队列]
+  Runtime --> Repos[窄 Repository 端口]
+  Repos --> SQLite[SQLite／文件 adapter]
+  SQLite --> Delivery[投递队列]
   Delivery --> Channel
-  Store --> Admin[管理 API]
+  SQLite --> Admin[管理 API]
   Admin --> Panel[React 面板]
   Runtime --> Stats[统计投影]
   Stats --> Panel
@@ -34,7 +35,7 @@ flowchart LR
 - **身份绑定**：由渠道身份、账号、会话类型和发送者组成作用域；模型不能提供身份或路径。
 - **BotRuntime**：协调接收、排队、命令、Harness turn、权限和投递。
 - **配置快照**：每轮开始时冻结人格、模型、工具、技能和媒体能力；后续修改从下一轮生效。
-- **Store**：保存 bot、人格版本、会话绑定、任务、投递、媒体记录和统计事件。
+- **Repository 端口与 adapter**：应用服务只看 src/core/ports/ 的窄 contract；bot、人格版本、会话绑定、任务、投递、媒体记录和统计事件由 src/infrastructure/sqlite/ 的 adapter 持久化，schema 与错误码保持不变。
 - **媒体 worker**：实现统一位于 `python/dsh_bot_runtime/`，只接受宿主解析后的附件和固定操作；宿主以受控包根和 `-P -m` 启动，凭据按任务注入，不写入配置或结果。
 - **管理 API**：提供摘要、分页查询和受保护命令；面板只使用 API，不直接访问存储层。
 - **生命周期协调器**：是独立 bundle，不是主插件内部服务。其可构建源码、integrity、protocol 和入口位于 `packages/bot-lifecycle/src/`；主插件只连接中立 runtime port。双方按 runtime protocol、coordinator API、package version range、capabilities、instance 与 artifact identity 双向握手；不兼容组合 fail closed，不把生命周期状态交给可变插件逻辑。
@@ -95,7 +96,7 @@ GPT-SoVITS 适配器按服务地址串行执行，每个请求完整执行 `set_
 
 `media.singing` 是独立、默认关闭的 STS 配置，与 `media.voice` 不共享目标权重或参考音频。`bot_sing` 同时要求人格开启 STS、允许该工具并启用 `singing-conversion`。专用工具维护 `prepare/list/convert` 候选和单轮 attempt；兼容工具 `bot_media` 禁止调用 `singing_convert`。服务地址、角色路径和 job ID 由宿主提供，工具参数不能覆盖。
 
-候选保存于 Store records，绑定 scope、session、generation 和候选集 ID。宿主解析当前会话的 audio/file 附件，或保留真实搜索结果的公开 URL、标题及可得许可信息。worker 复用公开链接下载与音轨提取；已知混音且无分离配置在下载前拒绝，类型未知要求用户确认。RVC Profile 的私有 `separation` 保存分离模型 ID、权重路径、伴奏混音开关和音量；默认关闭，配置完整后才允许 `mixed`，并先提取人声再转换和按偏好混音。明确的用户转换请求及待上传状态可绕过前置 ASR，普通语音仍自动转写。
+候选保存于持久化 records，绑定 scope、session、generation 和候选集 ID。宿主解析当前会话的 audio/file 附件，或保留真实搜索结果的公开 URL、标题及可得许可信息。worker 复用公开链接下载与音轨提取；已知混音且无分离配置在下载前拒绝，类型未知要求用户确认。RVC Profile 的私有 `separation` 保存分离模型 ID、权重路径、伴奏混音开关和音量；默认关闭，配置完整后才允许 `mixed`，并先提取人声再转换和按偏好混音。明确的用户转换请求及待上传状态可绕过前置 ASR，普通语音仍自动转写。
 
 宿主按规范化服务地址串行执行；`rvc_http_v1` 服务另有单槽 FIFO，每个作业创建专用 RVC 子进程。runner 使用已安装 RVC 包的 `VoiceConverter`，校验 checkpoint 版本、F0、speaker 和索引维度，再执行 RMVPE 转换。提交使用宿主生成的唯一 job ID；重复 ID 复用已有状态，提交响应丢失只查状态，不重放推理。取消由仍存活的宿主发往服务，确认子进程树结束才释放队列；状态未知时封锁该服务，确认空闲后恢复。
 

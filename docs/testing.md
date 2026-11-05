@@ -26,6 +26,10 @@ Lifecycle 单元/原生/安装测试覆盖：完全兼容、protocol major 不�
 
 `npm run check:environment` 是测试前的只读预检，不替代上述门禁。它检查操作系统、Node 24+、Harness `0.2.1-rc.2`、Python 3.12/3.13、ffmpeg/ffprobe、基础 Python 依赖和 lockfile；voice-generation 缺失显示 `OPTIONAL`，不阻止基础流程。
 
+## Repository contract 套件
+
+`tests/repository-contract.test.ts` 除了经由基础设施 facade 验证历史行为，还直接对真实临时 SQLite adapter 运行 contract 套件：重开持久化后配置 revision、binding、asset 与 pending delivery 仍然一致；scope／channel 隔离；persona revision CAS；session generation 与 stale／forged cursor；delivery unknown 不自动重放、retry 复用原 intent；多步写入事务回滚；Profile revision 不可变与验收绑定；删除一个 bot 不影响另一个 bot；teardown 显式关闭数据库。新增 repository 时必须在该套件补一条对应断言，并保持 `npm run check:architecture` 通过。
+
 ## 测试环境与变量分类
 
 测试 runner 不复制整个 `process.env`。子进程只接收系统执行所需的 `PATH`/`PATHEXT`/`SystemRoot`/`WINDIR`/`COMSPEC`、隔离的 `HOME`/临时目录，以及 runner 创建的目录变量。Python runner 额外把 `PYTHONPATH` 固定为被测 checkout 或已安装归档的 `python/`，并用 `-B -P -m` 验证公共命名空间；从不继承外部 `PYTHONPATH`。真实 API key、Cookie、Authorization、Harness profile/session、用户/群 ID、模型端点和 npm/pip 用户配置不会进入测试子进程。
