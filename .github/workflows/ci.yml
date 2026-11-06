@@ -59,8 +59,35 @@ jobs:
           python -m pip install -r requirements-ci.txt -r requirements-voice-generation-ci.txt
           python -m pip install -r requirements-audit-ci.txt
 
-      - name: 运行类型、测试与构建门禁
-        run: npm run verify:release
+      - name: 检查架构
+        run: npm run check:architecture
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: 构建
+        run: npm run build
+
+      - name: TypeScript 测试
+        run: npm test
+
+      - name: Python 测试
+        run: npm run test:python
+
+      - name: Python 依赖检查
+        run: npm run check:python-dependencies
+
+      - name: 文档检查
+        run: npm run check:docs
+
+      - name: 契约检查
+        run: npm run check:contracts
+
+      - name: 许可证检查
+        run: npm run check:licenses
+
+      - name: 发布内容检查
+        run: npm run check:release
 
       - name: 运行依赖审计
         run: |
