@@ -44,14 +44,12 @@ jobs:
 
       - name: 确认 FFmpeg
         run: |
-          if ! command -v ffmpeg >/dev/null 2>&1; then
-            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y ffmpeg || {
-              sudo apt-get update -o Acquire::Retries=3
-              DEBIAN_FRONTEND=noninteractive sudo apt-get install -y ffmpeg
-            }
+          if command -v ffmpeg >/dev/null 2>&1; then
+            ffmpeg -version | head -n 1
+            ffprobe -version | head -n 1
+          else
+            echo 'FFmpeg is unavailable on this quality runner; media unit tests use fixtures.'
           fi
-          ffmpeg -version | head -n 1
-          ffprobe -version | head -n 1
 
       - name: 安装可复现依赖
         run: |
