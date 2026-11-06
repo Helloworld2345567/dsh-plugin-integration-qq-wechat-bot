@@ -8,12 +8,15 @@ import io
 import struct
 import wave
 import os
+import shutil
 from dataclasses import dataclass
 
 ROOT = Path(__file__).resolve().parents[1]
 from dsh_bot_runtime.rvc_runner import validate_model
 from dsh_bot_runtime.singing_common import SingingError, validate_wav
 from dsh_bot_runtime.separation_runner import mix_audio, _model_config
+
+FFMPEG_AVAILABLE = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
 
 
 class SingingRunnerTests(unittest.TestCase):
@@ -120,6 +123,7 @@ class SingingRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(SingingError, "SINGING_MODEL_INCOMPATIBLE"):
             _model_config({**separation, "modelPath": str(self.root / "wrong.ckpt")}, rvc_root)
 
+    @unittest.skipUnless(FFMPEG_AVAILABLE, "FFmpeg required")
     def test_mixed_runner_separates_then_converts_then_mixes_once(self):
         source = self.root / "mix.wav"
         stream = io.BytesIO()

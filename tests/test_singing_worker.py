@@ -1,6 +1,7 @@
 import io
 import json
 from pathlib import Path
+import shutil
 import struct
 import tempfile
 import unittest
@@ -10,6 +11,8 @@ import wave
 ROOT = Path(__file__).resolve().parents[1]
 from dsh_bot_runtime import singing_worker
 from dsh_bot_runtime.singing_common import SingingError, validate_wav
+
+FFMPEG_AVAILABLE = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
 
 
 def audio_data():
@@ -41,6 +44,7 @@ class SingingWorkerTests(unittest.TestCase):
     def fake_conversion(self, job, source, target):
         Path(target).write_bytes(Path(source).read_bytes())
 
+    @unittest.skipUnless(FFMPEG_AVAILABLE, "FFmpeg required")
     def test_file_audio_is_probed_and_wav_or_mp3_is_fully_validated(self):
         for output_format in ("mp3", "wav"):
             with self.subTest(format=output_format), patch.object(singing_worker, "request_conversion", side_effect=self.fake_conversion):
@@ -63,6 +67,7 @@ class SingingWorkerTests(unittest.TestCase):
                 inference.assert_not_called()
                 download.assert_not_called()
 
+    @unittest.skipUnless(FFMPEG_AVAILABLE, "FFmpeg required")
     def test_configured_mixed_attachment_is_submitted_with_separation_settings(self):
         model = self.root / "model_bs_roformer_ep_368_sdr_12.9628.ckpt"
         model.write_bytes(b"operator fixture")
@@ -83,6 +88,7 @@ class SingingWorkerTests(unittest.TestCase):
         self.assertEqual(captured["endpoint"]["separation"]["modelId"], "vocals")
         self.assertEqual(result["assets"][0]["kind"], "audio")
 
+    @unittest.skipUnless(FFMPEG_AVAILABLE, "FFmpeg required")
     def test_html_input_silent_and_truncated_results_do_not_register_assets(self):
         self.source.write_bytes(b"<html>not audio</html>")
         with patch.object(singing_worker, "request_conversion") as inference:
@@ -97,6 +103,7 @@ class SingingWorkerTests(unittest.TestCase):
                     singing_worker.execute(self.job())
         self.assertFalse((self.root / "outputs" / "singing.mp3").exists())
 
+    @unittest.skipUnless(FFMPEG_AVAILABLE, "FFmpeg required")
     def test_output_limit_does_not_truncate_or_change_requested_format(self):
         with patch.object(singing_worker, "request_conversion", side_effect=self.fake_conversion) as inference, patch.object(singing_worker, "MAX_OUTPUT_BYTES", 100):
             with self.assertRaisesRegex(SingingError, "SINGING_OUTPUT_TOO_LARGE"):
