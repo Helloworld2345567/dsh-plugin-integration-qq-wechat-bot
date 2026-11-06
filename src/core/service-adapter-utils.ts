@@ -5,7 +5,7 @@ import type {ServiceShadowComparator} from './service-shadow.js';
 import {compareProducedResult} from './service-shadow.js';
 
 export const SERVICE_OPERATION_MAP=Object.freeze({
-  musicSearch:'music.search',musicAcquire:'music.acquire',voiceSpeak:'gpt-sovits.speak',rvcConvert:'rvc.convert',
+  musicSearch:'music.search',musicAcquire:'music.acquire',voiceSpeak:'gpt-sovits.speak',breezeSpeak:'breeze-tts.speak',rvcConvert:'rvc.convert',
   legacyMusicSearch:'music_search',legacyMusicAcquire:'music_acquire',legacyVoiceSpeak:'voice_speak',legacyRvcConvert:'singing_convert',
 });
 export function assertOutputFile(job:ServiceAdapterJob,file:string):string {

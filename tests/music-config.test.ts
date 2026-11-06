@@ -33,7 +33,8 @@ test('music card enables dedicated permissions and retains persona media setting
   const React={createElement:(type:any,props:any,...children:any[])=>({type,props,children})},ui=createUI(React,false,()=>{});
   const config=configSchema.parse({id:'music',name:'Music',personaPrompt:'A',tools:[],skills:[],media:{voice:{enabled:false}}});let updated:any;
   const nodes:any[]=[];const walk=(item:any)=>{if(!item||typeof item!=='object')return;nodes.push(item);item.children?.forEach(walk);};
-  walk(musicCard(React.createElement,ui,config,[],(patch:any)=>{updated=patch;}));
+  const tree=musicCard(React.createElement,ui,config,[],(patch:any)=>{updated=patch;});walk(tree);
+  assert.equal(tree.children[1].type,'details');
   assert.doesNotMatch(JSON.stringify(nodes),/验收|health|acceptance|测试|权重|locator/);
   assert.ok(nodes.some(node=>node.type==='label'&&node.children[0]==='音乐来源'));
   assert.equal(nodes.some(node=>node.type==='input'),false);

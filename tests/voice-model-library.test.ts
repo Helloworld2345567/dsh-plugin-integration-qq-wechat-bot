@@ -53,6 +53,22 @@ test('operator settings discover independent strict adapter profiles without cha
   assert.equal(JSON.stringify(f.store.personas.configs()),before);assert.doesNotMatch(JSON.stringify(f.profiles.list()),/model\.pth|baseUrl|sourceId|resourceHash|modelsRoot/);
 });
 
+test('Breeze voice discovery registers saved voices without requiring the shared model root',async t=>{
+  const f=await fixture(t),previous=globalThis.fetch;t.after(()=>globalThis.fetch=previous);
+  globalThis.fetch=async input=>{assert.equal(String(input),'http://127.0.0.1:8080/v1/voices');return Response.json({voices:[{id:'klee',name:'可莉'},{id:'mayuri',name:'真由理'},{id:'bad voice',name:'无效'}]});};
+  const view=await f.library.save({modelsRoot:'',gptSovitsUrl:'http://127.0.0.1:9880',breezeTtsUrl:'http://127.0.0.1:8080',expectedRevision:f.library.view().revision},new AbortController().signal);
+  assert.equal(view.reports['breeze-tts'].state,'ready');assert.equal(view.reports['breeze-tts'].profileCount,2);assert.equal(view.reports['breeze-tts'].diagnostics.length,1);
+  const klee=f.profiles.require({serviceId:'breeze-tts',profileId:'klee'});assert.equal(klee.managedConfig.protocol,'breeze_tts');assert.equal(klee.managedConfig.voice,'klee');assert.equal(klee.managedConfig.baseUrl,'http://127.0.0.1:8080');
+  await f.library.refresh(new AbortController().signal);assert.equal(f.profiles.require(klee).revision,klee.revision);
+});
+
+test('Breeze refresh falls back to the configured .breeze voices directory when HTTP is unavailable',async t=>{
+  const f=await fixture(t),voices=path.join(f.root,'breeze-voices');await mkdir(voices);await writeFile(path.join(voices,'klee.breeze'),'fixture-klee');await writeFile(path.join(voices,'mayuri.breeze'),'fixture-mayuri');
+  const previous=globalThis.fetch;t.after(()=>globalThis.fetch=previous);globalThis.fetch=async()=>{throw Error('BREEZE_OFFLINE');};
+  const view=await f.library.save({modelsRoot:'',gptSovitsUrl:'http://127.0.0.1:9880',breezeTtsUrl:'http://127.0.0.1:8080',breezeTtsVoicesRoot:voices,expectedRevision:f.library.view().revision},new AbortController().signal);
+  assert.equal(view.reports['breeze-tts'].state,'partial');assert.equal(view.reports['breeze-tts'].profileCount,2);assert.equal(f.profiles.require({serviceId:'breeze-tts',profileId:'klee'}).managedConfig.voice,'klee');
+});
+
 test('refresh is idempotent and model updates and removals affect only the owned profile',async t=>{
   const f=await fixture(t);await f.save();const first=f.profiles.require({serviceId:'rvc',profileId:'voice-v2'}),gpt=f.profiles.require({serviceId:'gpt-sovits',profileId:'voice-v4-zh'});
   f.profiles.create({serviceId:'rvc',profileId:'manual',state:'ready',displayName:'Manual',capabilities:['rvc.convert'],managedConfig:{private:'unchanged'}});

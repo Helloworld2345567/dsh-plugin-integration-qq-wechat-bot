@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import path from 'node:path';
-import {normalizeGptSovitsBaseUrl} from './voice-config.js';
+import {normalizeGptSovitsBaseUrl,normalizeVoiceServiceBaseUrl} from './voice-config.js';
 import {serviceProfileRefSchema,type ProfileState,type ServiceProfileRef,type TurnServiceSnapshot} from './service-contract.js';
 
 export const idSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
@@ -30,6 +30,13 @@ export const gptSovitsSchema=z.object({
   }
 });
 export type GptSovitsConfig=z.infer<typeof gptSovitsSchema>;
+const breezeVoiceSchema=z.string().trim().min(1).max(100).regex(/^[a-z0-9][a-z0-9_-]*$/,'Breeze 音色 ID 无效');
+export const breezeTtsSchema=z.object({
+  protocol:z.literal('breeze_tts'),
+  baseUrl:z.url().max(2048).refine(value=>{try{normalizeVoiceServiceBaseUrl(value);return true;}catch{return false;}},'Breeze TTS 服务须使用无凭据、查询和片段的 HTTP 或 HTTPS 地址').transform(normalizeVoiceServiceBaseUrl),
+  voice:breezeVoiceSchema,
+}).strict();
+export type BreezeTtsConfig=z.infer<typeof breezeTtsSchema>;
 const edgeTtsVoiceSchema=z.string().trim().min(1).max(100).refine(value=>new TextEncoder().encode(value).length<=128,'Edge TTS 音色名称不能超过 128 字节');
 export const edgeTtsSchema=z.object({protocol:z.literal('edge_tts'),voice:edgeTtsVoiceSchema});
 export type EdgeTtsConfig=z.infer<typeof edgeTtsSchema>;
@@ -51,11 +58,11 @@ const commonConfigFields={
 const v4ImageSchema=imageSkillOverrideSchema.strict();
 const v4AnalysisSchema=z.object({enabled:z.boolean().default(true),protocol:z.enum(['chat_completions','transcriptions']).default('chat_completions'),provider:z.never().optional(),model:z.never().optional(),baseUrl:z.never().optional(),keyEnv:z.never().optional()}).strict();
 const v4VoiceSchema=z.object({
-  enabled:z.boolean().default(false),profileRef:serviceProfileRefSchema.optional(),replyMode:z.enum(['on_demand','auto']).default('on_demand'),format:z.enum(['mp3','wav']).default('mp3'),
+  enabled:z.boolean().default(false),engine:z.enum(['edge_tts','gpt-sovits','breeze-tts']).optional(),profileRef:serviceProfileRefSchema.optional(),replyMode:z.enum(['on_demand','auto']).default('on_demand'),format:z.enum(['mp3','wav']).default('mp3'),
   // Edge TTS is a built-in provider without an operator endpoint, path or credential.
   protocol:z.literal('edge_tts').optional(),voice:edgeTtsVoiceSchema.optional(),edgeTts:edgeTtsFallbackSchema.optional(),
   gptSovits:z.never().optional(),baseUrl:z.never().optional(),endpoint:z.never().optional(),credentials:z.never().optional(),
-}).strict().superRefine((value,ctx)=>{if(value.protocol==='edge_tts'&&value.profileRef)ctx.addIssue({code:'custom',path:['profileRef'],message:'内置 Edge TTS 不使用服务 Profile'});if(value.protocol==='edge_tts'&&value.format==='wav')ctx.addIssue({code:'custom',path:['format'],message:'Edge TTS 语音输出仅支持 MP3'});});
+}).strict().superRefine((value,ctx)=>{if(value.protocol==='edge_tts'&&value.profileRef)ctx.addIssue({code:'custom',path:['profileRef'],message:'内置 Edge TTS 不使用服务 Profile'});if(value.protocol==='edge_tts'&&value.engine&&value.engine!=='edge_tts')ctx.addIssue({code:'custom',path:['engine'],message:'Edge TTS 引擎标识不匹配'});if(value.engine==='edge_tts'&&value.protocol!=='edge_tts')ctx.addIssue({code:'custom',path:['engine'],message:'Edge TTS 需要 edge_tts 协议'});if(value.engine&&value.engine!=='edge_tts'&&value.profileRef&&value.profileRef.serviceId!==value.engine)ctx.addIssue({code:'custom',path:['engine'],message:'语音引擎与服务 Profile 不匹配'});if(value.protocol==='edge_tts'&&value.format==='wav')ctx.addIssue({code:'custom',path:['format'],message:'Edge TTS 语音输出仅支持 MP3'});});
 const v4SingingSeparationSchema=z.object({
   enabled:z.boolean().default(false),instrumentalMix:z.boolean().default(false),volume:z.number().min(0).max(2).default(1),status:z.literal('unconfigured').default('unconfigured'),
   modelId:z.never().optional(),modelPath:z.never().optional(),weightsPath:z.never().optional(),

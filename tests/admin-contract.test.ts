@@ -9,11 +9,11 @@ import {botSchema} from '../src/core/types.js';
 import {createBotCredentials} from '../src/harness/credentials.js';
 import type {Credentials} from '../src/core/runtime-ports.js';
 
-async function fixture(t:any,credentials?:Credentials){
+async function fixture(t:any,credentials?:Credentials,chooseDirectory?:(initial?:string)=>Promise<string|undefined>){
   const home=await mkdtemp(path.resolve('.codex/admin-contract-'));const store=new SqlitePersistence(home,undefined,{secureDefaults:true});
   store.bots.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',enabled:true}));
   const runtime:any={repos:store.repositories(),states:new Map([['bot','connected']]),activeSessions:()=>0,health:()=>({ready:true,quiescing:false,activeTasks:0,pendingDeliveries:0,pendingSessionActions:0,connections:{bot:'connected'},latency:{}}),credentials:credentials??{read:async()=>({accountId:'account'})},media:{analysisStatus:async()=>({enabled:false,available:false})}};
-  const admin=new Admin({} as any,runtime,'token',async()=>{});t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});return{store,admin};
+  const admin=new Admin({} as any,runtime,'token',async()=>{},undefined,undefined,chooseDirectory);t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});return{store,admin};
 }
 
 test('versioned query and command contracts reject unknown fields and invalid envelopes',()=>{
@@ -27,6 +27,15 @@ test('versioned query and command contracts reject unknown fields and invalid en
   assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'bot.delete',input:{}}));
   assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'bot.delete',input:{id:'1',all:true}}));
   assert.equal(adminCommandRequestSchema.parse({version:1,kind:'command',name:'delivery.retry',input:{id:'delivery'}}).name,'delivery.retry');
+  assert.equal(adminCommandRequestSchema.parse({version:1,kind:'command',name:'service.start',input:{serviceId:'breeze-tts'}}).name,'service.start');
+  assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'service.start',input:{serviceId:'rvc'}}));
+});
+
+test('model directory picker command returns the selected path without saving settings',async t=>{
+  const selected=path.resolve('.codex/selected-models');let received:string|undefined;
+  const {admin}=await fixture(t,undefined,async initial=>{received=initial;return selected;});
+  const result:any=await admin.command({version:1,kind:'command',name:'service.settings.pick-directory',input:{current:'E:\\TTS_and_STS\\models'}});
+  assert.deepEqual(result,{path:selected});assert.equal(received,'E:\\TTS_and_STS\\models');
 });
 
 test('overview summary is bounded, redacted and supports unchanged revision responses',async t=>{

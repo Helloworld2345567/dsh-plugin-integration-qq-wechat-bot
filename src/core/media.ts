@@ -9,7 +9,7 @@ import type { Asset, BotConfig, MediaInput, TurnSnapshot } from './types.js';
 import {trusted} from './policy.js';
 import {normalizeProviderUsage,type MediaUsageCall} from './usage.js';
 import {validateMediaParameters,INPUT_LIMITS,VIDEO_LIMITS,AUDIO_LIMITS,isAudioInput} from './limits.js';
-import {mediaOperationRegistry,MediaOperationRegistry,SERVICE_OPERATION_BY_LEGACY,type MediaOperation} from './media-operation-registry.js';
+import {mediaOperationRegistry,MediaOperationRegistry,serviceOperationFor,type MediaOperation} from './media-operation-registry.js';
 import {MEDIA_WORKER_PROTOCOL,MEDIA_WORKER_PROTOCOL_VERSION,validateMediaWorkerJob,type MediaWorkerJob,type WorkerPort} from './worker-port.js';
 import {TransformSlots,transformSlots} from './transform-slots.js';
 import {assetFolder,moveFile,exists,type AssetOrigin} from './media-paths.js';
@@ -158,7 +158,7 @@ export class MediaService {
       // worker-backed operations cross the versioned process boundary.
       let result:MediaResult;
       if(useService){
-        const frozen=snapshot!.services[serviceRole!]!.snapshot!,serviceOperation=SERVICE_OPERATION_BY_LEGACY[operation];if(!serviceOperation)throw Error('SERVICE_OPERATION_MAPPING_MISSING');
+        const frozen=snapshot!.services[serviceRole!]!.snapshot!,serviceOperation=serviceOperationFor(operation,frozen.serviceId);if(!serviceOperation)throw Error('SERVICE_OPERATION_MAPPING_MISSING');
         const selectedParameters:Record<string,unknown>=operation==='voice_speak'?Object.fromEntries(['text','style','speed','format'].filter(key=>parameters[key]!==undefined).map(key=>[key,parameters[key]])):operation==='singing_convert'?Object.fromEntries(['sourceType','format'].filter(key=>parameters[key]!==undefined).map(key=>[key,parameters[key]])):operation==='music_search'?Object.fromEntries(['song','artist'].filter(key=>parameters[key]!==undefined).map(key=>[key,parameters[key]])):operation==='music_acquire'?Object.fromEntries(['song','artist','selection','includeLyrics'].filter(key=>parameters[key]!==undefined).map(key=>[key,parameters[key]])):{};
         const serviceResult=await this.serviceRuntime!.execute({operation:serviceOperation,profile:{serviceId:frozen.serviceId,profileId:frozen.profileId},profileRevision:frozen.profileRevision,profileContentHash:frozen.profileContentHash,inputHandles:source.map(item=>item.id),resolvedInputs:source.map(item=>({handle:item.id,kind:item.kind,path:item.path,name:item.name,mime:item.mime})),parameters:selectedParameters,outputDirectory:directory,idempotencyKey:createHash('sha256').update(JSON.stringify([scope,snapshot!.personaId,snapshot!.personaRevision,snapshot!.sourceIds,serviceOperation,selectedParameters,source.map(item=>item.id)])).digest('hex'),deadline:descriptor.timeoutMs>0?Date.now()+descriptor.timeoutMs:Date.now()+15*60*1000,scopeKey:scope,signal:combined,authorize});
         result={text:serviceResult.text,assets:serviceResult.outputs.map(output=>({path:output.path,name:path.basename(output.relativePath),mime:output.mime,kind:output.kind})),observations:serviceResult.observations};

@@ -27,7 +27,7 @@ test('default and new personas can refresh and change both voices in one valid d
     await import(new URL('../src/client/index.ts?voice-draft',import.meta.url).href);render();
     section('voice').find(n=>n.props?.role==='switch').props.onClick();await settle();
     assert.ok(states[7].tools.includes('bot_voice'));assert.ok(states[7].skills.includes('voice-generation'));
-    await select('voice','引擎','profile');
+    await select('voice','引擎','gpt-sovits');
     section('voice').find(n=>n.type==='button'&&n.children.includes('刷新')).props.onClick();await settle();await settle();
     assert.equal(calls.find(c=>c.name==='service.refresh').input.serviceId,'gpt-sovits');assert.equal(states[8],true);
     await select('voice','说话','gpt-sovits/first');await select('voice','说话','gpt-sovits/second');
@@ -40,7 +40,7 @@ test('default and new personas can refresh and change both voices in one valid d
     assert.equal(calls.filter(c=>c.action==='config.save').length,1);assert.equal(states[8],false);
     assert.equal(configSchema.parse(states[7]).media.voice?.profileRef?.profileId,'second');
     render().find(n=>n.type==='button'&&n.children.includes('新建')).props.onClick();await settle();
-    states[10]='media';await select('voice','说话','gpt-sovits/first');await select('singing','唱歌','rvc/first');
+    states[10]='media';states[7].media.voice.engine='gpt-sovits';states[7].media.voice.protocol=undefined;await settle();await select('voice','说话','gpt-sovits/first');await select('singing','唱歌','rvc/first');
     assert.equal(states[7].id,'');assert.equal(states[7].media.voice.profileRef.profileId,'first');assert.equal(states[7].media.singing.profileRef.profileId,'first');
   }finally{(globalThis as any).window=previous;globalThis.fetch=previousFetch;}
 });

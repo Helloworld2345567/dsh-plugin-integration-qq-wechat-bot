@@ -1,5 +1,5 @@
 import {randomUUID} from 'node:crypto';
-import {mkdir,readFile,copyFile,stat,realpath,rm,access,writeFile} from 'node:fs/promises';
+import {mkdir,readFile,copyFile,cp,stat,realpath,rm,access,writeFile} from 'node:fs/promises';
 import {existsSync,readdirSync,readFileSync} from 'node:fs';
 import {spawn} from 'node:child_process';
 import path from 'node:path';
@@ -135,8 +135,9 @@ export async function archivePackage(source,home){
     const sourceManifest=JSON.parse(await readFile(path.join(source,'package.json'),'utf8'));if(sourceManifest.name===lifecycleBundleName)try{await access(path.join(source,'src','index.ts'));await verifyLifecycleBuild(source);}catch(error){if(error.code!=='ENOENT')throw error;}
     const npm=[process.env.npm_execpath,path.join(path.dirname(process.execPath),'node_modules/npm/bin/npm-cli.js'),path.resolve(path.dirname(process.execPath),'../lib/node_modules/npm/bin/npm-cli.js')].find(p=>p&&path.basename(p)==='npm-cli.js'&&existsSync(p));
     if(!npm)throw Error('Cannot locate npm CLI beside Node');
-    const output=await new Promise((resolve,reject)=>{const child=spawn(process.execPath,[npm,'pack','--json','--ignore-scripts','--pack-destination',folder],{cwd:source,windowsHide:true,stdio:['ignore','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',data=>stdout+=data);child.stderr.on('data',data=>stderr+=data);child.on('error',reject);child.on('exit',code=>code===0?resolve(stdout):reject(Error(stderr)));});
-    const [packed]=JSON.parse(output);if(path.basename(packed.filename)!==packed.filename)throw Error('Unexpected npm pack filename');archive=path.join(folder,packed.filename);
+    const pack=async(input)=>{const output=await new Promise((resolve,reject)=>{const child=spawn(process.execPath,[npm,'pack','--json','--ignore-scripts','--pack-destination',folder],{cwd:input,windowsHide:true,stdio:['ignore','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',data=>stdout+=data);child.stderr.on('data',data=>stderr+=data);child.on('error',reject);child.on('exit',code=>code===0?resolve(stdout):reject(Error(stderr)));});const [packed]=JSON.parse(output);if(path.basename(packed.filename)!==packed.filename)throw Error('Unexpected npm pack filename');return path.join(folder,packed.filename);};
+    const materialized=source.split(/[\\/]/).includes('node_modules')?path.join(home,'package-archives',randomUUID()):undefined;
+    try{if(materialized){await cp(await realpath(source),materialized,{recursive:true,verbatimSymlinks:true});archive=await pack(materialized);}else archive=await pack(source);}finally{if(materialized)await rm(materialized,{recursive:true,force:true});}
   }else{if(!/\.tgz$/i.test(source))throw Error('Installation source must be a package directory or .tgz');archive=path.join(folder,path.basename(source));await copyFile(source,archive);}
   try{await validatePackageArchive(archive);return{path:archive,sha256:await hashFile(archive)};}catch(error){await rm(folder,{recursive:true,force:true});throw error;}
 }

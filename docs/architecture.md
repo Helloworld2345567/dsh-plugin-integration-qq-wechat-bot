@@ -78,9 +78,10 @@ bot 可以共享人格，但身份、会话、附件、记忆和投递始终按�
 
 入站音频优先使用渠道提供的转写；没有转写时，BotRuntime 在送入模型前自动调用 ASR，并把真实转写写回当前消息。自动转写失败会停止本轮模型调用，避免根据未识别音频猜测内容。语音输出由 `voice-generation` skill 生成 `audio` Asset，再沿现有投递队列发送。QQ 在渠道发送准备阶段派生 SILK 语音气泡，超过 300 秒时完整分段并另附整曲 MP3，各段独立保存投递状态；微信首期使用可播放的普通音频文件。
 
-人格配置只接受 V4。`media.voice` 使用 `profileRef` 选择 GPT-SoVITS 服务，或通过 `protocol: edge_tts` 使用内置语音；`replyMode` 支持 `on_demand` 与 `auto`。服务地址、模型权重、参考音频和语言保存在 Profile 的私有配置中，工具参数只提供朗读文本、语速等业务输入。
+人格配置只接受 V4。`media.voice` 使用 `profileRef` 选择 GPT-SoVITS 或 Breeze TTS 服务，或通过 `protocol: edge_tts` 使用内置语音；`replyMode` 支持 `on_demand` 与 `auto`。服务地址、模型权重、参考音频、Breeze 音色 ID 和语言保存在 Profile 的私有配置中，工具参数只提供朗读文本、语速等业务输入。
 
 GPT-SoVITS 适配器按服务地址串行执行，每个请求完整执行 `set_sovits_weights → set_gpt_weights → set_refer_audio → tts`。运行任务绑定冻结的 Profile 修订版本；权限撤销、取消及会话身份检查由宿主管理。
+Breeze TTS 适配器按服务地址串行调用已运行的 `/v1/audio/speech`，请求固定返回 WAV；健康检查要求服务报告 24 kHz。面板的显式启动命令只执行固定的外部启动器，插件不在刷新、合成或关闭时接管 Breeze 进程；取消提交后的请求无法确认服务端状态时会封锁该服务。
 
 自动语音在成功取得最终回复后、分段入投递队列前生成，正常聊天和自动化使用同一处理方式。`HarnessResult.voiceAttempted` 记录本轮显式语音尝试，失败也不会自动再合成。投递队列只重发已登记资产；普通合成失败保留正文，权限撤销或上下文失效终止投递。管理状态把配置完整性与当前人格修订版本的合成验收记录分别展示。
 
@@ -91,6 +92,10 @@ GPT-SoVITS 适配器按服务地址串行执行，每个请求完整执行 `set_
 ### GPT-SoVITS Limitations / Known Issues
 
 服务需要由一个机器人进程独占，首次使用及变更旧参考文本的语言/前端含义前须重新启动服务清空缓存。每次加载模型有额外耗时；取消本地 worker 不证明服务端推理立即停止。服务端模型资源和版本能力须单独配置与验收。
+
+### Breeze TTS Limitations / Known Issues
+
+Breeze 音色必须先在服务端保存并能通过 `/v1/voices` 列出；服务未启动或音色被删除时 Profile 会变为不可用。面板可以在运营者明确配置项目目录后执行固定 `Start-Breeze.ps1`，但刷新、合成和插件关闭都不会自动管理外部进程。Breeze 不提供速度控制，日语输入仍属于实验用途；真实音频和平台投递需要独立验收。
 
 ### RVC 音色转换
 

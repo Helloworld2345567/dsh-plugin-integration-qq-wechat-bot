@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {botSchema,configSchema} from '../core/types.js';
 import {voiceLibrarySettingsInputSchema} from '../core/voice-model-library.js';
-import {acceptanceQueryInputSchema,acceptanceRecordInputSchema,catalogModelsInputSchema,catalogProfileInputSchema,catalogProfilesInputSchema,serviceHealthInputSchema,serviceRefreshInputSchema} from '../core/service-management.js';
+import {acceptanceQueryInputSchema,acceptanceRecordInputSchema,catalogModelsInputSchema,catalogProfileInputSchema,catalogProfilesInputSchema,serviceHealthInputSchema,serviceRefreshInputSchema,serviceStartInputSchema} from '../core/service-management.js';
 
 export const ADMIN_CONTRACT_VERSION=1 as const;
 const revisionSchema=z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -53,7 +53,8 @@ export const adminCommandRequestSchema=z.discriminatedUnion('name',[
   commandRequest('skill.singing.probe',z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive()}).strict()),
   commandRequest('skill.music.probe',z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive()}).strict()),
   commandRequest('service.settings.save',voiceLibrarySettingsInputSchema),
-  commandRequest('service.refresh',serviceRefreshInputSchema),commandRequest('capability.acceptance',acceptanceRecordInputSchema),
+  commandRequest('service.settings.pick-directory',z.object({current:z.string().trim().max(32767).refine(value=>!/[\x00-\x1f]/.test(value),'目录路径包含无效字符').optional()}).strict()),
+  commandRequest('service.refresh',serviceRefreshInputSchema),commandRequest('service.start',serviceStartInputSchema),commandRequest('capability.acceptance',acceptanceRecordInputSchema),
   commandRequest('delivery.retry',deliveryRetryInput),
   commandRequest('automation.proactive',z.object({scopeKey:z.string().min(1).max(128),action:z.enum(['on','off','status','now','set']),args:z.string().max(1000).default('')}).strict()),
   commandRequest('automation.schedule',z.object({scopeKey:z.string().min(1).max(128),action:z.enum(['list','create','pause','resume','run','delete']),args:z.string().max(1000).default('')}).strict()),

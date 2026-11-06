@@ -32,6 +32,10 @@
 | `SAKURA_IMAGE_MODEL` | 非敏感配置 | 图片模型旧环境别名，优先级低于 `BOT_IMAGE_MODEL`。 | 是 | 否 | 否 | 只写占位符 |
 | `BOT_ANALYSIS_API_KEY` | **敏感，短生命周期** | 媒体分析/ASR worker 的固定注入变量名。实际密钥来自 Harness 模型 provider credentials；宿主只在每次子进程任务环境中注入，不要求运营者直接设置。 | 无需手工重启设置 | 否 | 否 | 禁止填写或伪造真实值；不要把它当作公开配置入口 |
 | `BOT_VOICE_MODELS_ROOT` | 非敏感配置，但会暴露本机路径 | 首次打开音色模型库时的模型根目录默认值；面板保存的库设置优先。模型、权重和参考音频仍是外部资源，不随主包安装。 | 是（或重新打开/刷新服务） | 否 | 否 | 不写真实路径、权重路径或模型文件 |
+| `BREEZE_TTS_URL` | 非敏感配置 | Breeze-TTS-2.cpp HTTP 服务地址默认值；面板保存的 Breeze 地址优先。 | 是（或重新打开/刷新服务） | 否 | 否 | 只写占位符，不写凭据或真实运行日志 |
+| `GPT_SOVITS_ROOT` | 非敏感路径 | GPT-SoVITS 外部项目目录默认值；面板保存的启动目录优先。仅用于用户点击“启动 GPT-SoVITS”，不会自动启动。 | 是 | 否 | 否 | 只写占位符，不写本机路径 |
+| `BREEZE_TTS_ROOT` | 非敏感路径 | Breeze-TTS-2.cpp 外部项目目录默认值；面板保存的启动目录优先。仅用于用户点击“启动 Breeze TTS”，不会自动启动。 | 是 | 否 | 否 | 只写占位符，不写本机路径 |
+| `BREEZE_TTS_VOICES_ROOT` | 非敏感路径 | Breeze `.breeze` 音色目录默认值；面板保存的目录优先。刷新时自动识别该目录中的已保存音色。 | 是（或刷新服务） | 否 | 否 | 只写占位符，不写本机路径 |
 | `BOT_LAUNCH_TOKEN` | **敏感运行时 nonce** | `scripts/start.mjs` 每次启动随机生成，用于 launcher、bot bundle 与 lifecycle 的本机 IPC 停止/就绪/重启握手；不应手工固定。 | 由启动器管理 | 否 | 是 | 禁止记录、复制或提交 |
 | `BOT_OPEN_DIRECTORY` | 路径敏感、短生命周期 | Windows“打开配置目录”动作在已校验路径后临时注入给本机 PowerShell helper；不是用户配置入口，不应手工设置。 | 无，由单次动作管理 | 否 | 否 | 禁止记录真实值或写入 `.env.example` |
 

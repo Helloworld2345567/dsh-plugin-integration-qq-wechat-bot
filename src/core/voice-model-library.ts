@@ -1,5 +1,5 @@
 import path from 'node:path';
-import {lstat,realpath} from 'node:fs/promises';
+import {lstat,realpath,readdir} from 'node:fs/promises';
 import {z} from 'zod';
 import {canonicalJsonHash} from './canonical-json.js';
 import {ConflictError} from './errors.js';
@@ -9,15 +9,20 @@ import {ReadOnlyServiceDiscovery,type DiscoveryCandidate,type ServiceDiscoverySt
 import type {ProfileStore} from './profile-store.js';
 import {profileIdSchema,sha256Schema} from './service-contract.js';
 import {gptSovitsSchema} from './types.js';
-import {normalizeGptSovitsBaseUrl} from './voice-config.js';
+import {normalizeGptSovitsBaseUrl,normalizeVoiceServiceBaseUrl} from './voice-config.js';
 import {sanitizePublicServiceText} from './service-errors.js';
+import {ExternalServiceLauncher,type LaunchableService,type ServiceStartResult, type ServiceLauncher} from './service-launcher.js';
 
-const SERVICES=['rvc','gpt-sovits'] as const;
+const SERVICES=['rvc','gpt-sovits','breeze-tts'] as const;
 type VoiceService=typeof SERVICES[number];
 const SOURCE_ID='voice-model-library';
 export const voiceLibrarySettingsSchema=z.object({
   modelsRoot:z.string().trim().max(4096).refine(value=>!value||path.isAbsolute(value)&&!/[\x00-\x1f]/.test(value),'模型根目录须为绝对路径').transform(value=>value?path.resolve(value):''),
   gptSovitsUrl:z.string().trim().min(1).max(2048).refine(value=>{try{normalizeGptSovitsBaseUrl(value);return true;}catch{return false;}},'请输入有效的 GPT-SoVITS 服务地址').transform(normalizeGptSovitsBaseUrl),
+  breezeTtsUrl:z.string().trim().min(1).max(2048).refine(value=>{try{normalizeVoiceServiceBaseUrl(value);return true;}catch{return false;}},'请输入有效的 Breeze TTS 服务地址').transform(normalizeVoiceServiceBaseUrl).default('http://127.0.0.1:8080'),
+  gptSovitsProjectRoot:z.string().trim().max(4096).refine(value=>!value||path.isAbsolute(value)&&!/[\x00-\x1f]/.test(value),'GPT-SoVITS 项目目录须为绝对路径').transform(value=>value?path.resolve(value):'').default(''),
+  breezeTtsProjectRoot:z.string().trim().max(4096).refine(value=>!value||path.isAbsolute(value)&&!/[\x00-\x1f]/.test(value),'Breeze TTS 项目目录须为绝对路径').transform(value=>value?path.resolve(value):'').default(''),
+  breezeTtsVoicesRoot:z.string().trim().max(4096).refine(value=>!value||path.isAbsolute(value)&&!/[\x00-\x1f]/.test(value),'Breeze TTS 音色目录须为绝对路径').transform(value=>value?path.resolve(value):'').default(''),
 }).strict();
 export const voiceLibrarySettingsInputSchema=voiceLibrarySettingsSchema.extend({expectedRevision:z.string().regex(/^sha256:[a-f0-9]{64}$/).optional()});
 export type VoiceLibrarySettings=z.infer<typeof voiceLibrarySettingsSchema>;
@@ -43,13 +48,13 @@ const emptyReport=():VoiceLibraryReport=>({state:'missing',profileCount:0,checke
 /** Operator-owned deployment settings are kept separate from model packages and personas. */
 export class VoiceModelLibrary {
   readonly discovery:ReadOnlyServiceDiscovery;
-  private reports:Record<VoiceService,VoiceLibraryReport>={rvc:emptyReport(),'gpt-sovits':emptyReport()};
+  private reports:Record<VoiceService,VoiceLibraryReport>={rvc:emptyReport(),'gpt-sovits':emptyReport(),'breeze-tts':emptyReport()};
   private pending:Promise<unknown>=Promise.resolve();
   private scanning:Promise<void>|undefined;
-  constructor(readonly settingsRepository:VoiceLibrarySettingsRepository,readonly home:string,readonly profiles:ProfileStore,readonly scanner:VoiceModelScanner,readonly defaults:Partial<VoiceLibrarySettings>={}){
+  constructor(readonly settingsRepository:VoiceLibrarySettingsRepository,readonly home:string,readonly profiles:ProfileStore,readonly scanner:VoiceModelScanner,readonly defaults:Partial<VoiceLibrarySettings>={},readonly launcher:ServiceLauncher=new ExternalServiceLauncher()){
     this.discovery=new ReadOnlyServiceDiscovery(profiles,new Map());
   }
-  private settings():VoiceLibrarySettings{return voiceLibrarySettingsSchema.parse(this.settingsRepository.read()??{modelsRoot:this.defaults.modelsRoot??process.env.BOT_VOICE_MODELS_ROOT??'',gptSovitsUrl:this.defaults.gptSovitsUrl??'http://127.0.0.1:9880'});}
+  private settings():VoiceLibrarySettings{return voiceLibrarySettingsSchema.parse(this.settingsRepository.read()??{modelsRoot:this.defaults.modelsRoot??process.env.BOT_VOICE_MODELS_ROOT??'',gptSovitsUrl:this.defaults.gptSovitsUrl??'http://127.0.0.1:9880',breezeTtsUrl:this.defaults.breezeTtsUrl??process.env.BREEZE_TTS_URL??'http://127.0.0.1:8080',gptSovitsProjectRoot:this.defaults.gptSovitsProjectRoot??process.env.GPT_SOVITS_ROOT??'',breezeTtsProjectRoot:this.defaults.breezeTtsProjectRoot??process.env.BREEZE_TTS_ROOT??'',breezeTtsVoicesRoot:this.defaults.breezeTtsVoicesRoot??process.env.BREEZE_TTS_VOICES_ROOT??''});}
   view():VoiceLibraryView {const settings=this.settings();return{...settings,revision:revision(settings),reports:structuredClone(this.reports)};}
   private exclusive<T>(action:()=>Promise<T>):Promise<T>{const current=this.pending.then(action,action);this.pending=current.catch(()=>{});return current;}
   async save(input:unknown,signal:AbortSignal):Promise<VoiceLibraryView>{
@@ -68,11 +73,17 @@ export class VoiceModelLibrary {
     try{await pending;}finally{if(this.scanning===pending)this.scanning=undefined;}
   }
   status(serviceId:VoiceService):ServiceDiscoveryStatus {
-    const report=this.reports[serviceId],configured=!!this.settings().modelsRoot;
+    const report=this.reports[serviceId],settings=this.settings(),configured=serviceId==='breeze-tts'?!!settings.breezeTtsUrl:!!settings.modelsRoot;
     return{serviceId,state:report.state,registeredRoots:configured?1:0,scannedRoots:report.checkedAt&&report.state!=='missing'?1:0,profileCount:report.profileCount,checkedAt:report.checkedAt,safeDiagnostic:report.diagnostics.join(' ').slice(0,1000)||undefined};
   }
-  private unavailable(state:'missing'|'blocked',diagnostic:string):void{
-    for(const serviceId of SERVICES){this.discovery.failSource(serviceId,SOURCE_ID,state);this.reports[serviceId]={state,profileCount:0,checkedAt:Date.now(),diagnostics:[diagnostic],models:[]};}
+  async start(serviceId:LaunchableService,signal:AbortSignal):Promise<ServiceStartResult>{
+    const settings=this.settings();
+    const projectRoot=serviceId==='breeze-tts'?settings.breezeTtsProjectRoot:settings.gptSovitsProjectRoot||path.dirname(settings.modelsRoot);
+    if(!projectRoot)throw Error(serviceId==='breeze-tts'?'BREEZE_TTS_PROJECT_ROOT_REQUIRED':'GPT_SOVITS_PROJECT_ROOT_REQUIRED');
+    return this.launcher.start({serviceId,baseUrl:serviceId==='breeze-tts'?settings.breezeTtsUrl:settings.gptSovitsUrl,projectRoot},signal);
+  }
+  private unavailable(serviceIds:readonly VoiceService[],state:'missing'|'blocked',diagnostic:string):void{
+    for(const serviceId of serviceIds){this.discovery.failSource(serviceId,SOURCE_ID,state);this.reports[serviceId]={state,profileCount:0,checkedAt:Date.now(),diagnostics:[diagnostic],models:[]};}
   }
   private async resource(file:string,label:string,diagnostics:string[],identities:ResourceIdentity[],directory=false):Promise<boolean>{
     try{const info=await lstat(file);if(info.isSymbolicLink()||!(directory?info.isDirectory():info.isFile()))throw Error('invalid');if(!directory)identities.push({path:file,size:info.size,mtimeMs:info.mtimeMs});return true;}
@@ -117,12 +128,46 @@ export class VoiceModelLibrary {
     const state=model.state==='ready'&&!diagnostics.length?'ready':'blocked',displayName=safe(model.displayName),uniqueDiagnostics=[...new Set(diagnostics)];
     return{candidate:{profileId:model.id,displayName,modelLabel:model.modelLabel?safe(model.modelLabel):model.modelVersion,capabilities:[model.serviceId==='rvc'?'rvc.convert':'gpt-sovits.speak'],state,managedConfig,resourceHash:canonicalJsonHash({model:model.resourceHash,dependencies:identities})},report:{profileId:model.id,displayName,state,diagnostics:uniqueDiagnostics}};
   }
+  private async refreshBreeze(settings:VoiceLibrarySettings,signal:AbortSignal):Promise<void>{
+    const checkedAt=Date.now(),sourceId='breeze-tts-voices';
+    const diagnostics:string[]=[],seen=new Set<string>(),candidates:DiscoveryCandidate[]=[];
+    const add=(id:string,display:string,resourceHash:string)=>{if(!/^[a-z0-9][a-z0-9_-]{0,79}$/.test(id)){if(id)diagnostics.push(`忽略无效 Breeze 音色 ID：${id.slice(0,80)}`);return;}if(seen.has(id))return;seen.add(id);candidates.push({profileId:id,displayName:display||id,modelLabel:'Breeze-TTS-2',capabilities:['breeze-tts.speak'],state:'ready',managedConfig:{protocol:'breeze_tts',baseUrl:settings.breezeTtsUrl,voice:id},resourceHash});};
+    let apiAvailable=false;
+    try{
+      const response=await fetch(`${settings.breezeTtsUrl}/v1/voices`,{signal:AbortSignal.any([signal,AbortSignal.timeout(10_000)]),redirect:'error'});
+      if(!response.ok)throw Error(`HTTP_${response.status}`);
+      const raw=await response.json() as unknown;
+      const rows=Array.isArray(raw)?raw:(raw&&typeof raw==='object'&&Array.isArray((raw as any).voices)?(raw as any).voices:[]);
+      apiAvailable=true;
+      for(const row of rows){
+        const item=typeof row==='string'?{id:row}:row&&typeof row==='object'?row as Record<string,unknown>:{};
+        const id=typeof item.id==='string'?item.id:typeof item.voice_id==='string'?item.voice_id:'';
+        const display=typeof item.name==='string'&&item.name.trim()?item.name.trim():id;
+        add(id,display||id,canonicalJsonHash({id,displayName:display||id}));
+      }
+    }catch{diagnostics.push('Breeze TTS 服务音色列表不可达，改用本地音色目录识别。');}
+    const voicesRoot=settings.breezeTtsVoicesRoot||(settings.breezeTtsProjectRoot?path.join(settings.breezeTtsProjectRoot,'voices'):'');
+    if(voicesRoot){
+      try{
+        const entries=await readdir(voicesRoot,{withFileTypes:true});
+        for(const entry of entries){
+          if(!entry.isFile()||!entry.name.toLowerCase().endsWith('.breeze'))continue;
+          const id=entry.name.slice(0,-'.breeze'.length),file=path.join(voicesRoot,entry.name),info=await lstat(file);
+          if(info.isSymbolicLink())continue;
+          add(id,id,canonicalJsonHash({id,size:info.size,mtimeMs:info.mtimeMs}));
+        }
+      }catch{diagnostics.push('Breeze TTS 音色目录不可读或不存在。');}
+    }
+    if(!apiAvailable&&candidates.length)diagnostics.push('已从本地 .breeze 文件识别音色；启动 Breeze 服务后即可合成。');
+    this.discovery.reconcile('breeze-tts',sourceId,candidates);
+    this.reports['breeze-tts']={state:candidates.length?(apiAvailable?'ready':'partial'):'blocked',profileCount:candidates.length,checkedAt,diagnostics,models:candidates.map(item=>({profileId:item.profileId,displayName:item.displayName,state:'ready',diagnostics:[]}))};
+  }
   private async refreshNow(signal:AbortSignal):Promise<void>{
-    const settings=this.settings();if(!settings.modelsRoot){this.unavailable('missing','尚未配置模型根目录。');return;}
+    const settings=this.settings();await this.refreshBreeze(settings,signal);if(!settings.modelsRoot){this.unavailable(['rvc','gpt-sovits'],'missing','尚未配置模型根目录。');return;}
     const diagnostics:string[]=[],identities:ResourceIdentity[]=[],projectRoot=path.dirname(settings.modelsRoot),python=path.join(projectRoot,'.codex','venv',process.platform==='win32'?'Scripts/python.exe':'bin/python'),script=path.join(projectRoot,'scripts','model_catalog.py');
     const rootExists=await this.resource(settings.modelsRoot,'模型根目录',diagnostics,identities,true);
     await this.resource(python,'项目 Python 环境',diagnostics,identities);await this.resource(script,'模型扫描入口',diagnostics,identities);
-    if(diagnostics.length){this.unavailable(rootExists?'blocked':'missing',diagnostics.join(' '));return;}
+    if(diagnostics.length){this.unavailable(['rvc','gpt-sovits'],rootExists?'blocked':'missing',diagnostics.join(' '));return;}
     try{
       const root=await realpath(settings.modelsRoot),context:VoiceScannerContext={modelsRoot:root,projectRoot,python,script,cache:path.join(this.home,'voice-model-cache','catalog.json'),signal:AbortSignal.any([signal,AbortSignal.timeout(120_000)])};
       const result=scannerResultSchema.parse(await this.scanner.scan(context));context.signal.throwIfAborted();const device=await this.scanner.device?.(context)??'cpu';
@@ -131,12 +176,12 @@ export class VoiceModelLibrary {
       const models=[...grouped.values()].map(group=>group.length===1?group[0]:{...group[0],state:'blocked' as const,resourceHash:canonicalJsonHash(group.map(model=>model.resourceHash).sort()),diagnostics:[...group[0].diagnostics,'多个模型包使用相同模型 ID，请为独立变体设置不同 ID。']});
       const candidates=await Promise.all(models.map(model=>this.candidate(model,context,settings,device)));
       context.signal.throwIfAborted();
-      for(const serviceId of SERVICES){
+      for(const serviceId of ['rvc','gpt-sovits'] as const){
         const selected=candidates.filter(item=>item.candidate.capabilities[0].startsWith(`${serviceId}.`));
         this.discovery.reconcile(serviceId,SOURCE_ID,selected.map(item=>item.candidate));
         const models=selected.map(item=>item.report),blocked=models.filter(item=>item.state==='blocked').length,globalDiagnostics=result.diagnostics.map(safe);
         this.reports[serviceId]={state:models.length?(blocked===models.length?'blocked':blocked?'partial':'ready'):'missing',profileCount:models.length,checkedAt:Date.now(),diagnostics:globalDiagnostics.length?globalDiagnostics:models.length?[]:['该目录未发现此类模型。'],models};
       }
-    }catch{this.unavailable('blocked',signal.aborted?'模型扫描已取消。':'模型扫描失败，请检查共享 Python 环境、模型说明和目录访问权限。');}
+    }catch{this.unavailable(['rvc','gpt-sovits'],'blocked',signal.aborted?'模型扫描已取消。':'模型扫描失败，请检查共享 Python 环境、模型说明和目录访问权限。');}
   }
 }

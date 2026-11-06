@@ -24,6 +24,7 @@ export interface MediaOperationDescriptor {
 export class MediaOperationRegistry {
   private readonly entries = new Map<string, MediaOperationDescriptor>();
   private readonly serviceOperations = new Map<string, string>();
+  private readonly serviceOperationAliases = new Set<string>();
   constructor(descriptors: readonly MediaOperationDescriptor[] = []) { for (const descriptor of descriptors) this.register(descriptor); }
   register(descriptor: MediaOperationDescriptor): () => void {
     if (!/^[a-z][a-z0-9_]{1,80}$/.test(descriptor.id)) throw new Error('MEDIA_OPERATION_ID_INVALID');
@@ -36,8 +37,17 @@ export class MediaOperationRegistry {
     if(descriptor.serviceOperation)this.serviceOperations.set(descriptor.serviceOperation,descriptor.id);
     return () => {this.entries.delete(descriptor.id);if(descriptor.serviceOperation&&this.serviceOperations.get(descriptor.serviceOperation)===descriptor.id)this.serviceOperations.delete(descriptor.serviceOperation);};
   }
+  registerServiceOperationAlias(serviceOperation:string,legacyOperation:string):()=>void {
+    if(!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/.test(serviceOperation))throw new Error('MEDIA_SERVICE_OPERATION_ID_INVALID');
+    if(!this.entries.has(legacyOperation))throw new Error('MEDIA_OPERATION_HANDLER_UNAVAILABLE');
+    if(this.serviceOperations.has(serviceOperation))throw new Error(`MEDIA_SERVICE_OPERATION_ALREADY_REGISTERED: ${serviceOperation}`);
+    this.serviceOperations.set(serviceOperation,legacyOperation);
+    this.serviceOperationAliases.add(serviceOperation);
+    return()=>{if(this.serviceOperations.get(serviceOperation)===legacyOperation){this.serviceOperations.delete(serviceOperation);this.serviceOperationAliases.delete(serviceOperation);}};
+  }
   has(id: string): boolean { return this.entries.has(id); }
   hasServiceOperation(id:string):boolean{return this.serviceOperations.has(id);}
+  isServiceOperationAlias(id:string):boolean{return this.serviceOperationAliases.has(id);}
   get(id: string): MediaOperationDescriptor { const descriptor = this.entries.get(id); if (!descriptor) throw new Error('UNKNOWN_MEDIA_OPERATION'); return descriptor; }
   getServiceOperation(id:string):MediaOperationDescriptor {const legacy=this.serviceOperations.get(id);if(!legacy)throw new Error('UNKNOWN_MEDIA_SERVICE_OPERATION');return this.get(legacy);}
   list(): readonly MediaOperationDescriptor[] { return [...this.entries.values()]; }
@@ -48,6 +58,10 @@ export class MediaOperationRegistry {
 }
 
 export const SERVICE_OPERATION_BY_LEGACY:Readonly<Record<string,string>>=Object.freeze({music_search:'music.search',music_acquire:'music.acquire',voice_speak:'gpt-sovits.speak',singing_convert:'rvc.convert'});
+export function serviceOperationFor(legacyOperation:string,serviceId:string):string|undefined {
+  if(legacyOperation==='voice_speak'&&serviceId==='breeze-tts')return'breeze-tts.speak';
+  return SERVICE_OPERATION_BY_LEGACY[legacyOperation];
+}
 export const DEFAULT_MEDIA_OPERATIONS: readonly MediaOperationDescriptor[] = Object.freeze([
   ...skillToolManifests.flatMap(manifest => manifest.operations.map(operation => ({...operation, serviceOperation:SERVICE_OPERATION_BY_LEGACY[operation.id], source: operation, skill: manifest.skill, tool: manifest.tool.name, permissionTool: manifest.permissionTool ?? manifest.tool.name, handler: 'skill', timeoutMs: 0}))),
   {id: 'image_generate', handler: 'image', timeoutMs: 0, quotaUnits: 10000, inputKinds: []},
@@ -59,4 +73,5 @@ export const DEFAULT_MEDIA_OPERATIONS: readonly MediaOperationDescriptor[] = Obj
 ]);
 
 export const mediaOperationRegistry = new MediaOperationRegistry(DEFAULT_MEDIA_OPERATIONS);
+mediaOperationRegistry.registerServiceOperationAlias('breeze-tts.speak','voice_speak');
 export type MediaOperation = string;

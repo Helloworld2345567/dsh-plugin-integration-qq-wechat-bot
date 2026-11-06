@@ -7,13 +7,14 @@ import type {PublicServiceProfile} from '../src/core/service-management.js';
 
 const React={createElement:(type:any,props:any,...children:any[])=>({type,props,children})};
 function nodes(tree:any):any[]{return tree&&typeof tree==='object'?[tree,...(tree.children??[]).flatMap(nodes)]:[];}
-const profile=(serviceId='gpt-sovits',state:PublicServiceProfile['state']='ready'):PublicServiceProfile=>({serviceId,profileId:'klee',revision:1,contentHash:'a'.repeat(64),state,capabilities:[serviceId==='rvc'?'rvc.convert':'gpt-sovits.speak'],displayName:'可莉',modelLabel:serviceId==='rvc'?'RVC v2':'GPT-SoVITS v4',updatedAt:1});
+const profile=(serviceId='gpt-sovits',state:PublicServiceProfile['state']='ready'):PublicServiceProfile=>({serviceId,profileId:'klee',revision:1,contentHash:'a'.repeat(64),state,capabilities:[serviceId==='rvc'?'rvc.convert':serviceId==='breeze-tts'?'breeze-tts.speak':'gpt-sovits.speak'],displayName:'可莉',modelLabel:serviceId==='rvc'?'RVC v2':serviceId==='breeze-tts'?'Breeze-TTS-2':'GPT-SoVITS v4',updatedAt:1});
 const persona=()=>configSchema.parse({schemaVersion:4,id:'test',name:'Persona',personaPrompt:'Original',tools:['bot_media'],skills:['image-generation'],media:{image:{enabled:true,model:'original-image'},voice:{enabled:false,protocol:'edge_tts',voice:'zh-CN-XiaoxiaoNeural',replyMode:'auto',format:'mp3'},singing:{enabled:false,pitchShift:3,defaultOutput:'wav'}}});
 
 test('using a speaking model enables its permissions and WAV while preserving the other role and preferences',()=>{
   const before=persona(),original=structuredClone(before),next=configSchema.parse(useVoiceModel(before,'voice',profile()));
   assert.deepEqual(before,original);assert.equal(next.revision,before.revision);assert.equal(next.media.voice?.enabled,true);assert.equal(next.media.voice?.format,'wav');assert.equal(next.media.voice?.replyMode,'auto');assert.equal(next.media.voice?.protocol,undefined);assert.equal(next.media.voice?.voice,undefined);
   assert.deepEqual(next.media.voice?.profileRef,{serviceId:'gpt-sovits',profileId:'klee'});assert.deepEqual(next.media.singing,before.media.singing);assert.deepEqual(next.media.image,before.media.image);
+  assert.equal(next.media.voice?.engine,'gpt-sovits');
   assert.deepEqual(next.tools,['bot_media','bot_voice']);assert.deepEqual(next.skills,['image-generation','voice-generation']);
 });
 

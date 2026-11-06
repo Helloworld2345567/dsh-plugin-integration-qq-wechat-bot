@@ -6,6 +6,7 @@ import {ProcessWorker} from './process-worker.js';
 import {MusicServiceAdapter,type MusicFacadePort,type MusicFacadeRequest,type MusicProfileConfig} from '../core/music-adapter.js';
 import {MUSIC_PROTOCOL} from '../core/music-state.js';
 import {GptSovitsServiceAdapter} from '../core/gpt-sovits-adapter.js';
+import {BreezeTtsServiceAdapter} from '../core/breeze-tts-adapter.js';
 import {RvcCliServiceAdapter} from '../core/rvc-cli-adapter.js';
 import {RvcHttpCompatibilityAdapter} from '../core/rvc-http-adapter.js';
 import {RvcServiceAdapter} from '../core/rvc-adapter.js';
@@ -49,6 +50,7 @@ export function createBuiltinServiceAdapters(python?:string){
   return Object.freeze([
     {manifest:BUILTIN_SERVICE_MANIFESTS.music,createAdapter:()=>new MusicServiceAdapter(new ProcessMusicFacade())},
     {manifest:BUILTIN_SERVICE_MANIFESTS.voice,createAdapter:()=>new GptSovitsServiceAdapter(worker)},
+    {manifest:BUILTIN_SERVICE_MANIFESTS.breeze,createAdapter:()=>new BreezeTtsServiceAdapter()},
     {manifest:BUILTIN_SERVICE_MANIFESTS.rvc,createAdapter:()=>new RvcServiceAdapter(new RvcCliServiceAdapter(processes),new RvcHttpCompatibilityAdapter(worker))},
   ]);
 }
