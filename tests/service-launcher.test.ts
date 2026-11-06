@@ -23,8 +23,8 @@ test('external launcher does not spawn an already healthy service',async t=>{
 
 test('GPT-SoVITS launcher validates its fixed runtime and config before spawning',async t=>{
   await mkdir(path.resolve('.codex'),{recursive:true});
-  const root=await mkdtemp(path.resolve('.codex/service-launcher-gpt-'));t.after(()=>rm(root,{recursive:true,force:true}));const serviceRoot=path.join(root,'GPT-SoVITS'),python=path.join(root,'.codex','venv','Scripts');await mkdir(path.join(serviceRoot,'GPT_SoVITS','configs'),{recursive:true});await mkdir(python,{recursive:true});
-  await Promise.all([writeFile(path.join(python,'python.exe'),''),writeFile(path.join(serviceRoot,'api_v2.py'),''),writeFile(path.join(serviceRoot,'GPT_SoVITS','configs','tts_local.yaml'),'')]);
+  const root=await mkdtemp(path.resolve('.codex/service-launcher-gpt-'));t.after(()=>rm(root,{recursive:true,force:true}));const serviceRoot=path.join(root,'GPT-SoVITS'),pythonDirectory=process.platform==='win32'?'Scripts':'bin',python=path.join(root,'.codex','venv',pythonDirectory);await mkdir(path.join(serviceRoot,'GPT_SoVITS','configs'),{recursive:true});await mkdir(python,{recursive:true});
+  await Promise.all([writeFile(path.join(python,process.platform==='win32'?'python.exe':'python'),''),writeFile(path.join(serviceRoot,'api_v2.py'),''),writeFile(path.join(serviceRoot,'GPT_SoVITS','configs','tts_local.yaml'),'')]);
   let args:readonly string[]=[];let healthy=false;const launcher=new ExternalServiceLauncher(async()=>healthy,async(_file,value)=>{args=value;healthy=true;return 9;},1,30);
   const result=await launcher.start({serviceId:'gpt-sovits',baseUrl:'http://127.0.0.1:9880',projectRoot:root},new AbortController().signal);
   assert.equal(result.state,'ready');assert.deepEqual(args,['-B','api_v2.py','-a','127.0.0.1','-p','9880','-c','GPT_SoVITS/configs/tts_local.yaml']);
