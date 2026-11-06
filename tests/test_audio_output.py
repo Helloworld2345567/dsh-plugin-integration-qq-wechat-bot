@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import shutil
 import struct
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from dsh_bot_runtime import audio_output
 from dsh_bot_runtime.skills.music_download import entry as music_delivery
 
 
+@unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg required")
 class AudioOutputTests(unittest.TestCase):
     def setUp(self):
         (ROOT / ".codex").mkdir(exist_ok=True)
