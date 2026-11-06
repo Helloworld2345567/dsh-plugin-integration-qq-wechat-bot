@@ -18,6 +18,12 @@ export const botModelArgumentsSchema=z.object({action:z.enum(['list','set','rese
 });
 export type BotModelArguments=z.infer<typeof botModelArgumentsSchema>;
 export interface BotModelResult {action:BotModelArguments['action'];sessionId:string;personaId:string;currentTurnModel:BotConfig['model'];nextTurnModel:BotConfig['model'];override:boolean;effective:'current'|'next_turn';models?:Array<{provider:string;model:string;inputModalities?:string[];reasoning?:{supported:boolean;efforts:string[]}}>}
+export const botVoiceArgumentsSchema=z.object({role:z.enum(['tts','sts']),action:z.enum(['list','set','reset']),id:z.string().trim().min(1).max(200).optional()}).strict().superRefine((value,ctx)=>{
+  if(value.action==='set'&&!value.id)ctx.addIssue({code:'custom',message:'set 需要 list 返回的准确音色 ID'});
+  if(value.action!=='set'&&value.id!==undefined)ctx.addIssue({code:'custom',message:'list/reset 不接受音色 ID'});
+});
+export type BotVoiceArguments=z.infer<typeof botVoiceArgumentsSchema>;
+export interface BotVoiceResult {role:BotVoiceArguments['role'];action:BotVoiceArguments['action'];sessionId:string;current?:string;next?:string;override:boolean;effective:'current'|'next_turn';items?:ReadonlyArray<{id:string;displayName:string;modelLabel?:string;state:string;selectable:boolean;serviceId?:string;profileId?:string}>}
 
 interface ContentChange {id:string;kind:'persona'|'skill'|'reload';scopeKey:string;configId:string;goal:string;before:BotConfig;after?:BotConfig;phase:'preparing'|'succeeded'|'failed'|'rolled-back';createdAt:number;updatedAt:number;error?:string}
 export function parseStatsArguments(args:string):StatsQueryInput {
@@ -81,6 +87,15 @@ export class BotFeatures {
       const bot=this.runtime.repos.bots.bot(current.scope.botId);if(!allowedNow('bot_model',snapshot,this.runtime.effectiveConfig(current),bot,current.scope))throw Error('TRUSTED_PRIVATE_REQUIRED');
     };
     authorize();const args=botModelArgumentsSchema.parse(input);const command=managementCommand({name:'model',args:args.action==='list'?'':args.action==='reset'?'reset':`${args.provider} ${args.model}`})!;const result=await this.runtime.commandBus.execute({source:'tool',binding,snapshot,signal,authorize},command);if(result.kind!=='reply'||!result.data)throw Error('MODEL_CONTROL_FAILED');return result.data as BotModelResult;
+  }
+  async voice(binding:SessionBinding,snapshot:TurnSnapshot,input:unknown,signal:AbortSignal):Promise<BotVoiceResult>{
+    const authorize=():void=>{
+      signal.throwIfAborted();const current=this.runtime.repos.sessions.findBinding(binding.key);
+      if(!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation||scopeKey(current.scope)!==binding.key||scopeKey(binding.scope)!==binding.key||snapshot.botId!==current.scope.botId)throw Error('VOICE_SESSION_CHANGED');
+      const bot=this.runtime.repos.bots.bot(current.scope.botId);if(!allowedNow('bot_voice_control',snapshot,this.runtime.effectiveConfig(current),bot,current.scope))throw Error('TRUSTED_PRIVATE_REQUIRED');
+    };
+    authorize();const args=botVoiceArgumentsSchema.parse(input),command=managementCommand({name:args.role,args:args.action==='list'?'':args.action==='reset'?'reset':`set ${args.id}`})!;
+    const result=await this.runtime.commandBus.execute({source:'tool',binding,snapshot,signal,authorize},command);if(result.kind!=='reply'||!result.data)throw Error('VOICE_CONTROL_FAILED');return result.data as BotVoiceResult;
   }
   history(binding?:SessionBinding){return [...this.evolution.history(),...this.runtime.repos.evolution.contentChanges<ContentChange>()].filter(t=>!binding||t.scopeKey===binding.key).sort((a,b)=>b.createdAt-a.createdAt);}
   task(binding:SessionBinding,id:string){const result=this.runtime.repos.evolution.findContentChange<ContentChange>(id)??this.evolution.inspect(id);if(result.scopeKey!==binding.key)throw Error('EVOLUTION_TASK_NOT_OWNED');return result;}

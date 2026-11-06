@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import path from 'node:path';
-import {normalizeGptSovitsBaseUrl,normalizeVoiceServiceBaseUrl} from './voice-config.js';
+import {edgeTtsVoiceIds,normalizeGptSovitsBaseUrl,normalizeVoiceServiceBaseUrl} from './voice-config.js';
 import {serviceProfileRefSchema,type ProfileState,type ServiceProfileRef,type TurnServiceSnapshot} from './service-contract.js';
 
 export const idSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
@@ -38,6 +38,8 @@ export const breezeTtsSchema=z.object({
 }).strict();
 export type BreezeTtsConfig=z.infer<typeof breezeTtsSchema>;
 const edgeTtsVoiceSchema=z.string().trim().min(1).max(100).refine(value=>new TextEncoder().encode(value).length<=128,'Edge TTS 音色名称不能超过 128 字节');
+export const edgeTtsVoiceIdSchema=z.enum(edgeTtsVoiceIds);
+export type EdgeTtsVoiceId= z.infer<typeof edgeTtsVoiceIdSchema>;
 export const edgeTtsSchema=z.object({protocol:z.literal('edge_tts'),voice:edgeTtsVoiceSchema});
 export type EdgeTtsConfig=z.infer<typeof edgeTtsSchema>;
 export const edgeTtsFallbackSchema=z.object({enabled:z.boolean().default(false),voice:edgeTtsVoiceSchema});
@@ -95,6 +97,18 @@ export const voiceSkillSchema=v4VoiceSchema;
 export const singingSkillSchema=v4SingingSchema;
 export const musicSkillSchema=v4MusicSchema;
 export function configForWrite(input:unknown):BotConfig {return configSchema.parse(input);}
+
+const ttsProfileRefSchema=z.union([
+  serviceProfileRefSchema.extend({serviceId:z.literal('gpt-sovits')}),
+  serviceProfileRefSchema.extend({serviceId:z.literal('breeze-tts')}),
+]);
+export const ttsOverrideSchema=z.discriminatedUnion('kind',[
+  z.object({kind:z.literal('edge'),voice:edgeTtsVoiceIdSchema}).strict(),
+  z.object({kind:z.literal('profile'),profileRef:ttsProfileRefSchema}).strict(),
+]);
+export type TtsOverride=z.infer<typeof ttsOverrideSchema>;
+export const stsOverrideSchema=z.object({profileRef:serviceProfileRefSchema.extend({serviceId:z.literal('rvc')})}).strict();
+export type StsOverride=z.infer<typeof stsOverrideSchema>;
 /** Persona projections contain only V4 configuration. */
 export function publicPersonaConfig(config:BotConfig):BotConfig {return configSchema.parse(structuredClone(config));}
 /** Parse persona config.json together with persona.md without weakening either schema. */
@@ -112,8 +126,8 @@ export interface CallerScope { botId: string; platform: string; accountId: strin
 export interface MediaInput {kind:'image'|'audio'|'video'|'file';name:string;mime:string;url?:string;bytes?:string;handle?:string;transcript?:string;remote?:{query?:string;key?:string;fullUrl?:string}}
 export interface ChannelReplyEnvelope { channelId:string; version:number; payload:Record<string,string> }
 export interface InboundMessage {id:string;scope:CallerScope;text:string;attachments:MediaInput[];quoted?:{id?:string;text?:string;attachments?:MediaInput[]};reply:Record<string,string>;replyEnvelope?:ChannelReplyEnvelope;timestamp:number}
-export interface SessionBinding { key:string;scope:CallerScope;sessionId:string;generation:number;persisted:boolean;personaId?:string;modelOverride?:z.infer<typeof modelSchema>;recentSince?:number }
-export interface SessionRecord { id:string;scopeKey:string;scope:CallerScope;generation:number;persisted:boolean;createdAt:number;updatedAt:number;personaId?:string;modelOverride?:z.infer<typeof modelSchema>;recentSince?:number }
+export interface SessionBinding { key:string;scope:CallerScope;sessionId:string;generation:number;persisted:boolean;personaId?:string;modelOverride?:z.infer<typeof modelSchema>;ttsOverride?:TtsOverride;stsOverride?:StsOverride;recentSince?:number }
+export interface SessionRecord { id:string;scopeKey:string;scope:CallerScope;generation:number;persisted:boolean;createdAt:number;updatedAt:number;personaId?:string;modelOverride?:z.infer<typeof modelSchema>;ttsOverride?:TtsOverride;stsOverride?:StsOverride;recentSince?:number }
 export type ServiceProfileRole='voice'|'singing'|'music';
 export type TurnServiceState=ProfileState|'disabled';
 export interface TurnServiceSelection {role:ServiceProfileRole;enabled:boolean;profileRef?:ServiceProfileRef;state:TurnServiceState;snapshot?:TurnServiceSnapshot}

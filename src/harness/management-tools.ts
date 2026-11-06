@@ -1,5 +1,6 @@
 import {defineTool,type ToolRunContext} from '@deepseek-ai/dsh-tools';
 import {botSessionArgumentsSchema,botPersonaArgumentsSchema,botSkillsArgumentsSchema,type BotSessionArguments,type BotPersonaArguments,type BotSkillsArguments} from '../core/management.js';
+import {botVoiceArgumentsSchema,type BotVoiceArguments} from '../core/features.js';
 
 export function defineBotSessionTool(execute:(args:BotSessionArguments,exec:ToolRunContext)=>Promise<unknown>){
   return defineTool({
@@ -31,5 +32,17 @@ export function defineBotSkillsTool(execute:(args:BotSkillsArguments,exec:ToolRu
     output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
     isConcurrencySafe:args=>args.action==='list',
     execute:async(args,exec)=>JSON.stringify(await execute(botSkillsArgumentsSchema.parse(args),exec)),
+  });
+}
+
+/** The closure supplies the current session; IDs are resolved by the host. */
+export function defineBotVoiceControlTool(execute:(args:BotVoiceArguments,exec:ToolRunContext)=>Promise<unknown>){
+  return defineTool({
+    name:'bot_voice_control',
+    description:'管理当前可信私聊会话的 TTS/STS 音色。先用 list 查询准确音色 ID，再 set；TTS 使用 edge/<voice> 或 service/profile，STS 使用 rvc/<profile>。reset 恢复人格默认音色。只影响当前会话，从下一轮生效；本轮和已启动子任务继续使用冻结音色，不修改共享人格。',
+    parameters:{role:{type:'string',required:true,enum:['tts','sts']},action:{type:'string',required:true,enum:['list','set','reset']},id:{type:'string'}},
+    output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
+    isConcurrencySafe:args=>args.action==='list',
+    execute:async(args,exec)=>JSON.stringify(await execute(botVoiceArgumentsSchema.parse(args),exec)),
   });
 }

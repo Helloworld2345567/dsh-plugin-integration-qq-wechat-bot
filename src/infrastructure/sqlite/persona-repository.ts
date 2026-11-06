@@ -32,7 +32,24 @@ export class SqlitePersonaConfigRepository implements PersonaConfigRepository {
   configVersion(personaId: string, revision: number): BotConfig | undefined {return this.database.records.get<BotConfig>('config-version', `${personaId}:${revision}`);}
   effectiveConfig(binding: SessionBinding): BotConfig {
     const config = this.config(binding.personaId ?? this.bots().bot(binding.scope.botId).configId);
-    return binding.modelOverride ? {...config, model:{...binding.modelOverride}} : config;
+    let effective: BotConfig = binding.modelOverride ? {...config, model:{...binding.modelOverride}} : config;
+    const voice = effective.media.voice;
+    if (voice && binding.ttsOverride) {
+      effective = {
+        ...effective,
+        media: {
+          ...effective.media,
+          voice: binding.ttsOverride.kind === 'edge'
+            ? {...voice, engine:'edge_tts', protocol:'edge_tts', profileRef:undefined, voice:binding.ttsOverride.voice, format:'mp3'}
+            : {...voice, engine:binding.ttsOverride.profileRef.serviceId, protocol:undefined, profileRef:{...binding.ttsOverride.profileRef}, voice:undefined, format:'wav'},
+        },
+      };
+    }
+    const singing = effective.media.singing;
+    if (singing && binding.stsOverride) {
+      effective = {...effective, media:{...effective.media, singing:{...singing, profileRef:{...binding.stsOverride.profileRef}}}};
+    }
+    return effective;
   }
   personaStatus(id: string): PersonaStatus {
     try {

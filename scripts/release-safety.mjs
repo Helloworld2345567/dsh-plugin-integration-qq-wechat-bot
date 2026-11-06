@@ -13,7 +13,7 @@ const TEXT_FILE=/\.(?:ts|tsx|js|mjs|cjs|py|ps1|json|ya?ml|md|txt|toml|ini|proper
 
 export const RELEASE_SCAN_ALLOWLIST=Object.freeze({
   loopback:new Set([
-    'scripts/start.mjs','scripts/stop.mjs','python/rvc_service.py','python/dsh_bot_runtime/rvc_service.py','dist/index.js',
+    'scripts/start.mjs','scripts/stop.mjs','python/rvc_service.py','python/dsh_bot_runtime/rvc_service.py','dist/index.js','dist/client.js',
   ]),
   systemPath:new Map([['src/harness/open-directory.ts',new Set(['C:\\Windows'])],['dist/index.js',new Set(['C:\\\\Windows','C:\\Windows'])]]),
 });

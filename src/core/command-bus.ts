@@ -9,6 +9,7 @@ export type ManagementCommand=
   | {kind:'session';action:'help'|'stop'|'new'|'reset'|'status'|'sessions'|'resume'|'compact';args:string}
   | {kind:'persona';action:'list'|'set';personaId?:string}
   | {kind:'model';action:'list'|'set'|'reset';provider?:string;model?:string}
+  | {kind:'voice';role:'tts'|'sts';action:'list'|'set'|'reset';ref?:string}
   | {kind:'skills';action:'list'|'toggle';name?:string;enabled?:boolean}
   | {kind:'reload'}
   | {kind:'restart'}
@@ -47,9 +48,28 @@ export interface CommandHost {
   queueSessionAction(binding:SessionBinding,snapshot:TurnSnapshot,input:DeferredSessionAction,signal:AbortSignal):QueuedCommandResult;
   switchPersona(scope:CallerScope,id:string,authorize?:()=>void):Promise<SessionBinding>;
   setModel(scope:CallerScope,model:BotConfig['model'],authorize?:()=>void):Promise<SessionBinding>;
+  voiceCatalog(role:'tts'|'sts',binding?:SessionBinding):VoiceCatalog;
+  setVoice(scope:CallerScope,role:'tts'|'sts',ref:string|null,authorize?:()=>void):Promise<SessionBinding>;
   applyPersonaFiles(id:string):Promise<BotConfig>;
   models():Promise<Array<{provider:string;model:string;inputModalities?:string[];reasoning?:{supported:boolean;efforts:string[]}}>>;
   commandServices:CommandServices;
+}
+
+export interface VoiceCatalogEntry {
+  id:string;
+  displayName:string;
+  modelLabel?:string;
+  state:string;
+  selectable:boolean;
+  serviceId?:string;
+  profileId?:string;
+}
+export interface VoiceCatalog {
+  role:'tts'|'sts';
+  current?:string;
+  next?:string;
+  override:boolean;
+  items:readonly VoiceCatalogEntry[];
 }
 
 const SESSION_ACTIONS=new Set(['help','stop','new','reset','status','sessions','resume','compact']);
@@ -61,6 +81,16 @@ export function managementCommand(parsed:ParsedCommand):ManagementCommand|undefi
     if(!args)return{kind:'model',action:'list'};
     if(args.toLowerCase()==='reset')return{kind:'model',action:'reset'};
     const match=/^(\S+)\s+(\S+)$/.exec(args);return{kind:'model',action:'set',provider:match?.[1],model:match?.[2]};
+  }
+  if(parsed.name==='tts'||parsed.name==='sts'){
+    const role=parsed.name as 'tts'|'sts';
+    if(!args)return{kind:'voice',role,action:'list'};
+    const [action,...rest]=args.split(/\s+/);
+    if(action.toLowerCase()==='list'&&rest.length===0)return{kind:'voice',role,action:'list'};
+    if(action.toLowerCase()==='reset'&&rest.length===0)return{kind:'voice',role,action:'reset'};
+    if(action.toLowerCase()==='set'&&rest.length===0)return{kind:'voice',role,action:'set'};
+    if(action.toLowerCase()==='set'&&rest.length===1)return{kind:'voice',role,action:'set',ref:rest[0]};
+    return undefined;
   }
   if(parsed.name==='skills')return{kind:'skills',action:'list'};
   if(parsed.name==='skill'){const match=/^(enable|disable)\s+(\S+)$/i.exec(args);return{kind:'skills',action:'toggle',name:match?.[2],enabled:match?.[1].toLowerCase()==='enable'};}
@@ -104,6 +134,25 @@ export class CommandBus {
         break;
       case 'persona':this.authorize(context);if(!command.personaId)return{kind:'reply',text:`当前人格：${config.id}\n`+this.host.configs().filter(item=>!item.archived).map(item=>`${item.id} — ${item.name}`).join('\n')};if(context.source==='tool')return this.queue(context,{action:'persona',personaId:command.personaId});await this.host.switchPersona(binding.scope,command.personaId,()=>this.authorize(context));return{kind:'reply',text:`已切换人格：${command.personaId}，下一轮生效。`};
       case 'model':this.authorize(context);if(command.action==='list'){const models=await this.host.models();this.authorize(context);return{kind:'reply',text:`当前模型：${config.model?`${config.model.provider} / ${config.model.model}`:'未配置'}${binding.modelOverride?'（会话覆盖）':''}`+(models.length?'\n可用模型：\n'+models.map(model=>`${model.provider} ${model.model}`).join('\n'):''),data:{action:'list',sessionId:binding.sessionId,personaId:config.id,currentTurnModel:context.snapshot?.config.model??config.model,nextTurnModel:this.host.effectiveConfig(this.host.binding(binding.scope)).model,override:!!binding.modelOverride,effective:'current',models}};}if(command.action==='reset'){await this.host.setModel(binding.scope,null,()=>this.authorize(context));const current=this.host.binding(binding.scope);return{kind:'reply',text:'已恢复人格默认模型。',data:{action:'reset',sessionId:current.sessionId,personaId:this.host.effectiveConfig(current).id,currentTurnModel:context.snapshot?.config.model??config.model,nextTurnModel:this.host.effectiveConfig(current).model,override:!!current.modelOverride,effective:'next_turn'}};}if(!command.provider||!command.model)throw Error('用法：/model <提供商> <模型> 或 /model reset');await this.host.setModel(binding.scope,{provider:command.provider,model:command.model},()=>this.authorize(context));{const current=this.host.binding(binding.scope);return{kind:'reply',text:`已切换模型：${command.provider} / ${command.model}，下一轮生效。`,data:{action:'set',sessionId:current.sessionId,personaId:this.host.effectiveConfig(current).id,currentTurnModel:context.snapshot?.config.model??config.model,nextTurnModel:this.host.effectiveConfig(current).model,override:true,effective:'next_turn'}};}
+      case 'voice':{
+        this.authorize(context);
+        const roleLabel=command.role==='tts'?'TTS':'STS';
+        if(command.action==='list'){
+          const catalog=this.host.voiceCatalog(command.role,this.host.binding(binding.scope));
+          const rows=catalog.items.map(item=>`${item.id} — ${item.displayName}${item.modelLabel?` · ${item.modelLabel}`:''}${item.state&&item.state!=='ready'?`（${item.state}）`:''}${item.selectable?'':' [不可用]'}`);
+          const current=catalog.current??'未配置',next=catalog.next??current;
+          return{kind:'reply',text:`当前人格默认${roleLabel}音色：${current}${catalog.override?`\n下一轮会话音色：${next}（会话覆盖）`:''}\n可用音色：\n${rows.join('\n')||'暂无'}`,data:{action:'list',role:command.role,sessionId:binding.sessionId,current,next,override:catalog.override,items:catalog.items}};
+        }
+        if(command.action==='reset'){
+          await this.host.setVoice(binding.scope,command.role,null,()=>this.authorize(context));
+          const current=this.host.binding(binding.scope),catalog=this.host.voiceCatalog(command.role,current);
+          return{kind:'reply',text:`已恢复人格默认${roleLabel}音色，下一轮生效。`,data:{action:'reset',role:command.role,sessionId:current.sessionId,current:catalog.current,next:catalog.next,override:false,effective:'next_turn'}};
+        }
+        if(!command.ref)throw Error(`/${command.role} set <音色ID>`);
+        await this.host.setVoice(binding.scope,command.role,command.ref,()=>this.authorize(context));
+        const current=this.host.binding(binding.scope),catalog=this.host.voiceCatalog(command.role,current);
+        return{kind:'reply',text:`已切换${roleLabel}音色：${command.ref}，下一轮生效。`,data:{action:'set',role:command.role,sessionId:current.sessionId,current:catalog.current,next:catalog.next,override:true,effective:'next_turn'}};
+      }
       case 'skills':if(command.action==='list')return{kind:'reply',text:this.host.commandServices.skills?await this.host.commandServices.skills.list(binding):`当前技能：${config.skills.join('、')||'无'}`};this.authorize(context);if(!command.name)throw Error('用法：/skill enable|disable <名称>');if(context.source==='tool')return this.queue(context,{action:'skill',name:skillNameSchema.parse(command.name),enabled:command.enabled!});if(!this.host.commandServices.skills)throw new Error('技能服务未启用');return{kind:'reply',text:await this.host.commandServices.skills.toggle(binding,skillNameSchema.parse(command.name),command.enabled!,()=>this.authorize(context))};
       case 'reload':this.authorize(context,true);if(this.host.commandServices.skills)return{kind:'reply',text:await this.host.commandServices.skills.reload(binding)};await this.host.applyPersonaFiles(config.id);return{kind:'reply',text:'人格文件已应用，下一轮生效。'};
       case 'restart':this.authorize(context,true);if(!this.host.commandServices.evolution)throw new Error('升级协调器未启用');return{kind:'reply',text:await this.host.commandServices.evolution.restart(binding)};

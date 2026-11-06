@@ -1,7 +1,7 @@
 import { scopeKey } from './identity.js';
 import type {RuntimeRepositories} from './ports/application.js';
 import { Assets, MediaService } from './media.js';
-import type { BotConfig, BotInstance, InboundMessage, SessionBinding, Output, TurnSnapshot, CallerScope } from './types.js';
+import type { BotConfig, BotInstance, InboundMessage, SessionBinding, Output, TurnSnapshot, CallerScope, TtsOverride, StsOverride } from './types.js';
 import {configForWrite} from './types.js';
 import type {ProfileStore} from './profile-store.js';
 import {randomUUID} from 'node:crypto';
@@ -12,7 +12,7 @@ import {botSchema,modelSchema,skillNameSchema} from './types.js';
 import {validateWorkingDirectory} from './workspaces.js';
 import {parseCommand,unescapeChat,commandHelp,type ParsedCommand} from './commands.js';
 import {parseNaturalControl} from './natural-commands.js';
-import {CommandBus,managementCommand,type CommandServices} from './command-bus.js';
+import {CommandBus,managementCommand,type CommandServices,type VoiceCatalog,type VoiceCatalogEntry} from './command-bus.js';
 import type {ChannelRegistry} from './channel-registry.js';
 import {deferredSessionActionSchema,sameSessionAction,sameSources,type DeferredSessionAction,type SessionActionRecord} from './session-actions.js';
 import {validateBatch,INPUT_LIMITS} from './limits.js';
@@ -24,6 +24,8 @@ import {botScheduleArgumentsSchema} from './automation-contract.js';
 import {spokenReplyText,replyNotice,ReplyContextChangedError} from './voice-reply.js';
 import {hasPendingSingingUpload,clearSingingCandidates,clearPendingSingingUpload,consumeSingingUpload,explicitSingingRequest} from './singing-state.js';
 import {clearMusicState} from './music-state.js';
+import {edgeTtsVoiceIds,type EdgeTtsVoiceId} from './voice-config.js';
+import {sanitizePublicServiceText} from './service-errors.js';
 
 function modelFailureCode(error:unknown):string {
   const message=error instanceof Error?error.message:typeof error==='string'?error:'MODEL_REQUEST_FAILED';
@@ -159,17 +161,64 @@ export class BotRuntime {
     const target=this.repos.sessions.session(scope,id);if(target.id===binding.sessionId)return binding;
     if(!target.persisted)throw new Error('目标会话尚无可恢复的历史');
     if(!this.harness.inspectSession)throw new Error('当前 Harness 不支持会话可读性检查');
-    await this.harness.inspectSession(id);const next={...binding,sessionId:id,personaId:target.personaId,modelOverride:target.modelOverride};await this.harness.validateModel(this.effectiveConfig(next));
+    await this.harness.inspectSession(id);const next={...binding,sessionId:id,personaId:target.personaId,modelOverride:target.modelOverride,ttsOverride:target.ttsOverride,stsOverride:target.stsOverride};await this.harness.validateModel(this.effectiveConfig(next));
     if(this.busy(binding.key)||this.repos.sessions.binding(scope).sessionId!==binding.sessionId)throw new Error('会话状态已变化，请重试');
     authorize?.();await this.harness.dispose(binding.sessionId);authorize?.();clearSingingCandidates(this.repos.media.singing,binding.key);clearMusicState(this.repos.media.music,binding.key);return this.repos.sessions.activateSession(scope,id);
   }
   async switchPersona(scope:CallerScope,id:string,authorize?:()=>void):Promise<SessionBinding>{
     const binding=this.repos.sessions.binding(scope);const config=this.repos.personas.config(id);await this.harness.validateModel(config);
-    const current=this.repos.sessions.binding(scope);if(current.sessionId!==binding.sessionId||current.generation!==binding.generation)throw new Error('会话状态已变化，请重试');authorize?.();const next={...current,personaId:id,modelOverride:undefined};this.repos.sessions.updateSession(next);this.recheckPermissions();return next;
+    const current=this.repos.sessions.binding(scope);if(current.sessionId!==binding.sessionId||current.generation!==binding.generation)throw new Error('会话状态已变化，请重试');authorize?.();const next={...current,personaId:id,modelOverride:undefined,ttsOverride:undefined,stsOverride:undefined};this.repos.sessions.updateSession(next);this.recheckPermissions();return next;
   }
   async setModel(scope:CallerScope,model:BotConfig['model'],authorize?:()=>void):Promise<SessionBinding>{
     const binding=this.repos.sessions.binding(scope);const next={...binding,modelOverride:model?modelSchema.parse(model):undefined};await this.harness.validateModel(this.effectiveConfig(next));
     const current=this.repos.sessions.binding(scope);if(current.sessionId!==binding.sessionId||current.generation!==binding.generation||current.personaId!==binding.personaId)throw new Error('会话配置已变化，请重试');authorize?.();return this.repos.sessions.updateSession({...current,modelOverride:next.modelOverride});
+  }
+  private voiceCatalogItems(role:'tts'|'sts'):VoiceCatalogEntry[] {
+    const items:VoiceCatalogEntry[]=[];
+    if(role==='tts')for(const voice of edgeTtsVoiceIds)items.push({id:`edge/${voice}`,displayName:voice,state:'ready',selectable:true,serviceId:'edge',profileId:voice});
+    if(!this.profiles)return items;
+    const operation=role==='tts'?new Set(['gpt-sovits.speak','breeze-tts.speak']):new Set(['rvc.convert']);
+    const services=role==='tts'?new Set(['gpt-sovits','breeze-tts']):new Set(['rvc']);
+    const latest=new Map<string,ReturnType<ProfileStore['list']>[number]>();
+    for(const profile of this.profiles.list()){
+      if(!services.has(profile.serviceId)||!profile.capabilities.some(cap=>operation.has(cap)))continue;
+      const key=`${profile.serviceId}/${profile.profileId}`,previous=latest.get(key);if(!previous||profile.revision>previous.revision)latest.set(key,profile);
+    }
+    for(const profile of latest.values())items.push({id:`${profile.serviceId}/${profile.profileId}`,displayName:sanitizePublicServiceText(profile.displayName,'Service Profile'),modelLabel:profile.modelLabel===undefined?undefined:sanitizePublicServiceText(profile.modelLabel,'Managed model'),state:profile.state,selectable:profile.state==='ready',serviceId:profile.serviceId,profileId:profile.profileId});
+    return items.sort((a,b)=>a.id.localeCompare(b.id));
+  }
+  private voiceSelectionId(role:'tts'|'sts',config:BotConfig):string|undefined {
+    const options=role==='tts'?config.media.voice:config.media.singing;
+    if(!options)return;
+    if(role==='tts'&&options.protocol==='edge_tts'&&options.voice)return `edge/${options.voice}`;
+    const ref=options.profileRef;return ref?`${ref.serviceId}/${ref.profileId}`:undefined;
+  }
+  voiceCatalog(role:'tts'|'sts',binding?:SessionBinding):VoiceCatalog {
+    if(!binding)return{role,override:false,items:this.voiceCatalogItems(role)};
+    const effective=this.effectiveConfig(binding),base=this.repos.personas.config(effective.id),override=role==='tts'?binding.ttsOverride:binding.stsOverride;
+    return{role,current:this.voiceSelectionId(role,base),next:this.voiceSelectionId(role,effective),override:!!override,items:this.voiceCatalogItems(role)};
+  }
+  async setVoice(scope:CallerScope,role:'tts'|'sts',ref:string|null,authorize?:()=>void):Promise<SessionBinding>{
+    const binding=this.repos.sessions.binding(scope),config=this.effectiveConfig(binding);
+    let override:TtsOverride|StsOverride|undefined=undefined;
+    if(ref!==null){
+      const [service,profileId,...extra]=ref.split('/');
+      if(extra.length||!service||!profileId)throw new Error('音色 ID 格式无效，请先 list 后使用完整 ID');
+      if(role==='tts'&&service==='edge'){
+        if(!edgeTtsVoiceIds.includes(profileId as EdgeTtsVoiceId))throw new Error('Edge TTS 音色不可用，请先 /tts list');
+        if(config.media.voice?.enabled!==true)throw new Error('当前人格未启用 TTS，请先在人格配置中启用');
+        override={kind:'edge',voice:profileId as EdgeTtsVoiceId};
+      }else{
+        if(config.media[role==='tts'?'voice':'singing']?.enabled!==true)throw new Error(`当前人格未启用${role==='tts'?'TTS':'STS'}，请先在人格配置中启用`);
+        if(!this.profiles)throw new Error('音色目录尚未加载');
+        const profile=this.profiles.get({serviceId:service,profileId});
+        const operation=role==='tts'?(service==='gpt-sovits'||service==='breeze-tts')?`${service}.speak`:undefined:(service==='rvc'?'rvc.convert':undefined);
+        if(!profile||!operation||profile.serviceId!==service||profile.state!=='ready'||!profile.capabilities.includes(operation))throw new Error('所选音色不可用，请先 list 并选择 ready 音色');
+        override=role==='tts'?{kind:'profile',profileRef:{serviceId:service as 'gpt-sovits'|'breeze-tts',profileId}}:{profileRef:{serviceId:'rvc',profileId}};
+      }
+    }
+    const current=this.repos.sessions.binding(scope);if(current.sessionId!==binding.sessionId||current.generation!==binding.generation||current.personaId!==binding.personaId)throw new Error('会话配置已变化，请重试');authorize?.();
+    const next:SessionBinding=role==='tts'?{...current,ttsOverride:override as TtsOverride}:{...current,stsOverride:override as StsOverride};this.repos.sessions.updateSession(next);this.recheckPermissions();return next;
   }
   async compactSession(scope:CallerScope):Promise<string>{
     const binding=this.repos.sessions.binding(scope);if(this.busy(binding.key))throw new Error('当前会话忙碌，请稍后再压缩');if(this.quiescing)throw new Error('正在升级，暂停新任务');if(!binding.persisted)throw new Error('当前会话尚无可压缩的上下文');if(!this.harness.compact)throw new Error('当前 Harness 不支持手动压缩');

@@ -33,7 +33,13 @@ async function defaultHealth(serviceId:LaunchableService,baseUrl:string,signal:A
 }
 
 async function defaultSpawn(file:string,args:readonly string[],cwd:string):Promise<number>{
-  const child=spawn(file,[...args],{cwd,detached:true,stdio:'ignore',windowsHide:true});
+  // On Windows the Breeze PowerShell launcher creates the actual service as a
+  // grandchild. Detaching the PowerShell process here leaves that grandchild
+  // in the launcher job and it is terminated as soon as PowerShell exits,
+  // even though the service reported healthy during startup. Keep the
+  // launcher attached on Windows so its child service remains owned by the
+  // long-lived bot process; Unix keeps the previous detached behavior.
+  const child=spawn(file,[...args],{cwd,detached:process.platform!=='win32',stdio:'ignore',windowsHide:true});
   await new Promise<void>((resolve,reject)=>{child.once('spawn',()=>resolve());child.once('error',reject);});
   child.unref();
   return child.pid??0;

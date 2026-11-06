@@ -62,7 +62,7 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
   const extensions:HarnessExtensions={};const harness=new NativeHarness(ctx,repos,assets,media,extensions);let disposeMode;try{disposeMode=await harness.registerMode();}catch(error){await serviceHost.dispose().catch(()=>{});persistence.close();throw error;}
   const channels=createChannelRegistry([qqChannel(new QQAdapter(undefined,{emit:event=>extensions.stats?.observeGroup({botId:event.botId,groupId:event.groupId,name:event.name,event:event.type==='group.joined'?'joined':event.type==='group.left'?'left':'observed',at:event.at,eventId:event.eventId})},undefined,undefined,createQQAudioPreparer(assets,{processes:new NodeControlledProcessPort()}))),weixinChannel(new WeixinAdapter(persistence.cursors))]);
   const runtime=new BotRuntime(repos,assets,media,harness,channels,credentials,config.debounceMs,0,profiles);
-  const features=new BotFeatures(runtime,createLifecyclePort());extensions.stats=features.stats;extensions.model=(binding,snapshot,args,signal)=>features.model(binding,snapshot,args,signal);extensions.evolve=(binding,snapshot,args,signal)=>features.execute(binding,snapshot,args,signal);
+  const features=new BotFeatures(runtime,createLifecyclePort());extensions.stats=features.stats;extensions.model=(binding,snapshot,args,signal)=>features.model(binding,snapshot,args,signal);extensions.voice=(binding,snapshot,args,signal)=>features.voice(binding,snapshot,args,signal);extensions.evolve=(binding,snapshot,args,signal)=>features.execute(binding,snapshot,args,signal);
   extensions.management=new BotManagement(runtime,features);
   const voiceLibrary=createVoiceModelLibrary(persistence.voiceLibrarySettings,persistence.home,profiles);
   await voiceLibrary.initialize();

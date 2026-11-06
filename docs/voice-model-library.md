@@ -41,6 +41,23 @@ RVC 的索引可省略，无索引时检索比例为零。GPT-SoVITS 必须提�
 
 面板仅保留音色选择、业务配置和明确的启动入口。新增模型后，在“连接”中点击“刷新”；刷新不会自动启动服务、自动切换人格，也不会封锁手工登记的其他 Profile。RVC 是按任务启动的 Worker，Music 是按任务执行的工具，两者没有常驻服务按钮。
 
+## 会话命令切换
+
+可信私聊可以用命令临时切换当前会话的音色。命令只保存会话覆盖，从下一轮生效，不修改共享人格；当前正在执行的轮次继续使用开始时冻结的音色。
+
+```text
+/tts list
+/tts set edge/zh-CN-XiaoxiaoNeural
+/tts set gpt-sovits/<profileId>
+/tts reset
+
+/sts list
+/sts set rvc/<profileId>
+/sts reset
+```
+
+`list` 返回当前选择和可用候选。TTS 的 Edge 候选为内置音色，Profile 候选只显示公开的 Profile ID、名称和状态；STS 只列出 RVC Profile。`set` 必须使用 `list` 返回的准确 ID，且 Profile 必须处于 `ready`。人格必须已启用对应的 TTS 或 STS 能力；命令不会替人格开启能力。`reset` 删除会话覆盖并恢复人格默认音色。新会话和恢复历史会话保留覆盖，切换人格时清除覆盖。
+
 ## 接口与版本
 
 - `service.settings`：读取模型库设置、启动目录、配置 revision 和逐模型诊断。

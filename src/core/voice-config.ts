@@ -1,4 +1,13 @@
 /** Canonical queue/cache identity for an operator-configured inference service. */
+/** Built-in Edge TTS voices exposed by the persona panel and chat controls. */
+export const edgeTtsVoiceIds = [
+  'zh-CN-XiaoxiaoNeural',
+  'zh-CN-YunxiNeural',
+  'en-US-AriaNeural',
+  'ja-JP-NanamiNeural',
+] as const;
+export type EdgeTtsVoiceId = typeof edgeTtsVoiceIds[number];
+
 export function normalizeVoiceServiceBaseUrl(value:string):string {
   const url=new URL(value);
   if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash)throw new Error('GPT_SOVITS_ENDPOINT_INVALID');
