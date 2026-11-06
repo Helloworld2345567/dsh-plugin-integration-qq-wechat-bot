@@ -9,12 +9,12 @@ async function fixture(t:any){const root=await mkdtemp(path.resolve('.codex/outp
 const png=(width=1,height=1)=>{const bytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64');bytes.writeUInt32BE(width,16);bytes.writeUInt32BE(height,20);return bytes;};
 
 test('validator owns paths and ignores adapter-declared MIME',async t=>{
-  const root=await fixture(t),file=path.join(root,'image.bin');await writeFile(file,png());const result=await new OutputValidatorRegistry().validate({kind:'image',jobDirectory:root,file:'image.bin',declaredMime:'text/html'});assert.equal(result.mime,'image/png');assert.deepEqual(result.metadata,{width:1,height:1});
+  const root=await fixture(t),file=path.join(root,'image.bin');await writeFile(file,png());const validator=new OutputValidatorRegistry({ffmpeg:''});const result=await validator.validate({kind:'image',jobDirectory:root,file:'image.bin',declaredMime:'text/html'});assert.equal(result.mime,'image/png');assert.deepEqual(result.metadata,{width:1,height:1});
   const outside=path.join(path.dirname(root),'outside.bin');await writeFile(outside,png());await assert.rejects(()=>new OutputValidatorRegistry().validate({kind:'image',jobDirectory:root,file:outside}),error=>error instanceof ServiceContractError&&error.serviceError.category==='OUTPUT_INVALID');const linked=path.join(root,'linked.png');await symlink(file,linked,'file');await assert.rejects(()=>new OutputValidatorRegistry().validate({kind:'image',jobDirectory:root,file:linked}),error=>error instanceof ServiceContractError&&error.serviceError.category==='OUTPUT_INVALID');await rm(outside,{force:true});
 });
 
 test('image validator rejects oversized dimensions and truncated payloads',async t=>{
-  const root=await fixture(t),huge=path.join(root,'huge.png'),truncated=path.join(root,'truncated.jpg');await writeFile(huge,png(32768,32768));await writeFile(truncated,Buffer.from([0xff,0xd8,0xff,0xe0,0,2]));const validator=new OutputValidatorRegistry({maxImagePixels:100});
+  const root=await fixture(t),huge=path.join(root,'huge.png'),truncated=path.join(root,'truncated.jpg');await writeFile(huge,png(32768,32768));await writeFile(truncated,Buffer.from([0xff,0xd8,0xff,0xe0,0,2]));const validator=new OutputValidatorRegistry({maxImagePixels:100,ffmpeg:''});
   await assert.rejects(()=>validator.validate({kind:'image',jobDirectory:root,file:huge}),/服务输出未通过宿主校验/);await assert.rejects(()=>validator.validate({kind:'image',jobDirectory:root,file:truncated}),/服务输出未通过宿主校验/);
 });
 

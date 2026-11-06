@@ -157,6 +157,7 @@ jobs:
         run: npm run check:environment
 
       - name: 执行发布门禁并生成临时归档
+        # npm run release:pack invokes npm run verify:release before packaging.
         run: npm run release:pack
 
       - name: 运行依赖审计
