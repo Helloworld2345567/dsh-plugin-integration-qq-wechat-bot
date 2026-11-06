@@ -1,5 +1,6 @@
 import {test,type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
 import {mkdir,mkdtemp,readFile,readdir,rm} from 'node:fs/promises';
 import path from 'node:path';
 import {decode,encode,getDuration,isSilk} from 'silk-wasm';
@@ -9,6 +10,11 @@ import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
 import {botSchema,type Asset,type ChannelOutboundContext} from '../src/core/types.js';
 import {TransformSlots} from '../src/core/transform-slots.js';
 import {NodeControlledProcessPort,type ControlledProcessPort} from '../src/harness/controlled-process.js';
+
+// The quality runner can operate without FFmpeg. Keep the pure SILK and
+// unavailable-tool coverage there, while exercising real conversions wherever
+// the host provides the encoder (including the Windows release gate).
+const FFMPEG_AVAILABLE=spawnSync(process.platform==='win32'?'where':'which',['ffmpeg'],{stdio:'ignore'}).status===0;
 
 function pcm(samples:number){const bytes=Buffer.alloc(samples*2);for(let sample=0;sample<samples;sample++)bytes.writeInt16LE(Math.round(5000*Math.sin(sample*2*Math.PI*440/24000)),sample*2);return bytes;}
 function wav(data:Buffer){const header=Buffer.alloc(44);header.write('RIFF');header.writeUInt32LE(data.length+36,4);header.write('WAVEfmt ',8);header.writeUInt32LE(16,16);header.writeUInt16LE(1,20);header.writeUInt16LE(1,22);header.writeUInt32LE(24000,24);header.writeUInt32LE(48000,28);header.writeUInt16LE(2,32);header.writeUInt16LE(16,34);header.write('data',36);header.writeUInt32LE(data.length,40);return Buffer.concat([header,data]);}
@@ -22,7 +28,7 @@ async function fixture(t:TestContext){
   return{home,store,assets,binding,controller,context,source,temporaryFiles,revoke:()=>{allowed=false;}};
 }
 
-test('QQ short WAV becomes real SILK with a complete final frame, inherited ownership and reusable cache',async t=>{
+test('QQ short WAV becomes real SILK with a complete final frame, inherited ownership and reusable cache',{skip:!FFMPEG_AVAILABLE},async t=>{
   const f=await fixture(t),original=wav(pcm(5161)),source=await f.source(original),processes=new NodeControlledProcessPort();let calls=0;
   const port:ControlledProcessPort={run:request=>{calls++;return processes.run(request);},cancel:id=>processes.cancel(id)},prepare=createQQAudioPreparer(f.assets,{processes:port,slots:new TransformSlots(1)}),context=f.context(source);context.outputs.unshift({type:'text',text:'AI voice'});
   const outputs=await prepare(context);assert.equal(outputs.length,2);assert.equal(outputs[0].text,'AI voice');const voice=await f.assets.resolve(f.binding.key,outputs[1].assetId!),bytes=await readFile(voice.path),decoded=await decode(bytes,24000);
@@ -31,7 +37,7 @@ test('QQ short WAV becomes real SILK with a complete final frame, inherited owne
   const resend=await prepare({...context,outputs:[{type:'asset',assetId:source.id,resend:true}]});assert.equal(resend[0].assetId,voice.id);assert.equal(resend[0].resend,true);assert.equal(calls,1);
 });
 
-test('QQ long WAV covers every sample in 300-second SILK parts and retains a complete MP3',async t=>{
+test('QQ long WAV covers every sample in 300-second SILK parts and retains a complete MP3',{skip:!FFMPEG_AVAILABLE},async t=>{
   const f=await fixture(t),samples=24000*300+241,original=wav(pcm(samples)),source=await f.source(original),processes=new NodeControlledProcessPort();let calls=0;
   const port:ControlledProcessPort={run:request=>{calls++;return processes.run(request);},cancel:id=>processes.cancel(id)},prepare=createQQAudioPreparer(f.assets,{processes:port}),outputs=await prepare(f.context(source));
   assert.equal(outputs.length,3);const parts=await Promise.all(outputs.slice(0,2).map(output=>f.assets.resolve(f.binding.key,output.assetId!))),silks=await Promise.all(parts.map(part=>readFile(part.path)));
@@ -53,7 +59,7 @@ test('QQ rejects unavailable FFmpeg without registering partial derived assets',
   await assert.rejects(prepare(f.context(source)),/QQ_AUDIO_FFMPEG_UNAVAILABLE/);assert.deepEqual(f.store.assets.allAssets().map(asset=>asset.id),[source.id]);assert.deepEqual(await f.temporaryFiles(),[]);
 });
 
-test('QQ cancels preparation while queued and rechecks revocation after FFmpeg',async t=>{
+test('QQ cancels preparation while queued and rechecks revocation after FFmpeg',{skip:!FFMPEG_AVAILABLE},async t=>{
   for(const mode of ['cancel','revoke'])await t.test(mode,async t=>{
     const f=await fixture(t),source=await f.source(wav(pcm(4800))),slots=new TransformSlots(1),held=mode==='cancel'?await slots.acquire(1,new AbortController().signal):undefined,real=new NodeControlledProcessPort();let calls=0;
     const prepare=createQQAudioPreparer(f.assets,{slots,processes:{run:async request=>{calls++;const result=await real.run(request);f.revoke();return result;},cancel:id=>real.cancel(id)}}),pending=prepare(f.context(source));
@@ -62,7 +68,7 @@ test('QQ cancels preparation while queued and rechecks revocation after FFmpeg',
   });
 });
 
-test('QQ rolls back newly registered derivatives when a later asset save is revoked',async t=>{
+test('QQ rolls back newly registered derivatives when a later asset save is revoked',{skip:!FFMPEG_AVAILABLE},async t=>{
   const f=await fixture(t),first=await f.source(wav(pcm(4800)),'first.wav'),second=await f.source(wav(pcm(4801)),'second.wav'),save=f.assets.save.bind(f.assets);let derivativeSaves=0;
   f.assets.save=async(...args:Parameters<Assets['save']>)=>{if(args[3]?.startsWith('qq-voice:')&&++derivativeSaves===2)f.revoke();return save(...args);};
   await assert.rejects(createQQAudioPreparer(f.assets,{processes:new NodeControlledProcessPort()})({...f.context(first),outputs:[{type:'asset',assetId:first.id},{type:'asset',assetId:second.id}]}),/REVOKED/);
