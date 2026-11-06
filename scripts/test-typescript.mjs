@@ -15,22 +15,23 @@ const processHome = path.join(temporary, 'home');
 const processTemp = await mkdtemp(path.join(tmpdir(), 'dsh-ts-'));
 let failed = false;
 let evidence;
+let testEnvironment;
 try {
   await mkdir(processHome, {recursive: true});
   await mkdir(processTemp, {recursive: true});
-  const env = safeSubprocessEnv({
+  testEnvironment = safeSubprocessEnv({
     HOME: processHome, USERPROFILE: processHome,
     APPDATA: path.join(processHome, 'appdata'), LOCALAPPDATA: path.join(processHome, 'localappdata'),
     TEMP: processTemp, TMP: processTemp, BOT_TEST_TMP: path.join(temporary, 'fixtures'),
     XDG_CONFIG_HOME: path.join(processHome, 'config'), PIP_CONFIG_FILE: path.join(processHome, 'empty-pip.ini'),
   });
-  await mkdir(env.BOT_TEST_TMP, {recursive: true});
-  await writeFile(env.npm_config_userconfig, '');
-  await writeFile(env.PIP_CONFIG_FILE, '[global]\nno-index = true\n');
+  await mkdir(testEnvironment.BOT_TEST_TMP, {recursive: true});
+  await writeFile(testEnvironment.npm_config_userconfig, '');
+  await writeFile(testEnvironment.PIP_CONFIG_FILE, '[global]\nno-index = true\n');
   // SQLite-backed fixtures share the repository-local test root. Serializing
   // files avoids Linux runner contention while keeping the full suite within
   // the release gate timeout.
-  const result = await spawnCapture(process.execPath, [cli, '--test', '--test-concurrency=1', ...files], {cwd: root, env, timeoutMs: 10 * 60 * 1000});
+  const result = await spawnCapture(process.execPath, [cli, '--test', '--test-concurrency=1', ...files], {cwd: root, env:testEnvironment, timeoutMs: 10 * 60 * 1000});
   if (result.output) console.error(redactEvidence(result.output));
 } catch (error) {
   failed = true;
@@ -42,7 +43,7 @@ try {
   // identity as a workflow annotation for actionable CI diagnostics.
   for (const file of files) {
     try {
-      await spawnCapture(process.execPath, [cli, '--test', '--test-concurrency=1', file], {cwd: root, env, timeoutMs: 10 * 60 * 1000});
+      await spawnCapture(process.execPath, [cli, '--test', '--test-concurrency=1', file], {cwd: root, env:testEnvironment, timeoutMs: 10 * 60 * 1000});
     } catch (fileError) {
       const detail = redactEvidence(fileError.result?.output ?? fileError.message).replace(/[\r\n]+/g, ' ').slice(0, 1000);
       console.error(`::error file=${file}::TypeScript test file failed: ${detail}`);
