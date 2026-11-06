@@ -27,7 +27,10 @@ try {
   await mkdir(env.BOT_TEST_TMP, {recursive: true});
   await writeFile(env.npm_config_userconfig, '');
   await writeFile(env.PIP_CONFIG_FILE, '[global]\nno-index = true\n');
-  const result = await spawnCapture(process.execPath, [cli, '--test', ...files], {cwd: root, env, timeoutMs: 10 * 60 * 1000});
+  // SQLite-backed fixtures share the repository-local test root. Serializing
+  // files avoids Linux runner contention while keeping the full suite within
+  // the release gate timeout.
+  const result = await spawnCapture(process.execPath, [cli, '--test', '--test-concurrency=1', ...files], {cwd: root, env, timeoutMs: 10 * 60 * 1000});
   if (result.output) console.error(redactEvidence(result.output));
 } catch (error) {
   failed = true;
