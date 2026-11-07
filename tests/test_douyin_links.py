@@ -24,6 +24,7 @@ def page_payload():
                             {"url_list": [
                                 "https://p3-pc-sign.douyinpic.com/thumb-1.webp",
                                 "https://p3-pc-sign.douyinpic.com/original-1.jpeg",
+                                "https://p3-pc-sign.douyinpic.com/original-1.png",
                             ]},
                             {"url_list": ["https://p3-pc-sign.douyinpic.com/original-2.jpeg"]},
                             {"url_list": ["https://p3-pc-sign.douyinpic.com/original-2.jpeg"]},
@@ -54,10 +55,20 @@ class DouyinLinkTests(unittest.TestCase):
         result = parse_page(html, WORK_ID)
         self.assertEqual(result["id"], WORK_ID)
         self.assertEqual(result["images"], [
-            "https://p3-pc-sign.douyinpic.com/original-1.jpeg",
+            "https://p3-pc-sign.douyinpic.com/original-1.png",
             "https://p3-pc-sign.douyinpic.com/original-2.jpeg",
         ])
         self.assertEqual(result["video"], "https://v.douyinstatic.com/live-photo.mp4")
+
+    def test_quality_hints_choose_original_png_and_keep_non_png_fallback(self):
+        urls = [
+            "https://cdn.example/thumb.webp",
+            "https://cdn.example/full.jpeg?width=2048&height=2731",
+            "https://cdn.example/preview.png?width=320&height=427",
+            "https://cdn.example/original.png?width=2048&height=2731",
+        ]
+        self.assertEqual(douyin_links._select_preferred_url(urls), urls[-1])
+        self.assertEqual(douyin_links._select_preferred_url(urls[:2]), urls[1])
 
     def test_parse_render_data_and_router_data(self):
         encoded = quote(json.dumps(page_payload()), safe="")

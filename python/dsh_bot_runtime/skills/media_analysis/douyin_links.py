@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import parse_qsl, unquote, urljoin, urlsplit
 
 import aiohttp
 
@@ -197,6 +197,54 @@ def _https_urls(values):
     return result
 
 
+def _format_hint(url):
+    """Return a declared image format without fetching or rewriting bytes."""
+    part = urlsplit(url)
+    path_match = re.search(r"\.(png|jpe?g|webp|avif)(?:$|/)", unquote(part.path).lower())
+    if path_match:
+        return path_match.group(1)
+    for key, value in parse_qsl(part.query, keep_blank_values=True):
+        if key.lower() not in {"format", "image_format", "mime", "mime_type", "type", "ext", "suffix"}:
+            continue
+        value = unquote(value).lower().removeprefix("image/")
+        if value in {"png", "jpg", "jpeg", "webp", "avif"}:
+            return value
+    return ""
+
+
+def _quality_hints(url):
+    part = urlsplit(url)
+    text = unquote(f"{part.path}?{part.query}").lower()
+    original = sum(text.count(token) for token in ("original", "origin", "source", "full", "raw"))
+    large = sum(text.count(token) for token in ("large", "highest", "high", "1080", "2048", "4096"))
+    dimensions = {"width": 0, "height": 0}
+    for key, value in parse_qsl(part.query, keep_blank_values=True):
+        key = key.lower()
+        if key not in {"width", "w", "image_width", "height", "h", "image_height"}:
+            continue
+        if value.isdigit():
+            dimensions["width" if key in {"width", "w", "image_width"} else "height"] = min(int(value), 100000)
+    return original, large, dimensions["width"] * dimensions["height"]
+
+
+def _select_preferred_url(urls):
+    """Prefer an explicitly declared PNG, then the strongest available variant.
+
+    Douyin commonly returns several equivalent CDN URLs in ``url_list``. The
+    platform does not promise their order, so format and quality hints are
+    considered before the original list position. No candidate is decoded or
+    re-encoded here; the selected URL is downloaded byte-for-byte later.
+    """
+    if not urls:
+        return ""
+    png_urls = [url for url in urls if _format_hint(url) == "png"]
+    pool = png_urls or list(urls)
+    return max(
+        enumerate(pool),
+        key=lambda pair: (*_quality_hints(pair[1]), pair[0]),
+    )[1]
+
+
 def _parse_payloads(payloads, work_id):
     item = _find_item(payloads, work_id)
     if not item:
@@ -207,14 +255,15 @@ def _parse_payloads(payloads, work_id):
         image_entries = [image_entries]
     for entry in image_entries:
         urls = _https_urls(_url_list(entry))
-        if urls and urls[-1] not in images:
-            images.append(urls[-1])
+        selected = _select_preferred_url(urls)
+        if selected and selected not in images:
+            images.append(selected)
     video = ""
     video_info = item.get("video") if isinstance(item.get("video"), dict) else {}
     for key in ("play_addr", "download_addr", "playAddr"):
         urls = _https_urls(_url_list(video_info.get(key)))
         if urls:
-            video = urls[-1]
+            video = _select_preferred_url(urls)
             break
     return {"id": str(work_id), "images": images, "video": video}
 
