@@ -183,15 +183,15 @@ class WorkerTests(unittest.TestCase):
                 directory.mkdir()
                 urls = [f'https://example.com/image-{index}.png' for index in range(count)]
                 downloaded = []
-                async def resolve(url):
-                    return {'images': urls}
+                async def resolve_images(url, cookie_file):
+                    return urls
                 async def download(url, target, *args, **kwargs):
                     downloaded.append(url)
                     target.write_bytes(original)
                     return len(original)
                 job = self.job('image_download', url='https://www.douyin.com/note/fixture')
                 job.update(handler='skill', output=str(directory))
-                with patch.object(image_download, 'resolve_link', side_effect=resolve), patch.object(image_download, 'download', side_effect=download):
+                with patch.object(image_download, 'resolve_images', side_effect=resolve_images), patch.object(image_download, 'download', side_effect=download):
                     result = worker.execute(job)
                 self.assertEqual(downloaded, urls[:100])
                 self.assertEqual(len(result['assets']), 100)

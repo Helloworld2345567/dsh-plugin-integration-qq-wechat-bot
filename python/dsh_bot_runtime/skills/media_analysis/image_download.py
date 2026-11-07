@@ -10,6 +10,7 @@ from PIL import Image, UnidentifiedImageError
 from dsh_bot_runtime.video_understanding.network import download
 from dsh_bot_runtime.video_understanding.models import VideoError
 from dsh_bot_runtime.skills.media_analysis.platform_links import PLATFORM_HOSTS, resolve_link, MEDIA_USER_AGENT
+from dsh_bot_runtime.skills.media_analysis.douyin_links import DOUYIN_HOSTS, configured_cookie_file, resolve_images
 
 MAX_IMAGES = 100
 MAX_BYTES = 20 * 1024 * 1024
@@ -93,7 +94,13 @@ def image_file(path, index):
 async def execute(job):
     directory = Path(job['output'])
     url = job['parameters']['url']
-    if urlsplit(url).hostname in PLATFORM_HOSTS:
+    host = (urlsplit(url).hostname or '').lower()
+    if host in DOUYIN_HOSTS:
+        images = await resolve_images(url, configured_cookie_file())
+        if not images:
+            raise VideoError('LINK_HAS_NO_IMAGE_GALLERY')
+        return await download_images(images, url, directory, 'PLATFORM_ORIGINAL_IMAGES')
+    if host in PLATFORM_HOSTS:
         result = await resolve_link(url)
         if not result['images']:
             raise VideoError('LINK_HAS_NO_IMAGE_GALLERY')

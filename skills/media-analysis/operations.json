@@ -102,7 +102,7 @@
     {
       "tool": {
         "name": "media_analysis",
-        "description": "执行media-analysis脚本；kind=image从url下载原图并自动作为图片附件交付，kind=audio识别语音，kind=video分析视频（action=download则仅下载并回传原视频），复用原生模型提供商的URL和凭据，无需单独配置密钥。视频支持抖音/B站作品链接或分享短链：提取分享文字中的https链接填url，不要用网页抓取代替视频分析。输入本会话附件ID；url与inputs二选一，均留空选同类型最近附件。返回实际分析结果与覆盖范围。",
+        "description": "执行media-analysis脚本；kind=image从url下载原图并自动作为图片附件交付，kind=audio识别语音，kind=video分析视频（action=download则仅下载并回传原视频），复用原生模型提供商的URL和凭据，无需单独配置密钥。视频支持抖音/B站作品链接或分享短链；抖音note/slides图文链接必须使用kind=image。提取分享文字中的https链接填url，不要用网页抓取代替视频分析。输入本会话附件ID；url与inputs二选一，均留空选同类型最近附件。返回实际分析结果与覆盖范围。",
         "parameters": {
           "kind": {
             "type": "string",

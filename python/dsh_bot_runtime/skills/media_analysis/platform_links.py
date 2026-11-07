@@ -1,4 +1,8 @@
-"""Public share-link resolver. No account, browser profile or user cookies."""
+"""Platform share-link resolvers.
+
+Douyin links are resolved locally from the platform's own share pages. The
+legacy public parser remains isolated to the Bilibili image path for now.
+"""
 import json
 import re
 from urllib.parse import urlsplit
@@ -8,8 +12,9 @@ import aiohttp
 from dsh_bot_runtime.video_understanding.models import VideoError
 from dsh_bot_runtime.video_understanding.network import PublicResolver, validate_url
 from dsh_bot_runtime.video_understanding.sources import SourceResolver, platform_source
+from dsh_bot_runtime.skills.media_analysis.douyin_links import resolve_reference
 
-# Public website's JSON endpoint; see its frontend and docs/references.md.
+# Legacy Bilibili image endpoint; Douyin never enters this path.
 MEDIA_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
 PARSE_ENDPOINT = 'https://shiguang.aihub.ren/api/parse'
 PLATFORM_HOSTS = {'v.douyin.com', 'douyin.com', 'www.douyin.com', 'www.iesdouyin.com',
@@ -57,6 +62,8 @@ def normalize_result(payload, source):
 
 async def resolve_link(url):
     source = describe_link(url)
+    if source['kind'] == 'douyin':
+        raise VideoError('UNSUPPORTED_SOURCE')
     connector = aiohttp.TCPConnector(resolver=PublicResolver(), use_dns_cache=False)
     try:
         async with aiohttp.ClientSession(connector=connector, trust_env=False,
@@ -79,6 +86,11 @@ class PublicLinkResolver(SourceResolver):
         self.describe(source['ref'], caller)
         if source['kind'] == 'attachment' or source.get('page', 1) != 1:
             return await super().resolve(source, caller)
+        if source['kind'] == 'douyin':
+            stable = await resolve_reference(source['ref'], self.cookie_file)
+            if stable.get('media') == 'image':
+                raise VideoError('LINK_IS_IMAGE_GALLERY_USE_IMAGE')
+            return await super().resolve(stable, caller)
         result = await resolve_link(source['ref'])
         if not result['video']:
             raise VideoError('LINK_IS_IMAGE_GALLERY_USE_IMAGE')

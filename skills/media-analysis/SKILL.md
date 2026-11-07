@@ -24,7 +24,7 @@ GIF 默认保留整段视频，12 fps、最长边 480 像素。只有用户明�
 ## 调用
 
 - 语音转写：`media_analysis(kind="audio", inputs=["本会话附件ID"], question="忠实转写")`。已有平台转写时先用现有文字。
-- 视频链接分析：`media_analysis(kind="video", url="https://v.douyin.com/…/", question="这个视频讲了什么？")`。支持抖音/B站作品地址及分享短链 `v.douyin.com`、`b23.tv`。从分享文案提取 HTTPS 链接；不要用网页摘要代替视频分析。
+- 视频链接分析：`media_analysis(kind="video", url="https://v.douyin.com/…/", question="这个视频讲了什么？")`。支持抖音/B站作品地址及分享短链 `v.douyin.com`、`b23.tv`。从分享文案提取 HTTPS 链接；不要用网页摘要代替视频分析。抖音 `note`/`slides` 图文链接应使用 `kind="image"`。
 - 视频附件分析：`media_analysis(kind="video", inputs=["本会话附件ID"], question="…")`。音视频不填来源时选择同会话最近的同类附件。
 - 下载链接原图：`media_analysis(kind="image", url="https://…")`。支持抖音图集、B站图文、图片直链及公开网页图片。
 - 只下载视频：`media_analysis(kind="video", action="download", url="https://…")`。返回视频附件，不调用分析模型。
@@ -33,13 +33,13 @@ GIF 默认保留整段视频，12 fps、最长边 480 像素。只有用户明�
 
 ## 执行与回复
 
-宿主运行固定模块 `dsh_bot_runtime.skills.media_analysis.media_api`；其中 `platform_links` 模块通过公开免登录解析服务获取抖音/B站媒体地址，再下载真实媒体字节。它不读取浏览器配置，不需要用户登录、Cookie 或解析密钥。该服务会接收用户要求处理的公开分享链接，来源见 [解析说明](references/platform-links.md)。
+宿主运行固定模块 `dsh_bot_runtime.skills.media_analysis.media_api`；其中 `platform_links` 模块对抖音直接访问抖音分享页并解析页面数据，再下载真实媒体字节；视频继续使用本地隔离的 `yt-dlp` extractor。抖音路径不调用第三方代解析服务。默认不读取 Cookie；配置 `DOUYIN_COOKIE_FILE` 时，仅向抖音网页请求发送匹配域名的本地 Netscape Cookie 文件。B站图集仍使用现有解析路径，来源见 [解析说明](references/platform-links.md)。
 
 工具参数、操作路由、模型角色、固定命名空间 entry 和附件交付由技能内的 [operations.json](operations.json) 声明。`tools` 分别声明分析、转换工具；新增操作在该声明和 `dsh_bot_runtime.skills.media_analysis` 包中实现。宿主不接受模型、人格或工作区提供的模块／脚本路径。
 
 分析复用本轮选定模型提供商的 URL、凭据和视频/语音模型配置，凭据仅在子进程环境中传入。视频发送完整 MP4 画面与音轨；只有取得真实模型结果后才能说已分析。语音按模型选择兼容载荷：Gemini 系列通过 `image_url` 传入带音频 MIME 的数据 URL，其他模型使用 `input_audio`；也支持已配置的转写接口。模型未收到音频时明确报错，不自动换载荷重试。
 
-下载原图由命名空间内的 `image_download` 模块执行。图集采用解析服务返回的图片列表；普通网页优先明确的原图链接和最大 srcset。原始下载字节不重新编码，下载的图片和视频自动登记为平台回复附件。文字回复不要输出图片 Markdown、`asset://` 地址或附件 ID。
+下载原图由命名空间内的 `image_download` 模块执行。抖音图集从官方分享页嵌入数据中提取图片列表；普通网页优先明确的原图链接和最大 srcset。原始下载字节不重新编码，下载的图片和视频自动登记为平台回复附件。文字回复不要输出图片 Markdown、`asset://` 地址或附件 ID。
 
 根据结果区分原话、画面观察、推断与不确定性。`incomplete=true` 时明确说明只完成了一部分；视频封面不等于图集原图，页面标题不等于视频内容。工具失败应简述实际错误，不编造已下载或已理解，也不自动重试可能已计费的模型请求。
 
@@ -49,7 +49,7 @@ GIF 默认保留整段视频，12 fps、最长边 480 像素。只有用户明�
 
 ## Limitations / Known Issues
 
-- 免登录服务及媒体 CDN 可能临时失败；仅处理公开内容，不依赖账号登录。
+- 抖音官方网页及媒体 CDN 可能临时失败；默认仅处理公开内容，可通过本地 Cookie 文件访问用户有权查看的内容。
 - B站分 P 视频保留原解析器以核对分 P 身份，不能把第 1 P 当成用户指定的其他分 P。
 - 一次最多返回 100 张图片；单张图片最多 20 MiB，整批图片下载最多 50 MiB。视频下载和分析源文件最多 500 MiB，发送到 QQ／微信的单个视频最多 200 MiB；视频分析每次一个、最长 300 秒，分析前按需转码，模型内联视频最多 8 MiB、请求载荷最多 12 MiB。超出时明确报告，不截断后冒充完整结果。
 - 累计附件存储仍受当前聊天作用域 512 MiB、全局 2 GiB 配额约束；已有附件占用可能使新视频登记失败。

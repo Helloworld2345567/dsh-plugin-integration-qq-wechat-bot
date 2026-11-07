@@ -55,8 +55,10 @@ def platform_source(text):
         match = re.fullmatch(r"/(?:video|share/video)/(\d+)/?", parsed.path)
         if match:
             return {"kind": "douyin", "ref": f"https://www.douyin.com/video/{match[1]}", "work_id": match[1]}
-        if "/note/" in parsed.path:
-            raise VideoError("GALLERY_NOT_VIDEO")
+        match = re.fullmatch(r"/(?:note|share/note|slides|share/slides)/(\d+)/?", parsed.path)
+        if match:
+            return {"kind": "douyin", "media": "image",
+                    "ref": f"https://www.douyin.com/note/{match[1]}", "work_id": match[1]}
     raise VideoError("UNSUPPORTED_SOURCE")
 
 
