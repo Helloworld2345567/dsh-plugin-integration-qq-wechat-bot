@@ -1,4 +1,4 @@
-import {access} from 'node:fs/promises';
+import {access,readdir} from 'node:fs/promises';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 
@@ -23,6 +23,48 @@ type SpawnProcess=(file:string,args:readonly string[],cwd:string)=>Promise<numbe
 
 const powershell=process.platform==='win32'?'pwsh.exe':'pwsh';
 const trimUrl=(value:string)=>value.replace(/\/$/,'');
+
+async function findModelConfig(projectRoot:string,configuredRoot:string,serviceRoot:string):Promise<string|undefined>{
+  const candidates=[
+    path.join(serviceRoot,'GPT_SoVITS','configs','tts_local.yaml'),
+    path.join(configuredRoot,'gpt-sovits'),
+    path.join(projectRoot,'models','gpt-sovits'),
+  ];
+  try{await access(candidates[0]);return candidates[0];}catch{}
+  const roots=[...new Set(candidates.slice(1).map(value=>path.resolve(value)))];
+  const matches:string[]=[];
+  const visit=async(directory:string,depth:number):Promise<void>=>{
+    if(depth>4||matches.length>=32)return;
+    let entries;try{entries=await readdir(directory,{withFileTypes:true});}catch{return;}
+    for(const entry of entries){
+      const target=path.join(directory,entry.name);
+      if(entry.isFile()&&entry.name==='tts_config.yaml')matches.push(target);
+      else if(entry.isDirectory())await visit(target,depth+1);
+      if(matches.length>=32)return;
+    }
+  };
+  await Promise.all(roots.map(root=>visit(root,0)));
+  if(matches.length)return matches.sort((a,b)=>a.localeCompare(b))[0];
+  try{await access(path.join(serviceRoot,'GPT_SoVITS','configs','tts_infer.yaml'));return path.join(serviceRoot,'GPT_SoVITS','configs','tts_infer.yaml');}catch{return;}
+}
+
+async function findGptSovitsRoot(configuredRoot:string):Promise<{root:string;python:string;serviceRoot:string;config:string;configArg:string}> {
+  const pythonName=process.platform==='win32'?path.join('.codex','venv','Scripts','python.exe'):path.join('.codex','venv','bin','python');
+  let current=path.resolve(configuredRoot);
+  for(;;){
+    const python=path.join(current,pythonName),serviceRoot=path.join(current,'GPT-SoVITS');
+    try{
+      await Promise.all([access(python),access(path.join(serviceRoot,'api_v2.py'))]);
+      const config=await findModelConfig(current,configuredRoot,serviceRoot);if(!config)throw Error('GPT_SOVITS_CONFIG_NOT_FOUND');
+      return{root:current,python,serviceRoot,config,configArg:path.relative(serviceRoot,config).replaceAll(path.sep,'/')};
+    }
+    catch{}
+    const parent=path.dirname(current);if(parent===current)break;current=parent;
+  }
+  // Preserve the original configured root in the diagnostic path while
+  // returning the same stable error category as the previous direct checks.
+  throw Error('GPT_SOVITS_LAYOUT_NOT_FOUND');
+}
 
 async function defaultHealth(serviceId:LaunchableService,baseUrl:string,signal:AbortSignal):Promise<boolean>{
   const response=await fetch(`${trimUrl(baseUrl)}${serviceId==='breeze-tts'?'/health':'/openapi.json'}`,{signal:AbortSignal.any([signal,AbortSignal.timeout(2500)]),redirect:'error'});
@@ -75,10 +117,8 @@ export class ExternalServiceLauncher implements ServiceLauncher {
     if(settings.serviceId==='breeze-tts'){
       const script=path.join(root,'Start-Breeze.ps1');await access(script);command=powershell;args=['-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',script];cwd=root;
     }else{
-      const python=path.join(root,'.codex','venv',process.platform==='win32'?'Scripts/python.exe':'bin/python');
-      const serviceRoot=path.join(root,'GPT-SoVITS'),config=path.join(serviceRoot,'GPT_SoVITS','configs','tts_local.yaml');
-      await Promise.all([access(python),access(path.join(serviceRoot,'api_v2.py')),access(config)]);
-      command=python;args=['-B','api_v2.py','-a','127.0.0.1','-p','9880','-c','GPT_SoVITS/configs/tts_local.yaml'];cwd=serviceRoot;
+      const layout=await findGptSovitsRoot(root),python=layout.python,serviceRoot=layout.serviceRoot;
+      command=python;args=['-B','api_v2.py','-a','127.0.0.1','-p','9880','-c',layout.configArg];cwd=serviceRoot;
     }
     const pid=await this.spawnProcess(command,args,cwd);
     const deadline=Date.now()+this.timeoutMs;
