@@ -55,6 +55,9 @@ export async function apply(ctx:Context){
   // Start after composition; errors are durable evidence for the parent test runner.
   const resultPath=process.env.NATIVE_TEST_RESULT!;
   const test=async()=>{
+    assert.equal(runtime.serviceRunning(),false,'the existing profile can load the bot panel with its service stopped');
+    await runtime.startService();
+    assert.equal(runtime.serviceRunning(),true,'the native host can explicitly start the bot service');
     const initial=personas.config('default');await runtime.saveConfig({...initial,model:{provider:'bot-fixture',model:'first'},allowHostTools:true,personaPrompt:'PERSONA_A'},initial.revision);
     const sakura=personas.config('sakura');await runtime.saveConfig({...sakura,model:{provider:'bot-fixture',model:'second'},allowHostTools:true,personaPrompt:'PERSONA_B'},sakura.revision);
     bots.saveBot(botSchema.parse({id:'fixture',name:'Fixture',channel:'qq',accountId:'fixture',enabled:true}));

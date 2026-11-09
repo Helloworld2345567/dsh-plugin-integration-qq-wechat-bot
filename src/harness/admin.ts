@@ -99,6 +99,8 @@ export class Admin {
       case 'bot.save':{const bot=this.runtime.saveBot(input);if(!bot.enabled||bot.archived)await this.runtime.stop(bot.id);return bot;}
       case 'bot.start':await this.runtime.start(z.string().parse(input.id));return{ok:true};
       case 'bot.stop':await this.runtime.stop(z.string().parse(input.id));return{ok:true};
+      case 'bot.service.start':await this.runtime.startService();return{running:this.runtime.serviceRunning()};
+      case 'bot.service.stop':await this.runtime.stopService();return{running:this.runtime.serviceRunning()};
       case 'bot.delete':{const id=z.string().parse(input.id);for(const [key,attempt] of this.attempts)if(attempt.botId===id)this.attempts.delete(key);await this.runtime.deleteBot(id);return{ok:true};}
       case 'bot.reconnect':await this.runtime.stop(z.string().parse(input.id));await this.runtime.start(input.id);return{ok:true};
       case 'bot.credentials':{

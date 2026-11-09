@@ -14,7 +14,7 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
   const React=require('react');const h=React.createElement;let t:Translate=chinese;let locale:any;
   async function api(action:string,input:any={},signal?:AbortSignal){
     const boot=window.__BOT_INTEGRATION__;if(!boot)throw Error(t('serviceNotReady'));
-    const strictCommand=action==='service.refresh'||action==='service.start'||action==='service.settings.save'||action==='service.settings.pick-directory';
+    const strictCommand=action==='service.refresh'||action==='service.start'||action==='service.settings.save'||action==='service.settings.pick-directory'||action==='bot.service.start'||action==='bot.service.stop';
     const response=await fetch(boot.endpoint,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${boot.token}`},body:JSON.stringify(strictCommand?{version:1,kind:'command',name:action,input}:{action,input}),signal});
     const body=await response.json();if(!response.ok)throw Error(body.error||t('operationFailed'));return body.result;
   }
@@ -96,12 +96,13 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
       h('section',{className:'card'},h('div',{className:'row spread'},h('h3',null,t('connections')),ui.button(t('manage'),()=>navigate('bots'),{className:'quiet'})),...summaryBots.map((bot:any)=>h('div',{key:bot.id,className:'item row spread'},identity(bot),badge(bot))),summary&&!summaryBots.length?h('p',{className:'empty'},t('noBots')):null),
       h('section',{className:'card'},h('div',{className:'row spread'},h('h3',null,t('usage')),ui.button(stats?t('collapse'):t('statistics'),()=>setStats(!stats),{'aria-expanded':stats,'aria-controls':'bot-statistics',className:'quiet'})),h('div',{id:'bot-statistics'},h(StatisticsPanel,{React,api,bots:summaryBots,t,compact:!stats,onError:setError}))));
     const botCard=(bot:any)=>{
+      const running=bot.enabled&&summary?.health?.serviceRunning!==false&&bot.status!=='stopped';
       const trustedUsers=list(bot.trustedUsers);
       const trustedEditor=h('div',{className:'stack'},
         ...trustedUsers.map((user:string,index:number)=>h('div',{className:'row spread',key:`${user}-${index}`},h('span',{className:'path'},user),ui.button(t('delete'),()=>{const next=[...trustedUsers];next.splice(index,1);return mutate('bot.save',{...bot,trustedUsers:next},t('saved'));}))),
         h('div',{className:'actions'},ui.button(t('add'),async()=>{const value=await ask(t('userId'));const next=value?.trim();if(next&&!trustedUsers.includes(next))await mutate('bot.save',{...bot,trustedUsers:[...trustedUsers,next]},t('saved'));})));
       const management=bots?h(React.Fragment,null,
-        ui.toggle(t('run'),bot.enabled,()=>mutate(bot.enabled?'bot.stop':'bot.start',{id:bot.id},bot.enabled?t('stopped'):t('connectionStarted'))),
+        ui.toggle(t('run'),running,()=>mutate(running?'bot.stop':'bot.start',{id:bot.id},running?t('stopped'):t('connectionStarted'))),
         ui.select(t('persona'),bot.configId,configs,v=>mutate('bot.save',{...bot,configId:v},t('switchedNextTurn'))),h('small',null,t('personaKeepsHistory')),
         ui.details(t('usersCount',{count:trustedUsers.length}),trustedEditor),
         ui.details(t('directoryMode',{mode:bot.workingDirectory?t('specifiedDirectory'):t('defaultDirectory')}),ui.field(t('workingDirectory'),workspaceEdits[bot.id]??bot.workingDirectory??'',v=>setWorkspaceEdits({...workspaceEdits,[bot.id]:v}),'text',{placeholder:directories.workspaceRoot}),h('div',{className:'actions'},ui.button(t('browseDirectory'),async()=>{const value=await pickDirectory(workspaceEdits[bot.id]??bot.workingDirectory);if(value)setWorkspaceEdits({...workspaceEdits,[bot.id]:value});}),ui.button(t('defaultDirectory'),()=>setWorkspaceEdits({...workspaceEdits,[bot.id]:''})),ui.button(t('save'),async()=>{await mutate('bot.save',{...bot,workingDirectory:workspaceEdits[bot.id]??bot.workingDirectory??''});setWorkspaceEdits((old:any)=>{const next={...old};delete next[bot.id];return next;});}))),
@@ -117,7 +118,7 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
         ui.details(t('manage'),management));
     };
     if(tab==='bots')body=h('section',{'aria-label':t('bots')},
-      h('div',{className:'toolbar spread'},h('small',null,t('botCount',{count:displayBots.length})),ui.button(newOpen?t('cancel'):t('createNew'),()=>setNewOpen(!newOpen),{className:'primary','aria-expanded':newOpen})),
+      h('div',{className:'toolbar spread'},h('small',null,t('botCount',{count:displayBots.length})),h('div',{className:'actions'},ui.button(summary?.health?.serviceRunning===true?t('stopBotService'):t('startBotService'),()=>mutate(summary?.health?.serviceRunning===true?'bot.service.stop':'bot.service.start',{},summary?.health?.serviceRunning===true?t('botServiceStopped'):t('botServiceStarted')),{disabled:busy||!summary?.health,'aria-label':summary?.health?.serviceRunning===true?t('stopBotService'):t('startBotService')}),ui.button(newOpen?t('cancel'):t('createNew'),()=>setNewOpen(!newOpen),{className:'primary','aria-expanded':newOpen}))),
       newOpen?h('section',{className:'card'},h('h3',null,t('newBot')),h('div',{className:'fields'},ui.field(t('id'),newBot.id,v=>setNewBot({...newBot,id:v})),ui.field(t('name'),newBot.name,v=>setNewBot({...newBot,name:v})),ui.select(t('channel'),newBot.channel,channels.map((c:any)=>({id:c.id,name:c.displayName})),v=>setNewBot({...newBot,channel:v})),ui.select(t('persona'),newBot.configId,configs,v=>setNewBot({...newBot,configId:v}))),ui.button(t('create'),async()=>{if(!newBot.id.trim()||!newBot.name.trim())throw Error(t('requiredBotFields'));await mutate('bot.save',newBot,t('created'));setNewOpen(false);setNewBot({...newBot,id:'',name:''});},{className:'primary'})):null,
       ...displayBots.map(botCard),
       credential?h('section',{className:'card','aria-label':t('qqCredentials')},h('h3',null,t('qqCredentials')),h('div',{className:'fields'},ui.field('AppID',credential.accountId,v=>setCredential({...credential,accountId:v})),ui.field('AppSecret',credential.appSecret,v=>setCredential({...credential,appSecret:v}),'password',{autoComplete:'new-password'})),h('div',{className:'actions'},ui.button(t('save'),async()=>{await mutate('bot.credentials',{id:credential.id,credential:{accountId:credential.accountId,appSecret:credential.appSecret}},t('credentialsSaved'));setCredential(null);},{className:'primary'}),ui.button(t('cancel'),()=>setCredential(null)))):null,

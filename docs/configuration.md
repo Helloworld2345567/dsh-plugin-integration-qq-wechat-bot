@@ -67,6 +67,7 @@
 | `dataDir` | 机器人运行数据目录；为空时按 `BOT_DATA_HOME`、`DSH_HOME` 和 `.runtime/bot-data` 推导。 | 需要重新加载插件 | 否 |
 | `python` | 媒体 worker Python 解释器；为空时使用 `BOT_PYTHON` 或 `python`。 | 需要重新加载插件 | 否 |
 | `debounceMs` | 同一会话入站消息合并等待时间，默认 `2000` ms，范围 `0–60000`。 | 需要重新加载插件 | 否 |
+| `autoStart` | 默认 `true`；设为 `false` 时加载机器人面板、配置和历史，等待单独启动机器人服务，再连接渠道和恢复后台任务。 | 需要重新加载插件 | 否 |
 
 ## 仅开发/测试使用的变量
 

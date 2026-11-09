@@ -55,7 +55,7 @@ await writeFile(env.npm_config_userconfig, '');
   await writeFile(path.join(fixture, 'package.json'), JSON.stringify({name: 'dsh-bot-native-fixture', version: '0.0.0', type: 'module', exports: './index.js', dsh: {bundle: {patch: './cordis.patch.yml'}}}));
   await writeFile(path.join(fixture, 'cordis.patch.yml'), '- insert:\n    - id: bot-native-fixture\n      name: dsh-bot-native-fixture\n');
   await writeFile(path.join(home, 'profiles', 'bots', 'package.json'), JSON.stringify({name: 'native-smoke-profile', private: true, type: 'module', dsh: {profile: {bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']}}}));
-  await writeFile(path.join(home, 'profiles', 'bots', 'cordis.patch.yml'), '- id: skill-filesystem\n  disabled: true\n- id: session-log-deepseek\n  disabled: true\n- id: session-query-sqlite\n  config:\n    path: ":memory:"\n    openAt: first-search\n');
+  await writeFile(path.join(home, 'profiles', 'bots', 'cordis.patch.yml'), '- id: skill-filesystem\n  disabled: true\n- id: session-log-deepseek\n  disabled: true\n- id: session-query-sqlite\n  config:\n    path: ":memory:"\n    openAt: first-search\n- id: bot-integration\n  config:\n    autoStart: false\n');
   const resultPath = env.NATIVE_TEST_RESULT;
   const cli = path.join(path.dirname(createRequire(import.meta.url).resolve('@deepseek-ai/dsh/package.json')), 'lib', 'bin.js');
   const run = args => spawnCapture(process.execPath, [cli, ...args], {cwd: root, env, timeoutMs: 180_000});

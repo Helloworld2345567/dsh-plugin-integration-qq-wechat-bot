@@ -51,6 +51,8 @@ export class BotRuntime {
   readonly automation:AutomationScheduler;
   private quiescing=false;
   private closed=false;
+  private serviceActive=true;
+  private serviceChange:Promise<void>=Promise.resolve();
   private readonly owner=randomUUID();
   private claimed=false;
   /** Session-bound music and singing state share the binding generation check. */
@@ -65,19 +67,31 @@ export class BotRuntime {
   busy(value:SessionBinding|string):boolean{const key=typeof value==='string'?value:value.key;return this.processing.has(key)||this.maintenance.has(key);}
   models(){return this.harness.models?this.harness.models():Promise.resolve([]);}
   sessionStatus(scope:CallerScope):'waiting_upgrade'|'compacting'|'running'|'idle'{const key=scopeKey(scope);return this.quiescing?'waiting_upgrade':this.maintenance.has(key)?'compacting':this.processing.has(key)||this.repos.telemetry.actions.sessionActions<SessionActionRecord>().some(r=>r.scopeKey===key&&r.state==='running')?'running':'idle';}
-  health():{ready:true;quiescing:boolean;activeTasks:number;pendingDeliveries:number;pendingSessionActions:number;connections:Record<string,string>;latency:{inboxToModel:{count:number;p50:number|null;p95:number|null;max:number|null};inboxToSent:{count:number;p50:number|null;p95:number|null;max:number|null}}}{return{ready:true,quiescing:this.quiescing,activeTasks:this.processing.size+this.maintenance.size+this.controls.size,pendingDeliveries:this.repos.deliveries.deliveries(['pending','sending']).length,pendingSessionActions:this.repos.telemetry.actions.sessionActions<SessionActionRecord>().filter(r=>r.state==='queued').length,connections:Object.fromEntries(this.states),latency:{inboxToModel:this.repos.telemetry.metrics.metricPercentiles('modelStartedAt'),inboxToSent:this.repos.telemetry.metrics.metricPercentiles('sentAt')}};}
+  health():{ready:true;serviceRunning:boolean;quiescing:boolean;activeTasks:number;pendingDeliveries:number;pendingSessionActions:number;connections:Record<string,string>;latency:{inboxToModel:{count:number;p50:number|null;p95:number|null;max:number|null};inboxToSent:{count:number;p50:number|null;p95:number|null;max:number|null}}}{return{ready:true,serviceRunning:this.serviceRunning(),quiescing:this.quiescing,activeTasks:this.processing.size+this.maintenance.size+this.controls.size,pendingDeliveries:this.repos.deliveries.deliveries(['pending','sending']).length,pendingSessionActions:this.repos.telemetry.actions.sessionActions<SessionActionRecord>().filter(r=>r.state==='queued').length,connections:Object.fromEntries(this.states),latency:{inboxToModel:this.repos.telemetry.metrics.metricPercentiles('modelStartedAt'),inboxToSent:this.repos.telemetry.metrics.metricPercentiles('sentAt')}};}
   constructor(readonly repos:RuntimeRepositories,readonly assets:Assets,readonly media:MediaService,readonly harness:HarnessPort,readonly channels:ChannelRegistry,readonly credentials:Credentials,readonly debounceMs=2000,readonly turnTimeoutMs=0,readonly profiles?:ProfileStore){
-    this.connectionSupervisor=new DurableConnectionSupervisor(repos.bots,this.channels,credentials,this.states,message=>this.receive(message));this.deliveryWorker=new DurableDeliveryWorker(repos,this.channels,credentials,undefined,this.profiles);this.commandBus=new CommandBus(this);this.automation=new AutomationScheduler(repos,{runPrompt:(binding,prompt,kind,signal)=>this.runAutomationPrompt(binding,prompt,kind,signal),flush:()=>this.flushDeliveries(),available:key=>!this.closed&&!this.quiescing&&!this.busy(key)&&!this.controls.has(key)&&!this.repos.inbox.messages(key).length});this.commandServices.automation={proactive:(binding,action,args)=>this.automationCommand(binding,action,args),schedule:(binding,action,args)=>this.scheduleCommand(binding,action,args)};
+    this.connectionSupervisor=new DurableConnectionSupervisor(repos.bots,this.channels,credentials,this.states,message=>this.receive(message));this.deliveryWorker=new DurableDeliveryWorker(repos,this.channels,credentials,undefined,this.profiles,()=>this.serviceRunning());this.commandBus=new CommandBus(this);this.automation=new AutomationScheduler(repos,{runPrompt:(binding,prompt,kind,signal)=>this.runAutomationPrompt(binding,prompt,kind,signal),flush:()=>this.flushDeliveries(),available:key=>this.serviceRunning()&&!this.quiescing&&!this.busy(key)&&!this.controls.has(key)&&!this.repos.inbox.messages(key).length});this.commandServices.automation={proactive:(binding,action,args)=>this.automationCommand(binding,action,args),schedule:(binding,action,args)=>this.scheduleCommand(binding,action,args)};
   }
-  async initialize():Promise<void>{
+  async initialize(options:{autoStart?:boolean}={}):Promise<void>{
+    this.serviceActive=options.autoStart!==false;
+    if(!this.serviceActive)this.automation.close();
     this.repos.lifecycle.claim(this.owner);this.claimed=true;this.repos.lifecycle.recover();
     for(const job of this.repos.media.jobs.jobs())if(job.state==='running'||job.state==='queued')this.repos.media.jobs.saveJob(job.id,{...job,state:'interrupted'});
     for(const action of this.repos.telemetry.actions.sessionActions<SessionActionRecord>())if(action.state==='running')this.finishSessionAction(action,'interrupted','会话操作在重启前被中断，结果未知；请先查看当前状态，再决定是否重试。');
-    for(const bot of this.repos.bots.bots())if(bot.enabled&&!bot.archived)void this.start(bot.id).catch(()=>this.states.set(bot.id,'error'));
+    if(this.serviceActive)for(const bot of this.repos.bots.bots())if(bot.enabled&&!bot.archived)void this.start(bot.id).catch(()=>this.states.set(bot.id,'error'));
     this.repos.lifecycle.retain();
-    if(!this.quiescing){this.resumeCommands();this.resumeSessionActions();for(const key of this.repos.inbox.scopesWithPending())this.schedule(key);void this.flushDeliveries();}
-    if(!this.quiescing)this.automation.start();
+    this.resumeServiceConsumers();
   }
+  serviceRunning():boolean{return this.serviceActive&&!this.closed;}
+  private changeService(action:()=>Promise<void>):Promise<void>{const next=this.serviceChange.catch(()=>{}).then(async()=>{if(this.closed)throw Error('BOT_RUNTIME_CLOSED');await action();});this.serviceChange=next;return next;}
+  private resumeServiceConsumers():void{if(!this.serviceRunning()||this.quiescing)return;this.automation.start();this.resumeCommands();this.resumeSessionActions();for(const key of this.repos.inbox.scopesWithPending())this.schedule(key);void this.flushDeliveries();}
+  async startService():Promise<void>{return this.changeService(async()=>{const starting=!this.serviceActive;this.serviceActive=true;await Promise.all(this.repos.bots.bots().filter(bot=>bot.enabled&&!bot.archived).map(bot=>this.connectionSupervisor.start(bot.id).catch(()=>{this.states.set(bot.id,'error');})));if(starting)this.resumeServiceConsumers();});}
+  async stopService():Promise<void>{return this.changeService(async()=>{
+    if(!this.serviceActive)return;this.serviceActive=false;this.automation.close();for(const timer of this.timers.values())clearTimeout(timer);this.timers.clear();
+    for(const [key,task] of [...this.processing.entries(),...this.maintenance.entries()]){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}
+    for(const [id,signal] of this.sessionActionSignals)if(this.repos.telemetry.actions.findSessionAction<SessionActionRecord>(id)?.state==='running')signal.controller.abort();
+    for(const bot of this.repos.bots.bots())this.deliveryWorker.cancelBot(bot.id,'机器人服务已停止');
+    await this.connectionSupervisor.disconnectAll();await Promise.all([...this.processing.values(),...this.maintenance.values()].map(task=>task.done.catch(()=>{})));await this.automation.drain();await this.drainControls();await this.deliveryWorker.drain();
+  });}
   async saveConfig(input:unknown,expectedRevision?:number):Promise<BotConfig>{
     const parsed=configForWrite(input);if(!parsed.archived)await this.harness.validateModel(parsed);
     const saved=this.repos.personas.saveConfig(parsed,expectedRevision);this.recheckPermissions();return saved;
@@ -95,7 +109,7 @@ export class BotRuntime {
     for(const [key,task] of this.processing){const binding=this.repos.sessions.findBinding(key);if(!binding)continue;const before=this.repos.telemetry.snapshots.findTurnSnapshot(task.sessionId);if(!before)continue;const bot=this.repos.bots.bot(binding.scope.botId);let current:BotConfig|undefined;try{current=this.effectiveConfig(binding);}catch{}if(!current||permissionsRevoked(before,current,bot,binding.scope,this.profiles)){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}}
     for(const [key,task] of this.maintenance){const binding=this.repos.sessions.findBinding(key);if(!binding)continue;const bot=this.repos.bots.bot(binding.scope.botId);if(!bot.enabled||bot.archived){task.controller.abort();this.harness.cancel(task.sessionId);}}
   }
-  async start(botId:string):Promise<void>{await this.connectionSupervisor.start(botId);}
+  async start(botId:string):Promise<void>{return this.changeService(async()=>{const starting=!this.serviceActive;this.serviceActive=true;try{await this.connectionSupervisor.start(botId);}catch(error){if(starting)this.serviceActive=false;throw error;}if(starting)this.resumeServiceConsumers();});}
   /** Keep only the reserved identity; remove owned history after all writers stop. */
   async deleteBot(botId:string):Promise<void>{
     const bot=this.repos.bots.bot(botId);
@@ -129,6 +143,7 @@ export class BotRuntime {
     await Promise.all([...this.processing.entries(),...this.maintenance.entries()].filter(([key])=>this.repos.sessions.findBinding(key)?.scope.botId===botId).map(([,p])=>p.done.catch(()=>{})));this.states.set(botId,'stopped');
   }
   async receive(message:InboundMessage):Promise<void>{
+    if(!this.serviceRunning())return;
     const bot=this.repos.bots.bot(message.scope.botId);const definition=this.channels.require(message.scope.platform);if(!message.replyEnvelope&&definition.normalizeReply)message={...message,replyEnvelope:definition.normalizeReply(message.reply)};if(!bot.enabled||bot.archived||bot.channel!==message.scope.platform||bot.accountId!==message.scope.accountId)return;
     if(!message.id||!message.scope.senderId||!message.scope.channelId)throw new Error('INVALID_CHANNEL_IDENTITY');
     const key=scopeKey(message.scope);if(!this.repos.inbox.accept(message))return;
@@ -221,6 +236,7 @@ export class BotRuntime {
     const next:SessionBinding=role==='tts'?{...current,ttsOverride:override as TtsOverride}:{...current,stsOverride:override as StsOverride};this.repos.sessions.updateSession(next);this.recheckPermissions();return next;
   }
   async compactSession(scope:CallerScope):Promise<string>{
+    if(!this.serviceRunning())throw Error('BOT_SERVICE_STOPPED');
     const binding=this.repos.sessions.binding(scope);if(this.busy(binding.key))throw new Error('当前会话忙碌，请稍后再压缩');if(this.quiescing)throw new Error('正在升级，暂停新任务');if(!binding.persisted)throw new Error('当前会话尚无可压缩的上下文');if(!this.harness.compact)throw new Error('当前 Harness 不支持手动压缩');
     const controller=new AbortController();let answer='';
     const done=Promise.resolve().then(async()=>{answer=await this.harness.compact!(binding,controller.signal);if(controller.signal.aborted)throw new Error('压缩已取消');}).finally(()=>{this.maintenance.delete(binding.key);if(this.repos.inbox.messages(binding.key).length)this.schedule(binding.key);});
@@ -228,7 +244,7 @@ export class BotRuntime {
   }
   queueSessionAction(binding:SessionBinding,snapshot:TurnSnapshot,input:DeferredSessionAction,signal:AbortSignal):{status:'queued';actionId:string;action:string}{
     signal.throwIfAborted();const action=deferredSessionActionSchema.parse(input);const current=this.repos.sessions.findBinding(binding.key);
-    if(this.closed||!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation||scopeKey(binding.scope)!==binding.key||scopeKey(current.scope)!==binding.key||snapshot.botId!==current.scope.botId)throw Error('SESSION_ACTION_SESSION_CHANGED');
+    if(!this.serviceRunning()||!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation||scopeKey(binding.scope)!==binding.key||scopeKey(current.scope)!==binding.key||snapshot.botId!==current.scope.botId)throw Error('SESSION_ACTION_SESSION_CHANGED');
     const processing=this.processing.get(binding.key);const ids=snapshot.sourceIds;
     if(!processing||processing.sessionId!==binding.sessionId||processing.controller.signal.aborted||!ids.length||new Set(ids).size!==ids.length||!sameSources(ids,processing.sourceIds))throw Error('SESSION_ACTION_SOURCE_INVALID');
     const sources=ids.map(id=>this.repos.inbox.source(binding.key,id));if(sources.some(m=>!m||scopeKey(m.scope)!==binding.key))throw Error('SESSION_ACTION_SOURCE_INVALID');
@@ -246,7 +262,7 @@ export class BotRuntime {
     return{status:'queued',actionId:record.id,action:action.action};
   }
   private authorizeSessionAction(record:SessionActionRecord):SessionBinding {
-    if(this.closed)throw Error('SESSION_ACTION_CANCELLED');
+    if(!this.serviceRunning())throw Error('SESSION_ACTION_CANCELLED');
     const current=this.repos.sessions.findBinding(record.scopeKey);
     if(!current||current.sessionId!==record.sessionId||current.generation!==record.generation||scopeKey(current.scope)!==record.scopeKey||scopeKey(record.scope)!==record.scopeKey)throw Error('SESSION_ACTION_SESSION_CHANGED');
     const bot=this.repos.bots.bot(current.scope.botId);if(!bot.enabled||bot.archived||bot.accountId!==current.scope.accountId||bot.channel!==current.scope.platform)throw Error('SESSION_ACTION_BOT_DISABLED');
@@ -273,12 +289,12 @@ export class BotRuntime {
     }
   }
   resumeSessionActions(key?:string):void {
-    if(this.closed||this.quiescing)return;
+    if(!this.serviceRunning()||this.quiescing)return;
     for(const record of this.repos.telemetry.actions.sessionActions<SessionActionRecord>().sort((a,b)=>a.createdAt-b.createdAt)){
       if(record.state!=='queued'||(key&&record.scopeKey!==key)||this.busy(record.scopeKey)||this.scheduledSessionActions.has(record.id))continue;
       const scope=record.scopeKey;const previous=this.controls.get(scope)??Promise.resolve();this.scheduledSessionActions.add(record.id);
       // Never await this chain from processing.done: an earlier /stop may be waiting for it.
-      const task=previous.catch(()=>{}).then(async()=>{if(!this.closed&&!this.quiescing)await this.executeSessionAction(record.id);}).finally(()=>{
+      const task=previous.catch(()=>{}).then(async()=>{if(this.serviceRunning()&&!this.quiescing)await this.executeSessionAction(record.id);}).finally(()=>{
         this.scheduledSessionActions.delete(record.id);if(this.controls.get(scope)===task){this.controls.delete(scope);this.resumeSessionActions(scope);if(this.repos.inbox.messages(scope).length)this.schedule(scope);}
       });this.controls.set(scope,task);
     }
@@ -305,12 +321,13 @@ export class BotRuntime {
   private replyEnvelope(message:InboundMessage){const normalize=this.channels.require(message.scope.platform).normalizeReply;return normalize?normalize(message.replyEnvelope??message.reply):message.replyEnvelope;}
   private async feedback(message:InboundMessage,text:string):Promise<void>{const binding=this.repos.sessions.binding(message.scope);const outputs:Output[]=[];for(let i=0;i<text.length;i+=1800)outputs.push({type:'text',text:text.slice(i,i+1800)});this.repos.deliveries.enqueue(binding,message.id,`command:${message.id}`,outputs,message.reply,this.replyEnvelope(message));await this.flushDeliveries();}
   async dispatchCommand(message:InboundMessage,command:ParsedCommand):Promise<void>{
+    if(!this.serviceRunning())return;
     const key=scopeKey(message.scope);
     // Cancellation bypasses the control queue so it can interrupt a compact or long validation.
     if(['stop','new','reset'].includes(command.name))this.interrupt(message.scope);
     const previous=this.controls.get(key)??Promise.resolve();
     const task=previous.catch(()=>{}).then(async()=>{
-      if(this.closed)return;try{
+      if(!this.serviceRunning())return;try{
         const result=await this.executeCommand(message,command);if(result!==undefined)await this.feedback(message,result);
         if(!['compact','evolve'].includes(command.name)||!this.repos.inbox.messages(key,['pending','processing']).some(m=>m.id===message.id))this.repos.inbox.mark(key,[message.id],'complete');
       }catch(error){this.repos.inbox.mark(key,[message.id],'failed');await this.feedback(message,error instanceof Error?error.message:'命令执行失败');}
@@ -332,14 +349,14 @@ export class BotRuntime {
     return undefined;
   }
   private inboundCommand(message:InboundMessage):ParsedCommand|undefined{return parseCommand(message.text)??(message.text.trimStart().startsWith('//')?undefined:parseNaturalControl(message.text));}
-  resumeCommands():void{for(const key of this.repos.inbox.scopesWithPending(['control']))for(const message of this.repos.inbox.messages(key,['control'])){const command=this.inboundCommand(message);if(command)void this.dispatchCommand(message,command);}}
+  resumeCommands():void{if(!this.serviceRunning())return;for(const key of this.repos.inbox.scopesWithPending(['control']))for(const message of this.repos.inbox.messages(key,['control'])){const command=this.inboundCommand(message);if(command)void this.dispatchCommand(message,command);}}
   async drainControls():Promise<void>{await Promise.all([...this.controls.values()].map(task=>task.catch(()=>{})));}
   pauseProcessing():void{this.quiescing=true;this.automation.close();for(const timer of this.timers.values())clearTimeout(timer);this.timers.clear();}
   async quiesce():Promise<void>{this.pauseProcessing();for(;;){await this.drainControls();await Promise.all([...this.processing.values(),...this.maintenance.values()].map(task=>task.done.catch(()=>{})));await this.automation.drain();await this.harness.drain?.();await this.flushDeliveries();await this.deliveryWorker.drain();if(!this.controls.size&&!this.processing.size&&!this.maintenance.size&&!this.deliveryWorker.activity().activeLanes)return;}}
-  resumeProcessing():void{this.quiescing=false;this.automation.start();this.resumeCommands();this.resumeSessionActions();for(const key of this.repos.inbox.scopesWithPending())this.schedule(key);void this.flushDeliveries();}
-  private schedule(key:string):void{if(this.closed||this.quiescing)return;const previous=this.timers.get(key);if(previous)clearTimeout(previous);this.timers.set(key,setTimeout(()=>{this.timers.delete(key);void this.process(key);},this.debounceMs));}
+  resumeProcessing():void{this.quiescing=false;this.resumeServiceConsumers();}
+  private schedule(key:string):void{if(!this.serviceRunning()||this.quiescing)return;const previous=this.timers.get(key);if(previous)clearTimeout(previous);this.timers.set(key,setTimeout(()=>{this.timers.delete(key);void this.process(key);},this.debounceMs));}
   async process(key:string):Promise<void>{
-    if(this.closed||this.quiescing||this.busy(key)||this.controls.has(key))return;
+    if(!this.serviceRunning()||this.quiescing||this.busy(key)||this.controls.has(key))return;
     const pending=this.repos.inbox.messages(key);if(!pending.length)return;
     const bot=this.repos.bots.bot(pending[0].scope.botId);if(!bot.enabled||bot.archived)return;
     const deferred=this.repos.inbox.messages(key,['deferred']).filter(m=>m.timestamp>Date.now()-600000).slice(-INPUT_LIMITS.batchMessages);
@@ -443,9 +460,10 @@ export class BotRuntime {
     });
     this.processing.set(key,{controller,sessionId:binding.sessionId,sourceIds:messages.map(m=>m.id),done});await done;
   }
-  async flushDeliveries():Promise<void>{await this.deliveryWorker.flush();}
+  async flushDeliveries():Promise<void>{if(this.serviceRunning())await this.deliveryWorker.flush();}
   private assertReplyContext(binding:SessionBinding,snapshot:TurnSnapshot,signal:AbortSignal):void {
     signal.throwIfAborted();
+    if(!this.serviceRunning())throw new ReplyContextChangedError();
     const current=this.repos.sessions.findBinding(binding.key);
     if(this.closed||!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation)throw new ReplyContextChangedError();
     try{
@@ -493,7 +511,7 @@ export class BotRuntime {
   }
   private async runAutomationPrompt(binding:SessionBinding,prompt:string,kind:AutomationKind,signal:AbortSignal):Promise<{turnId:string;outputs:Output[];snapshot:TurnSnapshot}>{
     const key=binding.key;
-    if(this.closed||this.quiescing||this.busy(key)||this.controls.has(key))throw Error('AUTOMATION_BUSY');
+    if(!this.serviceRunning()||this.quiescing||this.busy(key)||this.controls.has(key))throw Error('AUTOMATION_BUSY');
     this.assertTrusted(binding);
     const sourceId=`automation:${randomUUID()}`,latest=this.repos.inbox.allMessages().filter(message=>scopeKey(message.scope)===key).at(-1);
     if(!latest)throw Error('AUTOMATION_CONTEXT_MISSING');
@@ -531,6 +549,6 @@ export class BotRuntime {
     }
     const id=args.trim();if(!id)throw Error('需要任务 ID');const job=this.automation.listJobs().find(item=>item.id===id&&item.scopeKey===binding.key);if(!job)throw Error('定时任务不存在');if(action==='pause'||action==='resume'){this.automation.setJob(id,action==='resume');return`定时任务已${action==='resume'?'恢复':'暂停'}。`;}if(action==='delete'){this.automation.deleteJob(id);return'定时任务已删除。';}if(action==='run'){this.automation.queueJob(job);return'定时任务已排队，将在当前会话空闲后执行。';}return'用法：/schedule list|create|pause|resume|run|delete';
   }
-  async close():Promise<void>{this.closed=true;this.automation.close();for(const timer of this.timers.values())clearTimeout(timer);for(const [key,task] of [...this.processing.entries(),...this.maintenance.entries()]){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}await this.deliveryWorker.close();await this.connectionSupervisor.disconnectAll();await Promise.all([...this.processing.values(),...this.maintenance.values()].map(p=>p.done.catch(()=>{})));await this.automation.drain();await this.drainControls();await this.deliveryWorker.drain();for(const signal of this.sessionActionSignals.values())signal.dispose();this.sessionActionSignals.clear();await this.harness.dispose();if(this.claimed){this.repos.lifecycle.release(this.owner);this.claimed=false;}}
+  async close():Promise<void>{this.closed=true;this.serviceActive=false;this.automation.close();for(const timer of this.timers.values())clearTimeout(timer);for(const [key,task] of [...this.processing.entries(),...this.maintenance.entries()]){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}await this.serviceChange.catch(()=>{});await this.deliveryWorker.close();await this.connectionSupervisor.disconnectAll();await Promise.all([...this.processing.values(),...this.maintenance.values()].map(p=>p.done.catch(()=>{})));await this.automation.drain();await this.drainControls();await this.deliveryWorker.drain();for(const signal of this.sessionActionSignals.values())signal.dispose();this.sessionActionSignals.clear();await this.harness.dispose();if(this.claimed){this.repos.lifecycle.release(this.owner);this.claimed=false;}}
 }
 

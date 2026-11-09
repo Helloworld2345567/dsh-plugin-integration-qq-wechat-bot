@@ -27,6 +27,9 @@ test('versioned query and command contracts reject unknown fields and invalid en
   assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'bot.delete',input:{}}));
   assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'bot.delete',input:{id:'1',all:true}}));
   assert.equal(adminCommandRequestSchema.parse({version:1,kind:'command',name:'delivery.retry',input:{id:'delivery'}}).name,'delivery.retry');
+  assert.equal(adminCommandRequestSchema.parse({version:1,kind:'command',name:'bot.service.start',input:{}}).name,'bot.service.start');
+  assert.equal(adminCommandRequestSchema.parse({version:1,kind:'command',name:'bot.service.stop',input:{}}).name,'bot.service.stop');
+  assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'bot.service.start',input:{id:'unexpected'}}));
   assert.equal(adminCommandRequestSchema.parse({version:1,kind:'command',name:'service.start',input:{serviceId:'breeze-tts'}}).name,'service.start');
   assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'service.start',input:{serviceId:'rvc'}}));
 });
@@ -36,6 +39,14 @@ test('model directory picker command returns the selected path without saving se
   const {admin}=await fixture(t,undefined,async initial=>{received=initial;return selected;});
   const result:any=await admin.command({version:1,kind:'command',name:'service.settings.pick-directory',input:{current:'E:\\TTS_and_STS\\models'}});
   assert.deepEqual(result,{path:selected});assert.equal(received,'E:\\TTS_and_STS\\models');
+});
+
+test('bot service commands toggle the runtime without changing bot preferences',async t=>{
+  const {admin,store}=await fixture(t);let running=false,starts=0,stops=0;const runtime=admin.runtime as any;
+  runtime.startService=async()=>{starts++;running=true;};runtime.stopService=async()=>{stops++;running=false;};runtime.serviceRunning=()=>running;
+  assert.deepEqual(await admin.command({version:1,kind:'command',name:'bot.service.start',input:{}}),{running:true});
+  assert.deepEqual(await admin.command({version:1,kind:'command',name:'bot.service.stop',input:{}}),{running:false});
+  assert.equal(starts,1);assert.equal(stops,1);assert.equal(store.bots.bot('bot').enabled,true);
 });
 
 test('overview summary is bounded, redacted and supports unchanged revision responses',async t=>{

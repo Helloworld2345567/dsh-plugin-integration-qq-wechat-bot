@@ -30,6 +30,37 @@ test('controlled selects capture the new value before React restores the DOM',as
   await new Promise(resolve=>setImmediate(resolve));assert.equal(selected,'next');
 });
 
+test('an enabled bot in a stopped service shows an off switch that starts the bot',async()=>{
+  const bot={id:'bot',name:'Bot',channel:'qq',configId:'default',enabled:true,status:'stopped',credentialConfigured:true,trustedUsers:[]};
+  const summary={bots:[bot],configs:[{id:'default',name:'默认'}],counts:{pendingDeliveries:0},health:{activeTasks:0,serviceRunning:false}};
+  let app:any,cursor=0;const states:any[]=['bots',summary,'','','',false,[bot]];const commands:any[]=[],strictCommands:any[]=[];
+  const React={Fragment:'fragment',createElement:(type:any,props:any,...children:any[])=>({type,props,children}),useState:(initial:any)=>{const i=cursor++;if(!(i in states))states[i]=initial;return[states[i],(value:any)=>{states[i]=typeof value==='function'?value(states[i]):value;}];},useRef:()=>({current:null}),useEffect:()=>{}};
+  const previous=(globalThis as any).window,previousFetch=globalThis.fetch;
+  const locale={register:()=>()=>{},bind:()=>chinese};
+  (globalThis as any).window={__BOT_INTEGRATION__:{endpoint:'http://fixture.invalid',token:'fixture'},__ModuleLoader__:{load:({factory}:any)=>factory(()=>React).apply({locale,effect:(callback:any)=>callback(),slots:{inject:(_slot:any,register:any)=>register(),register:(_meta:any,component:any)=>{app=component;}}})}};
+  globalThis.fetch=async(_url,init)=>{
+    const body=JSON.parse(String(init?.body));if(body.action)commands.push(body);if(body.name)strictCommands.push(body);
+    return Response.json({result:body.action?{ok:true}:{data:body.name==='bots.list'?[bot]:summary}});
+  };
+  const flatten=(node:any):any[]=>Array.isArray(node)?node.flatMap(flatten):node&&typeof node==='object'?[node,...(node.children??[]).flatMap(flatten)]:[];
+  const render=()=>{cursor=0;return flatten(app());};
+  try{
+    await import(new URL('../src/client/index.ts?stopped-service',import.meta.url).href);
+    const serviceControl=render().find(node=>node.type==='button'&&node.props?.['aria-label']==='开启机器人服务');
+    assert.ok(serviceControl);serviceControl.props.onClick();await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(strictCommands[0],{version:1,kind:'command',name:'bot.service.start',input:{}});strictCommands.length=0;commands.length=0;
+    const control=render().find(node=>node.props?.role==='switch'&&node.props['aria-label']==='运行');
+    assert.equal(control.props['aria-checked'],false);control.props.onClick();await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(commands,[{action:'bot.start',input:{id:'bot'}}]);assert.equal(bot.enabled,true);
+    states[1]={...summary,health:{...summary.health,serviceRunning:true}};
+    assert.equal(render().find(node=>node.props?.role==='switch'&&node.props['aria-label']==='运行').props['aria-checked'],false);
+    for(const status of ['connecting','connected','error']){
+      bot.status=status;
+      assert.equal(render().find(node=>node.props?.role==='switch'&&node.props['aria-label']==='运行').props['aria-checked'],true);
+    }
+  }finally{(globalThis as any).window=previous;globalThis.fetch=previousFetch;}
+});
+
 test('panel retains summary options, drafts and local errors across its sections',async()=>{
   const config={id:'default',name:'默认',revision:1,personaPrompt:'hello',tools:[],skills:[],hostTools:[],media:{image:{enabled:false}},allowHostTools:false};
   const summary={bots:[],configs:[config,{id:'other',name:'其他人格'}],counts:{bots:0,configs:2,pendingDeliveries:0},health:{activeTasks:0}};

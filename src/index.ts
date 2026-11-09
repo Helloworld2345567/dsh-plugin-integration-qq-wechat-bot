@@ -37,8 +37,9 @@ export const Config=Schema.object({
   dataDir:Schema.string().min(1).max(4096).description('机器人运行数据目录；留空使用产品或 Harness 默认目录。'),
   python:Schema.string().min(1).max(4096).description('媒体 worker 使用的 Python 3.12+ 解释器；留空使用 BOT_PYTHON 或 python。'),
   debounceMs:Schema.number().step(1).min(0).max(60_000).default(2000).description('同一会话入站消息的合并等待时间（毫秒）。'),
+  autoStart:Schema.boolean().default(true).description('加载面板后自动启动机器人服务；关闭时保留配置和历史，等待单独启动服务。'),
 });
-export interface Config {dataDir?:string;python?:string;debounceMs?:number}
+export interface Config {dataDir?:string;python?:string;debounceMs?:number;autoStart?:boolean}
 declare module '@deepseek-ai/cordis' {interface Context {botIntegration:BotRuntime}}
 /** First release: only code-reviewed adapters compiled into this package may load. */
 const HOST_SERVICE_POLICIES:ReadonlyMap<string,ApprovedServicePolicy>=BUILTIN_SERVICE_POLICIES;
@@ -81,7 +82,7 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
   const shutdown=(message:unknown)=>{handleLifecycleShutdown(message);};
   process.on('message',shutdown);ctx.effect(()=>()=>process.off('message',shutdown));
   if(features.evolution.history().some(task=>['queued','draining','applying','restarting','reconnecting','rolling-back'].includes(task.phase)))runtime.pauseProcessing();
-  await assets.migrate();await harness.exportHistory();await features.backfill({readSession:id=>ctx.sessionQuery.readSession(SessionId(id))});await runtime.initialize();persistence.start();
+  await assets.migrate();await harness.exportHistory();await features.backfill({readSession:id=>ctx.sessionQuery.readSession(SessionId(id))});await runtime.initialize({autoStart:config.autoStart??true});persistence.start();
   const runtimePackageRoot=packageRoot();
   const runtimeIdentity=packageIdentity(runtimePackageRoot);
   detachLifecycle=registerLifecycleRuntime({packageRoot:runtimePackageRoot,quiesce:()=>runtime.quiesce(),resumeProcessing:()=>runtime.resumeProcessing(),health:()=>runtime.health()},runtimeIdentity);

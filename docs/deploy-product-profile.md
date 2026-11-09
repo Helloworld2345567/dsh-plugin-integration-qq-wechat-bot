@@ -48,6 +48,16 @@ node scripts/install.mjs . --layers=core,basic-media,voice-generation
 
 可用层为 `core`、`basic-media`、`voice-generation`、`music`、`singing-rvc`；`core` 和 `basic-media` 必须存在。可选层只安装本项目声明的配套依赖，外部服务仍由运营者单独部署和验收。
 
+## 分开加载管理界面与启动机器人服务
+
+管理界面继续使用原 profile、插件和会话存储。不要为了分开启停而切换到空 profile，否则原插件、机器人面板及历史不会默认显示。
+
+在主插件 Config 中设置 `autoStart: false`，Harness 启动后会加载机器人面板、人格、模型和历史，但不自动连接渠道或消费后台任务。宿主可通过运行时的 `startService()`、`stopService()` 和 `serviceRunning()` 独立控制机器人服务；停止服务会保留机器人的启用偏好与历史。面板上启动单个机器人也会启动其所需的后台消费者。
+
+同一机器人数据目录由一个 Harness 进程持有。服务启停命令控制该进程中的机器人运行时，不再另启第二个 Harness 写入同一份数据库。GPT-SoVITS、Breeze TTS、RVC 等外部服务仍使用各自的启停入口。
+
+机器人面板的工具栏提供“开启机器人服务”和“停止机器人服务”按钮；它们只切换渠道服务，不修改单个机器人的启用偏好。每个机器人卡片的“运行”开关仍用于单独连接或断开该机器人。
+
 ## 固定 GitHub Release 部署
 
 正式远程安装必须同时固定仓库、semver release tag、`.tgz` 资源名和预期 SHA-256：

@@ -6,10 +6,11 @@ import {Config} from '../src/index.js';
 import {chinese,zh} from '../src/client/locale.js';
 
 test('Host Config validates deployment settings and supplies the debounce default',()=>{
-  assert.deepEqual(Config({}),{debounceMs:2000});
-  assert.deepEqual(Config({dataDir:'runtime',python:'python3',debounceMs:0}),{dataDir:'runtime',python:'python3',debounceMs:0});
-  assert.deepEqual(Config({unknown:true} as any),{debounceMs:2000,unknown:true});
-  for(const input of [{dataDir:1},{python:1},{dataDir:''},{python:''},{debounceMs:-1},{debounceMs:60001},{debounceMs:1.5}])assert.throws(()=>Config(input as any),JSON.stringify(input));
+  assert.deepEqual(Config({}),{debounceMs:2000,autoStart:true});
+  assert.deepEqual(Config({dataDir:'runtime',python:'python3',debounceMs:0}),{dataDir:'runtime',python:'python3',debounceMs:0,autoStart:true});
+  assert.deepEqual(Config({autoStart:false}),{debounceMs:2000,autoStart:false});
+  assert.deepEqual(Config({unknown:true} as any),{debounceMs:2000,autoStart:true,unknown:true});
+  for(const input of [{dataDir:1},{python:1},{dataDir:''},{python:''},{debounceMs:-1},{debounceMs:60001},{debounceMs:1.5},{autoStart:'false'}])assert.throws(()=>Config(input as any),JSON.stringify(input));
   const schemaJson=JSON.stringify(Config.toJSON());assert.match(schemaJson,/数据目录/);assert.match(schemaJson,/Python/);assert.match(schemaJson,/毫秒/);
 });
 

@@ -63,14 +63,14 @@ export class DurableDeliveryWorker implements DeliveryWorker {
   private readonly outbound=new Map<string,{botId:string;scopeKey:string;runId?:string;controller:AbortController}>();
   private readonly progressRuns=new Map<string,()=>boolean>();
   private closed=false;
-  constructor(readonly repos:DeliveryWorkerRepositories,readonly channels:ChannelRegistry,readonly credentials:Credentials,readonly wait:(milliseconds:number,signal:AbortSignal)=>Promise<void>=async(milliseconds,signal)=>{await delay(milliseconds,undefined,{signal});},readonly profiles?:ProfileStore){}
+  constructor(readonly repos:DeliveryWorkerRepositories,readonly channels:ChannelRegistry,readonly credentials:Credentials,readonly wait:(milliseconds:number,signal:AbortSignal)=>Promise<void>=async(milliseconds,signal)=>{await delay(milliseconds,undefined,{signal});},readonly profiles?:ProfileStore,readonly accepting:()=>boolean=()=>true){}
   async flush(filter?:{botId?:string}):Promise<void>{
-    if(this.closed)return;
+    if(this.closed||!this.accepting())return;
     const ids=filter?.botId?[filter.botId]:this.repos.deliveries.pendingBotIds();
     await Promise.all(ids.map(botId=>this.startLane(botId)));
   }
   async retry(deliveryId:string):Promise<void>{
-    if(this.closed)return;
+    if(this.closed||!this.accepting())return;
     const delivery=this.repos.deliveries.retry(deliveryId);
     if(delivery)await this.flush({botId:delivery.botId});
   }
@@ -96,10 +96,10 @@ export class DurableDeliveryWorker implements DeliveryWorker {
   activity():DeliveryWorkerActivity{return{activeLanes:this.lanes.size,inFlight:this.outbound.size};}
   private startLane(botId:string):Promise<void>{const active=this.lanes.get(botId);if(active)return active;const task=this.flushBot(botId).finally(()=>{if(this.lanes.get(botId)===task)this.lanes.delete(botId);});this.lanes.set(botId,task);return task;}
   private async flushBot(botId:string):Promise<void>{
-    while(!this.closed){
+    while(!this.closed&&this.accepting()){
       const repository=this.repos.deliveries;const batch=repository.nextSendable(botId,100);if(!batch.length)return;
       for(const delivery of batch){
-        if(this.closed)return;
+        if(this.closed||!this.accepting())return;
         if(repository.hasEarlierBlocker(delivery))continue;
         const current=repository.find(delivery.id,'pending');if(!current)continue;
         if(!this.progressActive(delivery)){this.repos.deliveries.deliveryState(delivery,'cancelled');continue;}
@@ -113,7 +113,8 @@ export class DurableDeliveryWorker implements DeliveryWorker {
           const rawCredential=await (delivery.purpose==='progress'?abortable(credentialRead,controller.signal):credentialRead);if(!rawCredential)return;
           const definition=this.channels.require(bot.channel);const normalized=definition.normalizeCredential?.(rawCredential);const credential=normalized?.credential as any??rawCredential;
           if((normalized?.accountId??credential.accountId)!==bot.accountId)throw Error('CHANNEL_CREDENTIAL_ACCOUNT_MISMATCH');
-          if(this.closed||!repository.find(delivery.id,'pending'))continue;
+          if(this.closed||!this.accepting())return;
+          if(!repository.find(delivery.id,'pending'))continue;
           const currentBot=this.repos.bots.bot(delivery.botId);if(!currentBot.enabled||currentBot.archived){this.repos.deliveries.deliveryState(delivery,'cancelled');for(const item of batch){const pending=repository.find(item.id,'pending');if(pending)this.repos.deliveries.deliveryState(pending,'cancelled');}return;}
           if(!this.contextActive(delivery)){this.repos.deliveries.deliveryState(delivery,'cancelled');continue;}
           if(!this.progressActive(delivery)||controller.signal.aborted){this.repos.deliveries.deliveryState(delivery,'cancelled');continue;}
@@ -123,6 +124,7 @@ export class DurableDeliveryWorker implements DeliveryWorker {
           const resultDelivery=delivery.purpose!=='progress';
           const metricId=`inbox:${delivery.scopeKey}:${delivery.sourceId}`;if(resultDelivery&&this.repos.telemetry.metrics.findTurnMetric(metricId))this.repos.telemetry.metrics.updateTurnMetric(metricId,{deliveryStartedAt:Date.now()});
           while(true){
+            if(this.closed||!this.accepting())return;
             const attempt:NonNullable<Delivery['attempt']>={...sending.attempt,number:(sending.attempt?.number??0)+1,phase:'prepare',assetId:asset?.id,startedAt:Date.now()};
             sending={...sending,attempt};this.repos.deliveries.deliveryState(sending,'sending');
             try{
@@ -130,6 +132,7 @@ export class DurableDeliveryWorker implements DeliveryWorker {
               // Each adapter request still has its own shorter network timeout.
               const sendTimeout=asset?15*60_000:90_000;
               const sendSignal=resultDelivery?AbortSignal.any([controller.signal,AbortSignal.timeout(sendTimeout)]):controller.signal;
+              if(this.closed||!this.accepting())return;
               if(!this.contextActive(delivery))throw Error('DELIVERY_CONTEXT_REVOKED');
               const send=definition.adapter.send(bot,credential,sending,asset,sendSignal);
               const receipt=await (resultDelivery?send:abortable(send,sendSignal));
@@ -137,7 +140,7 @@ export class DurableDeliveryWorker implements DeliveryWorker {
             }catch(error){
               const {message,...detail}=failure(error);attempt.lastError=message;Object.assign(attempt,detail);
               const retryCount=attempt.autoRetryCount??0;
-              if(!controller.signal.aborted&&!this.closed&&retryCount<AUTO_RETRY_LIMIT&&mayAutoRetry(error,sending)){
+              if(!controller.signal.aborted&&!this.closed&&this.accepting()&&retryCount<AUTO_RETRY_LIMIT&&mayAutoRetry(error,sending)){
                 attempt.autoRetryCount=retryCount+1;this.repos.deliveries.deliveryState(sending,'sending',undefined,attempt.lastError);
                 try{await this.wait(AUTO_RETRY_DELAYS[retryCount]??AUTO_RETRY_DELAYS.at(-1)!,controller.signal);}catch{this.repos.deliveries.deliveryState(sending,terminalState(error,sending),undefined,attempt.lastError);break;}
                 continue;
