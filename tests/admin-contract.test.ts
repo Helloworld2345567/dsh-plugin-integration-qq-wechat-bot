@@ -109,6 +109,15 @@ test('session and delivery queries are bounded and cursor-paginated without repl
   const sessions:any=await admin.query({version:1,kind:'query',name:'overview.sessions',input:{limit:1}});assert.equal(sessions.items.length,1);assert.equal('scope' in sessions.items[0],false);
 });
 
+test('session query exposes the live per-session model configuration after a model command',async t=>{
+  const {admin,store}=await fixture(t);const scope={botId:'bot',platform:'qq' as const,accountId:'account',kind:'private' as const,channelId:'channel',senderId:'sender'};
+  const binding=store.sessions.binding(scope);const before:any=await admin.query({version:1,kind:'query',name:'overview.summary',input:{}});
+  store.sessions.updateSession({...binding,modelOverride:{provider:'Fixture',model:'SessionModel'}});
+  const sessions:any=await admin.query({version:1,kind:'query',name:'overview.sessions',input:{limit:10}});const current=sessions.items.find((item:any)=>item.id===binding.sessionId);
+  assert.deepEqual(current.modelOverride,{provider:'Fixture',model:'SessionModel'});assert.deepEqual(current.effectiveModel,current.modelOverride);
+  const after:any=await admin.query({version:1,kind:'query',name:'overview.summary',input:{}});assert.notEqual(after.data.sessionRevision,before.data.sessionRevision);
+});
+
 test('delivery query exposes recovery state without leaking channel upload secrets',async t=>{
   const {admin,store}=await fixture(t);const scope={botId:'bot',platform:'qq' as const,accountId:'account',kind:'private' as const,channelId:'channel',senderId:'sender'};const binding=store.sessions.binding(scope);store.deliveries.enqueue(binding,'source','turn',[{type:'asset',assetId:'asset'}],{});
   const delivery=store.deliveries.deliveries()[0];store.deliveries.deliveryState({...delivery,attempt:{number:2,phase:'commit',assetId:'asset',aesKey:'secret-key',uploadQuery:'secret-query',lastError:'receipt lost',causeCode:'ECONNRESET',autoRetryCount:2}},'unknown',undefined,'receipt lost');

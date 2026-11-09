@@ -67,7 +67,11 @@ export interface AdminSummaryData {
   channels:Array<{id:string;displayName:string;capabilities:{conversations:readonly ('private'|'group')[];login:readonly ('qr'|'credentials')[];groupSupport:'unsupported'|'observed_only'}}>;
   bots:AdminSummaryBot[];
   configs:AdminSummaryConfig[];
+  /** Safe live projection of each channel session and its effective model. */
+  sessions?:Array<{id:string;botId:string;personaId?:string;model:{provider:string;model:string}|null;modelOverride:{provider:string;model:string}|null;effectiveModel:{provider:string;model:string}|null;updatedAt:number;generation:number;persisted:boolean}>;
   counts:{bots:number;configs:number;sessions:number;jobs:number;failures:number;pendingDeliveries:number;pendingSessionActions:number};
+  /** Changes whenever a channel session binding or its per-session overrides change. */
+  sessionRevision:string;
   health:{ready:boolean;serviceRunning:boolean;quiescing:boolean;activeTasks:number;pendingDeliveries:number;pendingSessionActions:number;connections:Record<string,string>;latency:unknown};
   evolution?:{id:string;phase:string;updatedAt:number}|null;
 }

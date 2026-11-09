@@ -13,7 +13,7 @@ import {resolveImageSkill,imageSkillEnabled} from '../core/image-skill.js';
 import {defaultWorkspaceRoot,workingDirectory} from '../core/workspaces.js';
 import {openDirectory} from './open-directory.js';
 import type {BotFeatures} from '../core/features.js';
-import {adminCommandRequestSchema,adminQueryRequestSchema,type AdminSummaryData,versioned,ADMIN_CONTRACT_VERSION} from './admin-contract.js';
+import {adminCommandRequestSchema,adminQueryRequestSchema,type AdminSummaryData,versioned,revisionFor,ADMIN_CONTRACT_VERSION} from './admin-contract.js';
 import type {ServiceManagement} from '../core/service-management.js';
 import {sanitizeServiceDiagnostic} from '../core/service-errors.js';
 import {pickDirectory} from './pick-directory.js';
@@ -40,7 +40,14 @@ export class Admin {
     const bots=await Promise.all(repos.bots.bots().filter(bot=>!bot.archived).map(async bot=>({id:bot.id,name:bot.name,channel:bot.channel,accountId:bot.accountId,configId:bot.configId,enabled:bot.enabled,archived:bot.archived,status:this.runtime.states.get(bot.id)??'stopped',activeSessions:this.runtime.activeSessions(bot.id),credentialConfigured:!!await this.runtime.credentials.read(bot.id),trustedUserCount:bot.trustedUsers.length,workspaceConfigured:!!bot.workingDirectory})));
     const health=this.runtime.health();const evolution=this.features?.history()[0];
     const channels=this.runtime.channels?.list?.().map(({id,displayName,capabilities})=>({id,displayName,capabilities}))??[];
-    return{channels,bots,configs,counts:{bots:bots.filter(bot=>!bot.archived).length,configs:configs.filter(config=>!config.archived).length,sessions:repos.sessions.countBindings(),jobs:repos.media.jobs.countJobs(),failures:repos.telemetry.failures.countFailures(),pendingDeliveries:health.pendingDeliveries,pendingSessionActions:health.pendingSessionActions},health,evolution:evolution?{id:evolution.id,phase:evolution.phase,updatedAt:evolution.updatedAt}:null};
+    // Binding reads refresh updatedAt for history ordering; only configuration
+    // fields belong in the revision used by the panel's live model poll.
+    const sessionRevision=revisionFor(repos.sessions.sessionsAll().sort((a,b)=>a.id.localeCompare(b.id)).map(session=>{
+      let personaId=session.personaId;try{if(!personaId)personaId=repos.bots.bot(session.scope.botId).configId;}catch{}
+      let model:BotConfig['model']=null;try{if(personaId)model=repos.personas.config(personaId).model??null;}catch{}
+      return{id:session.id,generation:session.generation,personaId,model,modelOverride:session.modelOverride,ttsOverride:session.ttsOverride,stsOverride:session.stsOverride};
+    }));
+    return{channels,bots,configs,sessionRevision,counts:{bots:bots.filter(bot=>!bot.archived).length,configs:configs.filter(config=>!config.archived).length,sessions:repos.sessions.countBindings(),jobs:repos.media.jobs.countJobs(),failures:repos.telemetry.failures.countFailures(),pendingDeliveries:health.pendingDeliveries,pendingSessionActions:health.pendingSessionActions},health,evolution:evolution?{id:evolution.id,phase:evolution.phase,updatedAt:evolution.updatedAt}:null};
   }
   async query(request:unknown,signal:AbortSignal=new AbortController().signal):Promise<unknown> {
     const value=adminQueryRequestSchema.parse(request);
@@ -54,7 +61,17 @@ export class Admin {
     if(value.name==='service.settings'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.settings();}
     if(value.name==='service.health'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.health(value.input,signal);}
     if(value.name==='capability.acceptance'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.acceptance(value.input);}
-    if(value.name==='overview.sessions'){const page=repos.sessions.pageSessions({},value.input.limit,value.input.cursor);return{...page,contractVersion:ADMIN_CONTRACT_VERSION,items:page.items.map(row=>({id:row.id,scopeKey:row.scopeKey,botId:row.scope.botId,platform:row.scope.platform,kind:row.scope.kind,channelId:row.scope.channelId,senderId:row.scope.senderId,generation:row.generation,persisted:row.persisted,createdAt:row.createdAt,updatedAt:row.updatedAt,personaId:row.personaId})),hasMore:page.nextCursor!==null};}
+    if(value.name==='overview.sessions'){
+      const page=repos.sessions.pageSessions({},value.input.limit,value.input.cursor);
+      const items=page.items.map(row=>{
+        let botConfigId:string|undefined;try{botConfigId=repos.bots.bot(row.scope.botId).configId;}catch{/* Deleted bots can retain historical session rows. */}
+        let baseModel:BotConfig['model']|null=null,personaId=row.personaId??botConfigId,personaRevision:number|undefined;
+       try{if(personaId){const persona=repos.personas.config(personaId);baseModel=persona.model?{provider:persona.model.provider,model:persona.model.model}:null;personaRevision=persona.revision;}}catch{/* A deleted persona remains visible as a historical session. */}
+        const modelOverride=row.modelOverride?{provider:row.modelOverride.provider,model:row.modelOverride.model}:null;
+        return{id:row.id,scopeKey:row.scopeKey,botId:row.scope.botId,platform:row.scope.platform,kind:row.scope.kind,channelId:row.scope.channelId,senderId:row.scope.senderId,generation:row.generation,persisted:row.persisted,createdAt:row.createdAt,updatedAt:row.updatedAt,personaId,personaRevision,model:baseModel,modelOverride,effectiveModel:modelOverride??baseModel,ttsOverride:row.ttsOverride??null,stsOverride:row.stsOverride??null};
+      });
+      return{...page,contractVersion:ADMIN_CONTRACT_VERSION,items,hasMore:page.nextCursor!==null};
+    }
     if(value.name==='automation.list')return versioned({scopes:repos.sessions.bindings().filter(binding=>binding.scope.kind==='private').map(binding=>({scopeKey:binding.key,botId:binding.scope.botId,configId:repos.bots.bot(binding.scope.botId).configId,channelId:binding.scope.channelId,senderId:binding.scope.senderId})),proactive:this.runtime.automation.listProactive(),scheduled:this.runtime.automation.listJobs()},value.input.changedSince);
     const page=repos.deliveries.pageDeliveries({filter:{scopeKey:value.input.scopeKey},limit:value.input.limit,cursor:value.input.cursor});return{...page,contractVersion:ADMIN_CONTRACT_VERSION,items:page.items.map((row:Delivery)=>publicDelivery(row)),hasMore:page.nextCursor!==null};
   }

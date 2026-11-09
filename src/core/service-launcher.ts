@@ -47,14 +47,30 @@ async function defaultSpawn(file:string,args:readonly string[],cwd:string):Promi
 
 /** Starts only fixed, operator-configured launchers. It never stops or owns the child service. */
 export class ExternalServiceLauncher implements ServiceLauncher {
-  constructor(readonly health:HealthCheck=defaultHealth,readonly spawnProcess:SpawnProcess=defaultSpawn,readonly pollMs=500,readonly timeoutMs=180_000){}
+  constructor(readonly health:HealthCheck=defaultHealth,readonly spawnProcess:SpawnProcess=defaultSpawn,readonly pollMs=500,readonly timeoutMs=180_000,readonly healthTimeoutMs=2_500){}
+  /**
+   * A provider health probe must never hold the admin request forever. The
+   * built-in fetch already has a timeout, but launchers are injectable and a
+   * custom probe can accidentally ignore its AbortSignal. Race every probe
+   * against a local deadline and abort the probe when that deadline expires.
+   */
+  private async checkHealth(serviceId:LaunchableService,baseUrl:string,signal:AbortSignal):Promise<boolean>{
+    const controller=new AbortController();
+    const combined=AbortSignal.any([signal,controller.signal]);
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    let onAbort:()=>void=()=>{};
+    const timeout=new Promise<boolean>(resolve=>{timer=setTimeout(()=>{controller.abort(Error('SERVICE_HEALTH_TIMEOUT'));resolve(false);},Math.max(1,this.healthTimeoutMs));});
+    const aborted=new Promise<boolean>((_,reject)=>{onAbort=()=>reject(signal.reason??Error('SERVICE_START_CANCELLED'));if(signal.aborted)onAbort();else signal.addEventListener('abort',onAbort,{once:true});});
+    try{return await Promise.race([this.health(serviceId,baseUrl,combined).catch(()=>false),timeout,aborted]);}
+    finally{if(timer)clearTimeout(timer);signal.removeEventListener('abort',onAbort);}
+  }
   async start(settings:ServiceLaunchSettings,signal:AbortSignal):Promise<ServiceStartResult>{
     signal.throwIfAborted();
     const root=path.resolve(settings.projectRoot);
     if(!path.isAbsolute(settings.projectRoot)||/[\x00-\x1f]/.test(settings.projectRoot))throw Error('SERVICE_LAUNCH_ROOT_INVALID');
     const endpoint=new URL(settings.baseUrl),expectedPort=settings.serviceId==='breeze-tts'?'8080':'9880',actualPort=endpoint.port||(endpoint.protocol==='https:'?'443':'80');
     if(!['127.0.0.1','localhost','::1'].includes(endpoint.hostname)||actualPort!==expectedPort)throw Error('SERVICE_LAUNCH_ENDPOINT_MISMATCH');
-    if(await this.health(settings.serviceId,settings.baseUrl,signal).catch(()=>false))return{serviceId:settings.serviceId,state:'already-running',safeDiagnostic:'服务已经在运行。'};
+    if(await this.checkHealth(settings.serviceId,settings.baseUrl,signal))return{serviceId:settings.serviceId,state:'already-running',safeDiagnostic:'服务已经在运行。'};
     let command:string,args:string[],cwd:string;
     if(settings.serviceId==='breeze-tts'){
       const script=path.join(root,'Start-Breeze.ps1');await access(script);command=powershell;args=['-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',script];cwd=root;
@@ -68,7 +84,7 @@ export class ExternalServiceLauncher implements ServiceLauncher {
     const deadline=Date.now()+this.timeoutMs;
     while(Date.now()<deadline){
       signal.throwIfAborted();
-      if(await this.health(settings.serviceId,settings.baseUrl,signal).catch(()=>false))return{serviceId:settings.serviceId,state:'ready',safeDiagnostic:'服务已启动并通过健康检查。',...(pid?{pid}:{})};
+      if(await this.checkHealth(settings.serviceId,settings.baseUrl,signal))return{serviceId:settings.serviceId,state:'ready',safeDiagnostic:'服务已启动并通过健康检查。',...(pid?{pid}:{})};
       await new Promise<void>((resolve,reject)=>{const timer=setTimeout(resolve,this.pollMs);const abort=()=>{clearTimeout(timer);reject(signal.reason??Error('SERVICE_START_CANCELLED'));};if(signal.aborted)abort();else signal.addEventListener('abort',abort,{once:true});});
     }
     throw Error('SERVICE_START_TIMEOUT');

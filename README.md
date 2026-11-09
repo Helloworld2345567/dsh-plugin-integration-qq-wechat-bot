@@ -56,7 +56,7 @@
 
 ## 配置
 
-本机 RVC/GPT-SoVITS 模型可在人格媒体中的“连接”设置目录并自动识别，然后在人格媒体页分别点击音色的“使用”。新增模型后刷新即可登记，详见 [模型库配置与一键选择](docs/voice-model-library.md)。
+本机 RVC/GPT-SoVITS 模型可在机器人面板的“服务”栏设置目录并自动识别，然后在人格媒体页分别点击音色的“使用”。新增模型后在服务栏刷新即可登记，详见 [模型库配置与一键选择](docs/voice-model-library.md)。
 
 人格配置仅支持 `schemaVersion: 4`；V3 及更早版本不再读取、迁移或回退。服务模型路径由 Profile 私有配置管理。
 
@@ -90,7 +90,7 @@
 可信私聊可用 `/tts` 和 `/sts` 临时切换当前会话的音色：先执行 `/tts list` 或 `/sts list`，再使用准确 ID 执行 `set`；`/tts reset`、`/sts reset` 恢复人格默认音色。TTS 支持 `edge/<voice>`、GPT-SoVITS 和 Breeze Profile，STS 支持 RVC Profile。切换从下一轮生效，不修改共享人格；人格未启用对应能力时不能通过命令开启。模型收到自然语言请求时使用 `bot_voice_control`，遵循相同的 list/set/reset 流程。
 
 GPT-SoVITS 服务按队列依次执行加载 SoVITS、加载 GPT、设置参考音频和合成。每次都完整加载，不缓存当前角色，支持 v1、v2、v2Pro、v2ProPlus、v3、v4、v5dev、v5turbo 的配置；实际模型版本须与所填版本一致。输出为非流式 WAV；语速可调整，风格请求降级为普通朗读，`chant` 和显式 MP3 不受支持。内置语音使用 `edge_tts` 协议。
-Breeze TTS 使用 `breeze-tts-2-cpp` HTTP 服务，默认地址为本机 HTTP 8080 端口，面板中的 Breeze 连接设置可修改地址。刷新服务时读取 `/v1/voices`，只登记服务已保存的音色；请求使用 JSON `response_format=wav`，输出为 24 kHz 单声道 WAV。填写受信的 Breeze 项目目录后，面板的“启动 Breeze TTS”按钮可以执行固定的 `Start-Breeze.ps1` 并等待健康检查；插件不会在刷新或关闭时自动启动或停止 Breeze。中文和英文属于官方支持范围，日语输入仅作实验用途。Breeze 没有速度控制，传入速度时会保留文字结果并记录降级观察信息。
+Breeze TTS 使用 `breeze-tts-2-cpp` HTTP 服务，默认地址为本机 HTTP 8080 端口，服务栏中的 Breeze 设置可修改地址。刷新服务时读取 `/v1/voices`，只登记服务已保存的音色；请求使用 JSON `response_format=wav`，输出为 24 kHz 单声道 WAV。填写受信的 Breeze 项目目录后，服务栏的“启动 Breeze TTS”按钮可以执行固定的 `Start-Breeze.ps1` 并等待健康检查；插件不会在刷新或关闭时自动启动或停止 Breeze。中文和英文属于官方支持范围，日语输入仅作实验用途。Breeze 没有速度控制，传入速度时会保留文字结果并记录降级观察信息。
 
 管理页的“配置完整”只说明参数已配置；“当前版本合成已验收”来自对该人格修订版本登记的实际验收记录，两者独立。真实验收应检查完整音频并试听目标角色，换版本后重新验收。
 

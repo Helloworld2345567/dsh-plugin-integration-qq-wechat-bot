@@ -1,9 +1,9 @@
 export const LOCALE_NS='botIntegration';
 
 export const zh={
-  nav:'机器人面板',panelTitle:'机器人',panelSubtitle:'QQ · 微信',overview:'总览',bots:'机器人',personas:'人格',automation:'自动化',
+  nav:'机器人面板',panelTitle:'机器人',panelSubtitle:'QQ · 微信',overview:'总览',bots:'机器人',services:'服务',serviceDescription:'统一管理机器人运行时及语音服务的启动、端口和目录。',robotService:'机器人服务',personas:'人格',automation:'自动化',
   loading:'读取中…',loadingConfig:'读取配置中…',loadingShort:'加载中…',operationFailed:'操作失败',serviceNotReady:'机器人服务尚未就绪，请刷新页面',operationBusy:'操作进行中，请稍候',saved:'已保存',refreshFailed:'操作已完成，状态刷新失败，请稍后重新打开页面',serviceStarted:'服务已启动并通过健康检查',serviceAlreadyRunning:'服务已经在运行',startGptSovits:'启动 GPT-SoVITS',startBreezeTts:'启动 Breeze TTS',gptSovitsProjectRoot:'GPT-SoVITS 项目目录',breezeTtsProjectRoot:'Breeze TTS 项目目录',breezeTtsVoicesRoot:'Breeze TTS 音色目录',
-  online:'在线',connecting:'连接中',stopped:'已停止',error:'异常',offline:'离线',reconnecting:'重连中',notConnected:'未连接',
+  online:'在线',connecting:'连接中',stopped:'已停止',error:'异常',offline:'离线',reconnecting:'重连中',notConnected:'未连接',sessionModels:'会话模型',sessionModel:'{channel} · {model}',
   onlineCount:'在线',tasks:'任务',pending:'待发',connections:'连接',manage:'管理',noBots:'暂无机器人，点击管理开始创建',usage:'用量',collapse:'收起',statistics:'统计',
   botCount:'{count} 个机器人',cancel:'取消',createNew:'新建',newBot:'新建机器人',id:'ID',name:'名称',channel:'渠道',qqOfficial:'QQ 官方',weixinIlink:'微信 iLink',persona:'人格',create:'创建',requiredBotFields:'请填写 ID 和名称',created:'已创建',
   delete:'删除',add:'添加',copy:'复制',copySuffix:'副本',personaCopied:'人格已复制',userId:'用户 ID',deleteBotConfirm:'删除机器人“{name}”（ID：{id}）？将停止任务、清除授权，并永久删除该机器人的全部聊天记录、记忆、附件和自动化记录。此操作无法撤销。',deleteBotLabel:'删除机器人 {name}（{id}）',botDeleted:'机器人已删除',authorize:'授权',scanToAuthorize:'请扫码授权',run:'运行',connectionStarted:'连接已启动',startBotService:'开启机器人服务',stopBotService:'停止机器人服务',botServiceStarted:'机器人服务已开启',botServiceStopped:'机器人服务已停止',switchedNextTurn:'已切换，下一轮生效',personaKeepsHistory:'切换人格保留会话历史',usersCount:'用户 · {count} 人',none:'暂无',edit:'编辑',userIds:'用户 ID（逗号分隔）',directoryMode:'目录 · {mode}',specifiedDirectory:'指定目录',defaultDirectory:'默认目录',workingDirectory:'工作目录',save:'保存',reconnect:'重连',reconnected:'已重连',credentials:'凭据',changeAuthHint:'更换授权前请先关闭运行',qqCredentials:'QQ 凭据',credentialsSaved:'凭据已保存',scanAuth:'扫码授权',close:'关闭',waitingScan:'等待扫码',authSucceeded:'授权成功',qrExpired:'二维码已过期',cancelled:'已取消',qrAlt:'机器人授权二维码',

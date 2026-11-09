@@ -29,3 +29,18 @@ test('GPT-SoVITS launcher validates its fixed runtime and config before spawning
   const result=await launcher.start({serviceId:'gpt-sovits',baseUrl:'http://127.0.0.1:9880',projectRoot:root},new AbortController().signal);
   assert.equal(result.state,'ready');assert.deepEqual(args,['-B','api_v2.py','-a','127.0.0.1','-p','9880','-c','GPT_SoVITS/configs/tts_local.yaml']);
 });
+
+test('external launcher bounds a health probe that ignores cancellation',async t=>{
+  await mkdir(path.resolve('.codex'),{recursive:true});
+  const root=await mkdtemp(path.resolve('.codex/service-launcher-health-timeout-'));t.after(()=>rm(root,{recursive:true,force:true}));await writeFile(path.join(root,'Start-Breeze.ps1'),'');
+  const launcher=new ExternalServiceLauncher(async()=>new Promise<boolean>(()=>{}),async()=>42,1,30,5);
+  await assert.rejects(launcher.start({serviceId:'breeze-tts',baseUrl:'http://127.0.0.1:8080',projectRoot:root},new AbortController().signal),/SERVICE_START_TIMEOUT/);
+});
+
+test('external launcher propagates cancellation while probing health',async t=>{
+  await mkdir(path.resolve('.codex'),{recursive:true});
+  const root=await mkdtemp(path.resolve('.codex/service-launcher-health-abort-'));t.after(()=>rm(root,{recursive:true,force:true}));await writeFile(path.join(root,'Start-Breeze.ps1'),'');
+  const controller=new AbortController();const launcher=new ExternalServiceLauncher(async()=>new Promise<boolean>(()=>{}),async()=>42,1,30_000,30_000);
+  const pending=launcher.start({serviceId:'breeze-tts',baseUrl:'http://127.0.0.1:8080',projectRoot:root},controller.signal);setTimeout(()=>controller.abort(new Error('cancelled')),5);
+  await assert.rejects(pending,/cancelled/);
+});
