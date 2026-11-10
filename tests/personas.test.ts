@@ -4,7 +4,6 @@ import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,existsSync,rmSync,symli
 import path from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
-import {ConflictError} from '../src/core/errors.js';
 import {defaultPersonasRoot} from '../src/core/personas.js';
 import {BotRuntime} from '../src/core/runtime.js';
 import {Assets,MediaService} from '../src/core/media.js';
@@ -44,19 +43,20 @@ test('existing applied configurations export once at the product root, preservin
   }finally{store.close();rmSync(root,{recursive:true,force:true});}
 });
 
-test('panel saves update both persona files; external drafts block overwrites and apply once with a new version',async t=>{
+test('panel saves overwrite external persona drafts, while file drafts can still be applied explicitly',async t=>{
   const f=fixture(t);const old=f.store.personas.config('sakura');
   const saved=await f.runtime.saveConfig({...old,name:'面板名称',personaPrompt:'面板人设'},old.revision);
   assert.deepEqual(f.store.personaFiles.read('sakura').config,saved);assert.equal(saved.revision,2);
   const bot=f.store.bots.saveBot(botSchema.parse({id:'one',name:'One',channel:'qq',configId:'sakura',enabled:true}));
   const scope={botId:bot.id,platform:'qq' as const,accountId:'one',kind:'private' as const,channelId:'alice',senderId:'alice'};const binding=f.store.sessions.binding(scope);const snapshot=freezeTurn(saved,bot,scope,[]);
   f.edit({name:'文件名称',tools:[]});writeFileSync(path.join(f.folder,'persona.md'),'文件人设\n保留换行\n');
-  await assert.rejects(f.runtime.saveConfig({...saved,name:'覆盖'},saved.revision),ConflictError);
-  assert.equal(f.store.personas.config('sakura').revision,2);assert.equal(f.store.personaFiles.read('sakura').config.name,'文件名称');
+  const overwritten=await f.runtime.saveConfig({...saved,name:'覆盖'},saved.revision);
+  assert.equal(overwritten.revision,3);assert.equal(f.store.personaFiles.read('sakura').config.name,'覆盖');assert.equal(f.store.personaFiles.read('sakura').config.personaPrompt,'面板人设');assert.equal(f.store.personas.personaStatus('sakura').state,'synced');
+  f.edit({name:'文件名称',tools:[]});writeFileSync(path.join(f.folder,'persona.md'),'文件人设\n保留换行\n');
   const applied=await f.runtime.applyPersonaFiles('sakura');
-  assert.equal(applied.revision,3);assert.equal(applied.personaPrompt,'文件人设\n保留换行\n');assert.equal(f.settings().revision,3);assert.equal(f.store.personas.personaStatus('sakura').state,'synced');
+  assert.equal(applied.revision,4);assert.equal(applied.personaPrompt,'文件人设\n保留换行\n');assert.equal(f.settings().revision,4);assert.equal(f.store.personas.personaStatus('sakura').state,'synced');
   assert.equal(f.store.sessions.binding(scope).sessionId,binding.sessionId);assert.equal(snapshot.config.personaPrompt,'面板人设');assert.equal(allowedNow('bot_media',snapshot,applied,bot,scope),false);assert.ok(f.cancellations()>=2);
-  assert.equal((await f.runtime.applyPersonaFiles('sakura')).revision,3);assert.equal(f.store.personas.configVersion('sakura',2)?.personaPrompt,'面板人设');
+  assert.equal((await f.runtime.applyPersonaFiles('sakura')).revision,4);assert.equal(f.store.personas.configVersion('sakura',3)?.personaPrompt,'面板人设');
 });
 
 test('invalid files and models keep the applied version intact; stale drafts and edits during validation conflict',async t=>{

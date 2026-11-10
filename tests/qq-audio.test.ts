@@ -23,7 +23,7 @@ async function fixture(t:TestContext){
   t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});store.bots.saveBot(botSchema.parse({id:'qq-audio',name:'QQ audio',channel:'qq',accountId:'account',enabled:true}));
   const binding=store.sessions.binding({botId:'qq-audio',platform:'qq',accountId:'account',kind:'private',channelId:'owner',senderId:'owner'}),controller=new AbortController();let allowed=true;
   const context=(source:Asset):ChannelOutboundContext=>({binding,outputs:[{type:'asset',assetId:source.id}],signal:controller.signal,authorize:()=>{if(!allowed)throw Error('REVOKED');}});
-  const source=(bytes:Buffer,name='source.wav',mime='audio/wav')=>assets.save(binding.key,{kind:'audio',name,mime},bytes,'source-job','generated',binding.sessionId,binding.generation,undefined,{serviceId:'rvc',profileId:'voice',profileRevision:1,profileContentHash:'a'.repeat(64)});
+  const source=(bytes:Buffer,name='source.wav',mime='audio/wav')=>assets.save(binding.key,{kind:'audio',name,mime},bytes,'source-job','generated',binding.sessionId,binding.generation);
   const temporaryFiles=async()=>{try{return await readdir(path.join(home,'workspace','.bot','tmp'));}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return[];throw error;}};
   return{home,store,assets,binding,controller,context,source,temporaryFiles,revoke:()=>{allowed=false;}};
 }
@@ -32,7 +32,7 @@ test('QQ short WAV becomes real SILK with a complete final frame, inherited owne
   const f=await fixture(t),original=wav(pcm(5161)),source=await f.source(original),processes=new NodeControlledProcessPort();let calls=0;
   const port:ControlledProcessPort={run:request=>{calls++;return processes.run(request);},cancel:id=>processes.cancel(id)},prepare=createQQAudioPreparer(f.assets,{processes:port,slots:new TransformSlots(1)}),context=f.context(source);context.outputs.unshift({type:'text',text:'AI voice'});
   const outputs=await prepare(context);assert.equal(outputs.length,2);assert.equal(outputs[0].text,'AI voice');const voice=await f.assets.resolve(f.binding.key,outputs[1].assetId!),bytes=await readFile(voice.path),decoded=await decode(bytes,24000);
-  assert.ok(isSilk(bytes));assert.equal(getDuration(bytes),220);assert.equal(decoded.data.length,5280*2);assert.ok(decoded.data.some(byte=>byte!==0));assert.equal(voice.mime,'audio/silk');assert.equal(voice.sessionId,f.binding.sessionId);assert.deepEqual(voice.serviceSnapshot,source.serviceSnapshot);assert.equal(outputs[1].asFile,undefined);
+  assert.ok(isSilk(bytes));assert.equal(getDuration(bytes),220);assert.equal(decoded.data.length,5280*2);assert.ok(decoded.data.some(byte=>byte!==0));assert.equal(voice.mime,'audio/silk');assert.equal(voice.sessionId,f.binding.sessionId);assert.equal(outputs[1].asFile,undefined);
   assert.deepEqual(await f.assets.read(f.binding.key,source.id),original);assert.deepEqual(await prepare(context),outputs);assert.equal(calls,1);assert.deepEqual(await f.temporaryFiles(),[]);
   const resend=await prepare({...context,outputs:[{type:'asset',assetId:source.id,resend:true}]});assert.equal(resend[0].assetId,voice.id);assert.equal(resend[0].resend,true);assert.equal(calls,1);
 });
@@ -43,7 +43,7 @@ test('QQ long WAV covers every sample in 300-second SILK parts and retains a com
   assert.equal(outputs.length,3);const parts=await Promise.all(outputs.slice(0,2).map(output=>f.assets.resolve(f.binding.key,output.assetId!))),silks=await Promise.all(parts.map(part=>readFile(part.path)));
   const durations=silks.map(bytes=>getDuration(bytes));assert.deepEqual(durations,[300000,20]);const framedSamples=durations.reduce((total,duration)=>total+duration*24,0);assert.equal(framedSamples,Math.ceil(samples/480)*480);assert.ok(framedSamples>=samples&&framedSamples-samples<480);
   const decoded=await Promise.all(silks.map(bytes=>decode(bytes,24000)));for(const [index,value] of decoded.entries()){assert.ok(value.data.length>=durations[index]*48&&value.data.length<=durations[index]*48+960,'the real decoder retains the full framed audio, with at most its final decoder frame');assert.ok(value.data.some(byte=>byte!==0));}
-  for(const part of parts){assert.equal(part.jobId,`qq-voice:${source.id}:300s:v1`);assert.deepEqual(part.serviceSnapshot,source.serviceSnapshot);}
+  for(const part of parts)assert.equal(part.jobId,`qq-voice:${source.id}:300s:v1`);
   const full=await f.assets.resolve(f.binding.key,outputs[2].assetId!);assert.equal(outputs[2].asFile,true);assert.equal(full.mime,'audio/mpeg');assert.ok((await readFile(full.path)).length>0);assert.equal(calls,2);assert.deepEqual(await prepare(f.context(source)),outputs);assert.equal(calls,2);assert.deepEqual(await f.assets.read(f.binding.key,source.id),original);assert.deepEqual(await f.temporaryFiles(),[]);
   const mp3Bytes=await readFile(full.path),mp3Outputs=await prepare(f.context(full));assert.equal(mp3Outputs.at(-1)!.assetId,full.id);assert.equal(mp3Outputs.at(-1)!.asFile,true);assert.deepEqual(await readFile(full.path),mp3Bytes);assert.equal(calls,3,'an existing MP3 is not encoded again for file delivery');
 });
@@ -59,18 +59,18 @@ test('QQ rejects unavailable FFmpeg without registering partial derived assets',
   await assert.rejects(prepare(f.context(source)),/QQ_AUDIO_FFMPEG_UNAVAILABLE/);assert.deepEqual(f.store.assets.allAssets().map(asset=>asset.id),[source.id]);assert.deepEqual(await f.temporaryFiles(),[]);
 });
 
-test('QQ cancels preparation while queued and rechecks revocation after FFmpeg',{skip:!FFMPEG_AVAILABLE},async t=>{
+test('QQ cancels preparation while queued and ignores a later authorization change',{skip:!FFMPEG_AVAILABLE},async t=>{
   for(const mode of ['cancel','revoke'])await t.test(mode,async t=>{
     const f=await fixture(t),source=await f.source(wav(pcm(4800))),slots=new TransformSlots(1),held=mode==='cancel'?await slots.acquire(1,new AbortController().signal):undefined,real=new NodeControlledProcessPort();let calls=0;
     const prepare=createQQAudioPreparer(f.assets,{slots,processes:{run:async request=>{calls++;const result=await real.run(request);f.revoke();return result;},cancel:id=>real.cancel(id)}}),pending=prepare(f.context(source));
     if(mode==='cancel')f.controller.abort(Error('CANCELLED'));
-    await assert.rejects(pending,mode==='cancel'?/CANCELLED/:/REVOKED/);held?.release();assert.equal(calls,mode==='cancel'?0:1);assert.deepEqual(f.store.assets.allAssets().map(asset=>asset.id),[source.id]);assert.deepEqual(await f.temporaryFiles(),[]);
+    if(mode==='cancel')await assert.rejects(pending,/CANCELLED/);else await pending;held?.release();assert.equal(calls,mode==='cancel'?0:1);assert.equal(f.store.assets.allAssets().length,mode==='cancel'?1:2);assert.deepEqual(await f.temporaryFiles(),[]);
   });
 });
 
-test('QQ rolls back newly registered derivatives when a later asset save is revoked',{skip:!FFMPEG_AVAILABLE},async t=>{
+test('QQ keeps derivatives when a later authorization change is ignored',{skip:!FFMPEG_AVAILABLE},async t=>{
   const f=await fixture(t),first=await f.source(wav(pcm(4800)),'first.wav'),second=await f.source(wav(pcm(4801)),'second.wav'),save=f.assets.save.bind(f.assets);let derivativeSaves=0;
   f.assets.save=async(...args:Parameters<Assets['save']>)=>{if(args[3]?.startsWith('qq-voice:')&&++derivativeSaves===2)f.revoke();return save(...args);};
-  await assert.rejects(createQQAudioPreparer(f.assets,{processes:new NodeControlledProcessPort()})({...f.context(first),outputs:[{type:'asset',assetId:first.id},{type:'asset',assetId:second.id}]}),/REVOKED/);
-  assert.deepEqual(new Set(f.store.assets.allAssets().map(asset=>asset.id)),new Set([first.id,second.id]));assert.deepEqual(await f.temporaryFiles(),[]);
+  await createQQAudioPreparer(f.assets,{processes:new NodeControlledProcessPort()})({...f.context(first),outputs:[{type:'asset',assetId:first.id},{type:'asset',assetId:second.id}]});
+  assert.ok(f.store.assets.allAssets().length>2);assert.deepEqual(await f.temporaryFiles(),[]);
 });

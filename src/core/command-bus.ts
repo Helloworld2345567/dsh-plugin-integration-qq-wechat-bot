@@ -138,10 +138,10 @@ export class CommandBus {
         this.authorize(context);
         const roleLabel=command.role==='tts'?'TTS':'STS';
         if(command.action==='list'){
-          const catalog=this.host.voiceCatalog(command.role,this.host.binding(binding.scope));
-          const rows=catalog.items.map(item=>`${item.id} — ${item.displayName}${item.modelLabel?` · ${item.modelLabel}`:''}${item.state&&item.state!=='ready'?`（${item.state}）`:''}${item.selectable?'':' [不可用]'}`);
+          const catalog=this.host.voiceCatalog(command.role,this.host.binding(binding.scope)),items=catalog.items.filter(item=>item.selectable);
+          const rows=items.map(item=>`${item.id} — ${item.displayName}${item.modelLabel?` · ${item.modelLabel}`:''}`);
           const current=catalog.current??'未配置',next=catalog.next??current;
-          return{kind:'reply',text:`当前人格默认${roleLabel}音色：${current}${catalog.override?`\n下一轮会话音色：${next}（会话覆盖）`:''}\n可用音色：\n${rows.join('\n')||'暂无'}`,data:{action:'list',role:command.role,sessionId:binding.sessionId,current,next,override:catalog.override,items:catalog.items}};
+          return{kind:'reply',text:`当前人格默认${roleLabel}音色：${current}${catalog.override?`\n下一轮会话音色：${next}（会话覆盖）`:''}\n可用音色：\n${rows.join('\n')||'暂无'}`,data:{action:'list',role:command.role,sessionId:binding.sessionId,current,next,override:catalog.override,items}};
         }
         if(command.action==='reset'){
           await this.host.setVoice(binding.scope,command.role,null,()=>this.authorize(context));

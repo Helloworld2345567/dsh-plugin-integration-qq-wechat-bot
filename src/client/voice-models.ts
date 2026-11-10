@@ -30,15 +30,14 @@ export async function loadServiceProfiles(query:(name:string,input:any,signal?:A
 
 export function voiceModelPicker(h:any,ui:ReturnType<typeof createUI>,options:{role:VoiceModelRole;config:BotConfig;profiles:PublicServiceProfile[];busy:boolean;dirty:boolean;existing:boolean;serviceId?:string;apply:(role:VoiceModelRole,profile:PublicServiceProfile)=>void|Promise<void>},t:Translate=chinese) {
   const {role,config,profiles,busy}=options,selected=config.media[role];
-  const rows=profiles.filter(profile=>servicesFor[role].includes(profile.serviceId)&&(!options.serviceId||profile.serviceId===options.serviceId)&&profile.capabilities.includes(operationFor(role,profile.serviceId)));
   const key=selected?.profileRef?`${selected.profileRef.serviceId}/${selected.profileRef.profileId}`:'',disabled=busy;
+  const rows=profiles.filter(profile=>servicesFor[role].includes(profile.serviceId)&&(!options.serviceId||profile.serviceId===options.serviceId)&&profile.capabilities.includes(operationFor(role,profile.serviceId))&&profile.state==='ready');
   const choices=[...(!key?[{id:'',name:role==='voice'&&config.media.voice?.protocol==='edge_tts'?t('builtinSpeech'):rows.length?t('chooseVoice'):t('noVoice'),disabled:true}]:[]),...rows.map(profile=>{
     let version=profile.modelLabel?.replace(/^(?:GPT[- ]?SoVITS|RVC|Breeze[- ]?TTS(?:-2)?(?:\.cpp)?)\s*/i,'').trim();
     if(version?.startsWith(profile.displayName))version=version.slice(profile.displayName.length).replace(/^\s*[·:：-]?\s*/,'');
     return{id:`${profile.serviceId}/${profile.profileId}`,name:`${profile.displayName}${version?` · ${version}`:''}${profile.state==='ready'?'':t('unavailableSuffix')}`,disabled:profile.state!=='ready'};
   })];
-  if(key&&!choices.some(choice=>choice.id===key))choices.push({id:key,name:t('unavailable'),disabled:true});
-  return h('div',null,ui.select(role==='voice'?t('speak'):t('sing'),key,choices,async value=>{
+  return h('div',null,ui.select(role==='voice'?t('speak'):t('sing'),choices.some(choice=>choice.id===key)?key:'',choices,async value=>{
     if(disabled)return;const profile=rows.find(item=>`${item.serviceId}/${item.profileId}`===value);if(profile?.state==='ready')await options.apply(role,profile);
   },{disabled}));
 }

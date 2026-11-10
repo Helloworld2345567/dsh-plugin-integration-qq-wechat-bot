@@ -8,6 +8,7 @@ import {Assets,MediaService} from '../src/core/media.js';
 import {BotRuntime,type HarnessPort} from '../src/core/runtime.js';
 import {botSchema,configSchema,type CallerScope,type Delivery,type Output} from '../src/core/types.js';
 import {spokenReplyText} from '../src/core/voice-reply.js';
+import {ProfileStore} from '../src/core/profile-store.js';
 import {fixtureChannels} from './test-channel.js';
 import {seedAppliedConfig} from './sqlite-fixtures.js';
 
@@ -15,7 +16,7 @@ const scope:CallerScope={botId:'bot',platform:'qq',accountId:'account',kind:'pri
 function deferred(){let resolve!:()=>void;const promise=new Promise<void>(done=>resolve=done);return{promise,resolve};}
 
 async function fixture(t:any){
-  const directory=await mkdtemp(path.resolve('.codex/voice-reply-')),store=new SqlitePersistence(directory),assets=new Assets(store.repositories());
+  const directory=await mkdtemp(path.resolve('.codex/voice-reply-')),store=new SqlitePersistence(directory),assets=new Assets(store.repositories()),profiles=new ProfileStore(store.profiles);
   const initial=store.personas.config('sakura'),currentConfig=configSchema.parse({...initial,schemaVersion:4,media:{voice:{enabled:true,protocol:'edge_tts',replyMode:'auto',voice:'first',format:'mp3'}}});seedAppliedConfig(store,currentConfig);
   store.bots.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',configId:'sakura',enabled:true,trustedUsers:['owner']}));
   const binding=store.sessions.binding(scope);
@@ -27,10 +28,10 @@ async function fixture(t:any){
   const media=new MediaService(store.repositories(),assets);media.run=async(_scope,operation,config,inputs,parameters,signal,authorize)=>{
     assert.equal(operation,'voice_speak');assert.deepEqual(inputs,[]);authorize?.();calls.push({config,parameters,signal});return{assetIds:[audio.id]};
   };
-  const runtime=new BotRuntime(store.repositories(),assets,media,harness,fixtureChannels(adapter),{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}},60000);
+  const runtime=new BotRuntime(store.repositories(),assets,media,harness,fixtureChannels(adapter),{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}},60000,0,profiles);
   const chat=async()=>{await runtime.receive({id:'incoming',scope,text:'请回答',attachments:[],reply:{target:'owner',kind:'private',msgId:'incoming'},timestamp:Date.now()});await runtime.process(scopeKey(scope));};
   t.after(async()=>{await runtime.close();store.close();await rm(directory,{recursive:true,force:true});});
-  return{runtime,store,assets,media,harness,sent,calls,audio,binding,chat};
+  return{runtime,store,assets,media,harness,profiles,sent,calls,audio,binding,chat};
 }
 
 test('spoken replies retain prose and link labels while excluding code blocks and URL destinations',()=>{
@@ -83,6 +84,22 @@ test('voice settings remain frozen when the persona changes during the model tur
     return{turnId:'reply',outputs:[{type:'text',text:'你好'}],snapshot:options!.snapshot!};
   };
   await f.chat();assert.equal(f.calls.length,1);assert.equal(f.calls[0].config.media.voice.voice,'first');assert.equal(f.calls[0].config.media.voice.replyMode,'auto');
+});
+
+test('retiring a voice Profile after generation keeps the text reply deliverable',async t=>{
+  const f=await fixture(t);
+  const profile=f.profiles.create({serviceId:'gpt-sovits',profileId:'retiring',state:'ready',capabilities:['gpt-sovits.speak'],displayName:'Retiring voice',managedConfig:{baseUrl:'http://127.0.0.1:9880',modelVersion:'v4'}});
+  const current=f.store.personas.config('sakura');
+  const configured=configSchema.parse({...current,media:{voice:{enabled:true,engine:'gpt-sovits',profileRef:{serviceId:'gpt-sovits',profileId:profile.profileId},replyMode:'auto',format:'wav'}}});
+  f.store.personas.saveConfig(configured,current.revision);
+  f.harness.run=async(_b,_m,_s,options)=>{
+    f.profiles.transition({serviceId:'gpt-sovits',profileId:profile.profileId},'missing');
+    return{turnId:'reply',outputs:[{type:'text',text:'Profile 失效后仍应发送这段文字。'}],snapshot:options!.snapshot!};
+  };
+  await f.chat();
+  assert.ok(f.sent.some(delivery=>delivery.output.type==='text'&&delivery.output.text?.includes('Profile 失效后仍应发送')));
+  assert.equal(f.store.inbox.source(f.binding.key,'incoming')?.id,'incoming');
+  assert.equal(f.store.inbox.messages(f.binding.key,['complete']).filter(message=>message.id==='incoming').length,1);
 });
 
 for(const change of ['revoke-before','revoke-after','new-session','cancel'] as const)test(`${change} suppresses the completed answer and any late audio`,async t=>{

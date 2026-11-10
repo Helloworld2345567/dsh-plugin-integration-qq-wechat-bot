@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import type {ChannelReplyEnvelope, Delivery, Output, SessionBinding, TurnSnapshot} from '../../core/types.js';
+import type {ChannelReplyEnvelope, Delivery, Output, SessionBinding} from '../../core/types.js';
 import {decodeCursor, encodeCursor, filterHash} from '../../core/pagination.js';
 import type {Page} from '../../core/ports/common.js';
 import type {DeliveryPageRequest, DeliveryRepository, DeliveryState} from '../../core/ports/delivery.js';
@@ -63,7 +63,7 @@ export class SqliteDeliveryRepository implements DeliveryRepository {
     const more = rows.length > request.limit, items = rows.slice(0, request.limit), last = items.at(-1);
     return {items, nextCursor:more && last ? encodeCursor({v:1, collection:'deliveries', filter:fingerprint, revision, time:last.createdAt ?? 0, id:last.id}) : null, revision:`deliveries:${revision}`};
   }
-  enqueue(binding: SessionBinding, sourceId: string, turnId: string, outputs: readonly Output[], reply: Readonly<Record<string, string>>, replyEnvelope?: ChannelReplyEnvelope, progress?: NonNullable<Delivery['progress']>, snapshot?: TurnSnapshot): void {
+  enqueue(binding: SessionBinding, sourceId: string, turnId: string, outputs: readonly Output[], reply: Readonly<Record<string, string>>, replyEnvelope?: ChannelReplyEnvelope, progress?: NonNullable<Delivery['progress']>): void {
     // SAVEPOINT also works inside the foreground completion transaction.
     this.database.savepoint('enqueue_delivery', () => {
       if (!progress) this.deps.metrics().updateTurnMetrics(binding.key, [sourceId], {sessionId:binding.sessionId, turnId});
@@ -81,10 +81,7 @@ export class SqliteDeliveryRepository implements DeliveryRepository {
         if (this.find(id)) return;
         const replySequence = binding.scope.platform === 'qq' ? this.nextReplySequence(binding.scope.botId, replyEnvelope?.payload ?? reply) : undefined;
         const now = Date.now();
-        const referencedAsset = output.type === 'asset' && output.assetId ? this.deps.assets().findAsset(output.assetId) : undefined;
-        const assetServiceSnapshot = referencedAsset?.scopeKey === binding.key ? referencedAsset.serviceSnapshot : undefined;
-        const serviceSnapshots = assetServiceSnapshot ? [assetServiceSnapshot] : [];
-        const delivery: Delivery = {...(progress ? {purpose:'progress' as const, progress} : {}), ...(replySequence === undefined ? {} : {replySequence}), id, scopeKey:binding.key, botId:binding.scope.botId, sessionId:binding.sessionId, sessionGeneration:binding.generation, sourceId, turnId, index, output, reply, ...replyEnvelope ? {replyEnvelope} : {}, ...snapshot ? {turnContext:{personaId:snapshot.personaId, personaRevision:snapshot.personaRevision, trusted:snapshot.trusted, serviceSnapshots}} : {}, state:'pending', createdAt:now, updatedAt:now};
+        const delivery: Delivery = {...(progress ? {purpose:'progress' as const, progress} : {}), ...(replySequence === undefined ? {} : {replySequence}), id, scopeKey:binding.key, botId:binding.scope.botId, sessionId:binding.sessionId, sessionGeneration:binding.generation, sourceId, turnId, index, output, reply, ...replyEnvelope ? {replyEnvelope} : {}, state:'pending', createdAt:now, updatedAt:now};
         const inserted = this.database.db.prepare('INSERT OR IGNORE INTO deliveries(id,scope,json,state,created_at,bot_id,turn_id,output_index) VALUES(?,?,?,?,?,?,?,?)').run(id, binding.key, JSON.stringify(delivery), 'pending', now, delivery.botId, delivery.turnId, delivery.index).changes === 1;
         if (inserted) {
           this.deps.stats().observeDelivery(delivery);

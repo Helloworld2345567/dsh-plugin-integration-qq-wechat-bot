@@ -106,7 +106,7 @@ export class BotRuntime {
   private recheckPermissions():void{
     this.harness.recheckPermissions?.();
     // A changed policy cancels in-flight work; new privileges still wait for the next frozen turn.
-    for(const [key,task] of this.processing){const binding=this.repos.sessions.findBinding(key);if(!binding)continue;const before=this.repos.telemetry.snapshots.findTurnSnapshot(task.sessionId);if(!before)continue;const bot=this.repos.bots.bot(binding.scope.botId);let current:BotConfig|undefined;try{current=this.effectiveConfig(binding);}catch{}if(!current||permissionsRevoked(before,current,bot,binding.scope,this.profiles)){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}}
+    for(const [key,task] of this.processing){const binding=this.repos.sessions.findBinding(key);if(!binding)continue;const before=this.repos.telemetry.snapshots.findTurnSnapshot(task.sessionId);if(!before)continue;const bot=this.repos.bots.bot(binding.scope.botId);let current:BotConfig|undefined;try{current=this.effectiveConfig(binding);}catch{}if(!current||permissionsRevoked(before,current,bot,binding.scope)){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}}
     for(const [key,task] of this.maintenance){const binding=this.repos.sessions.findBinding(key);if(!binding)continue;const bot=this.repos.bots.bot(binding.scope.botId);if(!bot.enabled||bot.archived){task.controller.abort();this.harness.cancel(task.sessionId);}}
   }
   async start(botId:string):Promise<void>{return this.changeService(async()=>{const starting=!this.serviceActive;this.serviceActive=true;try{await this.connectionSupervisor.start(botId);}catch(error){if(starting)this.serviceActive=false;throw error;}if(starting)this.resumeServiceConsumers();});}
@@ -199,7 +199,7 @@ export class BotRuntime {
       if(!services.has(profile.serviceId)||!profile.capabilities.some(cap=>operation.has(cap)))continue;
       const key=`${profile.serviceId}/${profile.profileId}`,previous=latest.get(key);if(!previous||profile.revision>previous.revision)latest.set(key,profile);
     }
-    for(const profile of latest.values())items.push({id:`${profile.serviceId}/${profile.profileId}`,displayName:sanitizePublicServiceText(profile.displayName,'Service Profile'),modelLabel:profile.modelLabel===undefined?undefined:sanitizePublicServiceText(profile.modelLabel,'Managed model'),state:profile.state,selectable:profile.state==='ready',serviceId:profile.serviceId,profileId:profile.profileId});
+    for(const profile of latest.values())if(profile.state==='ready')items.push({id:`${profile.serviceId}/${profile.profileId}`,displayName:sanitizePublicServiceText(profile.displayName,'Service Profile'),modelLabel:profile.modelLabel===undefined?undefined:sanitizePublicServiceText(profile.modelLabel,'Managed model'),state:profile.state,selectable:true,serviceId:profile.serviceId,profileId:profile.profileId});
     return items.sort((a,b)=>a.id.localeCompare(b.id));
   }
   private voiceSelectionId(role:'tts'|'sts',config:BotConfig):string|undefined {
@@ -389,7 +389,7 @@ export class BotRuntime {
         const config=snapshot.config as BotConfig;
         const active=()=>{
           const current=this.repos.sessions.findBinding(key);
-          return !this.closed&&!signal.aborted&&this.processing.get(key)?.controller===controller&&current?.sessionId===binding.sessionId&&current.generation===binding.generation&&!permissionsRevoked(snapshot,this.effectiveConfig(current),this.repos.bots.bot(bot.id),binding.scope,this.profiles);
+          return !this.closed&&!signal.aborted&&this.processing.get(key)?.controller===controller&&current?.sessionId===binding.sessionId&&current.generation===binding.generation&&!permissionsRevoked(snapshot,this.effectiveConfig(current),this.repos.bots.bot(bot.id),binding.scope);
         };
         signal.throwIfAborted();
         if(binding.scope.kind==='private'&&config.progressReply.enabled){
@@ -400,7 +400,7 @@ export class BotRuntime {
               if(!active())return;
               for(const delivery of this.repos.deliveries.deliveries(['pending']))if(delivery.purpose==='progress'&&delivery.progress?.runId===runId)this.repos.deliveries.deliveryState(delivery,'cancelled');
               const source=pending.at(-1)!;
-              this.repos.deliveries.enqueue(binding,source.id,`progress:${runId}:${sequence}`,[{type:'text',text}],source.reply,this.replyEnvelope(source),{runId,generation:binding.generation,expiresAt},snapshot);
+              this.repos.deliveries.enqueue(binding,source.id,`progress:${runId}:${sequence}`,[{type:'text',text}],source.reply,this.replyEnvelope(source),{runId,generation:binding.generation,expiresAt});
               await this.deliveryWorker.flush({botId:bot.id});
             },
             cancel:runId=>this.deliveryWorker.cancelProgress(runId),
@@ -439,10 +439,10 @@ export class BotRuntime {
         stage='model';progress?.update('model');const modelAt=Date.now();this.repos.telemetry.metrics.updateTurnMetrics(key,messages.map(m=>m.id),{sessionId:binding.sessionId,modelStartedAt:modelAt});const result=await this.harness.run(binding,messages,signal,{snapshot,onProgress:stage=>progress?.update(stage)});
         if(signal.aborted||this.repos.sessions.binding(binding.scope).sessionId!==binding.sessionId){this.repos.inbox.mark(key,messages.map(m=>m.id),'cancelled');return;}
         this.repos.telemetry.metrics.markTurnStage(key,messages.map(m=>m.id),'modelCompletedAt');
-        stage='delivery';const prepared=await this.prepareReplyOutputs(binding,result,signal,()=>progress?.update('media'));progress?.stop();
+        stage='delivery';const prepared=await this.prepareReplyOutputs(binding,result,signal,()=>progress?.update('media'));signal.throwIfAborted();progress?.stop();
         const outputs:Output[]=[];for(const output of prepared){if(output.type==='text'&&output.text){for(let index=0;index<output.text.length;index+=1800)outputs.push({type:'text',text:output.text.slice(index,index+1800)});}else if(output.type==='asset'){this.repos.media.assets.asset(key,output.assetId!);outputs.push(output);}}
         if(!outputs.length)throw new Error('NO_DELIVERABLE_OUTPUT');
-        this.repos.telemetry.metrics.updateTurnMetrics(key,messages.map(m=>m.id),{turnId:result.turnId,deliveryStartedAt:Date.now()});this.repos.unitOfWork.transaction(()=>{this.repos.deliveries.enqueue(binding,pending.at(-1)!.id,result.turnId,outputs,pending.at(-1)!.reply,this.replyEnvelope(pending.at(-1)!),undefined,snapshot);this.repos.inbox.mark(key,messages.map(m=>m.id),'complete');});
+        this.repos.telemetry.metrics.updateTurnMetrics(key,messages.map(m=>m.id),{turnId:result.turnId,deliveryStartedAt:Date.now()});this.repos.unitOfWork.transaction(()=>{this.repos.deliveries.enqueue(binding,pending.at(-1)!.id,result.turnId,outputs,pending.at(-1)!.reply,this.replyEnvelope(pending.at(-1)!));this.repos.inbox.mark(key,messages.map(m=>m.id),'complete');});
       }catch(error){
         progress?.stop();
         const timedOut=deadline.aborted&&!controller.signal.aborted;const state=timedOut?'failed':controller.signal.aborted||signal.aborted||error instanceof ReplyContextChangedError?'cancelled':'failed';const at=Date.now();
@@ -467,29 +467,27 @@ export class BotRuntime {
     const current=this.repos.sessions.findBinding(binding.key);
     if(this.closed||!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation)throw new ReplyContextChangedError();
     try{
-      if(permissionsRevoked(snapshot,this.effectiveConfig(current),this.repos.bots.bot(binding.scope.botId),binding.scope,this.profiles))throw new ReplyContextChangedError();
+      if(permissionsRevoked(snapshot,this.effectiveConfig(current),this.repos.bots.bot(binding.scope.botId),binding.scope))throw new ReplyContextChangedError();
     }catch{throw new ReplyContextChangedError();}
   }
   private async prepareReplyOutputs(binding:SessionBinding,result:HarnessResult,signal:AbortSignal,onVoice?:()=>void):Promise<Output[]> {
     const outputs=await this.prepareVoiceReplyOutputs(binding,result,signal,onVoice);
-    const authorize=()=>this.assertReplyContext(binding,result.snapshot,signal);
-    authorize();
     const adapter=this.channels.require(this.repos.bots.bot(binding.scope.botId).channel).adapter;
     if(!adapter.prepareOutbound)return outputs;
     try{
-      const prepared=await adapter.prepareOutbound({binding,outputs:outputs.map(output=>({...output})),signal,authorize});
-      authorize();return prepared;
+      const prepared=await adapter.prepareOutbound({binding,outputs:outputs.map(output=>({...output})),signal,authorize:()=>signal.throwIfAborted()});
+      return prepared;
     }catch(error){
-      authorize();if(error instanceof ReplyContextChangedError)throw error;
+      if(error instanceof ReplyContextChangedError)throw error;
       const files=outputs.map(output=>output.type==='asset'&&this.repos.media.assets.asset(binding.key,output.assetId!).kind==='audio'?{...output,asFile:true}:output);
       return replyNotice(files,'本次语音发送准备失败，已保留音频文件。');
     }
   }
   private async prepareVoiceReplyOutputs(binding:SessionBinding,result:HarnessResult,signal:AbortSignal,onVoice?:()=>void):Promise<Output[]> {
     const snapshot=result.snapshot,config=snapshot.config as BotConfig;
-    this.assertReplyContext(binding,snapshot,signal);
     if(config.media.voice?.replyMode!=='auto'||!analysisEnabled(config,'tts')||result.voiceAttempted||result.singingAttempted)return result.outputs;
-    if(config.media.voice?.protocol!=='edge_tts'&&!snapshot.services.voice?.snapshot)return replyNotice(result.outputs,'本次语音 Profile 未就绪，已用文字回复。');
+    const voiceService=snapshot.services.voice;
+    if(config.media.voice?.protocol!=='edge_tts'&&(!voiceService?.snapshot||!['ready','partial'].includes(voiceService.state)))return replyNotice(result.outputs,'本次语音 Profile 未就绪，已用文字回复。');
     const text=spokenReplyText(result.outputs);if(!text)return result.outputs;
     const authorize=()=>{
       this.assertReplyContext(binding,snapshot,signal);
@@ -528,7 +526,7 @@ export class BotRuntime {
       runSignal.throwIfAborted();
       const result=await this.harness.run(binding,[synthetic],runSignal,{snapshot});
       runSignal.throwIfAborted();const current=this.repos.sessions.findBinding(key);
-      if(!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation||permissionsRevoked(snapshot,this.effectiveConfig(current),this.repos.bots.bot(binding.scope.botId),binding.scope,this.profiles))throw Error('AUTOMATION_CONTEXT_CHANGED');
+      if(!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation||permissionsRevoked(snapshot,this.effectiveConfig(current),this.repos.bots.bot(binding.scope.botId),binding.scope))throw Error('AUTOMATION_CONTEXT_CHANGED');
       answer={turnId:result.turnId,outputs:await this.prepareReplyOutputs(binding,result,runSignal),snapshot};
     }).finally(()=>{this.processing.delete(key);this.resumeSessionActions(key);if(this.repos.inbox.messages(key).length)this.schedule(key);});
     this.processing.set(key,{controller,sessionId:binding.sessionId,sourceIds:[],done});

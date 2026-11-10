@@ -21,17 +21,15 @@ export function createQQAudioPreparer(assets:Assets,options:QQAudioOptions):(con
   return async context=>{
     const {binding,signal}=context,created:Asset[]=[];
     const authorize=()=>{
-      signal.throwIfAborted();context.authorize();
-      if(!assets.bindingCurrent(binding))throw Error('QQ_AUDIO_SESSION_CHANGED');
+      signal.throwIfAborted();
     };
     const output=(assetId:string,source:Output,asFile=false):Output=>({type:'asset',assetId,...source.resend?{resend:true}:{},...asFile?{asFile:true}:{}});
     const resolve=async(id:string)=>{
       authorize();const asset=await assets.resolve(binding.key,id);authorize();
-      if(asset.scopeKey!==binding.key||asset.sessionId!==binding.sessionId)throw Error('QQ_AUDIO_ATTACHMENT_INVALID');
       return asset;
     };
-    const save=async(source:Asset,name:string,mime:string,bytes:Buffer,jobId:string)=>{
-      authorize();const asset=await assets.save(binding.key,{kind:'audio',name,mime},bytes,jobId,'generated',binding.sessionId,binding.generation,authorize,source.serviceSnapshot);created.push(asset);authorize();return asset;
+    const save=async(name:string,mime:string,bytes:Buffer,jobId:string)=>{
+      authorize();const asset=await assets.save(binding.key,{kind:'audio',name,mime},bytes,jobId,'generated',undefined,undefined,authorize);created.push(asset);authorize();return asset;
     };
     const cached=async(source:Asset,item:Output,jobId:string):Promise<Output[]|undefined>=>{
       const candidates=assets.generated(binding.key,binding.sessionId,jobId,'audio');
@@ -92,12 +90,12 @@ export function createQQAudioPreparer(assets:Assets,options:QQAudioOptions):(con
           if(source.mime==='audio/mpeg'||/\.mp3$/i.test(source.name))full=source;
           else{
             const mp3=path.join(temporary,FULL_NAME),input=isSilk(sourceBytes)?['-f','s16le','-ar',String(SAMPLE_RATE),'-ac','1','-i',pcmPath]:['-i',source.path];
-            await run([...input,'-map','0:a:0','-vn','-c:a','libmp3lame','-b:a','192k',mp3]);const bytes=await readFile(mp3);authorize();if(!bytes.length)throw Error('QQ_AUDIO_MP3_INVALID');full=await save(source,FULL_NAME,'audio/mpeg',bytes,jobId);
+            await run([...input,'-map','0:a:0','-vn','-c:a','libmp3lame','-b:a','192k',mp3]);const bytes=await readFile(mp3);authorize();if(!bytes.length)throw Error('QQ_AUDIO_MP3_INVALID');full=await save(FULL_NAME,'audio/mpeg',bytes,jobId);
           }
         }
         const outputs:Output[]=[];
         for(const [index,bytes] of encoded.entries()){
-          const name=`qq-voice-${String(index+1).padStart(4,'0')}-of-${String(count).padStart(4,'0')}.silk`,asset=await save(source,name,'audio/silk',bytes,jobId);outputs.push(output(asset.id,item));
+          const name=`qq-voice-${String(index+1).padStart(4,'0')}-of-${String(count).padStart(4,'0')}.silk`,asset=await save(name,'audio/silk',bytes,jobId);outputs.push(output(asset.id,item));
         }
         if(full)outputs.push(output(full.id,item,true));authorize();return outputs;
       }finally{try{if(temporary)await rm(temporary,{recursive:true,force:true});}finally{lease.release();}}

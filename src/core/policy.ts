@@ -34,12 +34,8 @@ export function allowedNow(name:string,snapshot:TurnSnapshot,current:BotConfig,b
 export function mediaConfigNow(snapshot:TurnSnapshot,current:BotConfig):BotConfig {
   return {...snapshot.config,media:{...snapshot.config.media,...Object.fromEntries(Object.entries(current.media).filter(([,value])=>value?.enabled===false).map(([role])=>[role,{...snapshot.config.media[role as keyof BotConfig['media']],enabled:false}]))}} as BotConfig;
 }
-export function serviceSnapshotsRevoked(snapshot:TurnSnapshot,profiles?:ProfileStore):boolean {
-  if(!profiles)return false;
-  return Object.values(snapshot.services).some(selection=>selection?.snapshot&&!['ready','partial'].includes(profiles.snapshotStatus(selection.snapshot).state));
-}
-export function permissionsRevoked(snapshot:TurnSnapshot,current:BotConfig,bot:BotInstance,scope:CallerScope,profiles?:ProfileStore):boolean {
-  return !bot.enabled||bot.archived||current.archived||(snapshot.trusted&&!trusted(bot,scope))||snapshot.config.tools.some(name=>!current.tools.includes(name))||(snapshot.config.allowHostTools&&!current.allowHostTools)||snapshot.config.hostTools.some(name=>!current.hostTools.includes(name))||snapshot.config.skills.some(name=>!current.skills.includes(name))||(imageSkillEnabled(snapshot.config)&&!imageSkillEnabled(current))||(['asr','video'] as const).some(role=>analysisEnabled(snapshot.config,role)&&!analysisEnabled(current,role))||(snapshot.config.media.voice?.enabled===true&&current.media.voice?.enabled!==true)||(snapshot.config.media.singing?.enabled===true&&current.media.singing?.enabled!==true)||(snapshot.config.media.music?.enabled===true&&current.media.music?.enabled!==true)||serviceSnapshotsRevoked(snapshot,profiles);
+export function permissionsRevoked(snapshot:TurnSnapshot,current:BotConfig,bot:BotInstance,scope:CallerScope):boolean {
+  return !bot.enabled||bot.archived||current.archived||(snapshot.trusted&&!trusted(bot,scope))||snapshot.config.tools.some(name=>!current.tools.includes(name))||(snapshot.config.allowHostTools&&!current.allowHostTools)||snapshot.config.hostTools.some(name=>!current.hostTools.includes(name))||snapshot.config.skills.some(name=>!current.skills.includes(name))||(imageSkillEnabled(snapshot.config)&&!imageSkillEnabled(current))||(['asr','video'] as const).some(role=>analysisEnabled(snapshot.config,role)&&!analysisEnabled(current,role))||(snapshot.config.media.voice?.enabled===true&&current.media.voice?.enabled!==true)||(snapshot.config.media.singing?.enabled===true&&current.media.singing?.enabled!==true)||(snapshot.config.media.music?.enabled===true&&current.media.music?.enabled!==true);
 }
 function freezeService(role:ServiceProfileRole,config:BotConfig,profiles?:ProfileStore):Readonly<TurnServiceSelection>|undefined {
   const options=config.media[role];if(!options)return;

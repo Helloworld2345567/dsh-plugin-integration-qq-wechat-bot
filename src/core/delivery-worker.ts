@@ -1,8 +1,7 @@
 import type {DeliveryWorkerRepositories} from './ports/application.js';
 import type {Credentials} from './runtime-ports.js';
-import type {BotConfig,Delivery,TurnSnapshot} from './types.js';
+import type {Delivery} from './types.js';
 import type {ProfileStore} from './profile-store.js';
-import {permissionsRevoked} from './policy.js';
 import type {ChannelRegistry} from './channel-registry.js';
 import {errorCauseCode,errorCauseMessage,RemoteError,sanitizeRemoteMessage} from './network.js';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -87,12 +86,6 @@ export class DurableDeliveryWorker implements DeliveryWorker {
     const progress=delivery.progress,binding=this.repos.sessions.findBinding(delivery.scopeKey);
     return !!progress&&progress.expiresAt>Date.now()&&binding?.sessionId===delivery.sessionId&&binding.generation===progress.generation&&this.progressRuns.get(progress.runId)?.()===true;
   }
-  private contextActive(delivery:Delivery):boolean {
-    const binding=this.repos.sessions.findBinding(delivery.scopeKey);if(!binding||binding.sessionId!==delivery.sessionId||delivery.sessionGeneration!==undefined&&binding.generation!==delivery.sessionGeneration)return false;
-    if(delivery.turnContext){const frozen=this.repos.personas.configVersion(delivery.turnContext.personaId,delivery.turnContext.personaRevision);let current:BotConfig|undefined;try{current=this.repos.personas.effectiveConfig(binding);}catch{}if(!frozen||!current||permissionsRevoked({config:frozen,personaId:delivery.turnContext.personaId,personaRevision:delivery.turnContext.personaRevision,services:{},botId:delivery.botId,trusted:delivery.turnContext.trusted,sourceIds:[delivery.sourceId],startedAt:delivery.createdAt??0} satisfies TurnSnapshot,current,this.repos.bots.bot(delivery.botId),binding.scope,this.profiles))return false;}
-    const snapshots=[...(delivery.turnContext?.serviceSnapshots??[])];if(delivery.output.type==='asset'){const asset=this.repos.media.assets.asset(delivery.scopeKey,delivery.output.assetId!);if(asset.serviceSnapshot&&!snapshots.some(item=>item.serviceId===asset.serviceSnapshot!.serviceId&&item.profileId===asset.serviceSnapshot!.profileId&&item.profileRevision===asset.serviceSnapshot!.profileRevision&&item.profileContentHash===asset.serviceSnapshot!.profileContentHash))snapshots.push(asset.serviceSnapshot);}
-    return !this.profiles||snapshots.every(snapshot=>['ready','partial'].includes(this.profiles!.snapshotStatus(snapshot).state));
-  }
   activity():DeliveryWorkerActivity{return{activeLanes:this.lanes.size,inFlight:this.outbound.size};}
   private startLane(botId:string):Promise<void>{const active=this.lanes.get(botId);if(active)return active;const task=this.flushBot(botId).finally(()=>{if(this.lanes.get(botId)===task)this.lanes.delete(botId);});this.lanes.set(botId,task);return task;}
   private async flushBot(botId:string):Promise<void>{
@@ -107,16 +100,13 @@ export class DurableDeliveryWorker implements DeliveryWorker {
         const progressTimer=delivery.purpose==='progress'?setTimeout(()=>controller.abort(new Error('PROGRESS_SEND_TIMEOUT')),Math.min(PROGRESS_SEND_MS,delivery.progress!.expiresAt-Date.now())):undefined;
         this.outbound.set(delivery.id,{botId,scopeKey:delivery.scopeKey,runId:delivery.progress?.runId,controller});
         try{
-          const bot=this.repos.bots.bot(delivery.botId);if(!bot.enabled||bot.archived){for(const item of batch){const pending=repository.find(item.id,'pending');if(pending)this.repos.deliveries.deliveryState(pending,'cancelled');}return;}
-          if(!this.contextActive(delivery)){this.repos.deliveries.deliveryState(delivery,'cancelled');continue;}
+          const bot=this.repos.bots.bot(delivery.botId);
           const credentialRead=this.credentials.read(bot.id);
           const rawCredential=await (delivery.purpose==='progress'?abortable(credentialRead,controller.signal):credentialRead);if(!rawCredential)return;
           const definition=this.channels.require(bot.channel);const normalized=definition.normalizeCredential?.(rawCredential);const credential=normalized?.credential as any??rawCredential;
           if((normalized?.accountId??credential.accountId)!==bot.accountId)throw Error('CHANNEL_CREDENTIAL_ACCOUNT_MISMATCH');
           if(this.closed||!this.accepting())return;
           if(!repository.find(delivery.id,'pending'))continue;
-          const currentBot=this.repos.bots.bot(delivery.botId);if(!currentBot.enabled||currentBot.archived){this.repos.deliveries.deliveryState(delivery,'cancelled');for(const item of batch){const pending=repository.find(item.id,'pending');if(pending)this.repos.deliveries.deliveryState(pending,'cancelled');}return;}
-          if(!this.contextActive(delivery)){this.repos.deliveries.deliveryState(delivery,'cancelled');continue;}
           if(!this.progressActive(delivery)||controller.signal.aborted){this.repos.deliveries.deliveryState(delivery,'cancelled');continue;}
           const asset=delivery.output.type==='asset'?this.repos.media.assets.asset(delivery.scopeKey,delivery.output.assetId!):undefined;
           const envelope=definition.normalizeReply?.(delivery.replyEnvelope??delivery.reply);
@@ -133,7 +123,6 @@ export class DurableDeliveryWorker implements DeliveryWorker {
               const sendTimeout=asset?15*60_000:90_000;
               const sendSignal=resultDelivery?AbortSignal.any([controller.signal,AbortSignal.timeout(sendTimeout)]):controller.signal;
               if(this.closed||!this.accepting())return;
-              if(!this.contextActive(delivery))throw Error('DELIVERY_CONTEXT_REVOKED');
               const send=definition.adapter.send(bot,credential,sending,asset,sendSignal);
               const receipt=await (resultDelivery?send:abortable(send,sendSignal));
               this.repos.deliveries.deliveryState(sending,'sent',receipt);if(resultDelivery){if(this.repos.telemetry.metrics.findTurnMetric(metricId))this.repos.telemetry.metrics.updateTurnMetric(metricId,{sentAt:Date.now()});this.repos.telemetry.metrics.updateTurnMetricsByTurn(delivery.scopeKey,delivery.turnId,{sentAt:Date.now()});}break;

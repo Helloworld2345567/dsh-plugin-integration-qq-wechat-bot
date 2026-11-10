@@ -1,4 +1,4 @@
-import type {ChannelReplyEnvelope, Delivery, Output, SessionBinding, TurnSnapshot} from '../types.js';
+import type {ChannelReplyEnvelope, Delivery, Output, SessionBinding} from '../types.js';
 import type {Page} from './common.js';
 
 export type DeliveryState = Delivery['state'];
@@ -37,5 +37,5 @@ export interface DeliveryQueueRepository {
 export interface DeliveryRepository extends DeliveryQueueRepository {
   deliveries(states?: readonly string[]): Delivery[];
   deliveryState(delivery: Delivery, state: DeliveryState, receipt?: string, error?: string): void;
-  enqueue(binding: SessionBinding, sourceId: string, turnId: string, outputs: readonly Output[], reply: Readonly<Record<string, string>>, replyEnvelope?: ChannelReplyEnvelope, progress?: NonNullable<Delivery['progress']>, snapshot?: TurnSnapshot): void;
+  enqueue(binding: SessionBinding, sourceId: string, turnId: string, outputs: readonly Output[], reply: Readonly<Record<string, string>>, replyEnvelope?: ChannelReplyEnvelope, progress?: NonNullable<Delivery['progress']>): void;
 }

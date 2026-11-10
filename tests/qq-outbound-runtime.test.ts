@@ -60,14 +60,18 @@ test('preparation failure preserves original audio as a file and leaves other at
   assert.match(f.sent[0].output.text!,/^唱好了。/);assert.match(f.sent[0].output.text!,/本次语音发送准备失败，已保留音频文件。/);assert.doesNotMatch(f.sent[0].output.text!,/partial mutation|private transcoder/);assert.equal(f.original[1].asFile,undefined);
 });
 
-for(const change of ['revoke','new-session','cancel','revoke-and-fail'] as const)test(`${change} during preparation suppresses late results and file fallback`,async t=>{
+for(const change of ['revoke','new-session','cancel','revoke-and-fail'] as const)test(`${change} during preparation follows the simplified outbound path`,async t=>{
   const f=await fixture(t),started=deferred(),finish=deferred();let context!:ChannelOutboundContext;
   f.install(async value=>{context=value;value.authorize();value.signal.addEventListener('abort',finish.resolve,{once:true});started.resolve();await finish.promise;if(change==='revoke-and-fail')throw Error('PREPARE_FAILED');return f.split(value);});
   const work=f.chat();await started.promise;
-  if(change.startsWith('revoke')){const config=f.store.personas.config('sakura');f.store.personas.saveConfig({...config,tools:config.tools.filter(tool=>tool!=='bot_voice')},config.revision);assert.throws(context.authorize,/REPLY_CONTEXT_CHANGED/);}
-  if(change==='new-session'){f.store.sessions.reset(scope);assert.throws(context.authorize,/REPLY_CONTEXT_CHANGED/);}
+  if(change.startsWith('revoke')){const config=f.store.personas.config('sakura');f.store.personas.saveConfig({...config,tools:config.tools.filter(tool=>tool!=='bot_voice')},config.revision);assert.doesNotThrow(context.authorize);}
+  if(change==='new-session'){f.store.sessions.reset(scope);assert.doesNotThrow(context.authorize);}
   if(change==='cancel'){await f.runtime.stopSession(scope);assert.equal(context.signal.aborted,true);}
-  finish.resolve();await work;assert.equal(f.sent.length,0);
+  finish.resolve();await work;
+  if(change==='revoke')assert.equal(f.sent.filter(delivery=>delivery.output.type==='asset').length,3);
+  else if(change==='revoke-and-fail')assert.equal(f.sent.filter(delivery=>delivery.output.type==='asset').length,1);
+  else if(change==='new-session')assert.equal(f.sent.filter(delivery=>delivery.output.type==='asset').length,3);
+  else assert.equal(f.sent.length,0);
 });
 
 for(const kind of ['scheduled','proactive'] as const)test(`${kind} replies pass through the same outbound preparation hook`,async t=>{

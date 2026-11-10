@@ -38,7 +38,7 @@ export class Assets {
     this.deps.media.assets.deleteAsset(scope,id);
     return true;
   }
-  async save(scope:string,input:MediaInput,bytes:Buffer,jobId?:string,origin:AssetOrigin=jobId?'generated':'received',expectedSession?:string,expectedGeneration?:number,authorize?:()=>void,serviceSnapshot?:import('./service-contract.js').TurnServiceSnapshot):Promise<Asset>{
+  async save(scope:string,input:MediaInput,bytes:Buffer,jobId?:string,origin:AssetOrigin=jobId?'generated':'received',expectedSession?:string,expectedGeneration?:number,authorize?:()=>void):Promise<Asset>{
     // Capture ownership before any I/O: a concurrent /new must not reassign an older upload.
     const sessionId=this.currentSession(scope);
     if(expectedSession!==undefined&&(sessionId!==expectedSession||expectedGeneration!==undefined&&this.deps.sessions.findBinding(scope)?.generation!==expectedGeneration))throw Error('SINGING_SESSION_CHANGED');
@@ -53,7 +53,7 @@ export class Assets {
     const workspace=await this.workspace(scope),createdAt=Date.now();
     const folder=assetFolder(workspace,{id,scopeKey:scope,kind:input.kind,createdAt,jobId,origin});await mkdir(folder,{recursive:true});const file=path.join(folder,name);await writeFile(file,bytes,{flag:'wx'});
     try{if(expectedSession!==undefined&&(this.currentSession(scope)!==expectedSession||expectedGeneration!==undefined&&this.deps.sessions.findBinding(scope)?.generation!==expectedGeneration))throw Error('SINGING_SESSION_CHANGED');authorize?.();}catch(error){await rm(folder,{recursive:true,force:true});throw error;}
-    const asset:Asset={id,scopeKey:scope,name,mime:input.mime,path:file,size:bytes.length,kind:input.kind,createdAt,jobId,sessionId,workspace,origin,...serviceSnapshot?{serviceSnapshot}:{}};
+    const asset:Asset={id,scopeKey:scope,name,mime:input.mime,path:file,size:bytes.length,kind:input.kind,createdAt,jobId,sessionId,workspace,origin};
     this.deps.media.assets.saveAsset(asset);return asset;
   }
   async read(scope:string,id:string):Promise<Buffer>{return readFile((await this.resolve(scope,id)).path);}
@@ -116,8 +116,7 @@ export class MediaService {
     const persist=(value:Record<string,unknown>)=>this.deps.media.jobs.patchJob(id,value);
     let lease:Awaited<ReturnType<TransformSlots['acquire']>>|undefined;
     const captureUsage=async()=>{try{const raw=JSON.parse(await readFile(path.join(directory,'model-usage.json'),'utf8'));if(!Array.isArray(raw))return;const modelCalls:MediaUsageCall[]=raw.filter(c=>c?.attempted===true&&typeof c.id==='string'&&Number.isSafeInteger(c.at)).map(c=>({id:c.id,attempted:true,at:c.at,provider,model:typeof c.model==='string'?c.model:requestedModel,usage:normalizeProviderUsage(c.usage)}));persist({modelCalls});const binding=this.deps.sessions.findBinding(scope);if(binding)this.deps.stats.projection.upsertMediaCalls(id,binding.scope.botId,modelCalls);}catch{/* No dispatched model call is claimed without a journal entry. */}};
-    const serviceSnapshot=operation==='voice_speak'?snapshot?.services.voice?.snapshot:operation==='singing_convert'?snapshot?.services.singing?.snapshot:operation.startsWith('music_')?snapshot?.services.music?.snapshot:undefined;
-    persist({id,scope,operation,directory,workspace,state:descriptor.localTransform?'queued':'running',startedAt,...serviceSnapshot?{serviceId:serviceSnapshot.serviceId,profileId:serviceSnapshot.profileId,profileRevision:serviceSnapshot.profileRevision,profileContentHash:serviceSnapshot.profileContentHash}:{}});
+    persist({id,scope,operation,directory,workspace,state:descriptor.localTransform?'queued':'running',startedAt});
     try{
     combined.throwIfAborted();
     if(descriptor.localTransform){lease=await this.slots.acquire(operation==='convert_gif'?2:1,combined);combined.throwIfAborted();authorize?.();persist({state:'running'});}
@@ -168,7 +167,7 @@ export class MediaService {
         : await this.worker.run(job,combined,credentials);
       combined.throwIfAborted();
       authorize?.();
-      const save=async(files:MediaFile[])=>{const ids:string[]=[];for(const file of files){const resolved=await realpath(file.path);const root=await realpath(directory);if(!resolved.startsWith(root+path.sep))throw new Error('WORKER_OUTPUT_OUTSIDE_JOB');const size=(await stat(resolved)).size;const maxBytes=file.kind==='video'?VIDEO_LIMITS.attachmentBytes:file.kind==='audio'?AUDIO_LIMITS.outputBytes:20*1024*1024;if(size>maxBytes||operation==='convert_gif'&&size>=10_000_000)throw new Error('OUTPUT_TOO_LARGE');const bytes=await readFile(resolved);combined.throwIfAborted();authorize?.();assertSession();const asset=await this.assets.save(scope,{name:file.name,mime:file.mime,kind:file.kind},bytes,id,'generated',sessionBound?singingSession:undefined,expectedBinding?.generation,sessionBound?()=>{combined.throwIfAborted();authorize?.();assertSession();}:undefined,serviceSnapshot);assertSession();ids.push(asset.id);}return ids;};
+      const save=async(files:MediaFile[])=>{const ids:string[]=[];for(const file of files){const resolved=await realpath(file.path);const root=await realpath(directory);if(!resolved.startsWith(root+path.sep))throw new Error('WORKER_OUTPUT_OUTSIDE_JOB');const size=(await stat(resolved)).size;const maxBytes=file.kind==='video'?VIDEO_LIMITS.attachmentBytes:file.kind==='audio'?AUDIO_LIMITS.outputBytes:20*1024*1024;if(size>maxBytes||operation==='convert_gif'&&size>=10_000_000)throw new Error('OUTPUT_TOO_LARGE');const bytes=await readFile(resolved);combined.throwIfAborted();authorize?.();assertSession();const asset=await this.assets.save(scope,{name:file.name,mime:file.mime,kind:file.kind},bytes,id,'generated',sessionBound?singingSession:undefined,expectedBinding?.generation,sessionBound?()=>{combined.throwIfAborted();authorize?.();assertSession();}:undefined);assertSession();ids.push(asset.id);}return ids;};
       const assetIds=await save(result.assets??[]);const contextAssetIds=await save(result.contextAssets??[]);
       persist({state:'complete',assetIds,contextAssetIds,finishedAt:Date.now()});
       assertSession();return {text:result.text,coverage:result.coverage,incomplete:result.incomplete,assetIds,contextAssetIds,...(result.music?{music:result.music}:{})};

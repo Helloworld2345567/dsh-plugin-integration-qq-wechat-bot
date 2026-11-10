@@ -60,3 +60,17 @@ test('voice commands enforce trusted private callers and enabled roles',async t=
   assert.equal(f.store.sessions.binding(scope()).ttsOverride,undefined);
   assert.ok(f.sent.some(text=>text.includes('可信私聊')||text.includes('未启用 TTS')));
 });
+
+test('voice lists hide profiles whose latest revision is no longer usable',async t=>{
+  const f=await fixture(t);
+  const tts=f.profiles.create({serviceId:'gpt-sovits',profileId:'stale',state:'ready',capabilities:['gpt-sovits.speak'],displayName:'Stale voice',managedConfig:{baseUrl:'http://127.0.0.1:9880',modelVersion:'v4'}});
+  f.profiles.transition({serviceId:'gpt-sovits',profileId:tts.profileId},'missing');
+  const sts=f.profiles.create({serviceId:'rvc',profileId:'stale',state:'ready',capabilities:['rvc.convert'],displayName:'Stale singer',managedConfig:{weights:'private.pth'}});
+  f.profiles.transition({serviceId:'rvc',profileId:sts.profileId},'blocked');
+  await f.runtime.receive(message('/tts list'));
+  await f.runtime.receive(message('/sts list'));
+  assert.equal(f.sent.some(text=>text.includes('gpt-sovits/stale')),false);
+  assert.equal(f.sent.some(text=>text.includes('rvc/stale')),false);
+  assert.ok(f.sent.some(text=>text.includes('gpt-sovits/first')));
+  assert.ok(f.sent.some(text=>text.includes('rvc/first')));
+});

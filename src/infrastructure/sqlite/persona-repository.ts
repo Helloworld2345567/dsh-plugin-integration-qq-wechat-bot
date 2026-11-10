@@ -75,10 +75,8 @@ export class SqlitePersonaConfigRepository implements PersonaConfigRepository {
       return previous;
     };
     this.files.recover(value.id, this.findConfig(value.id));
-    const previous = check(), baseline = this.baseline(value.id);
-    if (fileDigest !== undefined) {
-      if (this.files.read(value.id).digest !== fileDigest) throw new ConflictError('人格文件在校验期间被修改，请重新应用');
-    } else if (this.files.hasFiles(value.id) && (!baseline || this.files.currentDigest(value.id) !== baseline.digest)) throw new ConflictError('人格文件有未应用修改，请先校验并应用文件，或恢复文件后再保存面板');
+    const previous = check();
+    if (fileDigest !== undefined && this.files.read(value.id).digest !== fileDigest) throw new ConflictError('人格文件在校验期间被修改，请重新应用');
     if (fileDigest !== undefined && previous && sameConfig(previous, value)) {
       this.database.transaction(() => {
         check();

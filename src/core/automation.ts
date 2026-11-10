@@ -193,7 +193,7 @@ export class AutomationScheduler {
       if(item.scope.platform==='qq')delete reply.msgId;
       const envelope=latest.replyEnvelope?{...latest.replyEnvelope,payload:reply}:undefined;
       const outputs=chunkOutputs(result.outputs);if(!outputs.length)throw Error('AUTOMATION_EMPTY_OUTPUT');
-      this.repos.deliveries.enqueue(binding,`automation:${run.id}`,`${item.kind}:${run.id}`,outputs,reply,envelope,undefined,result.snapshot);
+      this.repos.deliveries.enqueue(binding,`automation:${run.id}`,`${item.kind}:${run.id}`,outputs,reply,envelope);
       run.turnId=result.turnId;await this.services.flush();return this.finish(run,'succeeded');
     }catch(error){return this.finish(run,'failed',error instanceof Error?error.message:'AUTOMATION_FAILED');}
     finally{this.running.delete(item.id);}

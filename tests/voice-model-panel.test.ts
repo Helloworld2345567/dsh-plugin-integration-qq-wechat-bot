@@ -30,24 +30,24 @@ test('model application rejects incomplete profiles and the wrong service even i
   assert.throws(()=>useVoiceModel(persona(),'voice',profile('rvc')),/对应音色/);
 });
 
-test('native voice selector filters service types, applies choices, and disables unavailable models',async()=>{
+test('native voice selector filters service types and only offers ready models',async()=>{
   const profiles=[profile(),{...profile('rvc'),displayName:'胡桃'}, {...profile('gpt-sovits','blocked'),profileId:'incomplete',displayName:'待补全'}];let selected:any;
   const options={role:'voice' as const,config:persona(),profiles,busy:false,dirty:false,existing:true,apply:async(role:string,value:any)=>{selected={role,value};}};
   const ui=createUI(React,false,error=>{throw Error(error);});
   const tree=nodes(voiceModelPicker(React.createElement,ui,options));assert.ok(!JSON.stringify(tree).includes('胡桃'));
   const select=tree.find(node=>node.type==='select');assert.equal(select.props.disabled,false);select.props.onChange({target:{value:'gpt-sovits/klee'}});await new Promise(resolve=>setImmediate(resolve));assert.equal(selected.role,'voice');assert.equal(selected.value.profileId,'klee');
-  assert.equal(tree.find(node=>node.type==='option'&&node.props.value==='gpt-sovits/incomplete').props.disabled,true);
+  assert.equal(tree.some(node=>node.type==='option'&&node.props.value==='gpt-sovits/incomplete'),false);
   assert.equal(tree.find(node=>node.type==='option'&&node.props.value==='gpt-sovits/klee').children[0],'可莉 · v4');
   assert.equal(tree.some(node=>node.type==='button'),false);
   for(const patch of [{dirty:true},{existing:false}])assert.equal(nodes(voiceModelPicker(React.createElement,ui,{...options,...patch})).find(node=>node.type==='select').props.disabled,false);
   assert.equal(nodes(voiceModelPicker(React.createElement,ui,{...options,busy:true})).find(node=>node.type==='select').props.disabled,true);
 });
 
-test('native voice selector preserves missing selections and labels built-in voices and model variants',()=>{
+test('native voice selector hides missing selections and labels built-in voices and model variants',()=>{
   const ui=createUI(React,false,()=>{}),selectedProfile={...profile(),modelLabel:'可莉 · v4-zh'},config=useVoiceModel(persona(),'voice',selectedProfile);
   const render=(value:typeof config,profiles:PublicServiceProfile[])=>nodes(voiceModelPicker(React.createElement,ui,{role:'voice',config:value,profiles,busy:false,dirty:false,existing:true,apply:async()=>{throw Error('must not automatically apply');}}));
   const existing=render(config,[selectedProfile]);assert.equal(existing.find(node=>node.type==='option'&&node.props.value==='gpt-sovits/klee').children[0],'可莉 · v4-zh');
-  const missing=render(config,[]);assert.equal(missing.find(node=>node.type==='select').props.value,'gpt-sovits/klee');assert.equal(missing.find(node=>node.type==='option'&&node.props.value==='gpt-sovits/klee').children[0],'不可用');assert.equal(missing.find(node=>node.type==='option'&&node.props.value==='gpt-sovits/klee').props.disabled,true);
+  const missing=render(config,[]);assert.equal(missing.find(node=>node.type==='select').props.value,'');assert.equal(missing.some(node=>node.type==='option'&&node.props.value==='gpt-sovits/klee'),false);
   const builtIn=render(persona(),[selectedProfile]);assert.equal(builtIn.find(node=>node.type==='option'&&node.props.value==='').children[0],'内置语音');assert.equal(builtIn.find(node=>node.type==='select').props.disabled,false);
 });
 

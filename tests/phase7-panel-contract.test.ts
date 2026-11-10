@@ -15,13 +15,21 @@ const config=v4ConfigSchema.parse({schemaVersion:4,id:'panel',name:'Panel',revis
 const profiles:PublicServiceProfile[]=[
   {serviceId:'music',profileId:'blocked',revision:2,contentHash:'a'.repeat(64),state:'blocked',capabilities:['music.search','music.acquire'],displayName:'Managed Music',modelLabel:'Catalog A',updatedAt:1},
   {serviceId:'rvc',profileId:'missing',revision:3,contentHash:'b'.repeat(64),state:'missing',capabilities:['rvc.convert'],displayName:'Managed Voice',modelLabel:'Catalog B',updatedAt:1},
+  {serviceId:'music',profileId:'old',revision:1,contentHash:'e'.repeat(64),state:'missing',capabilities:['music.search','music.acquire'],displayName:'Old Music',modelLabel:'Catalog Old',updatedAt:1},
+  {serviceId:'rvc',profileId:'old',revision:1,contentHash:'f'.repeat(64),state:'blocked',capabilities:['rvc.convert'],displayName:'Old Voice',modelLabel:'Catalog Old',updatedAt:1},
+  {serviceId:'music',profileId:'ready',revision:1,contentHash:'c'.repeat(64),state:'ready',capabilities:['music.search','music.acquire'],displayName:'Ready Music',modelLabel:'Catalog Ready',updatedAt:1},
+  {serviceId:'rvc',profileId:'ready',revision:1,contentHash:'d'.repeat(64),state:'ready',capabilities:['rvc.convert'],displayName:'Ready Voice',modelLabel:'Catalog Ready',updatedAt:1},
 ];
 
-test('media cards keep unavailable selections without exposing internal status or verification controls',()=>{const ui=createUI(React,false,()=>{});
+test('media cards hide unavailable selections without exposing internal status or verification controls',()=>{const ui=createUI(React,false,()=>{});
   const music=nodes(musicCard(React.createElement,ui,config,profiles,()=>{}));
   const picker=voiceModelPicker(React.createElement,ui,{role:'singing',config,profiles,busy:false,dirty:false,existing:true,apply:async()=>{}});
   const singing=nodes(singingCard(React.createElement,ui,config,()=>{},picker));
-  for(const [rows,value,label] of [[music,'music/blocked','音乐来源'],[singing,'rvc/missing','唱歌']] as const){assert.ok(rows.some(node=>node.type==='label'&&node.children[0]===label));assert.equal(rows.find(node=>node.type==='option'&&node.props.value===value).props.disabled,true);assert.ok(!rows.some(node=>node.type==='label'&&/endpoint|地址|端口|path|路径|weight|权重|credential|凭据|locator/i.test(String(node.children[0]))));assert.ok(!rows.some(node=>node.type==='button'&&/检查|验收|测试/.test(String(node.children[0]))));}
+  for(const [rows,value,label] of [[music,'music/blocked','音乐来源'],[singing,'rvc/missing','唱歌']] as const){assert.ok(rows.some(node=>node.type==='label'&&node.children[0]===label));assert.equal(rows.some(node=>node.type==='option'&&node.props.value===value),false);assert.ok(!rows.some(node=>node.type==='label'&&/endpoint|地址|端口|path|路径|weight|权重|credential|凭据|locator/i.test(String(node.children[0]))));assert.ok(!rows.some(node=>node.type==='button'&&/检查|验收|测试/.test(String(node.children[0]))));}
+  assert.equal(music.find(node=>node.type==='option'&&node.props.value==='music/ready').props.disabled,false);
+  assert.equal(singing.find(node=>node.type==='option'&&node.props.value==='rvc/ready').props.disabled,false);
+  assert.equal(music.some(node=>node.type==='option'&&node.props.value==='music/old'),false);
+  assert.equal(singing.some(node=>node.type==='option'&&node.props.value==='rvc/old'),false);
   assert.ok(music.some(node=>node.props?.role==='switch'&&node.props['aria-label']==='下载时附带歌词'));
 });
 
