@@ -13,7 +13,7 @@ import type {} from '../src/index.js';
 import type {NativeHarness} from '../src/harness/bridge.js';
 import {scopeKey} from '../src/core/identity.js';
 import {freezeTurn} from '../src/core/policy.js';
-import {botSchema,type InboundMessage} from '../src/core/types.js';
+import {botSchema,type BotSettings,type InboundMessage} from '../src/core/types.js';
 import type {SessionActionRecord} from '../src/core/session-actions.js';
 export const inject=['botIntegration','llm','settings','credentials','sessionQuery','agents','agentPresets','tools','skills','systemPrompt','attachments','permissionPresets','sessions','sessionPersistence','storageDomain','workingDirectory'];
 export const name='bot-native-fixture';
@@ -24,6 +24,7 @@ export async function apply(ctx:Context){
   const home=repos.storage.home,personas=repos.personas,sessions=repos.sessions,bots=repos.bots,inbox=repos.inbox,
     memory=repos.memory,deliveries=repos.deliveries,assets=repos.media.assets,actions=repos.telemetry.actions,
     failures=repos.telemetry.failures,statsSessions=repos.statsSessions,historyLocations=repos.historyLocations;
+  const updateSettings=(patch:Partial<BotSettings>)=>{const bot=bots.bot('fixture');return runtime.saveBot({...bot,settings:{...bot.settings!,...patch}});};
   const progressRequests:GenerateOptions[]=[];let progressFails=false;
   const requests:GenerateOptions[]=[];let phase=0;let compactions=0;let finalText="FINAL_ONLY";let mediaCall:{name:string;args:Record<string,unknown>}|undefined;let beforeTool:(()=>Promise<void>)|undefined;let beforeFinal:((options:GenerateOptions)=>void|Promise<void>)|undefined;
   class Fixture extends LlmAdapter{
@@ -37,7 +38,7 @@ export async function apply(ctx:Context){
       if(mediaCall){const call=mediaCall;mediaCall=undefined;const update=beforeTool;beforeTool=undefined;await update?.();yield{type:'block-start',index:0,blockType:'tool-call'};yield{type:'block-end',index:0,block:{type:'tool-call',id:ToolCallId('media-'+requests.length),name:call.name,arguments:JSON.stringify(call.args)}};yield{type:'finish',reason:{kind:'tool-calls'}};return;}
       if(phase++===0){
         // Change the binding during a multi-step turn. The second step must keep its original model/persona.
-        runtime.saveBot({...bots.bot('fixture'),configId:'sakura'});
+        const bot=bots.bot('fixture');runtime.saveBot({...bot,configId:'sakura',settings:{...bot.settings!,model:{provider:'bot-fixture',model:'second'}}});
         await writeFile(path.join(personas.personaDirectory('sakura'),'persona.md'),'PERSONA_B_FILE');
         await runtime.applyPersonaFiles('sakura');
         const args={key:'drink',value:'绿茶',sourceId:'first',quote:'我喜欢绿茶'};
@@ -124,7 +125,7 @@ export async function apply(ctx:Context){
     const delivered=await ctx.tools.execute({name:'bot_send_file',arguments:{path:'workspace-proof.txt'},callId:ToolCallId('workspace-file'),agent,signal:AbortSignal.timeout(5000)});assert.equal(delivered.isError,false,JSON.stringify(delivered));
     const child=await ctx.agents.create({sessionId:('child-'+binding.sessionId) as any,parentAgent:agent,agentOptions:{provider:'bot-fixture',model:'second'}});
     assert.equal(ctx.workingDirectory.get(child.agent.session),await realpath(customCwd));
-    runtime.saveBot({...bots.bot('fixture'),configId:'default'});await bridge.run(binding,[msg('switch-back','父轮切回默认')],AbortSignal.timeout(30000));
+    runtime.saveBot({...bots.bot('fixture'),configId:'default'});updateSettings({model:{provider:'bot-fixture',model:'first'}});await bridge.run(binding,[msg('switch-back','父轮切回默认')],AbortSignal.timeout(30000));
     child.agent.followup({id:MessageId('child-input'),role:'user',content:[{type:'text',text:'子任务沿用创建时的配置'}],source:{kind:'user'}});await child.agent.whenIdle();
     const childRequest=requests.find(r=>r.sessionId===child.agent.id)!;assert.equal(childRequest?.model,'second');assert.ok(JSON.stringify(childRequest.messages).includes('PERSONA_B'));
     let childCancelled=false;const cancelChild=child.agent.cancel.bind(child.agent);child.agent.cancel=(cause)=>{childCancelled=true;return cancelChild(cause);};
@@ -217,43 +218,47 @@ export async function apply(ctx:Context){
       await imageReady;const parallel=await ctx.tools.execute({name:'image_generation',arguments:{operation:'edit',prompt:'Must not run concurrently',inputs:[asset.id]},callId:ToolCallId('parallel-image'),agent:parent,signal:AbortSignal.timeout(5000)});finishImage();assert.equal(parallel.isError,true);assert.equal(imageCalls,3);
       const recovered=await recoveredPromise;assert.equal(recovered.isError,false,JSON.stringify(recovered));assert.equal(imageCalls,3);assert.deepEqual(bridge.live.get(binding.sessionId)!.assets,[{type:'asset',assetId:asset.id}]);
       const duplicate=await ctx.tools.execute({name:'bot_media',arguments:{operation:'image_generate',prompt:'duplicate'},callId:ToolCallId('duplicate-image'),agent:parent,signal:AbortSignal.timeout(5000)});assert.equal(duplicate.isError,true);assert.equal(imageCalls,3);
-      const c=personas.config('default');await runtime.saveConfig({...c,media:{image:{enabled:false}}},c.revision);
+      const settings=bots.bot('fixture').settings!;updateSettings({media:{...settings.media,image:{enabled:false}}});
       const disabled=await ctx.tools.execute({name:'image_generation',arguments:{prompt:'disabled'},callId:ToolCallId('disabled-image'),agent:parent,signal:AbortSignal.timeout(5000)});assert.equal(disabled.isError,true);assert.equal(imageCalls,3);
     }finally{finishImage();runtime.media.run=mediaRun;}
     const audio=await runtime.assets.save(binding.key,{kind:'audio',name:'voice.wav',mime:'audio/wav'},Buffer.from('fixture'));
     let analysisCalls=0;runtime.media.run=async(_scope,operation,config,inputs)=>{assert.equal(operation,'transcribe');assert.deepEqual(inputs,[audio.id]);assert.equal(config.model?.model,'first');analysisCalls++;return{text:'SCRIPT_TRANSCRIPT',coverage:'AUDIO_MODEL_ANALYSIS',assetIds:[]};};
     try{
       mediaCall={name:'media_analysis',args:{kind:'audio',question:'转写'}};await bridge.run(binding,[msg('analysis','分析最近语音')],AbortSignal.timeout(30000));assert.equal(analysisCalls,1);assert.ok(JSON.stringify(requests.at(-1)!.messages).includes('SCRIPT_TRANSCRIPT'));
+      const settings=bots.bot('fixture').settings!;
       const {personaPrompt,...draft}=personas.config('default');await writeFile(path.join(personas.personaDirectory('default'),'config.json'),JSON.stringify({...draft,skills:['image-generation']}));await runtime.applyPersonaFiles('default');
+      assert.deepEqual(bots.bot('fixture').settings,settings,'applying persona files must preserve the independent bot settings');updateSettings({skills:['image-generation']});
       for(const call of [{name:'media_analysis',arguments:{kind:'audio',inputs:[audio.id]}},{name:'media_transform',arguments:{operation:'image_convert',inputs:[asset.id]}},{name:'bot_media',arguments:{operation:'transcribe',inputs:[audio.id]}},{name:'skill',arguments:{name:'media-analysis'}}]){const denied=await ctx.tools.execute({...call,callId:ToolCallId('revoked-'+call.name),agent:bridge.live.get(binding.sessionId)!.handle.agent,signal:AbortSignal.timeout(5000)});assert.equal(denied.isError,true);}assert.equal(analysisCalls,1);
     }finally{runtime.media.run=mediaRun;}
     const webChecks:string[]=[];
     if(process.env.BOT_TEST_WEB_TOOLS_SOURCE){
-      const c=personas.config('default');await runtime.saveConfig({...c,tools:[...c.tools,'web_search','web_fetch']},c.revision);
+      const settings=bots.bot('fixture').settings!;updateSettings({tools:[...settings.tools,'web_search','web_fetch']});
       mediaCall={name:'web_fetch',args:{url:'https://example.com/'}};
       await bridge.run(binding,[msg('web-page','读取公开测试页面')],AbortSignal.timeout(45000));
       const parent=bridge.live.get(binding.sessionId)!.handle.agent;const schemas=ctx.tools.schemas(parent).map(t=>t.name);assert.ok(schemas.includes('web_fetch'));assert.ok(schemas.includes('web_search'));assert.ok(!schemas.includes('pwsh'));assert.equal(ctx.permissionPresets.current(parent.session),'read-only');
       const page=requests.at(-1)!.messages.filter(m=>m.role==='tool'&&m.toolCallId?.startsWith('media-')).at(-1)!;assert.ok(page.role==='tool');assert.equal(page.isError,false,JSON.stringify(page));assert.ok(JSON.stringify(page.content).includes('Example Domain'));
       const search=await ctx.tools.execute({name:'web_search',arguments:{queries:['DeepSeek Harness official']},callId:ToolCallId('missing-search-key'),agent:parent,signal:AbortSignal.timeout(10000)});assert.equal(search.isError,true,'without search credentials this must not claim search success');
-      const current=personas.config('default');await runtime.saveConfig({...current,tools:current.tools.filter(t=>!['web_search','web_fetch'].includes(t))},current.revision);
+      updateSettings({tools:bots.bot('fixture').settings!.tools.filter(t=>!['web_search','web_fetch'].includes(t))});
       const revoked=await ctx.tools.execute({name:'web_fetch',arguments:{url:'https://example.com/'},callId:ToolCallId('revoked-web'),agent:parent,signal:AbortSignal.timeout(5000)});assert.equal(revoked.isError,true);
       webChecks.push('installed dsh-web-tools exposes native web tools to ordinary bot session','actual public page fetch returns Example Domain without host access','missing search key remains explicit error','web permission revocation denies later calls');
     }
     const featureChecks:string[]=[];
     runtime.saveBot({...bots.bot('fixture'),trustedUsers:['alice']});
     await runtime.switchPersona(scope,'sakura');await bridge.run(sessions.binding(scope),[msg('session-persona','仅本会话人格覆盖')],AbortSignal.timeout(30000));
-    assert.equal(bots.bot('fixture').configId,'default');assert.equal(requests.at(-1)!.model,'second');assert.equal(bridge.live.get(binding.sessionId)!.snapshot.config.id,'sakura');
-    await runtime.setModel(scope,{provider:'bot-fixture',model:'first'});await bridge.run(sessions.binding(scope),[msg('session-model','仅本会话模型覆盖')],AbortSignal.timeout(30000));assert.equal(requests.at(-1)!.model,'first');
-    const newBinding=await runtime.newSession(scope);assert.notEqual(newBinding.sessionId,binding.sessionId);assert.equal(newBinding.personaId,'sakura');assert.equal(newBinding.modelOverride?.model,'first');
-    await bridge.run(newBinding,[msg('override-new','新会话保留覆盖配置')],AbortSignal.timeout(30000));assert.equal(requests.at(-1)!.model,'first');assert.ok(!JSON.stringify(requests.at(-1)!.messages).includes('[sourceId=session-model]'));
-    await runtime.setModel(scope,null);await bridge.run(sessions.binding(scope),[msg('model-reset','恢复人格模型')],AbortSignal.timeout(30000));assert.equal(requests.at(-1)!.model,'second');
-    featureChecks.push('per-session persona and model overrides preserve bot defaults','new native session retains persona/model overrides and resets turn history','model reset uses persona model');
+    assert.equal(bots.bot('fixture').configId,'default');assert.equal(requests.at(-1)!.model,'first');assert.equal(bridge.live.get(binding.sessionId)!.snapshot.config.id,'sakura');
+    await runtime.setModel(scope,{provider:'bot-fixture',model:'second'});await bridge.run(sessions.binding(scope),[msg('session-model','仅本会话模型覆盖')],AbortSignal.timeout(30000));assert.equal(requests.at(-1)!.model,'second');
+    const newBinding=await runtime.newSession(scope);assert.notEqual(newBinding.sessionId,binding.sessionId);assert.equal(newBinding.personaId,'sakura');assert.equal(newBinding.modelOverride?.model,'second');
+    await bridge.run(newBinding,[msg('override-new','新会话保留覆盖配置')],AbortSignal.timeout(30000));assert.equal(requests.at(-1)!.model,'second');assert.ok(!JSON.stringify(requests.at(-1)!.messages).includes('[sourceId=session-model]'));
+    await runtime.setModel(scope,null);await bridge.run(sessions.binding(scope),[msg('model-reset','恢复机器人默认模型')],AbortSignal.timeout(30000));assert.equal(requests.at(-1)!.model,'first');assert.equal(personas.config('sakura').model?.model,'second');
+    featureChecks.push('per-session persona changes preserve the independent bot model','new native session retains persona/model overrides and resets turn history','model reset uses the bot default instead of the persona model');
+    updateSettings({model:{provider:'bot-fixture',model:'second'}});
 
     const active=bridge.live.get(newBinding.sessionId)!.handle.agent;const compactBefore=compactions;
     const compactResult=await runtime.compactSession(scope);assert.equal(typeof compactResult,'string');assert.equal(compactions,compactBefore+1,'manual compact must call native compaction exactly once');assert.ok(active.session.snapshotEvents().some(e=>e.type==='compaction/end'));
     featureChecks.push('manual compact dispatches native Harness command and persists summary');
     const dynamicName='native-proof';const skillFiles=(version:string)=>[{path:'SKILL.md',content:`---\nname: ${dynamicName}\ndescription: Native fixture skill\n---\nRead scripts/proof.py from the returned resourceBase.\n${version}\n`},{path:'scripts/proof.py',content:"import os\nfrom pathlib import Path\nimport helper\nprint(helper.PROOF)\nprint('BYTECODE_ENV=' + os.environ.get('PYTHONDONTWRITEBYTECODE', 'unset'))\nPath(helper.PROOF + '.txt').write_text(helper.PROOF, encoding='utf-8')\n"},{path:'scripts/helper.py',content:`PROOF = '${version}'\n`}];
-    const currentSkill=personas.config('sakura');const v1=await runtime.saveConfig(bridge.skillFiles.stageFiles(currentSkill,dynamicName,skillFiles('DYNAMIC_V1')),currentSkill.revision);
+    const publishSkill=async(version:string)=>{const current=personas.config('sakura'),published=await runtime.saveConfig(bridge.skillFiles.stageFiles(current,dynamicName,skillFiles(version)),current.revision),settings=bots.bot('fixture').settings!;updateSettings({skills:[...new Set([...settings.skills,dynamicName])],skillVersions:{...settings.skillVersions,[dynamicName]:published.skillVersions[dynamicName]}});return published;};
+    const v1=await publishSkill('DYNAMIC_V1');
     await bridge.run(sessions.binding(scope),[msg('skill-v1','使用新技能')],AbortSignal.timeout(30000));
     const readSkill=async(target:typeof active,tag:string)=>ctx.tools.execute({name:'skill',arguments:{name:dynamicName},callId:ToolCallId(tag),agent:target,signal:AbortSignal.timeout(5000)});
     const firstSkill=await readSkill(active,'dynamic-v1');assert.equal(firstSkill.isError,false,JSON.stringify(firstSkill));assert.ok(JSON.stringify(firstSkill).includes('DYNAMIC_V1'));assert.ok(JSON.stringify(firstSkill).includes(v1.skillVersions[dynamicName]));
@@ -267,7 +272,7 @@ export async function apply(ctx:Context){
     mediaCall={name:'pwsh',args:{command:pythonCommand}};frozenChild.agent.followup({id:MessageId('dynamic-child-python-input'),role:'user',content:[{type:'text',text:'在当前工作目录运行固定版本技能脚本，验证同目录 helper 导入'}],source:{kind:'user'}});await frozenChild.agent.whenIdle();
     const childPythonTool=requests.filter(r=>r.sessionId===frozenChild.agent.id).at(-1)!.messages.filter(m=>m.role==='tool').at(-1)!;assert.equal(childPythonTool.role,'tool');assert.equal(childPythonTool.isError,false,JSON.stringify(childPythonTool));assert.ok(JSON.stringify(childPythonTool).includes('BYTECODE_ENV=1'));assert.ok(JSON.stringify(childPythonTool).includes('DYNAMIC_V1'));
     assert.deepEqual((await readdir(path.join(v1Resources,'scripts'))).sort(),['helper.py','proof.py']);assert.doesNotThrow(()=>bridge.skillFiles.snapshot(v1));
-    beforeTool=async()=>{const current=personas.config('sakura');await runtime.saveConfig(bridge.skillFiles.stageFiles(current,dynamicName,skillFiles('DYNAMIC_V2')),current.revision);};mediaCall={name:'skill',args:{name:dynamicName}};
+    beforeTool=async()=>{await publishSkill('DYNAMIC_V2');};mediaCall={name:'skill',args:{name:dynamicName}};
     await bridge.run(sessions.binding(scope),[msg('publish-v2-inflight','本轮内发布下一版技能')],AbortSignal.timeout(30000));
     const toolMessage=requests.at(-1)!.messages.filter(m=>m.role==='tool').at(-1)!;assert.ok(JSON.stringify(toolMessage).includes('DYNAMIC_V1'),'in-flight skill read must keep V1');assert.ok(!JSON.stringify(toolMessage).includes('DYNAMIC_V2'));
     await bridge.run(sessions.binding(scope),[msg('skill-v2','下一轮技能刷新')],AbortSignal.timeout(30000));const secondSkill=await readSkill(active,'dynamic-v2');assert.equal(secondSkill.isError,false);assert.ok(JSON.stringify(secondSkill).includes('DYNAMIC_V2'));assert.ok(!JSON.stringify(secondSkill).includes('DYNAMIC_V1'));
@@ -277,7 +282,7 @@ export async function apply(ctx:Context){
     const privileged=ctx.tools.schemas(active).map(t=>t.name);assert.ok(privileged.includes('bot_stats'));assert.ok(privileged.includes('bot_evolve'));
     const stats=await ctx.tools.execute({name:'bot_stats',arguments:{range:'all'},callId:ToolCallId('trusted-stats'),agent:active,signal:AbortSignal.timeout(5000)});assert.equal(stats.isError,false,JSON.stringify(stats));const totals=bridge.extensions.stats!.query({range:'all'});assert.ok(totals.summary.calls>0);assert.ok(totals.summary.knownTokens>0);assert.ok(totals.models.some(m=>m.kind==='compaction'&&m.calls>0));assert.ok(totals.models.some(m=>m.kind==='subagent'&&m.calls>0));
     const evo=await ctx.tools.execute({name:'bot_evolve',arguments:{action:'status'},callId:ToolCallId('trusted-evolve'),agent:active,signal:AbortSignal.timeout(5000)});assert.equal(evo.isError,false,JSON.stringify(evo));
-    const noHostConfig=personas.config('sakura');await runtime.saveConfig({...noHostConfig,allowHostTools:false},noHostConfig.revision);
+    updateSettings({allowHostTools:false});
     await bridge.run(sessions.binding(scope),[msg('model-without-host','查看会话模型管理能力')],AbortSignal.timeout(30000));const noHostTools=ctx.tools.schemas(active).map(t=>t.name);assert.ok(noHostTools.includes('bot_model'),'trusted model management remains available without host tool permission');assert.ok(!noHostTools.includes('pwsh'));assert.ok(!noHostTools.includes('bot_evolve'));
     const listedModels=await ctx.tools.execute({name:'bot_model',arguments:{action:'list'},callId:ToolCallId('trusted-model-list'),agent:active,signal:AbortSignal.timeout(5000)});assert.equal(listedModels.isError,false,JSON.stringify(listedModels));assert.ok(JSON.stringify(listedModels).includes('bot-fixture'));
     const modelFrozenChild=await ctx.agents.create({sessionId:('model-'+newBinding.sessionId) as any,parentAgent:active,agentOptions:{provider:'bot-fixture',model:'second'}});
@@ -307,7 +312,7 @@ export async function apply(ctx:Context){
     const switchTool=switchRequests.at(-1)!.messages.filter(m=>m.role==='tool').at(-1)!;assert.equal(switchTool.role,'tool');assert.equal(switchTool.isError,false,JSON.stringify(switchTool));const switchResult=JSON.parse(switchTool.content.filter(b=>b.type==='text').map(b=>b.text).join(''));assert.equal(switchResult.effective,'next_turn');assert.equal(switchResult.currentTurnModel.model,'second');assert.equal(switchResult.nextTurnModel.model,'first');assert.equal(personas.config('sakura').model?.model,'second');
     await bridge.run(sessions.binding(scope),[msg('model-next-turn','现在用切换后的模型继续')],AbortSignal.timeout(30000));assert.equal(requests.at(-1)!.model,'first');
     modelFrozenChild.agent.followup({id:MessageId('frozen-model-child'),role:'user',content:[{type:'text',text:'父会话切换模型后子任务保持自己的冻结模型'}],source:{kind:'user'}});await modelFrozenChild.agent.whenIdle();assert.equal(requests.filter(r=>r.sessionId===modelFrozenChild.agent.id).at(-1)!.model,'second');await modelFrozenChild.dispose();
-    const reenableHost=personas.config('sakura');await runtime.saveConfig({...reenableHost,allowHostTools:true},reenableHost.revision);await bridge.run(sessions.binding(scope),[msg('reenable-host','重新启用本机工具后继续当前会话')],AbortSignal.timeout(30000));
+    updateSettings({allowHostTools:true});await bridge.run(sessions.binding(scope),[msg('reenable-host','重新启用本机工具后继续当前会话')],AbortSignal.timeout(30000));
     const reopenedShell=await ctx.tools.execute({name:'pwsh',arguments:{command:"Write-Output 'SHELL_AFTER_PERMISSION_REENABLE'"},callId:ToolCallId('reopened-shell'),agent:active,signal:AbortSignal.timeout(15000)});assert.equal(reopenedShell.isError,false,JSON.stringify(reopenedShell));assert.ok(JSON.stringify(reopenedShell).includes('SHELL_AFTER_PERMISSION_REENABLE'));assert.equal(ctx.permissionPresets.current(active.session),'danger-full-access');
     featureChecks.push('trusted bot_model schema and catalog remain available with host tools disabled','natural-language model tool returns next_turn and keeps the current native continuation on its old model','following native turn uses requested session model without changing shared persona or an existing child model','ordinary users can query basic native session and skills tools but cannot change shared skills','trusted persona and skill catalogs work without host permission and never expose resource paths','child agents can query management tools but every session/persona/skills/model mutation is rejected before queuing');
     const failedPhoto={...msg('fixture-failed-photo','请根据我上传的参考照片生成一张新图片'),timestamp:Date.now()-1000};inbox.accept(failedPhoto);inbox.mark(newBinding.key,[failedPhoto.id],'failed');failures.saveFailure(`native-photo-failure:${newBinding.sessionId}`,{sessionId:newBinding.sessionId,scope:newBinding.key,state:'failed',stage:'attachments',sourceIds:[failedPhoto.id],at:Date.now()-1000,code:'ATTACHMENT_DOWNLOAD_FAILED'});
