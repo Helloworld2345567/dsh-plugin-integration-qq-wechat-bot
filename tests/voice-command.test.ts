@@ -7,7 +7,7 @@ import {ProfileStore} from '../src/core/profile-store.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {BotRuntime,type HarnessPort} from '../src/core/runtime.js';
 import {createChannelRegistry} from '../src/core/channel-registry.js';
-import {botSchema,configSchema,type CallerScope,type InboundMessage,type ChannelAdapter} from '../src/core/types.js';
+import {botSchema,configSchema,botSettingsFromConfig,type CallerScope,type InboundMessage,type ChannelAdapter} from '../src/core/types.js';
 import {freezeTurn} from '../src/core/policy.js';
 import {managementCommand} from '../src/core/command-bus.js';
 
@@ -21,6 +21,7 @@ async function fixture(t:any){
   const previous=store.personas.config('default');
   const config=configSchema.parse({...previous,name:'Default',personaPrompt:'P',tools:['bot_voice','bot_sing'],skills:['voice-generation','singing-conversion'],media:{voice:{enabled:true,protocol:'edge_tts',voice:'zh-CN-XiaoxiaoNeural',replyMode:'on_demand',format:'mp3'},singing:{enabled:true,defaultOutput:'mp3'}}});
   store.personas.saveConfig(config,previous.revision);
+  store.bots.saveBot({...store.bots.bot('one'),settings:botSettingsFromConfig(config)});
   profiles.create({serviceId:'gpt-sovits',profileId:'first',state:'ready',capabilities:['gpt-sovits.speak'],displayName:'First voice',managedConfig:{baseUrl:'http://127.0.0.1:9880',modelVersion:'v4'}});
   profiles.create({serviceId:'rvc',profileId:'first',state:'ready',capabilities:['rvc.convert'],displayName:'Singer',managedConfig:{weights:'private.pth'}});
   const assets=new Assets(store.repositories()),media=new MediaService(store.repositories(),assets),sent:string[]=[];
@@ -55,7 +56,7 @@ test('voice commands enforce trusted private callers and enabled roles',async t=
   const f=await fixture(t);
   await f.runtime.receive(message('/tts set edge/en-US-AriaNeural',scope('alice','group')));
   assert.equal(f.store.sessions.binding(scope('alice','group')).ttsOverride,undefined);
-  const config=f.store.personas.config('default');f.store.personas.saveConfig({...config,media:{...config.media,voice:{...config.media.voice!,enabled:false}}},config.revision);
+  const bot=f.store.bots.bot('one'),settings=bot.settings!;f.runtime.saveBot({...bot,settings:{...settings,media:{...settings.media,voice:{...settings.media.voice!,enabled:false}}}});
   await f.runtime.receive(message('/tts set edge/en-US-AriaNeural'));
   assert.equal(f.store.sessions.binding(scope()).ttsOverride,undefined);
   assert.ok(f.sent.some(text=>text.includes('可信私聊')||text.includes('未启用 TTS')));

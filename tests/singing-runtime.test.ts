@@ -40,7 +40,7 @@ for(const text of ['普通语音','> 请帮我翻唱这段歌曲','网页内容�
   const f=await fixture(t);await f.receive(text);assert.deepEqual(f.calls,['transcribe']);assert.equal(f.seen[0].attachments[0].transcript,'ordinary speech');
 });
 test('revoking singing before upload restores ordinary ASR',async t=>{
-  const f=await fixture(t);saveSingingCandidates({bindings:f.store.sessions,singing:f.store.singingState},f.binding,[],true);const config=f.store.personas.config('sakura');f.store.personas.saveConfig({...config,tools:config.tools.filter(tool=>tool!=='bot_sing')},config.revision);
+  const f=await fixture(t);saveSingingCandidates({bindings:f.store.sessions,singing:f.store.singingState},f.binding,[],true);const bot=f.store.bots.bot('bot'),settings=bot.settings!;f.runtime.saveBot({...bot,settings:{...settings,tools:settings.tools.filter(tool=>tool!=='bot_sing')}});
   await f.receive('');assert.deepEqual(f.calls,['transcribe']);
 });
 test('stop clears a pending upload and session reset cannot reuse its candidates',async t=>{

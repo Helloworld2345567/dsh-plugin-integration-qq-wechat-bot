@@ -48,6 +48,14 @@ export class DynamicSkills {
   private draftRoot(configId:string):string {const root=path.join(this.personas.personaDirectory(configId),'skills');directory(root);return root;}
   private draft(configId:string,name:string):string {nameSchema.parse(name);segment(name);const root=this.draftRoot(configId);const collision=readdirSync(root).find(n=>n.toLowerCase()===name.toLowerCase()&&n!==name);if(collision)throw new Error('SKILL_CASE_COLLISION');const result=path.join(root,name);if(existsSync(result))directory(result);return result;}
   private releaseRoot(configId:string,name:string,version:string):string {this.personas.personaDirectory(configId);nameSchema.parse(name);if(!/^[a-f0-9]{64}$/.test(version))throw new Error('SKILL_VERSION_INVALID');const base=path.join(this.home,'skill-versions');directory(base);const owner=path.join(base,configId);directory(owner);const skill=path.join(owner,name);directory(skill);return path.join(skill,version);}
+  private publishedRoot(configId:string,name:string,version:string):string {
+    const root=this.releaseRoot(configId,name,version);if(existsSync(root))return root;
+    for(const persona of this.personas.configs()){
+      const owner=path.join(this.home,'skill-versions',persona.id),skill=path.join(owner,name),candidate=path.join(skill,version);
+      if(existsSync(candidate)){directory(owner);directory(skill);return candidate;}
+    }
+    return root;
+  }
   private stage(configId:string,name:string,tree:Tree):string {
     if(Object.hasOwn(packagedSkills,name))throw new Error('BUILTIN_SKILL_REQUIRES_CODE_UPDATE');
     const version=fingerprint(tree);const target=this.releaseRoot(configId,name,version);definition(name,tree,target,version);
@@ -58,7 +66,7 @@ export class DynamicSkills {
     const result:Record<string,FrozenSkill>={};
     for(const name of config.skills){nameSchema.parse(name);if(Object.hasOwn(packagedSkills,name)){
       const root=path.join(this.bundledRoot,name);const content=readFileSync(path.join(root,'SKILL.md'),'utf8');result[name]=Object.freeze({name,description:packagedSkills[name],content,path:path.join(root,'SKILL.md'),resourceBase:{kind:'directory' as const,path:root},version:createHash('sha256').update(content).digest('hex')});
-    }else{const version=config.skillVersions?.[name];if(!version)throw new Error(`SKILL_NOT_PUBLISHED: ${name}`);const root=this.releaseRoot(config.id,name,version);const tree=readTree(root);if(fingerprint(tree)!==version)throw new Error('SKILL_RELEASE_CHANGED');result[name]=definition(name,tree,root,version);}}
+    }else{const version=config.skillVersions?.[name];if(!version)throw new Error(`SKILL_NOT_PUBLISHED: ${name}`);const root=this.publishedRoot(config.id,name,version);const tree=readTree(root);if(fingerprint(tree)!==version)throw new Error('SKILL_RELEASE_CHANGED');result[name]=definition(name,tree,root,version);}}
     return Object.freeze(result);
   }
   list(config:BotConfig){return Object.values(this.snapshot(config)).map(({content,...skill})=>skill);}
@@ -81,7 +89,7 @@ export class DynamicSkills {
     return {...config,skills:[...new Set([...config.skills,name])],skillVersions:{...config.skillVersions,[name]:version}};
   }
   copy(config:BotConfig,newId:string):void {
-    for(const [name,version] of Object.entries(config.skillVersions??{}))this.stage(newId,name,readTree(this.releaseRoot(config.id,name,version)));
+    for(const [name,version] of Object.entries(config.skillVersions??{}))this.stage(newId,name,readTree(this.publishedRoot(config.id,name,version)));
   }
   draftFingerprint(configId:string):string {
     const trees:Tree=new Map();
@@ -97,7 +105,7 @@ export class DynamicSkills {
     for(const name of new Set([...Object.keys(before.skillVersions),...Object.keys(after.skillVersions)])){
       if(before.skillVersions[name]===after.skillVersions[name])continue;
       const folder=this.draft(after.id,name);if(existsSync(folder)&&fingerprint(readTree(folder))!==after.skillVersions[name])throw Error('SKILL_DRAFT_CONFLICT: 回退前请保留或处理手工修改');
-      const version=before.skillVersions[name];changes.push({name,folder,version,tree:version?readTree(this.releaseRoot(before.id,name,version)):undefined});
+      const version=before.skillVersions[name];changes.push({name,folder,version,tree:version?readTree(this.publishedRoot(before.id,name,version)):undefined});
     }
     const archive=path.join(this.home,'skill-draft-archives');directory(archive);
     try{

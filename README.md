@@ -6,9 +6,9 @@
 
 - QQ 官方渠道与微信 iLink 渠道
 - 多 bot、独立会话和会话级身份隔离
-- 人格、模型、工具和技能的版本化配置
+- 独立的人格与机器人模型、工具、技能配置
 - 图片生成、图片理解、自动语音识别、AI 语音回复和视频分析
-- 独立 RVC 音色转换（STS），将用户选定的纯人声转换为人格配置的目标音色
+- 独立 RVC 音色转换（STS），将用户选定的纯人声转换为机器人配置的目标音色
 - 通过独立 Music 环境搜索并下载歌曲，将当前会话的歌曲交给 RVC 音色转换
 - media-analysis 统一处理抖音/B站免登录链接解析、视频下载与分析、图集和网页原图下载
 - media_transform 并发处理图片格式/质量/尺寸，将完整视频分段并发转换为 10 MB 以下 GIF（最低 12 fps）
@@ -56,20 +56,22 @@
 
 ## 配置
 
-本机 RVC/GPT-SoVITS 模型可在机器人面板的“服务”栏设置目录并自动识别，然后在人格媒体页分别点击音色的“使用”。新增模型后在服务栏刷新即可登记，详见 [模型库配置与一键选择](docs/voice-model-library.md)。
+本机 RVC/GPT-SoVITS 模型可在机器人面板的“服务”栏设置目录并自动识别，然后在“机器人 → 媒体”中分别选择音色并保存。新增模型后在服务栏刷新即可登记，详见 [模型库配置与一键选择](docs/voice-model-library.md)。
 
 人格配置仅支持 `schemaVersion: 4`；V3 及更早版本不再读取、迁移或回退。服务模型路径由 Profile 私有配置管理。
 
 1. 在 Harness 模型设置中配置聊天模型和凭据。
-2. 在机器人面板创建或选择人格，设置模型、工具、技能和媒体能力。
-3. 创建 bot，绑定人格并完成对应渠道的授权。
+2. 在“人格”页创建或选择人格，填写名称与人设。
+3. 在“机器人”页创建 bot、绑定人格，配置模型、回复行为和媒体，并完成渠道授权。
 4. 启动 bot，随后即可在 QQ 或微信中使用。
 
-在人格“媒体 → 图片 → 配置”中可设置 HTTPS 服务地址和密钥环境变量名，密钥值仍由后台进程的环境变量提供。留空使用宿主环境默认配置；人格中的图片连接设置优先，由 V4 人格保存。图片模型可通过 `media.image.model` 覆盖，未设置时使用环境默认模型。语音、音乐和音色转换继续通过受管 Service Profile 配置。
+在机器人“媒体 → 图片”中可设置 HTTPS 服务地址和密钥环境变量名，密钥值仍由后台进程的环境变量提供。留空使用宿主环境默认配置；机器人中的图片连接设置优先，由 `bot.settings` 独立保存。图片模型可通过 `media.image.model` 覆盖，未设置时使用环境默认模型。语音、音乐和音色转换继续通过受管 Service Profile 配置。
 
 配置文件由 `config.json` 和 `persona.md` 组成，生效版本由 SQLite 保存。修改配置后从面板应用，变更在下一轮生效；当前轮继续使用已冻结的配置。
 
-可信私聊用户可使用人格允许的受控工具。权限在执行时再次检查，撤销后立即阻止后续调用。
+人格页只管理人设和文件；模型、回复行为、媒体与工具权限由每个机器人独立保存。升级时，现有机器人会从原人格配置复制一次运行设置，此后修改人格文件不会改动机器人设置。切换人格只更换人设，保留机器人设置及当前会话的模型、音色覆盖；同一人格可供不同设置的机器人共用。
+
+可信私聊用户可使用机器人允许的受控工具。权限在执行时再次检查，撤销后立即阻止后续调用。
 
 机器人 ID 支持 1～80 位英文字母、数字、下划线和连字符，可使用纯数字 ID。授权凭据按原始 ID 隔离保存在 Harness 凭据服务中；已有小写字母开头、只含小写字母、数字和连字符的 ID 继续使用原凭据。
 
@@ -83,11 +85,11 @@
 
 ## Edge TTS / GPT-SoVITS / Breeze TTS 语音回复
 
-在人格的“媒体 → 语音输出”中开启语音。Edge TTS 不需要 API key，输出 MP3。GPT-SoVITS 和 Breeze TTS 通过运营者登记的受管 Service Profile 接入：服务地址、模型权重、参考音频或 Breeze 保存音色 ID 位于 profile 私有配置，人格只保存 profile 选择、启用状态和回复模式。人格只接受 V4 配置，服务地址和本机路径通过受管 Profile 保存。参考文本须与 3～10 秒主参考音频的实际内容一致。
+在机器人的“媒体 → 语音 TTS”中开启语音。Edge TTS 不需要 API key，输出 MP3。GPT-SoVITS 和 Breeze TTS 通过运营者登记的受管 Service Profile 接入：服务地址、模型权重、参考音频或 Breeze 保存音色 ID 位于 profile 私有配置，机器人只保存 profile 选择、启用状态和回复模式。人格只接受 V4 配置，服务地址和本机路径通过受管 Profile 保存。参考文本须与 3～10 秒主参考音频的实际内容一致。
 
 “按需语音”通过现有 `bot_voice` 工具响应朗读请求；“文字加自动语音”会为聊天、定时任务和主动会话的最终正文追加音频，保留文字。本轮已尝试显式语音时不再次自动合成。自动朗读跳过代码块和裸链接，保留链接文字；正文过长或没有可读文字时保留文字，普通合成失败会提示并返回文字。
 
-可信私聊可用 `/tts` 和 `/sts` 临时切换当前会话的音色：先执行 `/tts list` 或 `/sts list`，再使用准确 ID 执行 `set`；`/tts reset`、`/sts reset` 恢复人格默认音色。TTS 支持 `edge/<voice>`、GPT-SoVITS 和 Breeze Profile，STS 支持 RVC Profile。切换从下一轮生效，不修改共享人格；人格未启用对应能力时不能通过命令开启。模型收到自然语言请求时使用 `bot_voice_control`，遵循相同的 list/set/reset 流程。
+可信私聊可用 `/tts` 和 `/sts` 临时切换当前会话的音色：先执行 `/tts list` 或 `/sts list`，再使用准确 ID 执行 `set`；`/tts reset`、`/sts reset` 恢复机器人默认音色。TTS 支持 `edge/<voice>`、GPT-SoVITS 和 Breeze Profile，STS 支持 RVC Profile。切换从下一轮生效，不修改机器人默认设置；机器人未启用对应能力时不能通过命令开启。模型收到自然语言请求时使用 `bot_voice_control`，遵循相同的 list/set/reset 流程。
 
 GPT-SoVITS 服务按队列依次执行加载 SoVITS、加载 GPT、设置参考音频和合成。每次都完整加载，不缓存当前角色，支持 v1、v2、v2Pro、v2ProPlus、v3、v4、v5dev、v5turbo 的配置；实际模型版本须与所填版本一致。输出为非流式 WAV；语速可调整，风格请求降级为普通朗读，`chant` 和显式 MP3 不受支持。内置语音使用 `edge_tts` 协议。
 Breeze TTS 使用 `breeze-tts-2-cpp` HTTP 服务，默认地址为本机 HTTP 8080 端口，服务栏中的 Breeze 设置可修改地址。刷新服务时读取 `/v1/voices`，只登记服务已保存的音色；请求使用 JSON `response_format=wav`，输出为 24 kHz 单声道 WAV。填写受信的 Breeze 项目目录后，服务栏的“启动 Breeze TTS”按钮可以执行固定的 `Start-Breeze.ps1` 并等待健康检查；插件不会在刷新或关闭时自动启动或停止 Breeze。中文和英文属于官方支持范围，日语输入仅作实验用途。Breeze 没有速度控制，传入速度时会保留文字结果并记录降级观察信息。
@@ -100,7 +102,7 @@ Breeze TTS 使用 `breeze-tts-2-cpp` HTTP 服务，默认地址为本机 HTTP 80
 
 ## RVC 音色转换（STS）
 
-RVC 音色转换通过运营者登记的受管 Service Profile 选择模型/角色。服务地址、`.pth` 权重和可选 `.index` 索引只保存在 profile 私有配置；人格只保存 profile 引用、启用状态和音高、输出格式等白名单业务偏好。支持 RVC v1/v2 的 F0 模型，无索引时检索比例为 `0`。启用能力会同时加入 `bot_sing` 工具和 `singing-conversion` 技能；缺失或 blocked 的 profile 会明确显示且不会静默换模型。
+RVC 音色转换通过运营者登记的受管 Service Profile 选择模型/角色。服务地址、`.pth` 权重和可选 `.index` 索引只保存在 profile 私有配置；机器人只保存 profile 引用、启用状态和音高、输出格式等白名单业务偏好。支持 RVC v1/v2 的 F0 模型，无索引时检索比例为 `0`。启用能力会同时加入 `bot_sing` 工具和 `singing-conversion` 技能；缺失或 blocked 的 profile 会明确显示且不会静默换模型。
 
 RVC 适配服务使用安装了 `rvc` 包的 Python 环境，复用 RVC 项目的 `VoiceConverter` 推理接口。服务与 GPT-SoVITS 分别运行，使用不同端口；可以共享已兼容的 Python 环境。安装 FFmpeg、HuBERT/ContentVec、RMVPE 和目标角色模型后，启动随插件提供的适配器：
 
@@ -123,9 +125,9 @@ QQ 图片、视频、音频和普通文件的投递硬上限均为 200 MiB。直
 
 ## 音乐搜索与下载
 
-音乐下载复用独立 Music 项目的 Python 环境，通过受管 JSON 子进程接口调用。运营者在 Music Service Profile 的私有 `home` 字段登记项目根目录；人格只保存 profile 引用、`enabled` 与 `includeLyrics`。本机路径、运行依赖和来源配置不随人格复制，也不提供给聊天模型。音乐目录和来源只读取所选 Profile 的 `home`、`sources`。
+音乐下载复用独立 Music 项目的 Python 环境，通过受管 JSON 子进程接口调用。运营者在 Music Service Profile 的私有 `home` 字段登记项目根目录；机器人只保存 profile 引用、`enabled` 与 `includeLyrics`。本机路径、运行依赖和来源配置不随人格复制，也不提供给聊天模型。音乐目录和来源只读取所选 Profile 的 `home`、`sources`。
 
-在人格“媒体 → 音乐搜索与下载”中开启能力，会同时加入 `bot_music` 工具和 `music-download` 技能；旧人格默认关闭。用户可以按歌名、歌手直接下载最高匹配的歌曲，也可先搜索再选择候选；当前会话歌曲可用于音色转换。歌词默认不附带，可在卡片中开启。
+在机器人“媒体 → 音乐搜索与下载”中开启能力，会同时加入 `bot_music` 工具和 `music-download` 技能；默认关闭。用户可以按歌名、歌手直接下载最高匹配的歌曲，也可先搜索再选择候选；当前会话歌曲可用于音色转换。歌词默认不附带，可在卡片中开启。
 
 受管 Music Profile 可声明来源顺序，支持 `MiguMusicClient`（咪咕）、`KuwoMusicClient`（酷我）、`QQMusicClient`（QQ 音乐）、`NeteaseMusicClient`（网易云音乐）；默认只使用已通过完整下载验证的来源，新增来源须先做真实搜索与完整下载验证。下载交付和按歌名翻唱均输出完整且严格小于 20 MB 的音频，合规 MP3 直接复用，其他格式按时长完整转码。面板“检查 health”只检查当前 Profile 是否可探测，实际下载验收单独记录并同时绑定人格 revision、Profile revision/content hash 与 operation。操作和验收细节见 [音乐接入说明](docs/music-integration.md)。
 

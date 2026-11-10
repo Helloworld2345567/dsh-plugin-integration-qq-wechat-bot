@@ -9,7 +9,7 @@ import {BotRuntime,type HarnessPort} from '../src/core/runtime.js';
 import {BotFeatures} from '../src/core/features.js';
 import {BotManagement,botSessionArgumentsSchema,botPersonaArgumentsSchema,botSkillsArgumentsSchema} from '../src/core/management.js';
 import {defineBotSessionTool,defineBotPersonaTool,defineBotSkillsTool} from '../src/harness/management-tools.js';
-import {botSchema,type CallerScope,type SessionBinding} from '../src/core/types.js';
+import {botSchema,botSettingsFromConfig,type CallerScope,type SessionBinding} from '../src/core/types.js';
 import {freezeTurn} from '../src/core/policy.js';
 import {defineBotScheduleTool,defineBotProactiveTool} from '../src/harness/automation-tools.js';
 import {seedAppliedConfig} from './sqlite-fixtures.js';
@@ -94,6 +94,7 @@ test('ordinary and group callers can query only their own session metadata and e
 test('trusted catalogs include disabled published skills and project only public metadata',async t=>{
   const f=await fixture(t);const before=f.store.personas.config('sakura');const staged=f.features.skills.stageFiles(before,'weather-helper',[{path:'SKILL.md',content:'---\nname: weather-helper\ndescription: Weather helper\n---\nUse the helper.'}]);
   f.store.personas.saveConfig({...staged,skills:['media-analysis']},before.revision);seedAppliedConfig(f.store,{...f.store.personas.config('sakura'),id:'hidden',name:'Hidden',archived:true},false);
+  f.store.bots.saveBot({...f.store.bots.bot('bot'),settings:botSettingsFromConfig({...staged,skills:['media-analysis']})});
   const skills:any=await f.management.skills(f.binding(),f.snapshot(),{action:'list'},signal());assert.deepEqual(new Set(skills.skills.map((s:any)=>s.name)),new Set(['image-generation','media-analysis','voice-generation','singing-conversion','music-download','weather-helper']));
   assert.equal(skills.skills.find((s:any)=>s.name==='weather-helper').enabled,false);assert.equal(skills.skills.find((s:any)=>s.name==='weather-helper').available,true);assert.equal(skills.skills.find((s:any)=>s.name==='image-generation').builtin,true);
   const persona:any=await f.management.persona(f.binding(),f.snapshot(),{action:'list'},signal());assert.ok(!persona.personas.some((p:any)=>p.id==='hidden'));assert.equal(persona.currentPersonaId,'sakura');

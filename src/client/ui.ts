@@ -9,7 +9,7 @@ export const list=(value:unknown):string[]=>Array.isArray(value)?value:[];
 export function createUI(React:any,busy:boolean,onError:(message:string)=>void){
   const h=React.createElement;
   const run=(action:()=>unknown)=>{Promise.resolve().then(action).catch((error:Error)=>onError(error.message));};
-  const button=(label:string,action:()=>unknown,props:any={})=>h('button',{type:'button',disabled:busy,onClick:()=>run(action),...props},label);
+  const button=(label:string|any[],action:()=>unknown,props:any={})=>h('button',{type:'button',disabled:busy,onClick:()=>run(action),...props},label);
   const toggle=(label:string,checked:boolean,action:()=>unknown,props:any={})=>h('div',{className:'toggle-row'},
     h('span',null,label),h('button',{type:'button',role:'switch','aria-label':label,'aria-checked':checked,
       className:'toggle',disabled:busy,onClick:()=>run(action),...props},h('span',{className:'toggle-thumb','aria-hidden':true})));

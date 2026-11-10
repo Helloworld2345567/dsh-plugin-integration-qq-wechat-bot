@@ -32,10 +32,11 @@ test('commands preserve argument case, escape slashes, never send unknown comman
 });
 test('session persona and model overrides keep history, preserve case and never alter another channel',async t=>{
   const f=await fixture(t);f.store.personas.saveConfig(configSchema.parse({id:'SakuraCase',name:'Case',personaPrompt:'P',model:{provider:'P',model:'Base'}}));
+  const bot=f.store.bots.bot('one');f.runtime.saveBot({...bot,settings:{...bot.settings!,model:{provider:'P',model:'BotBase'}}});
   const id=f.store.sessions.binding(scope()).sessionId;await f.runtime.receive(input('/MODEL ProviderA ModelCase'));assert.deepEqual(f.runtime.effectiveConfig(f.store.sessions.binding(scope())).model,{provider:'ProviderA',model:'ModelCase'});
-  await f.runtime.receive(input('/PERSONA SakuraCase'));assert.equal(f.store.sessions.binding(scope()).sessionId,id);assert.equal(f.store.sessions.binding(scope()).modelOverride,undefined);assert.equal(f.runtime.effectiveConfig(f.store.sessions.binding(scope())).id,'SakuraCase');assert.equal(f.runtime.effectiveConfig(f.store.sessions.binding(scope('bob'))).id,'default');
-  await f.runtime.receive(input('/model ProviderA Other'));await f.runtime.receive(input('/model reset'));assert.equal(f.runtime.effectiveConfig(f.store.sessions.binding(scope())).model?.model,'Base');
-  await f.runtime.receive(input('/model ProviderA bad'));assert.equal(f.runtime.effectiveConfig(f.store.sessions.binding(scope())).model?.model,'Base');assert.match(f.sent.at(-1)!,/BAD_MODEL/);
+  await f.runtime.receive(input('/PERSONA SakuraCase'));assert.equal(f.store.sessions.binding(scope()).sessionId,id);assert.deepEqual(f.store.sessions.binding(scope()).modelOverride,{provider:'ProviderA',model:'ModelCase'});assert.equal(f.runtime.effectiveConfig(f.store.sessions.binding(scope())).id,'SakuraCase');assert.equal(f.runtime.effectiveConfig(f.store.sessions.binding(scope('bob'))).id,'default');
+  await f.runtime.receive(input('/model ProviderA Other'));await f.runtime.receive(input('/model reset'));assert.equal(f.runtime.effectiveConfig(f.store.sessions.binding(scope())).model?.model,'BotBase');
+  await f.runtime.receive(input('/model ProviderA bad'));assert.equal(f.runtime.effectiveConfig(f.store.sessions.binding(scope())).model?.model,'BotBase');assert.match(f.sent.at(-1)!,/BAD_MODEL/);
 });
 test('new keeps model/persona and stable memories, cancels deferred input and clears recent index boundary',async t=>{
   const f=await fixture(t);await f.runtime.switchPersona(scope(),'sakura');await f.runtime.setModel(scope(),{provider:'P',model:'M'});const before=f.store.sessions.binding(scope());
@@ -55,7 +56,7 @@ test('trusted private restriction covers global statistics, persona/model and se
   for(const user of [scope('bob'),scope('alice','group')])for(const text of ['/stats','/persona sakura','/model P M','/reload','/restart','/evolve add skill'])await f.runtime.receive(input(text,user));
   assert.equal(stats,0);assert.equal(evolves,0);assert.ok(f.sent.every(s=>s.includes('可信私聊')));
   await f.runtime.receive(input('/stats 7d'));assert.equal(stats,1);assert.equal(f.sent.at(-1),'global');
-  const config=f.store.personas.config('default');f.store.personas.saveConfig({...config,allowHostTools:false},config.revision);await f.runtime.receive(input('/evolve add skill'));assert.equal(evolves,0);assert.match(f.sent.at(-1)!,/本机工具/);
+  const bot=f.store.bots.bot('one');f.runtime.saveBot({...bot,settings:{...bot.settings!,allowHostTools:false}});await f.runtime.receive(input('/evolve add skill'));assert.equal(evolves,0);assert.match(f.sent.at(-1)!,/本机工具/);
 });
 test('compact returns receive immediately, is cancellable through stop and refuses a busy turn',async t=>{
   const began=gate();let aborted=false;const f=await fixture(t,{compact:async(_b,signal)=>{began.resolve();await new Promise<void>(resolve=>signal.addEventListener('abort',()=>{aborted=true;resolve();},{once:true}));return'compressed';}});
@@ -64,7 +65,7 @@ test('compact returns receive immediately, is cancellable through stop and refus
 });
 test('serial control operations preserve order during validation and duplicate command has one effect',async t=>{
   const validation=gate(),entered=gate();const f=await fixture(t,{validateModel:async c=>{if(c.model?.model==='Slow'){entered.resolve();await validation.promise;}}});
-  const first=f.runtime.receive(input('/model P Slow'));await entered.promise;const second=f.runtime.receive(input('/persona sakura'));validation.resolve();await Promise.all([first,second]);assert.equal(f.store.sessions.binding(scope()).personaId,'sakura');assert.equal(f.store.sessions.binding(scope()).modelOverride,undefined);
+  const first=f.runtime.receive(input('/model P Slow'));await entered.promise;const second=f.runtime.receive(input('/persona sakura'));validation.resolve();await Promise.all([first,second]);assert.equal(f.store.sessions.binding(scope()).personaId,'sakura');assert.deepEqual(f.store.sessions.binding(scope()).modelOverride,{provider:'P',model:'Slow'});
   const command=input('/new');await Promise.all([f.runtime.receive(command),f.runtime.receive(command)]);assert.equal(f.store.sessions.sessions(scope()).length,2);
 });
 test('revoking trust during model validation prevents the pending configuration write',async t=>{

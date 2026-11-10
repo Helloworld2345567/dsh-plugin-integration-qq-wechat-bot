@@ -10,7 +10,7 @@ import {RvcCliServiceAdapter} from '../src/core/rvc-cli-adapter.js';
 import {ServiceManagement} from '../src/core/service-management.js';
 import {Admin} from '../src/harness/admin.js';
 import {adminCommandRequestSchema,adminQueryRequestSchema} from '../src/harness/admin-contract.js';
-import {configSchema} from '../src/core/types.js';
+import {configSchema,botSettingsFromConfig} from '../src/core/types.js';
 
 const resources=[
   '.codex/venv/'+(process.platform==='win32'?'Scripts/python.exe':'bin/python'),'scripts/model_catalog.py',
@@ -115,16 +115,21 @@ test('admin settings and refresh use versioned operator interfaces and share a f
 test('applying a newly selected voice profile rechecks its current availability without blocking unrelated edits',async t=>{
   const f=await fixture(t);await f.save();
   const management=new ServiceManagement({personas:f.store.personas,capabilities:f.store.capability,health:f.store.capability},f.profiles,{} as any,{models:async()=>[]}),original=f.store.personas.config('default'),selected=configSchema.parse({...original,media:{...original.media,voice:{enabled:true,profileRef:{serviceId:'gpt-sovits',profileId:'voice-v4-zh'},format:'wav'}}});
-  const admin=new Admin({} as any,{repos:f.store.repositories(),saveConfig:(config:unknown,expectedRevision:number)=>f.store.personas.saveConfig(config,expectedRevision)} as any,'token',undefined,undefined,management);
+  const bot=f.store.bots.saveBot({id:'bot',name:'Bot',channel:'qq',enabled:true});
+  const admin=new Admin({} as any,{repos:f.store.repositories(),saveConfig:(config:unknown,expectedRevision:number)=>f.store.personas.saveConfig(config,expectedRevision),saveBot:(value:unknown)=>f.store.bots.saveBot(value),stop:async()=>{},harness:{validateModel:async()=>{}}} as any,'token',undefined,undefined,management);
   f.profiles.transition({serviceId:'gpt-sovits',profileId:'voice-v4-zh'},'blocked');
-  await assert.rejects(admin.invoke('config.save',{config:selected,expectedRevision:original.revision}),/模型不可用/);assert.equal(f.store.personas.config('default').revision,original.revision);
+  await assert.rejects(admin.invoke('bot.save',{...bot,settings:botSettingsFromConfig(selected)}),/模型不可用/);assert.deepEqual(f.store.bots.bot('bot'),bot);
   const blocked=f.profiles.require({serviceId:'gpt-sovits',profileId:'voice-v4-zh'});f.profiles.create({...blocked,state:'ready'});
-  const applied:any=await admin.invoke('config.save',{config:selected,expectedRevision:original.revision});
+  const applied:any=await admin.invoke('bot.save',{...bot,settings:botSettingsFromConfig(selected)});
   f.profiles.transition({serviceId:'gpt-sovits',profileId:'voice-v4-zh'},'missing');
-  const renamed:any=await admin.invoke('config.save',{config:{...applied,name:'Renamed'},expectedRevision:applied.revision});assert.equal(renamed.name,'Renamed');
-  await assert.rejects(admin.invoke('config.save',{config:{...renamed,name:'Stale'},expectedRevision:applied.revision}),/配置已被其他操作修改/);
-  const disabled:any=await admin.invoke('config.save',{config:{...renamed,media:{...renamed.media,voice:{...renamed.media.voice,enabled:false}}},expectedRevision:renamed.revision});
-  await assert.rejects(admin.invoke('config.save',{config:{...disabled,media:{...disabled.media,voice:{...disabled.media.voice,enabled:true}}},expectedRevision:disabled.revision}),/模型不可用/);
+  const renamed:any=await admin.invoke('bot.save',{...applied,name:'Renamed'});assert.equal(renamed.name,'Renamed');
+  const persona:any=await admin.invoke('config.save',{config:{...original,name:'Persona renamed'},expectedRevision:original.revision});assert.equal(persona.name,'Persona renamed');
+  const disabled:any=await admin.invoke('bot.save',{...renamed,settings:{...renamed.settings,media:{...renamed.settings.media,voice:{...renamed.settings.media.voice,enabled:false}}}});
+  await assert.rejects(admin.invoke('bot.save',{...disabled,settings:{...disabled.settings,media:{...disabled.settings.media,voice:{...disabled.settings.media.voice,enabled:true}}}}),/模型不可用/);
+  f.profiles.create({...f.profiles.require({serviceId:'gpt-sovits',profileId:'voice-v4-zh'}),state:'ready'});
+  (admin.runtime as any).harness.validateModel=async()=>{f.profiles.transition({serviceId:'gpt-sovits',profileId:'voice-v4-zh'},'blocked');};
+  await assert.rejects(admin.invoke('bot.save',{...disabled,settings:{...disabled.settings,media:{...disabled.settings.media,voice:{...disabled.settings.media.voice,enabled:true}}}}),/模型不可用/);
+  assert.equal(f.store.bots.bot('bot').settings?.media.voice?.enabled,false);
 });
 
 test('scanner failures block existing owned models and duplicated IDs only block their own model',async t=>{

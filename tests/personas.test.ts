@@ -19,11 +19,11 @@ function fixture(t:any){
   const folder=store.personaFiles.directory('sakura');
   const settings=()=>JSON.parse(readFileSync(path.join(folder,'config.json'),'utf8'));
   const edit=(patch:any)=>writeFileSync(path.join(folder,'config.json'),JSON.stringify({...settings(),...patch},null,2));
-  const assets=new Assets(store.repositories());let validations=0,cancellations=0;let validate:((c:BotConfig)=>Promise<void>)|undefined;
+  const assets=new Assets(store.repositories());let cancellations=0;
   const adapter={beginLogin:async()=>({status:'pending' as const}),pollLogin:async()=>({status:'expired' as const}),connect:async()=>{},materialize:async()=>Buffer.alloc(0),send:async()=> 'receipt'};
-  const runtime=new BotRuntime(store.repositories(),assets,new MediaService(store.repositories(),assets),{run:async()=>{throw Error('unused');},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async c=>{validations++;if(c.model?.model==='invalid')throw Error('UNKNOWN_MODEL');await validate?.(c);},recheckPermissions:()=>{cancellations++;}},fixtureChannels(adapter),{} as any);
+  const runtime=new BotRuntime(store.repositories(),assets,new MediaService(store.repositories(),assets),{run:async()=>{throw Error('unused');},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async c=>{if(c.model?.model==='invalid')throw Error('UNKNOWN_MODEL');},recheckPermissions:()=>{cancellations++;}},fixtureChannels(adapter),{} as any);
   t.after(()=>runtime.close());
-  return{root,home,store,folder,settings,edit,runtime,validations:()=>validations,cancellations:()=>cancellations,setValidate:(fn:(c:BotConfig)=>Promise<void>)=>{validate=fn;}};
+  return{root,home,store,folder,settings,edit,runtime,cancellations:()=>cancellations};
 }
 
 test('existing applied configurations export once at the product root, preserving revisions, history and sessions',_t=>{
@@ -59,16 +59,16 @@ test('panel saves overwrite external persona drafts, while file drafts can still
   assert.equal((await f.runtime.applyPersonaFiles('sakura')).revision,4);assert.equal(f.store.personas.configVersion('sakura',3)?.personaPrompt,'面板人设');
 });
 
-test('invalid files and models keep the applied version intact; stale drafts and edits during validation conflict',async t=>{
+test('invalid files keep the applied version intact; stale drafts and file changes conflict',async t=>{
   const f=fixture(t);const old=f.store.personas.config('sakura');
-  for(const patch of [{id:'other'},{apiKey:'must-not-be-accepted'},{model:{provider:'p',model:'invalid'}},{revision:99}]){
+  for(const patch of [{id:'other'},{apiKey:'must-not-be-accepted'},{revision:99}]){
     writeFileSync(path.join(f.folder,'config.json'),JSON.stringify({...(({personaPrompt,...rest})=>rest)(old),...patch}));
     await assert.rejects(f.runtime.applyPersonaFiles('sakura'));assert.deepEqual(f.store.personas.config('sakura'),old);
   }
   writeFileSync(path.join(f.folder,'config.json'),'not json');await assert.rejects(f.runtime.applyPersonaFiles('sakura'));assert.equal(f.store.personas.personaStatus('sakura').state,'error');
   writeFileSync(path.join(f.folder,'config.json'),JSON.stringify((({personaPrompt,...rest})=>rest)(old)));
-  f.setValidate(async()=>{writeFileSync(path.join(f.folder,'persona.md'),'校验时发生的修改');});
-  await assert.rejects(f.runtime.applyPersonaFiles('sakura'),/校验期间被修改/);assert.deepEqual(f.store.personas.config('sakura'),old);assert.equal(readFileSync(path.join(f.folder,'persona.md'),'utf8'),'校验时发生的修改');
+  const draft=f.store.personas.readPersonaDraft('sakura');writeFileSync(path.join(f.folder,'persona.md'),'校验时发生的修改');
+  assert.throws(()=>f.store.personas.saveConfig(draft.config,draft.config.revision,draft.digest),/校验期间被修改/);assert.deepEqual(f.store.personas.config('sakura'),old);assert.equal(readFileSync(path.join(f.folder,'persona.md'),'utf8'),'校验时发生的修改');
 });
 
 test('interrupted two-file saves recover according to the SQLite commit and preserve unexpected external changes',t=>{

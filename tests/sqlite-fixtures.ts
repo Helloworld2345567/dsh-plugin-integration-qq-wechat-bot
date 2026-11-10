@@ -14,6 +14,9 @@ export function seedAppliedConfig(persistence:SqlitePersistence,config:BotConfig
 export function seedLegacyBinding(persistence:SqlitePersistence,key:string,value:unknown):void {
   persistence.database.records.put('binding',key,value);
 }
+export function seedLegacyBot(persistence:SqlitePersistence,id:string,value:unknown):void {
+  persistence.database.records.put('bot',id,value);
+}
 export function seedLegacyAssetMetadata(persistence:SqlitePersistence,asset:Asset):void {
   persistence.database.records.put('asset',asset.id,asset);
 }

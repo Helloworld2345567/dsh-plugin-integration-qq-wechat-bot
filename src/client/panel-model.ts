@@ -71,12 +71,6 @@ export interface ServiceCardViewModel {
   dirty:boolean;
 }
 
-export interface CapabilityGroupViewModel {
-  id:string;
-  label:string;
-  items:readonly string[];
-}
-
 export const statusTone=(status:string|undefined):StatusTone=>{
   switch(status){
     case 'connected':return 'success';
@@ -153,24 +147,3 @@ export function mapServiceCards(input:{serviceRunning?:boolean;activeTasks?:numb
     card('rvc','RVC 模型库',rvc?.state??'missing',Boolean(settings?.modelsRoot),number(rvc?.profileCount),rvc?.safeDiagnostic),
   ];
 }
-
-const toolGroups:readonly CapabilityGroupViewModel[]=[
-  {id:'messages',label:'消息',items:['bot_send_file','bot_read_social','bot_stats']},
-  {id:'media',label:'媒体',items:['bot_media']},
-  {id:'voice',label:'语音',items:['bot_voice','bot_sing']},
-  {id:'music',label:'音乐',items:['bot_music']},
-  {id:'memory',label:'记忆',items:['bot_remember','bot_forget_memory']},
-  {id:'session',label:'会话',items:['bot_model','bot_persona','bot_schedule','bot_proactive']},
-  {id:'web',label:'网页',items:['web_search','web_fetch']},
-];
-
-const skillGroups:readonly CapabilityGroupViewModel[]=[
-  {id:'image',label:'图片',items:['image-generation']},
-  {id:'analysis',label:'媒体分析',items:['media-analysis']},
-  {id:'voice',label:'语音',items:['voice-generation']},
-  {id:'singing',label:'变声',items:['singing-conversion']},
-  {id:'music',label:'音乐',items:['music-download']},
-];
-
-export function capabilityGroups(kind:'tools'|'skills'):readonly CapabilityGroupViewModel[]{return kind==='tools'?toolGroups:skillGroups;}
-

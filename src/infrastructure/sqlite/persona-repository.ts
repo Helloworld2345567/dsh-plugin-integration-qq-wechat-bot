@@ -1,4 +1,4 @@
-import {configSchema, configForWrite, type BotConfig, type SessionBinding} from '../../core/types.js';
+import {configSchema, configForWrite,botSettingsFromConfig,configWithBotSettings, type BotConfig, type SessionBinding} from '../../core/types.js';
 import {sameConfig} from '../../core/personas.js';
 import {ConflictError} from '../../core/errors.js';
 import type {PersonaConfigRepository, PersonaDraft, PersonaStatus} from '../../core/ports/persona.js';
@@ -31,7 +31,9 @@ export class SqlitePersonaConfigRepository implements PersonaConfigRepository {
   configVersions(): readonly BotConfig[] {return this.database.records.list<BotConfig>('config-version').map(config => configSchema.parse(config));}
   configVersion(personaId: string, revision: number): BotConfig | undefined {return this.database.records.get<BotConfig>('config-version', `${personaId}:${revision}`);}
   effectiveConfig(binding: SessionBinding): BotConfig {
-    const config = this.config(binding.personaId ?? this.bots().bot(binding.scope.botId).configId);
+    const bot=this.bots().bot(binding.scope.botId);
+    const persona=this.config(binding.personaId??bot.configId);
+    const config=configWithBotSettings(persona,bot.settings??botSettingsFromConfig(this.config(bot.configId)));
     let effective: BotConfig = binding.modelOverride ? {...config, model:{...binding.modelOverride}} : config;
     const voice = effective.media.voice;
     if (voice && binding.ttsOverride) {

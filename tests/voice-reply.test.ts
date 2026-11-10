@@ -6,7 +6,7 @@ import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
 import {scopeKey} from '../src/core/identity.js';
 import {Assets,MediaService} from '../src/core/media.js';
 import {BotRuntime,type HarnessPort} from '../src/core/runtime.js';
-import {botSchema,configSchema,type CallerScope,type Delivery,type Output} from '../src/core/types.js';
+import {botSchema,configSchema,botSettingsFromConfig,type CallerScope,type Delivery,type Output} from '../src/core/types.js';
 import {spokenReplyText} from '../src/core/voice-reply.js';
 import {ProfileStore} from '../src/core/profile-store.js';
 import {fixtureChannels} from './test-channel.js';
@@ -54,7 +54,7 @@ test('foreground auto voice synthesizes once before text chunking and delivery r
 
 for(const scenario of ['on_demand','explicit-success','explicit-failure','singing-attempt','only-assets','code-only','too-long'] as const)test(`${scenario} does not start automatic synthesis`,async t=>{
   const f=await fixture(t);
-  if(scenario==='on_demand'){const config=f.store.personas.config('sakura');f.store.personas.saveConfig({...config,media:{voice:{...config.media.voice!,replyMode:'on_demand'}}},config.revision);}
+  if(scenario==='on_demand'){const bot=f.store.bots.bot('bot'),settings=bot.settings!;f.runtime.saveBot({...bot,settings:{...settings,media:{voice:{...settings.media.voice!,replyMode:'on_demand'}}}});}
   f.harness.run=async(_b,_m,_s,options)=>({turnId:'reply',outputs:scenario==='only-assets'?[{type:'asset',assetId:f.audio.id}]:[{type:'text',text:scenario==='code-only'?'```ts\nconst x=1;\n```':scenario==='too-long'?'字'.repeat(11000):'回复'},...(scenario==='explicit-success'?[{type:'asset' as const,assetId:f.audio.id}]:[])],snapshot:options!.snapshot!,voiceAttempted:scenario.startsWith('explicit-'),singingAttempted:scenario==='singing-attempt'});
   await f.chat();assert.equal(f.calls.length,0);assert.ok(f.sent.length>0);
 });
@@ -77,10 +77,10 @@ test('progress continues in the media stage after the model finishes and stops w
   assert.deepEqual(stages,['media']);assert.equal(f.sent.filter(delivery=>delivery.output.type==='asset').length,1);
 });
 
-test('voice settings remain frozen when the persona changes during the model turn',async t=>{
+test('voice settings remain frozen when bot settings change during the model turn',async t=>{
   const f=await fixture(t);
   f.harness.run=async(_b,_m,_s,options)=>{
-    const config=f.store.personas.config('sakura');await f.runtime.saveConfig({...config,media:{voice:{...config.media.voice!,voice:'second',replyMode:'on_demand'}}},config.revision);
+    const bot=f.store.bots.bot('bot'),settings=bot.settings!;f.runtime.saveBot({...bot,settings:{...settings,media:{voice:{...settings.media.voice!,voice:'second',replyMode:'on_demand'}}}});
     return{turnId:'reply',outputs:[{type:'text',text:'你好'}],snapshot:options!.snapshot!};
   };
   await f.chat();assert.equal(f.calls.length,1);assert.equal(f.calls[0].config.media.voice.voice,'first');assert.equal(f.calls[0].config.media.voice.replyMode,'auto');
@@ -91,7 +91,7 @@ test('retiring a voice Profile after generation keeps the text reply deliverable
   const profile=f.profiles.create({serviceId:'gpt-sovits',profileId:'retiring',state:'ready',capabilities:['gpt-sovits.speak'],displayName:'Retiring voice',managedConfig:{baseUrl:'http://127.0.0.1:9880',modelVersion:'v4'}});
   const current=f.store.personas.config('sakura');
   const configured=configSchema.parse({...current,media:{voice:{enabled:true,engine:'gpt-sovits',profileRef:{serviceId:'gpt-sovits',profileId:profile.profileId},replyMode:'auto',format:'wav'}}});
-  f.store.personas.saveConfig(configured,current.revision);
+  f.runtime.saveBot({...f.store.bots.bot('bot'),settings:botSettingsFromConfig(configured)});
   f.harness.run=async(_b,_m,_s,options)=>{
     f.profiles.transition({serviceId:'gpt-sovits',profileId:profile.profileId},'missing');
     return{turnId:'reply',outputs:[{type:'text',text:'Profile 失效后仍应发送这段文字。'}],snapshot:options!.snapshot!};
@@ -104,7 +104,7 @@ test('retiring a voice Profile after generation keeps the text reply deliverable
 
 for(const change of ['revoke-before','revoke-after','new-session','cancel'] as const)test(`${change} suppresses the completed answer and any late audio`,async t=>{
   const f=await fixture(t),started=deferred(),finish=deferred();
-  const revoke=()=>{const config=f.store.personas.config('sakura');f.store.personas.saveConfig({...config,media:{voice:{...config.media.voice!,enabled:false}}},config.revision);};
+  const revoke=()=>{const bot=f.store.bots.bot('bot'),settings=bot.settings!;f.runtime.saveBot({...bot,settings:{...settings,media:{voice:{...settings.media.voice!,enabled:false}}}});};
   if(change==='revoke-before')f.harness.run=async(_b,_m,_s,options)=>{revoke();return{turnId:'reply',outputs:[{type:'text',text:'不应发送'}],snapshot:options!.snapshot!};};
   else f.media.run=async(_scope,_operation,_config,_inputs,_parameters,signal,authorize)=>{
     authorize?.();started.resolve();signal.addEventListener('abort',finish.resolve,{once:true});await finish.promise;return{assetIds:[f.audio.id]};
@@ -130,6 +130,6 @@ for(const kind of ['scheduled','proactive'] as const)test(`${kind} final replies
 test('background voice failure falls back to text but revoked permissions suppress the entire result',async t=>{
   const f=await fixture(t);f.media.run=async()=>{throw Error('VOICE_FAILED');};
   const first=f.runtime.automation.createJob(scope,'提醒',{runAt:Date.now()+3600000});assert.equal((await f.runtime.automation.runJob(first)).state,'succeeded');assert.match(f.sent[0].output.text!,/语音生成失败/);
-  f.sent.length=0;f.media.run=async()=>{const config=f.store.personas.config('sakura');f.store.personas.saveConfig({...config,tools:config.tools.filter(tool=>tool!=='bot_voice')},config.revision);throw Error('VOICE_FAILED');};
+  f.sent.length=0;f.media.run=async()=>{const bot=f.store.bots.bot('bot'),settings=bot.settings!;f.runtime.saveBot({...bot,settings:{...settings,tools:settings.tools.filter(tool=>tool!=='bot_voice')}});throw Error('VOICE_FAILED');};
   const second=f.runtime.automation.createJob(scope,'提醒2',{runAt:Date.now()+7200000});assert.equal((await f.runtime.automation.runJob(second)).state,'failed');assert.equal(f.sent.length,0);
 });

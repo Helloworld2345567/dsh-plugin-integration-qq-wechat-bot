@@ -166,6 +166,7 @@ export class SqlitePersistence {
         else if (!baseline && sameConfig(this.personaFiles.read(config.id).config, config)) this.personas.saveBaseline(config.id, this.personaFiles.currentDigest(config.id));
       } catch {/* An invalid draft must not stop bots using the last applied configuration. */}
     }
+    this.bots.migrateSettings();
     this.sessions.backfill(this.deliveries.deliveries());
     this.stage = 'initialized';
   }

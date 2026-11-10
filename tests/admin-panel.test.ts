@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createUI,dateInput,scheduledTime} from '../src/client/ui.js';
 import {chinese} from '../src/client/locale.js';
+import {botSettingsFromConfig,botSettingsSchema,configSchema} from '../src/core/types.js';
 
 test('switches expose their state and handle failed actions',async()=>{
   const errors:string[]=[];let calls=0;
@@ -61,87 +62,173 @@ test('an enabled bot in a stopped service shows an off switch that starts the bo
   }finally{(globalThis as any).window=previous;globalThis.fetch=previousFetch;}
 });
 
-test('panel retains summary options, drafts and local errors across its sections',async()=>{
-  const config={id:'default',name:'默认',revision:1,personaPrompt:'hello',tools:[],skills:[],hostTools:[],media:{image:{enabled:false}},allowHostTools:false};
-  const summary={bots:[],configs:[config,{id:'other',name:'其他人格'}],counts:{bots:0,configs:2,pendingDeliveries:0},health:{activeTasks:0}};
-  let app:any,cursor=0;const states:any[]=['catalog',summary,'加载错误','操作错误','',false,[],config,false,false,'basic'];
+
+const flattenPanel=(node:any):any[]=>Array.isArray(node)?node.flatMap(flattenPanel):node&&typeof node==='object'?[node,...(node.children??[]).flatMap(flattenPanel)]:[];
+const settlePanel=()=>new Promise(resolve=>setImmediate(resolve));
+
+function panelHarness(states:any[],respond:(body:any)=>any){
+  let app:any,cursor=0;
   const React={Fragment:'fragment',createElement:(type:any,props:any,...children:any[])=>({type,props,children}),useState:(initial:any)=>{const i=cursor++;if(!(i in states))states[i]=initial;return[states[i],(value:any)=>{states[i]=typeof value==='function'?value(states[i]):value;}];},useRef:()=>({current:null}),useEffect:()=>{}};
-  const previous=(globalThis as any).window;const previousFetch=globalThis.fetch;
+  const previousWindow=(globalThis as any).window,previousFetch=globalThis.fetch;
   const locale={getSnapshot:()=>({revision:1}),subscribe:()=>()=>{},register:()=>()=>{},bind:()=>chinese};
-  (globalThis as any).window={__ModuleLoader__:{load:({factory}:any)=>factory(()=>React).apply({locale,effect:(callback:any)=>callback(),slots:{inject:(_slot:any,register:any)=>register(),register:(_meta:any,component:any)=>{app=component;}}})}};
-  const nodes=(tree:any)=>{const result:any[]=[];const walk=(node:any)=>{if(!node||typeof node!=='object')return;if(Array.isArray(node)){node.forEach(walk);return;}result.push(node);node.children?.forEach(walk);};walk(tree);return result;};
-  const render=()=>{cursor=0;return nodes(app());};
+  (globalThis as any).window={__BOT_INTEGRATION__:{endpoint:'http://fixture.invalid',token:'fixture'},__ModuleLoader__:{load:({factory}:any)=>factory(()=>React).apply({locale,effect:(callback:any)=>callback(),slots:{inject:(_slot:any,register:any)=>register(),register:(_meta:any,component:any)=>{app=component;}}})}};
+  globalThis.fetch=async(_url,init)=>Response.json({result:await respond(JSON.parse(String(init?.body)))});
+  return{
+    start:async(name:string)=>{await import(new URL('../src/client/index.ts?'+name,import.meta.url).href);},
+    render:()=>{cursor=0;return flattenPanel(app());},
+    restore:()=>{(globalThis as any).window=previousWindow;globalThis.fetch=previousFetch;},
+  };
+}
+
+test('bot page renders creation before data arrives and with no bots, then edits the loaded bot settings',async()=>{
+  const states:any[]=['bots',null,'','','',false,null];
+  const harness=panelHarness(states,()=>{throw Error('No API request expected while rendering');});
+  const createButton=(tree:any[])=>tree.find(n=>n.type==='button'&&n.props?.['aria-label']==='新建机器人');
   try{
-    await import('../src/client/index.js');let tree=render();
-    assert.ok(tree.some(n=>n.type==='option'&&n.children.includes('其他人格')));
+    await harness.start('empty-bots');let tree=harness.render();
+    assert.ok(createButton(tree));assert.equal(createButton(tree).props.disabled,false);
+    createButton(tree).props.onClick();await settlePanel();
+    tree=harness.render();assert.ok(tree.some(n=>n.props?.className==='card create-form'));
+    createButton(tree).props.onClick();await settlePanel();
+    states[1]={bots:[],configs:[],counts:{pendingDeliveries:0},health:{activeTasks:0}};states[6]=[];
+    tree=harness.render();assert.ok(createButton(tree));assert.ok(!tree.some(n=>n.props?.className==='bot-detail'));
+    const persona=configSchema.parse({id:'default',name:'默认',personaPrompt:'hello',media:{image:{enabled:false}}});
+    const bot={id:'loaded',name:'已加载机器人',channel:'qq',configId:persona.id,enabled:false,status:'stopped',trustedUsers:[],settings:botSettingsFromConfig(persona)};
+    states[1]={...states[1],bots:[bot],configs:[persona]};states[6]=[bot];
+    tree=harness.render();assert.ok(tree.some(n=>n.props?.className==='bot-detail'&&n.props['aria-label']===bot.name));
+    tree.find(n=>n.props?.id==='bot-detail-loaded-run').props.onClick();await settlePanel();
+    tree=harness.render();
+    assert.ok(tree.some(n=>n.type==='label'&&n.children[0]==='提供商'));
+    assert.ok(tree.some(n=>n.type==='span'&&n.children[0]==='处理延时回复'));
+    tree.find(n=>n.props?.id==='bot-detail-loaded-media').props.onClick();await settlePanel();
+    tree=harness.render();const image=tree.find(n=>n.props?.role==='switch'&&n.props['aria-label']==='图片');
+    assert.equal(image.props['aria-checked'],false);image.props.onClick();await settlePanel();
+    assert.equal(states[29].id,bot.id);assert.equal(states[29].settings.media.image.enabled,true);assert.equal(bot.settings.media.image?.enabled,false);
+  }finally{harness.restore();}
+});
+
+test('persona editing keeps only identity, prompt and files while preserving the full saved configuration',async()=>{
+  const initial=configSchema.parse({schemaVersion:4,id:'default',name:'默认',personaPrompt:'hello',model:{provider:'deepseek',model:'deepseek-chat'},media:{image:{enabled:false}}});
+  let saved=initial;
+  const summary=()=>({bots:[],configs:[saved,{id:'other',name:'其他人格'}],counts:{bots:0,configs:2,pendingDeliveries:0},health:{activeTasks:0}});
+  const states:any[]=['catalog',summary(),'加载错误','操作错误','',false,[],initial,false,false,'basic'];
+  const calls:any[]=[];
+  const harness=panelHarness(states,body=>{
+    calls.push(body);
+    if(body.action==='config.save'){saved=configSchema.parse({...body.input.config,revision:2});return saved;}
+    if(body.name==='catalog.config')return{data:saved};
+    if(body.action==='skill.image.status'||body.action==='skill.media.status')return{};
+    return{data:summary()};
+  });
+  try{
+    await harness.start('persona-focus');let tree=harness.render();
+    assert.ok(tree.some(n=>n.type==='button'&&n.props?.['aria-label']==='其他人格'));
     assert.ok(tree.some(n=>n.props?.role==='alert'&&n.children[0]==='加载错误\n操作错误'));
     assert.ok(tree.some(n=>n.type==='button'&&n.children.includes('自动化')));
-    const nameLabel=tree.find(n=>n.type==='label'&&n.children[0]==='名称');nameLabel.children[1].props.onChange({target:{value:'未保存的人格'}});
-    tree=render();tree.find(n=>n.type==='button'&&n.children.includes('媒体')).props.onClick();await new Promise(resolve=>setImmediate(resolve));
-    tree=render();assert.ok(tree.some(n=>n.props?.role==='switch'&&n.props['aria-label']==='图片'&&!n.props['aria-checked']));
+    assert.ok(!tree.some(n=>n.type==='button'&&['模型','行为','媒体'].some(label=>n.children.includes(label))));
+    assert.ok(!tree.some(n=>n.props?.role==='switch'));
+    tree.find(n=>n.type==='label'&&n.children[0]==='名称').children[1].props.onChange({target:{value:'改名人格'}});
+    tree=harness.render();tree.find(n=>n.type==='label'&&n.children[0]==='人设').children[1].props.onChange({target:{value:'新的独立人设'}});
+    tree=harness.render();tree.find(n=>n.type==='button'&&n.children.includes('文件')).props.onClick();await settlePanel();
+    tree=harness.render();assert.ok(tree.some(n=>n.type==='h3'&&n.children.includes('配置文件')));
+    assert.equal(states[7].name,'改名人格');assert.equal(states[7].personaPrompt,'新的独立人设');assert.equal(states[8],true);
+    tree.find(n=>n.type==='button'&&n.props.className==='primary'&&n.children.includes('保存')).props.onClick();await settlePanel();await settlePanel();
+    assert.equal(calls.filter(body=>body.action==='config.save').length,1);
+    assert.equal(saved.name,'改名人格');assert.equal(saved.personaPrompt,'新的独立人设');
+    assert.deepEqual(saved.model,initial.model);assert.deepEqual(saved.media,initial.media);assert.equal(states[8],false);
+    states[3]='保留本地错误';states[0]='overview';tree=harness.render();assert.ok(tree.some(n=>n.props?.role==='alert'&&n.children[0].includes('保留本地错误')));
+    states[0]='catalog';states[7]=null;tree=harness.render();
+    assert.ok(tree.some(n=>n.type==='button'&&n.props?.['aria-label']==='其他人格'));
+    assert.ok(tree.some(n=>n.type==='button'&&n.props?.['aria-label']==='新建人格'));
+    states[1]={...summary(),configs:[]};tree=harness.render();
+    assert.ok(tree.some(n=>n.type==='button'&&n.props?.['aria-label']==='新建人格'&&!n.props.disabled));
+  }finally{harness.restore();}
+});
+
+test('bot tabs expose independent media drafts, authorization and workspace without changing persona settings',async()=>{
+  const persona=configSchema.parse({schemaVersion:4,id:'default',name:'默认',personaPrompt:'hello',media:{image:{enabled:false},voice:{enabled:false,protocol:'edge_tts'}}});
+  let bot:any={id:'bot',name:'机器人一',channel:'qq',configId:'default',enabled:false,status:'stopped',archived:false,credentialConfigured:false,trustedUsers:[],settings:botSettingsFromConfig(persona)};
+  const otherPersona={...persona,id:'other',name:'其他人格'};
+  const summary=()=>({bots:[bot],configs:[persona,otherPersona],counts:{bots:1,configs:2,pendingDeliveries:0},health:{activeTasks:0,serviceRunning:true}});
+  const states:any[]=['bots',summary(),'','','',false,[bot]];
+  const calls:any[]=[];
+  const harness=panelHarness(states,body=>{
+    calls.push(body);
+    if(body.action==='bot.save'){bot={...bot,...body.input,settings:botSettingsSchema.parse(body.input.settings)};return bot;}
+    if(body.action==='skill.image.status'){assert.deepEqual(body.input,{scope:'bots'});return{bot:{keyConfigured:false,keyEnv:'CUSTOM_IMAGE_KEY'}};}
+    if(body.action==='skill.media.status')return{bot:{}};
+    if(body.name==='catalog.models')return{data:[]};
+    if(body.name==='catalog.profiles')return{items:[],nextCursor:null};
+    return{data:body.name==='bots.list'?[bot]:summary()};
+  });
+  const clickSection=async(id:string)=>{const button=harness.render().find(n=>n.props?.id==='bot-detail-bot-'+id);assert.ok(button);button.props.onClick();await settlePanel();const tree=harness.render();assert.equal(tree.find(n=>n.props?.id==='bot-detail-bot-'+id).props['aria-current'],'page');return tree;};
+  try{
+    await harness.start('bot-tabs');let tree=harness.render();
+    assert.ok(tree.some(n=>n.props?.role==='switch'&&n.props['aria-label']==='运行'));
+    assert.ok(!tree.some(n=>n.props?.id==='bot-detail-bot-model'||n.props?.id==='bot-detail-bot-behavior'));
+    tree=await clickSection('persona');
+    assert.ok(tree.some(n=>n.type==='label'&&n.children[0]==='人格'));
+    assert.ok(tree.some(n=>n.type==='option'&&n.children.includes('其他人格')));
+    assert.ok(!tree.some(n=>n.props?.role==='switch'&&n.props['aria-label']==='运行'));
+    tree=await clickSection('auth');
+    assert.ok(tree.some(n=>n.type==='button'&&n.children.includes('授权')));
+    tree.find(n=>n.type==='button'&&n.children.includes('凭据')).props.onClick();await settlePanel();
+    tree=harness.render();assert.ok(tree.some(n=>n.type==='input'&&n.props.type==='password'));
+    tree=await clickSection('workspace');
+    assert.ok(tree.some(n=>n.type==='label'&&n.children[0]==='工作目录'));
+    assert.ok(tree.some(n=>n.type==='button'&&n.children.includes('添加')));
+    assert.ok(!tree.some(n=>n.type==='input'&&n.props.type==='password'));
+    tree=await clickSection('run');assert.ok(tree.some(n=>n.props?.role==='switch'&&n.props['aria-label']==='运行'));
+    assert.ok(tree.some(n=>n.type==='label'&&n.children[0]==='提供商'));
+    assert.ok(tree.some(n=>n.type==='span'&&n.children[0]==='处理延时回复'));
+    tree=await clickSection('media');
+    assert.ok(tree.some(n=>n.props?.role==='switch'&&n.props['aria-label']==='图片'&&!n.props['aria-checked']));
     assert.ok(tree.some(n=>n.props?.role==='switch'&&n.props['aria-label']==='语音 TTS'&&!n.props['aria-checked']));
     assert.ok(!tree.some(n=>n.type==='input'&&n.props.type==='checkbox'));
-    tree.find(n=>n.props?.role==='switch'&&n.props['aria-label']==='图片').props.onClick();await new Promise(resolve=>setImmediate(resolve));
-    tree=render();assert.equal(states[7].name,'未保存的人格');assert.equal(states[7].media.image.enabled,true);assert.equal(states[8],true);
-    states[7]={...states[7],media:{...states[7].media,image:{enabled:true,baseUrl:'https://old.example.invalid/v1',keyEnv:'OLD_IMAGE_KEY',model:'existing-image-model'}}};
-    tree=render();let imageSection=nodes(tree.find(n=>n.props?.key==='image'));
-    assert.equal(imageSection.find(n=>n.type==='label'&&n.children[0]==='服务地址').children[1].props.value,'https://old.example.invalid/v1');
-    imageSection.find(n=>n.type==='label'&&n.children[0]==='服务地址').children[1].props.onChange({target:{value:'  https://images.example.invalid/v1  '}});
-    tree=render();imageSection=nodes(tree.find(n=>n.props?.key==='image'));
-    imageSection.find(n=>n.type==='label'&&n.children[0]==='密钥环境变量名').children[1].props.onChange({target:{value:'  CUSTOM_IMAGE_KEY  '}});
+    tree.find(n=>n.props?.role==='switch'&&n.props['aria-label']==='图片').props.onClick();await settlePanel();
+    assert.equal(states[29].id,'bot');assert.equal(states[29].settings.media.image.enabled,true);
+    assert.equal(persona.media.image?.enabled,false);assert.equal(bot.settings.media.image.enabled,false);
+    const imageSection=()=>flattenPanel(harness.render().find(n=>n.props?.key==='image'));
+    const changeImage=(label:string,value:string)=>imageSection().find(n=>n.type==='label'&&n.children[0]===label).children[1].props.onChange({target:{value}});
+    changeImage('模型','existing-image-model');changeImage('服务地址','  https://images.example.invalid/v1  ');changeImage('密钥环境变量名','  CUSTOM_IMAGE_KEY  ');
     const expectedImage={enabled:true,baseUrl:'https://images.example.invalid/v1',keyEnv:'CUSTOM_IMAGE_KEY',model:'existing-image-model'};
-    assert.deepEqual(states[7].media.image,expectedImage);
-    assert.ok(!imageSection.some(n=>n.type==='input'&&n.props.type==='password'));
-    assert.ok(imageSection.some(n=>n.type==='small'&&String(n.children[0]).includes('只填写变量名')));
-    assert.ok(imageSection.some(n=>n.type==='p'&&n.children[0]==='未保存'));
-    assert.ok(tree.some(n=>n.type==='button'&&n.children.includes('保存')&&!n.props.disabled));
-    states[7]={...states[7],schemaVersion:4,media:{...states[7].media,voice:{enabled:true,profileRef:{serviceId:'gpt-sovits',profileId:'speaker'},replyMode:'auto',format:'wav'}}};states[8]=false;
-    states[13]={default:{keyConfigured:true}};
-    tree=render();const voiceSection=nodes(tree.find(n=>n.props?.key==='voice'));
-    assert.ok(voiceSection.some(n=>n.type==='option'&&n.children.includes('文字 + 语音')));
-    assert.ok(voiceSection.some(n=>n.type==='label'&&n.children[0]==='说话'));
-    assert.ok(!tree.some(n=>n.type==='button'&&/检查|验收|登记|模型服务/.test(n.children.join(''))));
-    assert.ok(!voiceSection.some(n=>n.type==='label'&&/权重|凭据|locator/i.test(String(n.children[0]))));
-    assert.ok(!voiceSection.some(n=>n.type==='label'&&n.children[0]==='提供商'));
-    const calls:string[]=[];(globalThis as any).window.__BOT_INTEGRATION__={endpoint:'http://admin.invalid',token:'fixture'};
-    globalThis.fetch=async(_url,init)=>{
-      const body=JSON.parse(String(init?.body));calls.push(body.action??body.name);
-      if(body.action==='config.save'){assert.deepEqual(body.input.config.media.image,expectedImage);return Response.json({result:{...body.input.config,revision:2}});}
-      if(body.action==='skill.image.status')return Response.json({result:{default:{keyConfigured:false,keyEnv:'CUSTOM_IMAGE_KEY'}}});
-      if(body.name==='catalog.models')return Response.json({result:{data:[],revision:'sha256:'+'3'.repeat(64)}});
-      if(body.name==='catalog.profiles')return Response.json({result:{items:[],nextCursor:null,revision:'sha256:'+'4'.repeat(64)}});
-      return Response.json({result:{data:summary,revision:'sha256:'+'1'.repeat(64)}});
-    };
-    states[8]=true;tree=render();tree.find(n=>n.type==='button'&&n.children.includes('保存')).props.onClick();await new Promise(resolve=>setImmediate(resolve));
-    tree=render();assert.equal(states[7].revision,2);
-    assert.ok(calls.includes('skill.image.status'));assert.equal(states[13].default.keyConfigured,false);
-    assert.ok(nodes(tree.find(n=>n.props?.key==='image')).some(n=>n.type==='p'&&n.children[0]==='待配置'));
-    imageSection=nodes(tree.find(n=>n.props?.key==='image'));
-    imageSection.find(n=>n.type==='label'&&n.children[0]==='服务地址').children[1].props.onChange({target:{value:'   '}});
-    tree=render();imageSection=nodes(tree.find(n=>n.props?.key==='image'));
-    imageSection.find(n=>n.type==='label'&&n.children[0]==='密钥环境变量名').children[1].props.onChange({target:{value:'  '}});
-    assert.equal(states[7].media.image.baseUrl,undefined);assert.equal(states[7].media.image.keyEnv,undefined);
-    assert.deepEqual(JSON.parse(JSON.stringify(states[7])).media.image,{enabled:true,model:'existing-image-model'});
-    states[3]='保留本地错误';states[0]='overview';tree=render();assert.ok(tree.some(n=>n.props?.role==='alert'));
-    states[0]='catalog';states[7]=null;tree=render();assert.ok(tree.some(n=>n.type==='option'&&n.children.includes('其他人格')));
-    assert.ok(!tree.some(n=>n.props?.role==='switch'));
-    const duplicateBots=['1','2'].map(id=>({id,name:'sakura',channel:'qq',configId:'default',enabled:false,archived:false,credentialConfigured:false,trustedUsers:[]}));
-    let remaining=duplicateBots;const deleted:string[]=[];
-    states[0]='bots';states[1]={...summary,bots:duplicateBots};states[6]=duplicateBots;states[18]={id:'1'};states[19]={botId:'1'};
-    globalThis.fetch=async(_url,init)=>{
-      const body=JSON.parse(String(init?.body));
-      if(body.action==='bot.delete'){deleted.push(body.input.id);remaining=remaining.filter(bot=>bot.id!==body.input.id);return Response.json({result:{ok:true}});}
-      const data=body.name==='bots.list'?remaining:{...summary,bots:remaining};
-      return Response.json({result:{data,revision:'sha256:'+'2'.repeat(64)}});
-    };
-    tree=render();assert.equal(tree.filter(n=>n.type==='button'&&n.children.includes('删除')).length,2);
-    tree.find(n=>n.props?.['aria-label']==='删除机器人 sakura（1）').props.onClick();await new Promise(resolve=>setImmediate(resolve));
-    tree=render();assert.match(tree.find(n=>n.props?.role==='dialog').props['aria-label'],/ID：1/);assert.match(tree.find(n=>n.props?.role==='dialog').props['aria-label'],/永久删除.*聊天记录/);
-    tree.find(n=>n.type==='button'&&n.children.includes('取消')).props.onClick();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(deleted,[]);
-    tree=render();tree.find(n=>n.props?.['aria-label']==='删除机器人 sakura（1）').props.onClick();await new Promise(resolve=>setImmediate(resolve));
-    tree=render();tree.find(n=>n.props?.role==='dialog').props.onSubmit({preventDefault:()=>{}});await new Promise(resolve=>setImmediate(resolve));
-    tree=render();assert.deepEqual(deleted,['1']);assert.equal(states[18],null);assert.equal(states[19],null);
+    assert.deepEqual(states[29].settings.media.image,expectedImage);
+    assert.ok(!imageSection().some(n=>n.type==='input'&&n.props.type==='password'));
+    assert.ok(imageSection().some(n=>n.type==='small'&&String(n.children[0]).includes('只填写变量名')));
+    assert.ok(imageSection().some(n=>n.type==='p'&&n.children[0]==='未保存'));
+    tree=harness.render();tree.find(n=>n.type==='button'&&n.props.className==='primary'&&n.children.includes('保存')).props.onClick();await settlePanel();await settlePanel();
+    assert.equal(calls.filter(body=>body.action==='bot.save').length,1);assert.ok(!calls.some(body=>body.action==='config.save'));
+    assert.deepEqual(bot.settings.media.image,expectedImage);assert.equal(states[29],null);
+    assert.equal(states[13].bot.keyConfigured,false);assert.ok(imageSection().some(n=>n.type==='p'&&n.children[0]==='待配置'));
+    changeImage('服务地址','   ');changeImage('密钥环境变量名','  ');
+    const clearedImageDraft:any=states[29];
+    assert.deepEqual(JSON.parse(JSON.stringify(clearedImageDraft.settings)).media.image,{enabled:true,model:'existing-image-model'});
+    tree=harness.render();tree.find(n=>n.type==='button'&&n.children.includes('取消')).props.onClick();await settlePanel();
+    assert.equal(states[29],null);assert.deepEqual(bot.settings.media.image,expectedImage);
+  }finally{harness.restore();}
+});
+
+test('bot deletion still confirms, cancels and clears only matching authorization forms',async()=>{
+  const persona=configSchema.parse({id:'default',name:'默认',personaPrompt:'hello'});
+  const duplicateBots=['1','2'].map(id=>({id,name:'sakura',channel:'qq',configId:'default',enabled:false,archived:false,credentialConfigured:false,trustedUsers:[],settings:botSettingsFromConfig(persona)}));
+  let remaining=duplicateBots;const deleted:string[]=[];
+  const summary=()=>({bots:remaining,configs:[persona],counts:{pendingDeliveries:0},health:{activeTasks:0}});
+  const states:any[]=['bots',summary(),'','','',false,remaining];states[18]={id:'1'};states[19]={botId:'1'};states[28]='auth';
+  const harness=panelHarness(states,body=>{
+    if(body.action==='bot.delete'){deleted.push(body.input.id);remaining=remaining.filter(bot=>bot.id!==body.input.id);return{ok:true};}
+    if(body.action==='skill.image.status'||body.action==='skill.media.status')return{};
+    return{data:body.name==='bots.list'?remaining:summary()};
+  });
+  try{
+    await harness.start('bot-delete');let tree=harness.render();
+    assert.equal(tree.filter(n=>n.type==='button'&&n.children.includes('删除')).length,2);
+    tree.find(n=>n.props?.['aria-label']==='删除机器人 sakura（1）').props.onClick();await settlePanel();
+    tree=harness.render();assert.match(tree.find(n=>n.props?.role==='dialog').props['aria-label'],/ID：1/);assert.match(tree.find(n=>n.props?.role==='dialog').props['aria-label'],/永久删除.*聊天记录/);
+    flattenPanel(tree.find(n=>n.props?.role==='dialog')).find(n=>n.type==='button'&&n.children.includes('取消')).props.onClick();await settlePanel();assert.deepEqual(deleted,[]);
+    tree=harness.render();tree.find(n=>n.props?.['aria-label']==='删除机器人 sakura（1）').props.onClick();await settlePanel();
+    tree=harness.render();tree.find(n=>n.props?.role==='dialog').props.onSubmit({preventDefault:()=>{}});await settlePanel();await settlePanel();
+    tree=harness.render();assert.deepEqual(deleted,['1']);assert.equal(states[18],null);assert.equal(states[19],null);
     assert.ok(!tree.some(n=>n.props?.['aria-label']==='删除机器人 sakura（1）'));assert.ok(tree.some(n=>n.props?.['aria-label']==='删除机器人 sakura（2）'));
-    states[5]=true;tree=render();assert.equal(tree.find(n=>n.props?.['aria-label']==='删除机器人 sakura（2）').props.disabled,true);
-  }finally{(globalThis as any).window=previous;globalThis.fetch=previousFetch;}
+    states[5]=true;tree=harness.render();assert.equal(tree.find(n=>n.props?.['aria-label']==='删除机器人 sakura（2）').props.disabled,true);
+  }finally{harness.restore();}
 });

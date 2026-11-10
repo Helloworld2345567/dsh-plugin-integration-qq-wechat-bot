@@ -22,8 +22,7 @@ test('STS card supports disabled drafts and enabling supplies dedicated permissi
   const nodes:any[]=[];const walk=(item:any)=>{if(!item||typeof item!=='object')return;nodes.push(item);item.children?.forEach(walk);};
   const picker=React.createElement('select',{'aria-label':'唱歌音色'}),tree=singingCard(React.createElement,ui,config,(patch:any)=>{updated=patch;},picker);walk(tree);
   assert.ok(nodes.includes(picker));
-  assert.equal(tree.children[1].type,'details');
-  assert.ok(tree.children.indexOf(picker)>tree.children.indexOf(tree.children[1]));
+  assert.equal(nodes.some(node=>node.type==='details'),false);
   assert.deepEqual(nodes.filter(node=>node.type==='label').map(node=>node.children[0]),['说话人','音高（半音）','检索比例','输出']);
   const retrieval=nodes.find(node=>node.type==='label'&&node.children[0]==='检索比例').children[1];assert.equal(retrieval.props.min,0);assert.equal(retrieval.props.max,1);assert.equal(retrieval.props.step,0.05);
   assert.doesNotMatch(JSON.stringify(nodes),/验收|health|acceptance|测试|权重|locator/);

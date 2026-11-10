@@ -93,6 +93,20 @@ export const v4ConfigSchema=z.object({
 export type BotConfig=z.infer<typeof v4ConfigSchema>;
 export type V4BotConfig=BotConfig;
 export const configSchema=v4ConfigSchema;
+export const botSettingsSchema=z.object({
+  model:commonConfigFields.model,progressReply:commonConfigFields.progressReply,
+  media:v4ConfigSchema.shape.media,imageStyle:commonConfigFields.imageStyle,
+  tools:commonConfigFields.tools,skills:commonConfigFields.skills,skillVersions:commonConfigFields.skillVersions,
+  allowHostTools:commonConfigFields.allowHostTools,hostTools:commonConfigFields.hostTools,
+}).strict().superRefine((value,ctx)=>{const found=forbiddenV4Path(value);if(found)ctx.addIssue({code:'custom',path:found.split('.'),message:'机器人运行配置不得保存服务路径、权重或凭据'});});
+export type BotSettings=z.infer<typeof botSettingsSchema>;
+export function botSettingsFromConfig(config:BotConfig):BotSettings {
+  const {model,progressReply,media,imageStyle,tools,skills,skillVersions,allowHostTools,hostTools}=config;
+  return botSettingsSchema.parse({model,progressReply,media,imageStyle,tools,skills,skillVersions,allowHostTools,hostTools});
+}
+export function configWithBotSettings(config:BotConfig,settings:BotSettings):BotConfig {
+  return configSchema.parse({...config,...settings});
+}
 export const voiceSkillSchema=v4VoiceSchema;
 export const singingSkillSchema=v4SingingSchema;
 export const musicSkillSchema=v4MusicSchema;
@@ -120,6 +134,7 @@ export const botSchema = z.object({
   enabled: z.boolean().default(false), archived: z.boolean().default(false),
   trustedUsers: z.array(z.string().min(1).max(200)).max(200).default([]),
   workingDirectory:z.string().trim().max(32767).refine(value=>!value||path.isAbsolute(value)&&!/[\x00-\x1f]/.test(value),'工作目录须为绝对路径').transform(value=>value||undefined).optional(),
+  settings:botSettingsSchema.optional(),
 });
 export type BotInstance = z.infer<typeof botSchema>;
 export interface CallerScope { botId: string; platform: string; accountId: string; kind: 'private' | 'group'; channelId: string; senderId: string }

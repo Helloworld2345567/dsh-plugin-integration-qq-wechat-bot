@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
 import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
-import {botSchema,configSchema,type CallerScope} from '../src/core/types.js';
+import {botSchema,configSchema,botSettingsFromConfig,type CallerScope} from '../src/core/types.js';
 import {permitted} from '../src/core/policy.js';
 
 const scope=(kind:'private'|'group'='private'):CallerScope=>({botId:'one',platform:'qq',accountId:'one',kind,channelId:kind==='private'?'alice':'room',senderId:'alice'});
@@ -19,6 +19,7 @@ test('session TTS and STS overrides merge without changing the persona and survi
       singing:{enabled:true,profileRef:{serviceId:'rvc',profileId:'base'},speakerId:2,pitchShift:4,indexRate:.25,defaultOutput:'wav'},
     }});
     store.personas.saveConfig(configured,original.revision);
+    store.bots.saveBot({...store.bots.bot('one'),settings:botSettingsFromConfig(configured)});
     const binding=store.sessions.binding(scope());
     store.sessions.updateSession({...binding,
       ttsOverride:{kind:'profile',profileRef:{serviceId:'gpt-sovits',profileId:'speaker'}},

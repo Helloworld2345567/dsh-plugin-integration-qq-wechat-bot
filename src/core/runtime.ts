@@ -93,12 +93,11 @@ export class BotRuntime {
     await this.connectionSupervisor.disconnectAll();await Promise.all([...this.processing.values(),...this.maintenance.values()].map(task=>task.done.catch(()=>{})));await this.automation.drain();await this.drainControls();await this.deliveryWorker.drain();
   });}
   async saveConfig(input:unknown,expectedRevision?:number):Promise<BotConfig>{
-    const parsed=configForWrite(input);if(!parsed.archived)await this.harness.validateModel(parsed);
+    const parsed=configForWrite(input);
     const saved=this.repos.personas.saveConfig(parsed,expectedRevision);this.recheckPermissions();return saved;
   }
   async applyPersonaFiles(id:string):Promise<BotConfig>{
     const file=this.repos.personas.readPersonaDraft(id);
-    if(!file.config.archived)await this.harness.validateModel(file.config);
     const saved=this.repos.personas.saveConfig(file.config,file.config.revision,file.digest);
     this.recheckPermissions();return saved;
   }
@@ -181,8 +180,8 @@ export class BotRuntime {
     authorize?.();await this.harness.dispose(binding.sessionId);authorize?.();clearSingingCandidates(this.repos.media.singing,binding.key);clearMusicState(this.repos.media.music,binding.key);return this.repos.sessions.activateSession(scope,id);
   }
   async switchPersona(scope:CallerScope,id:string,authorize?:()=>void):Promise<SessionBinding>{
-    const binding=this.repos.sessions.binding(scope);const config=this.repos.personas.config(id);await this.harness.validateModel(config);
-    const current=this.repos.sessions.binding(scope);if(current.sessionId!==binding.sessionId||current.generation!==binding.generation)throw new Error('会话状态已变化，请重试');authorize?.();const next={...current,personaId:id,modelOverride:undefined,ttsOverride:undefined,stsOverride:undefined};this.repos.sessions.updateSession(next);this.recheckPermissions();return next;
+    const binding=this.repos.sessions.binding(scope);this.repos.personas.config(id);await this.harness.validateModel(this.effectiveConfig({...binding,personaId:id}));
+    const current=this.repos.sessions.binding(scope);if(current.sessionId!==binding.sessionId||current.generation!==binding.generation)throw new Error('会话状态已变化，请重试');authorize?.();const next={...current,personaId:id};this.repos.sessions.updateSession(next);this.recheckPermissions();return next;
   }
   async setModel(scope:CallerScope,model:BotConfig['model'],authorize?:()=>void):Promise<SessionBinding>{
     const binding=this.repos.sessions.binding(scope);const next={...binding,modelOverride:model?modelSchema.parse(model):undefined};await this.harness.validateModel(this.effectiveConfig(next));
@@ -210,7 +209,7 @@ export class BotRuntime {
   }
   voiceCatalog(role:'tts'|'sts',binding?:SessionBinding):VoiceCatalog {
     if(!binding)return{role,override:false,items:this.voiceCatalogItems(role)};
-    const effective=this.effectiveConfig(binding),base=this.repos.personas.config(effective.id),override=role==='tts'?binding.ttsOverride:binding.stsOverride;
+    const effective=this.effectiveConfig(binding),base=this.effectiveConfig({...binding,ttsOverride:undefined,stsOverride:undefined}),override=role==='tts'?binding.ttsOverride:binding.stsOverride;
     return{role,current:this.voiceSelectionId(role,base),next:this.voiceSelectionId(role,effective),override:!!override,items:this.voiceCatalogItems(role)};
   }
   async setVoice(scope:CallerScope,role:'tts'|'sts',ref:string|null,authorize?:()=>void):Promise<SessionBinding>{
@@ -221,10 +220,10 @@ export class BotRuntime {
       if(extra.length||!service||!profileId)throw new Error('音色 ID 格式无效，请先 list 后使用完整 ID');
       if(role==='tts'&&service==='edge'){
         if(!edgeTtsVoiceIds.includes(profileId as EdgeTtsVoiceId))throw new Error('Edge TTS 音色不可用，请先 /tts list');
-        if(config.media.voice?.enabled!==true)throw new Error('当前人格未启用 TTS，请先在人格配置中启用');
+        if(config.media.voice?.enabled!==true)throw new Error('当前机器人未启用 TTS，请先在机器人配置中启用');
         override={kind:'edge',voice:profileId as EdgeTtsVoiceId};
       }else{
-        if(config.media[role==='tts'?'voice':'singing']?.enabled!==true)throw new Error(`当前人格未启用${role==='tts'?'TTS':'STS'}，请先在人格配置中启用`);
+        if(config.media[role==='tts'?'voice':'singing']?.enabled!==true)throw new Error(`当前机器人未启用${role==='tts'?'TTS':'STS'}，请先在机器人配置中启用`);
         if(!this.profiles)throw new Error('音色目录尚未加载');
         const profile=this.profiles.get({serviceId:service,profileId});
         const operation=role==='tts'?(service==='gpt-sovits'||service==='breeze-tts')?`${service}.speak`:undefined:(service==='rvc'?'rvc.convert':undefined);
@@ -317,7 +316,7 @@ export class BotRuntime {
     }catch(error){if(this.repos.telemetry.actions.findSessionAction<SessionActionRecord>(id)?.state!=='cancelled')this.finishSessionAction(record,'failed',`会话操作失败：${error instanceof Error?error.message:'SESSION_ACTION_FAILED'}`);}
     await this.flushDeliveries();
   }
-  private assertTrusted(binding:SessionBinding,host=false):void {const bot=this.repos.bots.bot(binding.scope.botId);if(!bot.enabled||bot.archived||!trusted(bot,binding.scope))throw new Error('此命令仅供可信私聊用户使用');if(host&&!this.effectiveConfig(binding).allowHostTools)throw new Error('当前人格未允许本机工具');}
+  private assertTrusted(binding:SessionBinding,host=false):void {const bot=this.repos.bots.bot(binding.scope.botId);if(!bot.enabled||bot.archived||!trusted(bot,binding.scope))throw new Error('此命令仅供可信私聊用户使用');if(host&&!this.effectiveConfig(binding).allowHostTools)throw new Error('当前机器人未允许本机工具');}
   private replyEnvelope(message:InboundMessage){const normalize=this.channels.require(message.scope.platform).normalizeReply;return normalize?normalize(message.replyEnvelope??message.reply):message.replyEnvelope;}
   private async feedback(message:InboundMessage,text:string):Promise<void>{const binding=this.repos.sessions.binding(message.scope);const outputs:Output[]=[];for(let i=0;i<text.length;i+=1800)outputs.push({type:'text',text:text.slice(i,i+1800)});this.repos.deliveries.enqueue(binding,message.id,`command:${message.id}`,outputs,message.reply,this.replyEnvelope(message));await this.flushDeliveries();}
   async dispatchCommand(message:InboundMessage,command:ParsedCommand):Promise<void>{

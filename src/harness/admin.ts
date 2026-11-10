@@ -5,7 +5,7 @@ import QRCode from 'qrcode';
 import type { Context } from '@deepseek-ai/cordis';
 import type { BotRuntime } from '../core/runtime.js';
 import { ConflictError } from '../core/errors.js';
-import {publicPersonaConfig,type BotConfig,type Delivery} from '../core/types.js';
+import {publicPersonaConfig,botSchema,botSettingsFromConfig,configWithBotSettings,type BotConfig,type Delivery} from '../core/types.js';
 import {sanitizeRemoteMessage} from '../core/network.js';
 import type {} from '@deepseek-ai/dsh-session-query';
 import { SessionId } from '@deepseek-ai/dsh-session';
@@ -33,6 +33,11 @@ function publicDelivery(delivery:Delivery):Omit<Delivery,'reply'|'replyEnvelope'
 export class Admin {
   readonly attempts=new Map<string,{botId:string;ticket:string;expires:number}>();
   constructor(readonly ctx:Context,readonly runtime:BotRuntime,readonly token:string,readonly revealDirectory:(directory:string)=>Promise<void>=openDirectory,readonly features?:BotFeatures,readonly services?:ServiceManagement,readonly chooseDirectory:(initial?:string)=>Promise<string|undefined>=pickDirectory){}
+  private statusConfigs(input:unknown):Array<[string,BotConfig]> {
+    const {scope}=z.object({scope:z.literal('bots').optional()}).strict().parse(input??{});
+    const repos=this.runtime.repos;
+    return scope==='bots'?repos.bots.bots().filter(bot=>!bot.archived).map(bot=>{const persona=repos.personas.config(bot.configId);return[bot.id,configWithBotSettings(persona,bot.settings??botSettingsFromConfig(persona))];}):repos.personas.configs().map(config=>[config.id,config]);
+  }
   private serviceAcceptance(config:BotConfig,role:'voice'|'singing'|'music'):{status:string;evidence?:string;updatedAt?:number;source?:string}|undefined {const binding=serviceRoleBinding(config,role);if(!binding||!this.services)return;const profile=this.runtime.profiles?.get({serviceId:binding.serviceId,profileId:binding.profileId});if(!profile)return{status:'NOT_RUN'};try{const value=this.services.acceptance({...binding,profileRevision:profile.revision,profileContentHash:profile.contentHash}).data;return{status:value.state,evidence:value.evidence,updatedAt:value.checkedAt,source:value.source};}catch{return{status:'NOT_RUN'};}}
   private async serviceHealth(config:BotConfig,role:'voice'|'singing'|'music',signal:AbortSignal):Promise<any>{const binding=serviceRoleBinding(config,role);if(!binding||!this.services)throw Error('请先选择已登记 Profile');const result=await this.services.health({serviceId:binding.serviceId,profileId:binding.profileId},signal);return{...result.data,status:['ready','degraded'].includes(result.data.state)?'PASS':result.data.state==='blocked'?'BLOCKED':'FAIL',evidence:result.data.safeDiagnostic,updatedAt:result.data.checkedAt,source:'health'};}
   private async summary():Promise<AdminSummaryData> {
@@ -44,7 +49,7 @@ export class Admin {
     // fields belong in the revision used by the panel's live model poll.
     const sessionRevision=revisionFor(repos.sessions.sessionsAll().sort((a,b)=>a.id.localeCompare(b.id)).map(session=>{
       let personaId=session.personaId;try{if(!personaId)personaId=repos.bots.bot(session.scope.botId).configId;}catch{}
-      let model:BotConfig['model']=null;try{if(personaId)model=repos.personas.config(personaId).model??null;}catch{}
+      let model:BotConfig['model']=null;try{model=repos.bots.bot(session.scope.botId).settings?.model??null;}catch{}
       return{id:session.id,generation:session.generation,personaId,model,modelOverride:session.modelOverride,ttsOverride:session.ttsOverride,stsOverride:session.stsOverride};
     }));
     return{channels,bots,configs,sessionRevision,counts:{bots:bots.filter(bot=>!bot.archived).length,configs:configs.filter(config=>!config.archived).length,sessions:repos.sessions.countBindings(),jobs:repos.media.jobs.countJobs(),failures:repos.telemetry.failures.countFailures(),pendingDeliveries:health.pendingDeliveries,pendingSessionActions:health.pendingSessionActions},health,evolution:evolution?{id:evolution.id,phase:evolution.phase,updatedAt:evolution.updatedAt}:null};
@@ -66,7 +71,7 @@ export class Admin {
       const items=page.items.map(row=>{
         let botConfigId:string|undefined;try{botConfigId=repos.bots.bot(row.scope.botId).configId;}catch{/* Deleted bots can retain historical session rows. */}
         let baseModel:BotConfig['model']|null=null,personaId=row.personaId??botConfigId,personaRevision:number|undefined;
-       try{if(personaId){const persona=repos.personas.config(personaId);baseModel=persona.model?{provider:persona.model.provider,model:persona.model.model}:null;personaRevision=persona.revision;}}catch{/* A deleted persona remains visible as a historical session. */}
+       try{if(personaId){const persona=repos.personas.config(personaId),model=repos.bots.bot(row.scope.botId).settings?.model;baseModel=model?{provider:model.provider,model:model.model}:null;personaRevision=persona.revision;}}catch{/* A deleted persona remains visible as a historical session. */}
         const modelOverride=row.modelOverride?{provider:row.modelOverride.provider,model:row.modelOverride.model}:null;
         return{id:row.id,scopeKey:row.scopeKey,botId:row.scope.botId,platform:row.scope.platform,kind:row.scope.kind,channelId:row.scope.channelId,senderId:row.scope.senderId,generation:row.generation,persisted:row.persisted,createdAt:row.createdAt,updatedAt:row.updatedAt,personaId,personaRevision,model:baseModel,modelOverride,effectiveModel:modelOverride??baseModel,ttsOverride:row.ttsOverride??null,stsOverride:row.stsOverride??null};
       });
@@ -88,32 +93,42 @@ export class Admin {
       case 'models':{if(this.services){const catalog=(await this.services.models({})).data,providers=new Map<string,Array<{id:string;name:string;inputModalities:readonly string[];reasoning:{supported:boolean;efforts:readonly string[]}}>>();for(const item of catalog){const models=providers.get(item.provider)??[];models.push({id:item.model,name:item.model,inputModalities:item.inputModalities,reasoning:item.reasoning});providers.set(item.provider,models);}return[...providers].map(([id,models])=>({id,models}));}return Promise.all(this.ctx.llm.listProviders().map(async p=>({id:p.id,models:(await this.ctx.llm.listModels(p.id)).map(m=>({id:m.id,name:m.name}))})));}
       case 'directories':return{workspaceRoot:defaultWorkspaceRoot(),configDirectory:repos.personas.personaRoot(),storageDirectory:repos.storage.home,personas:repos.personas.configs().map(c=>repos.personas.personaStatus(c.id)),sessions:repos.sessions.bindings().map(binding=>({sessionId:binding.sessionId,botId:binding.scope.botId,directory:workingDirectory(repos.bots.bot(binding.scope.botId),binding.key)}))};
       case 'config.directory.open':{const value=z.object({botId:z.string().optional(),configId:z.string().optional()}).strict().parse(input);const configId=value.configId??(value.botId?repos.bots.bot(value.botId).configId:undefined);if(value.botId)repos.bots.bot(value.botId);if(configId)repos.personas.config(configId);const directory=repos.personas.personaDirectory(configId);await this.revealDirectory(directory);return{opened:true,directory};}
-      case 'skill.image.status':return Object.fromEntries(repos.personas.configs().map(config=>{try{const endpoint=resolveImageSkill(config);return [config.id,{enabled:imageSkillEnabled(config),model:endpoint.model,keyEnv:endpoint.keyEnv,keyConfigured:!!process.env[endpoint.keyEnv],overridden:!!(config.media.image?.baseUrl||config.media.image?.model||config.media.image?.keyEnv)}];}catch(error){return [config.id,{enabled:false,error:error instanceof Error?error.message:'IMAGE_SKILL_CONFIGURATION_INVALID'}];}}));
-      case 'skill.media.status':return Object.fromEntries(await Promise.all(repos.personas.configs().map(async config=>[config.id,Object.fromEntries(await Promise.all((['asr','video'] as const).map(async role=>[role,await this.runtime.media.analysisStatus(config,role)])))])));
-      case 'skill.voice.status':return Object.fromEntries(await Promise.all(repos.personas.configs().map(async config=>{
-        const options=config.media.voice,edge=options?.protocol==='edge_tts',profile=edge?undefined:publicProfile(this.runtime,options),validation=this.serviceAcceptance(config,'voice'),health=options?.profileRef?this.services?.healthStatus(options.profileRef):undefined;
-        return [config.id,{...(profile?{configured:['ready','partial'].includes(profile.state),...profile,health:health??null}:await this.runtime.media.analysisStatus(config,'tts')),revision:config.revision,protocol:options?.protocol,replyMode:options?.replyMode??'on_demand',provider:edge?'edge_tts':options?.profileRef?.serviceId,voice:edge?options.voice??'zh-CN-XiaoxiaoNeural':undefined,format:options?.format??'mp3',synthesisValidation:validation??{status:'NOT_RUN'}}];
+      case 'skill.image.status':return Object.fromEntries(this.statusConfigs(input).map(([id,config])=>{try{const endpoint=resolveImageSkill(config);return [id,{enabled:imageSkillEnabled(config),model:endpoint.model,keyEnv:endpoint.keyEnv,keyConfigured:!!process.env[endpoint.keyEnv],overridden:!!(config.media.image?.baseUrl||config.media.image?.model||config.media.image?.keyEnv)}];}catch(error){return [id,{enabled:false,error:error instanceof Error?error.message:'IMAGE_SKILL_CONFIGURATION_INVALID'}];}}));
+      case 'skill.media.status':return Object.fromEntries(await Promise.all(this.statusConfigs(input).map(async ([id,config])=>[id,Object.fromEntries(await Promise.all((['asr','video'] as const).map(async role=>[role,await this.runtime.media.analysisStatus(config,role)])))])));
+      case 'skill.voice.status':return Object.fromEntries(await Promise.all(this.statusConfigs(input).map(async ([id,config])=>{
+        const options=config.media.voice,edge=options?.protocol==='edge_tts',profile=edge?undefined:publicProfile(this.runtime,options),validation=input?.scope==='bots'?undefined:this.serviceAcceptance(config,'voice'),health=options?.profileRef?this.services?.healthStatus(options.profileRef):undefined;
+        return [id,{...(profile?{configured:['ready','partial'].includes(profile.state),...profile,health:health??null}:await this.runtime.media.analysisStatus(config,'tts')),revision:config.revision,protocol:options?.protocol,replyMode:options?.replyMode??'on_demand',provider:edge?'edge_tts':options?.profileRef?.serviceId,voice:edge?options.voice??'zh-CN-XiaoxiaoNeural':undefined,format:options?.format??'mp3',synthesisValidation:validation??{status:'NOT_RUN'}}];
       })));
       case 'capability.list':{const serviceRoles=new Set(['voice','singing','singing_protocol','music','music_protocol']);return[...repos.capabilities.statuses().filter((record:any)=>!serviceRoles.has(record?.role)),...repos.capabilities.allAcceptances()];}
-      case 'skill.music.status':return Object.fromEntries(repos.personas.configs().map(config=>{
+      case 'skill.music.status':return Object.fromEntries(this.statusConfigs(input).map(([id,config])=>{
         const options=config.media.music,profile=publicProfile(this.runtime,options),health=options?.profileRef?this.services?.healthStatus(options.profileRef):undefined;
-        return [config.id,{...profile,includeLyrics:options?.includeLyrics===true,revision:config.revision,permitted:config.skills.includes('music-download')&&config.tools.includes('bot_music'),environment:health??null,protocolValidation:health?{status:['ready','degraded'].includes(health.state)?'PASS':health.state==='blocked'?'BLOCKED':'FAIL',evidence:health.safeDiagnostic,updatedAt:health.checkedAt,source:'health'}:{status:'NOT_RUN'},downloadValidation:this.serviceAcceptance(config,'music')??{status:'NOT_RUN'}}];
+        return [id,{...profile,includeLyrics:options?.includeLyrics===true,revision:config.revision,permitted:config.skills.includes('music-download')&&config.tools.includes('bot_music'),environment:health??null,protocolValidation:health?{status:['ready','degraded'].includes(health.state)?'PASS':health.state==='blocked'?'BLOCKED':'FAIL',evidence:health.safeDiagnostic,updatedAt:health.checkedAt,source:'health'}:{status:'NOT_RUN'},downloadValidation:(input?.scope==='bots'?undefined:this.serviceAcceptance(config,'music'))??{status:'NOT_RUN'}}];
       }));
       case 'skill.music.probe':{
         const value=z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive()}).strict().parse(input),config=repos.personas.config(value.configId);if(config.revision!==value.revision)throw new ConflictError('配置已变化，请针对当前版本重新验收');return this.serviceHealth(config,'music',AbortSignal.timeout(30_000));
       }
-      case 'skill.singing.status':return Object.fromEntries(repos.personas.configs().map(config=>{
+      case 'skill.singing.status':return Object.fromEntries(this.statusConfigs(input).map(([id,config])=>{
         const options=config.media.singing,profile=publicProfile(this.runtime,options),health=options?.profileRef?this.services?.healthStatus(options.profileRef):undefined;
-        return [config.id,{...profile,configured:['ready','partial'].includes(profile.state),health:health??null,revision:config.revision,format:options?.defaultOutput??'mp3',permitted:config.skills.includes('singing-conversion')&&config.tools.includes('bot_sing'),protocolValidation:health?{status:['ready','degraded'].includes(health.state)?'PASS':health.state==='blocked'?'BLOCKED':'FAIL',evidence:health.safeDiagnostic,updatedAt:health.checkedAt,source:'health'}:{status:'NOT_RUN'},conversionValidation:this.serviceAcceptance(config,'singing')??{status:'NOT_RUN'}}];
+        return [id,{...profile,configured:['ready','partial'].includes(profile.state),health:health??null,revision:config.revision,format:options?.defaultOutput??'mp3',permitted:config.skills.includes('singing-conversion')&&config.tools.includes('bot_sing'),protocolValidation:health?{status:['ready','degraded'].includes(health.state)?'PASS':health.state==='blocked'?'BLOCKED':'FAIL',evidence:health.safeDiagnostic,updatedAt:health.checkedAt,source:'health'}:{status:'NOT_RUN'},conversionValidation:(input?.scope==='bots'?undefined:this.serviceAcceptance(config,'singing'))??{status:'NOT_RUN'}}];
       }));
       case 'skill.singing.probe':{
         const value=z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive()}).strict().parse(input),config=repos.personas.config(value.configId);if(config.revision!==value.revision)throw new ConflictError('配置已变化，请针对当前版本重新验收');return this.serviceHealth(config,'singing',AbortSignal.timeout(30_000));
       }
       case 'capability.record':{const value=z.object({configId:z.string(),revision:z.number().int(),role:z.enum(['image','asr','video','voice','singing','singing_protocol','music','music_protocol']),status:z.enum(['PASS','FAIL','BLOCKED','NOT_RUN']),evidence:z.string().min(1).max(2000)}).parse(input);const config=repos.personas.config(value.configId);if(config.revision!==value.revision)throw new ConflictError('配置已变化，请针对当前版本重新验收');if(['singing_protocol','music_protocol'].includes(value.role))throw Error('v4 Profile 协议状态只来自 service.health');if(['voice','singing','music'].includes(value.role)){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');if(value.status==='NOT_RUN')throw Error('新验收 API 不登记 NOT_RUN');const binding=serviceRoleBinding(config,value.role as 'voice'|'singing'|'music');if(!binding)throw Error('请先选择已登记 Profile');const profile=this.runtime.profiles?.get({serviceId:binding.serviceId,profileId:binding.profileId});if(!profile)throw Error('Profile 未登记');return this.services.recordAcceptance({...binding,profileRevision:profile.revision,profileContentHash:profile.contentHash,state:value.status,evidence:value.evidence,evidenceType:'operator-review'}).data;}const record={...value,updatedAt:Date.now(),source:'operator'};repos.capabilities.saveStatus(`${value.configId}:${value.revision}:${value.role}`,record);return record;}
-      case 'config.save':this.services?.validateSelections(input.config,repos.personas.findConfig(input.config?.id));return this.runtime.saveConfig(input.config,input.expectedRevision);
+      case 'config.save':return this.runtime.saveConfig(input.config,input.expectedRevision);
       case 'config.files.apply':return this.runtime.applyPersonaFiles(z.object({id:z.string()}).strict().parse(input).id);
       case 'config.copy':{const original=repos.personas.config(z.string().parse(input.id));const newId=z.string().parse(input.newId);this.features?.skills.copy(original,newId);return this.runtime.saveConfig({...original,id:newId,name:z.string().parse(input.name),revision:1});}
-      case 'bot.save':{const bot=this.runtime.saveBot(input);if(!bot.enabled||bot.archived)await this.runtime.stop(bot.id);return bot;}
+      case 'bot.save':{
+        const candidate=botSchema.parse(input),previous=repos.bots.bots().find(bot=>bot.id===candidate.id);
+        if(!previous||candidate.settings&&JSON.stringify(candidate.settings)!==JSON.stringify(previous.settings)){
+          const persona=repos.personas.config(candidate.configId),config=configWithBotSettings(persona,candidate.settings??botSettingsFromConfig(persona));
+          this.services?.validateSelections(config,previous?.settings?configWithBotSettings(persona,previous.settings):undefined);
+          await this.runtime.harness.validateModel(config);
+          if(JSON.stringify(repos.bots.bots().find(bot=>bot.id===candidate.id))!==JSON.stringify(previous))throw new ConflictError();
+          this.services?.validateSelections(config,previous?.settings?configWithBotSettings(persona,previous.settings):undefined);
+        }
+        const bot=this.runtime.saveBot(candidate);if(!bot.enabled||bot.archived)await this.runtime.stop(bot.id);return bot;
+      }
       case 'bot.start':await this.runtime.start(z.string().parse(input.id));return{ok:true};
       case 'bot.stop':await this.runtime.stop(z.string().parse(input.id));return{ok:true};
       case 'bot.service.start':await this.runtime.startService();return{running:this.runtime.serviceRunning()};

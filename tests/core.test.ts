@@ -218,8 +218,8 @@ test('one blocked bot cannot block another bot delivery',async t=>{
   for(const id of ['one','two'])f.store.deliveries.enqueue(f.store.sessions.binding(scope(id)),'a','t',[{type:'text',text:id}],{});
   const flush=f.runtime.flushDeliveries();await started.promise;await new Promise(r=>setImmediate(r));assert.deepEqual(sent,['two']);wait.resolve();await flush;assert.deepEqual(sent,['two','one']);
 });
-test('invalid models and media URLs never replace a valid configuration',async t=>{
-  const f=await runtimeFixture(t,async()=>{throw Error('unused');});const c=f.store.personas.config('default');await assert.rejects(f.runtime.saveConfig({...c,model:{provider:'p',model:'invalid'}},1),/UNKNOWN_MODEL/);assert.equal(f.store.personas.config('default').revision,1);
+test('persona files retain dormant model references but reject invalid media URLs',async t=>{
+  const f=await runtimeFixture(t,async()=>{throw Error('unused');});const c=f.store.personas.config('default');await f.runtime.saveConfig({...c,model:{provider:'p',model:'invalid'}},1);assert.equal(f.store.personas.config('default').revision,2);assert.equal(f.store.bots.bot('one').settings?.model,null);
   for(const baseUrl of ['file:///tmp/a','http://127.0.0.1','https://user:secret@example.com','https://example.com?token=secret'])assert.equal(configSchema.safeParse({...c,media:{image:{baseUrl,model:'x',keyEnv:'KEY'}}}).success,false);
   assert.equal(configSchema.safeParse({...c,skills:['private-global-skill']}).success,true);assert.equal(configSchema.safeParse({...c,skills:['../escape']}).success,false);
 });
@@ -287,7 +287,7 @@ for(const action of ['stop','new','disable','revoke','close'] as const)test(`${a
   if(action==='stop')await f.runtime.stopSession(scope());
   if(action==='new')await f.runtime.newSession(scope());
   if(action==='disable')await f.runtime.stop('one');
-  if(action==='revoke'){const config=f.store.personas.config('default');await f.runtime.saveConfig({...config,tools:[]},config.revision);}
+  if(action==='revoke'){const bot=f.store.bots.bot('one');f.runtime.saveBot({...bot,settings:{...bot.settings!,tools:[]}});}
   if(action==='close'){const closing=f.runtime.close();assert.ok(progressSignal?.aborted);await closing;}
   release.resolve();await work;await settleProgress();t.mock.timers.tick(120000);await settleProgress();assert.equal(f.store.deliveries.deliveries().length,0);
 });

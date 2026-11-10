@@ -1,5 +1,6 @@
 import type {Translate} from './locale.js';
 import type {PanelUI} from './bots-panel.js';
+import {modelLibraryLabel,serviceHealthLabel} from './service-health.js';
 
 export interface ServicesPanelProps {
   React:any;
@@ -22,10 +23,8 @@ export interface ServicesPanelProps {
 const h=(React:any,type:any,props:any,...children:any[])=>React.createElement(type,props,...children);
 
 function stateBadge(React:any, t:Translate, value:any){
-  const state=String(value?.state??value??'');
-  const ready=['ready','degraded','connected','running'].includes(state);
-  const label=ready?t('serviceReady'):state?t('serviceUnavailable'):t('loadingShort');
-  return h(React,'span',{className:`badge${ready?'':' warning'}`,role:'status'},label);
+  const warning=['degraded','unavailable','blocked'].includes(value?.state);
+  return h(React,'span',{className:`badge${warning?' warning':''}`,role:'status',title:value?.safeDiagnostic},serviceHealthLabel(value,t));
 }
 
 function serviceCard(React:any, props:ServicesPanelProps, serviceId:'gpt-sovits'|'breeze-tts', label:string, urlKey:'gptSovitsUrl'|'breezeTtsUrl', rootKey:'gptSovitsProjectRoot'|'breezeTtsProjectRoot', addressLabel:string, startLabel:string){
@@ -50,13 +49,13 @@ export function ServicesPanel(props:ServicesPanelProps){
   return h(React,'section',{className:'panel-page services-page','aria-label':props.t('services')},
     h(React,'div',{className:'page-toolbar'},h(React,'div',null,h(React,'h3',null,props.t('services')),h(React,'span',{className:'muted'},props.t('serviceDescription')))),
     h(React,'section',{className:'card service-card'},
-      h(React,'div',{className:'section-heading'},h(React,'h3',null,props.t('robotService')),stateBadge(React,props.t,running?'running':'stopped')),
+      h(React,'div',{className:'section-heading'},h(React,'h3',null,props.t('robotService')),h(React,'span',{className:'badge',role:'status'},props.summary?.health?(running?props.t('online'):props.t('stopped')):props.t('unknown'))),
       h(React,'div',{className:'actions'},props.ui.button(running?props.t('stopBotService'):props.t('startBotService'),props.onToggleRobotService,{className:'primary',disabled:props.busy||!props.summary?.health,'aria-label':running?props.t('stopBotService'):props.t('startBotService')})),
     ),
     serviceCard(React,props,'gpt-sovits','GPT-SoVITS','gptSovitsUrl','gptSovitsProjectRoot',props.t('gptSovitsAddress'),props.t('startGptSovits')),
     serviceCard(React,props,'breeze-tts','Breeze TTS','breezeTtsUrl','breezeTtsProjectRoot',props.t('breezeTtsAddress'),props.t('startBreezeTts')),
     draft?h(React,'section',{className:'card service-card'},
-      h(React,'div',{className:'section-heading'},h(React,'h3',null,props.t('stsModelDirectory')),stateBadge(React,props.t,props.health?.rvc)),
+      h(React,'div',{className:'section-heading'},h(React,'h3',null,props.t('stsModelDirectory')),h(React,'span',{className:'badge',role:'status',title:props.settings?.reports?.rvc?.diagnostics?.join('\n')},modelLibraryLabel(props.settings?.reports?.rvc,props.t))),
       h(React,'div',{className:'directory-field'},props.ui.field(props.t('stsModelDirectory'),draft.modelsRoot,value=>props.onDraftChange({modelsRoot:value})),props.ui.button(props.t('browseDirectory'),()=>props.onPickDirectory('modelsRoot'))),
       h(React,'div',{className:'save-bar'},h(React,'span',{className:'save-state'},props.dirty?props.t('unsaved'):props.t('savedState')),props.ui.button(props.t('save'),props.onSave,{className:'primary',disabled:props.busy||!props.dirty}),props.ui.button(props.t('refresh'),props.onRefresh,{disabled:props.busy||props.dirty})),
     ):h(React,'p',{role:'status'},props.t('loading')),

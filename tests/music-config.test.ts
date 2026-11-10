@@ -34,9 +34,10 @@ test('music card enables dedicated permissions and retains persona media setting
   const config=configSchema.parse({id:'music',name:'Music',personaPrompt:'A',tools:[],skills:[],media:{voice:{enabled:false}}});let updated:any;
   const nodes:any[]=[];const walk=(item:any)=>{if(!item||typeof item!=='object')return;nodes.push(item);item.children?.forEach(walk);};
   const tree=musicCard(React.createElement,ui,config,[],(patch:any)=>{updated=patch;});walk(tree);
-  assert.equal(tree.children[1].type,'details');
+  assert.equal(nodes.some(node=>node.type==='details'),false);
   assert.doesNotMatch(JSON.stringify(nodes),/验收|health|acceptance|测试|权重|locator/);
   assert.ok(nodes.some(node=>node.type==='label'&&node.children[0]==='音乐来源'));
+  assert.ok(nodes.some(node=>node.props?.role==='switch'&&node.props['aria-label']==='下载时附带歌词'));
   assert.equal(nodes.some(node=>node.type==='input'),false);
   nodes.find(node=>node.props?.['aria-label']==='音乐搜索与下载').props.onClick();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(updated.media.music.enabled,true);assert.equal(updated.media.music.includeLyrics,false);assert.deepEqual(updated.media.voice,config.media.voice);
