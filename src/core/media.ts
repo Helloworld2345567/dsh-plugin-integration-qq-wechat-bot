@@ -48,7 +48,6 @@ export class Assets {
         ? origin==='generated'?AUDIO_LIMITS.outputBytes:AUDIO_LIMITS.inputBytes
         : INPUT_LIMITS.attachmentBytes;
     if(bytes.length>maxBytes) throw new Error('MEDIA_TOO_LARGE');
-    const usage=this.deps.media.assets.assetUsage(scope);if(usage.scope+bytes.length>512*1024*1024||usage.total+bytes.length>2*1024*1024*1024)throw new Error('MEDIA_STORAGE_LIMIT');
     const id=randomUUID(); const name=path.basename(input.name.replaceAll('\\','/')).replace(/[^\p{L}\p{N}._ -]/gu,'_').slice(0,180)||'attachment.bin';
     const workspace=await this.workspace(scope),createdAt=Date.now();
     const folder=assetFolder(workspace,{id,scopeKey:scope,kind:input.kind,createdAt,jobId,origin});await mkdir(folder,{recursive:true});const file=path.join(folder,name);await writeFile(file,bytes,{flag:'wx'});

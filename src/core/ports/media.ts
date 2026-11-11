@@ -1,18 +1,12 @@
 import type {Asset} from '../types.js';
 import type {MediaUsageCall} from '../usage.js';
 
-export interface AssetUsage {
-  scope: number;
-  total: number;
-}
-
 /** Registered inbound and generated media, owned by one channel identity. */
 export interface AssetRepository {
   saveAsset(asset: Asset): void;
   asset(scope: string, id: string): Asset;
   findAsset(id: string): Asset | undefined;
   recentAssets(scope: string, sessionId: string, kind?: string, limit?: number): Asset[];
-  assetUsage(scope: string): AssetUsage;
   deleteAsset(scope: string, id: string): void;
   allAssets(): Asset[];
   countAssets(): number;

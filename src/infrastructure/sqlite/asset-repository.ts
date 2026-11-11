@@ -1,7 +1,7 @@
 import {storageDescriptor} from '../../i18n/storage.js';
 import {LocalizedError} from '../../core/errors.js';
 import type {Asset} from '../../core/types.js';
-import type {AssetRepository, AssetUsage} from '../../core/ports/media.js';
+import type {AssetRepository} from '../../core/ports/media.js';
 import type {SqliteDatabase} from './database.js';
 
 const indexSql = 'INSERT INTO asset_index VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET scope=excluded.scope,session=excluded.session,kind=excluded.kind,created_at=excluded.created_at,size=excluded.size';
@@ -33,11 +33,6 @@ export class SqliteAssetRepository implements AssetRepository {
       result.push(asset);
     }
     return result;
-  }
-  assetUsage(scope: string): AssetUsage {
-    const owned = this.database.db.prepare('SELECT COALESCE(SUM(size),0) value FROM asset_index WHERE scope=?').get(scope) as {value:number|bigint};
-    const total = this.database.db.prepare('SELECT COALESCE(SUM(size),0) value FROM asset_index').get() as {value:number|bigint};
-    return {scope:Number(owned.value), total:Number(total.value)};
   }
   deleteAsset(scope: string, id: string): void {
     this.database.transaction(() => {
