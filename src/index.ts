@@ -10,6 +10,7 @@ import { Assets, MediaService } from './core/media.js';
 import { BotRuntime } from './core/runtime.js';
 import {createBotCredentials} from './harness/credentials.js';
 import { NativeHarness,type HarnessExtensions } from './harness/bridge.js';
+import {SessionOwners} from './harness/session-owners.js';
 import { Admin } from './harness/admin.js';
 import { QQAdapter,qqChannel } from './channels/qq.js';
 import {createQQAudioPreparer} from './channels/qq-audio.js';
@@ -46,6 +47,7 @@ declare module '@deepseek-ai/cordis' {interface Context {botIntegration:BotRunti
 /** First release: only code-reviewed adapters compiled into this package may load. */
 const HOST_SERVICE_POLICIES:ReadonlyMap<string,ApprovedServicePolicy>=BUILTIN_SERVICE_POLICIES;
 export async function apply(ctx:Context,config:Config={}):Promise<void>{
+  const sessionOwners=new SessionOwners(ctx);
   const systemLocale=():SystemLocale=>config.messageLocale?.get()??'zh';
   ctx.effect(()=>ctx.settings.configure({auto:false}));
   const home=config.dataDir??process.env.BOT_DATA_HOME??path.join(process.env.DSH_HOME??path.join(process.cwd(),'.runtime','bot-data'),'storages','bot-integration');
@@ -64,7 +66,7 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
   }catch(error){await serviceHost?.dispose().catch(()=>{});persistence.close();throw error;}
   const assets=new Assets(repos);const media=new MediaService(repos,assets,config.python,new HarnessMediaProvider(ctx),new ProcessWorker(config.python),mediaOperationRegistry,undefined,serviceRuntime);
   const credentials=createBotCredentials(ctx.credentials);
-  const extensions:HarnessExtensions={};const harness=new NativeHarness(ctx,repos,assets,media,extensions,systemLocale);let disposeMode;try{disposeMode=await harness.registerMode();}catch(error){await serviceHost.dispose().catch(()=>{});persistence.close();throw error;}
+  const extensions:HarnessExtensions={};const harness=new NativeHarness(ctx,repos,assets,media,extensions,systemLocale,sessionOwners);let disposeMode;try{disposeMode=await harness.registerMode();}catch(error){await serviceHost.dispose().catch(()=>{});persistence.close();throw error;}
   const channels=createChannelRegistry([qqChannel(new QQAdapter(undefined,{emit:event=>extensions.stats?.observeGroup({botId:event.botId,groupId:event.groupId,name:event.name,event:event.type==='group.joined'?'joined':event.type==='group.left'?'left':'observed',at:event.at,eventId:event.eventId})},undefined,undefined,createQQAudioPreparer(assets,{processes:new NodeControlledProcessPort()}))),weixinChannel(new WeixinAdapter(persistence.cursors))]);
   const runtime=new BotRuntime(repos,assets,media,harness,channels,credentials,config.debounceMs,0,profiles,systemLocale);
   const features=new BotFeatures(runtime,createLifecyclePort());extensions.stats=features.stats;extensions.model=(binding,snapshot,args,signal)=>features.model(binding,snapshot,args,signal);extensions.voice=(binding,snapshot,args,signal)=>features.voice(binding,snapshot,args,signal);extensions.evolve=(binding,snapshot,args,signal)=>features.execute(binding,snapshot,args,signal);

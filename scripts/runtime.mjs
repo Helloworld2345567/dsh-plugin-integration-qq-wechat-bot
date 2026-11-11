@@ -30,6 +30,8 @@ export const {productHome,workspaceRoot,workspaceRuntime,runtimeEnv}=runtime;
 /** Start/install call this explicitly; importing runtime configuration stays read-only. */
 export function prepareRuntimeDirectories(config=runtime){
   for(const directory of [config.processHome,config.temporary,config.runtimeEnv.APPDATA,config.runtimeEnv.LOCALAPPDATA])mkdirSync(directory,{recursive:true});
+  // Windows folder dialogs resolve Desktop beneath the redirected profile.
+  if(process.platform==='win32')mkdirSync(path.join(config.processHome,'Desktop'),{recursive:true});
   return config;
 }
 

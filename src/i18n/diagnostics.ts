@@ -123,7 +123,6 @@ export const diagnostics={
   directoryWindowUnconfirmed:{zh:'未确认配置目录窗口已打开，请手动打开面板显示的路径',en:'The directory window could not be confirmed open. Open the path shown in the panel manually.'},
   mediaModelRequired:{zh:'请选择聊天模型或媒体分析模型',en:'Select a chat model or media analysis model.'},
   sessionStorageUnsupported:{zh:'当前会话存储不支持删除，请使用随插件安装的 JSONL 存储',en:'This session storage does not support deletion. Use the JSONL storage installed with the plugin.'},
-  sessionInUse:{zh:'会话仍被使用，请停止相关任务后重试删除',en:'The session is still in use. Stop its tasks before deleting it.'},
   workspaceNotDirectory:{zh:'工作目录必须是文件夹',en:'The working directory must be a folder.'},
   skillDraftApply:{zh:'SKILL_DRAFT_CONFLICT: 请先应用或保留现有文件草稿',en:'SKILL_DRAFT_CONFLICT: Apply or preserve the existing file draft first.'},
   skillDraftChanged:{zh:'SKILL_DRAFT_CHANGED: 技能文件在校验期间发生变化',en:'SKILL_DRAFT_CHANGED: Skill files changed during validation.'},

@@ -44,7 +44,7 @@ function publicDelivery(delivery:Delivery):Omit<Delivery,'reply'|'replyEnvelope'
 
 export class Admin {
   readonly attempts=new Map<string,{botId:string;ticket:string;expires:number}>();
-  constructor(readonly ctx:Context,readonly runtime:BotRuntime,readonly token:string,readonly revealDirectory:(directory:string)=>Promise<void>=openDirectory,readonly features?:BotFeatures,readonly services?:ServiceManagement,readonly chooseDirectory:(initial?:string,locale?:SystemLocale)=>Promise<string|undefined>=(initial,locale)=>pickDirectory(initial,undefined,undefined,locale)){}
+  constructor(readonly ctx:Context,readonly runtime:BotRuntime,readonly token:string,readonly revealDirectory:(directory:string)=>Promise<void>=openDirectory,readonly features?:BotFeatures,readonly services?:ServiceManagement,readonly chooseDirectory:(initial?:string,locale?:SystemLocale,signal?:AbortSignal)=>Promise<string|undefined>=(_initial,_locale,signal)=>pickDirectory(ctx.get('directoryPicker'),signal)){}
   private statusConfigs(input:unknown):Array<[string,BotConfig]> {
     const {scope}=z.object({scope:z.literal('bots').optional()}).strict().parse(input??{});
     const repos=this.runtime.repos;
@@ -92,7 +92,7 @@ export class Admin {
     if(value.name==='automation.list')return versioned({scopes:repos.sessions.bindings().filter(binding=>binding.scope.kind==='private').map(binding=>({scopeKey:binding.key,botId:binding.scope.botId,configId:repos.bots.bot(binding.scope.botId).configId,channelId:binding.scope.channelId,senderId:binding.scope.senderId})),proactive:this.runtime.automation.listProactive(),scheduled:this.runtime.automation.listJobs()},value.input.changedSince);
     const page=repos.deliveries.pageDeliveries({filter:{scopeKey:value.input.scopeKey},limit:value.input.limit,cursor:value.input.cursor});return{...page,contractVersion:ADMIN_CONTRACT_VERSION,items:page.items.map((row:Delivery)=>publicDelivery(row)),hasMore:page.nextCursor!==null};
   }
-  async command(request:unknown,signal:AbortSignal=new AbortController().signal):Promise<unknown>{const value=adminCommandRequestSchema.parse(request);if(value.name==='service.settings.save'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.saveSettings(value.input,signal);}if(value.name==='service.settings.pick-directory')return {path:await this.chooseDirectory((value.input as {current?:string}).current,(value.input as {locale?:SystemLocale}).locale)};if(value.name==='service.refresh'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.refresh(value.input,signal);}if(value.name==='service.start'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.start(value.input,signal);}if(value.name==='capability.acceptance'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.recordAcceptance(value.input);}return this.invoke(value.name,value.input);}
+  async command(request:unknown,signal:AbortSignal=new AbortController().signal):Promise<unknown>{const value=adminCommandRequestSchema.parse(request);if(value.name==='service.settings.save'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.saveSettings(value.input,signal);}if(value.name==='service.settings.pick-directory')return {path:await this.chooseDirectory((value.input as {current?:string}).current,(value.input as {locale?:SystemLocale}).locale,signal)};if(value.name==='service.refresh'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.refresh(value.input,signal);}if(value.name==='service.start'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.start(value.input,signal);}if(value.name==='capability.acceptance'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.recordAcceptance(value.input);}return this.invoke(value.name,value.input);}
   async invoke(action:string,input:any):Promise<unknown>{
     const repos=this.runtime.repos;
     switch(action){
@@ -181,6 +181,7 @@ export class Admin {
         repos.memory.correctMemory(value.scope,value.key,value.value,value.version);return{ok:true};
       }
       case 'session.cancel':{const id=z.string().parse(input.id);const binding=repos.sessions.bindings().find(b=>b.sessionId===id);if(!binding)throw localizedError('sessionMissing');await this.runtime.stopSession(binding.scope);return{ok:true};}
+      case 'session.delete':return {ok:true,...await this.runtime.deleteSession(z.string().min(1).max(200).parse(input.id))};
       case 'delivery.retry':{const id=z.string().parse(input.id);const delivery=repos.deliveries.find(id);if(!delivery)throw localizedError('deliveryMissing');if(!['unknown','failed'].includes(delivery.state))throw localizedError('deliveryNotRecoverable');await this.runtime.deliveryWorker.retry(id);return{deliveryId:id,state:repos.deliveries.find(id)?.state??'unknown'};}
       default:throw new Error('UNKNOWN_ADMIN_ACTION');
     }

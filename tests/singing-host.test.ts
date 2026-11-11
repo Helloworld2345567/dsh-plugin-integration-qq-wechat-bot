@@ -33,7 +33,7 @@ async function prepare(f:Awaited<ReturnType<typeof fixture>>){return JSON.parse(
 
 test('singing candidates resolve explicit old session-owned files and reject cross-session references',async t=>{
   const f=await fixture(t);f.assets.recent=()=>[];
-  const first=await prepare(f);assert.equal(first.candidates[0].title,'vocals.wav');assert.equal(first.candidates[0].assetId,undefined);
+  const first=await prepare(f);assert.equal(first.candidates[0].title,'vocals.wav');assert.equal(first.candidates[0].candidate,1);assert.equal(first.candidates[0].number,undefined);assert.equal(first.candidates[0].assetId,undefined);
   f.store.assets.saveAsset({...f.input,sessionId:'another-session'});
   await assert.rejects(prepare(f),/SINGING_ATTACHMENT_INVALID/);
   f.store.sessions.reset(f.binding.scope);assert.equal(singingCandidates({bindings:f.store.sessions,singing:f.store.singingState},f.binding),undefined); // current binding is checked on mutation
@@ -44,6 +44,9 @@ test('candidate set replacement cannot redirect an old selection and invalid inp
   const f=await fixture(t),first=await prepare(f),second=await prepare(f);let calls=0;f.deps.media={run:async()=>{calls++;return{assetIds:[]};}} as any;
   await assert.rejects(f.call({action:'convert',candidateSet:first.candidateSet,candidate:1,sourceType:'vocals'}),/SINGING_CANDIDATES_STALE/);
   await assert.rejects(f.call({action:'convert',candidateSet:second.candidateSet,candidate:1,sourceType:'unknown'}),/SINGING_SOURCE_TYPE_REQUIRED/);
+  for(const selection of [{candidate:0,number:1},{number:2}])await assert.rejects(f.call({action:'convert',candidateSet:second.candidateSet,...selection,sourceType:'vocals'}),error=>{
+    assert.ok(error instanceof Error);assert.match(error.message,/^SINGING_CANDIDATE_INVALID\b/);assert.match(error.message,/candidates\[\]\.candidate/);return true;
+  });
   assert.equal(calls,0);
 });
 
@@ -68,14 +71,19 @@ test('v4 conversion preserves only safe singing provider codes and hides service
 });
 
 test('success returns safe names, reuses one audio asset and forwards only business parameters',async t=>{
-  const f=await fixture(t),p=await prepare(f);let calls=0;
-  f.deps.media={run:async(_scope:string,_operation:string,config:unknown,inputs:string[],parameters:unknown,_signal:AbortSignal,authorize:()=>void)=>{
-    calls++;authorize();assert.deepEqual(inputs,[f.input.id]);assert.deepEqual(config,f.config);assert.deepEqual(parameters,{sourceType:'vocals',format:'mp3'});
-    const out=await f.assets.save(f.binding.key,{kind:'audio',mime:'audio/mpeg',name:'converted.mp3'},Buffer.from('converted'),'job');return{assetIds:[out.id]};
-  }} as any;
-  const args={action:'convert',candidateSet:p.candidateSet,candidate:1,sourceType:'vocals',serviceUrl:'http://evil.invalid',singingWeightsPath:'bad'};
-  const result=JSON.parse(await f.call(args));assert.deepEqual(result.files,['converted.mp3']);assert.doesNotMatch(JSON.stringify(result),/models|assetId|serviceUrl|traceback/);
-  const reused=JSON.parse(await f.call(args));assert.equal(reused.reused,true);assert.equal(calls,1);assert.equal(f.live.assets.length,1);
+  for(const [name,selection] of [['candidate',{candidate:1}],['legacy number',{number:1}],['candidate takes precedence',{candidate:1,number:2}]] as const)await t.test(name,async t=>{
+    const f=await fixture(t),prepared=await prepare(f),p=JSON.parse(await f.call({action:'list'}));assert.deepEqual(p,prepared);let calls=0;
+    f.deps.media={run:async(_scope:string,_operation:string,config:unknown,inputs:string[],parameters:unknown,_signal:AbortSignal,authorize:()=>void)=>{
+      calls++;authorize();assert.deepEqual(inputs,[f.input.id]);assert.deepEqual(config,f.config);assert.deepEqual(parameters,{sourceType:'vocals',format:'mp3'});
+      const out=await f.assets.save(f.binding.key,{kind:'audio',mime:'audio/mpeg',name:'converted.mp3'},Buffer.from('converted'),'job');return{assetIds:[out.id]};
+    }} as any;
+    const args={action:'convert',candidateSet:p.candidateSet,sourceType:'vocals',serviceUrl:'http://evil.invalid',singingWeightsPath:'bad'};
+    const result=JSON.parse(await f.call({...args,...selection}));assert.deepEqual(result.files,['converted.mp3']);assert.doesNotMatch(JSON.stringify(result),/models|assetId|serviceUrl|traceback/);
+    for(const selected of [{candidate:p.candidates[0].candidate},{number:p.candidates[0].candidate}]){
+      const reused=JSON.parse(await f.call({...args,...selected}));assert.equal(reused.reused,true);assert.deepEqual(reused.files,result.files);
+    }
+    assert.equal(calls,1);assert.equal(f.live.assets.length,1);
+  });
 });
 
 test('URL candidates require current network permission and pending upload has explicit consumption',async t=>{

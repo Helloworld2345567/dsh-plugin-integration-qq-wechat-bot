@@ -4,6 +4,7 @@ import {mkdir, mkdtemp, writeFile, rm} from 'node:fs/promises';
 import path from 'node:path';
 import {loadSkillOperations, resolveSkillOperation, skillToolManifests, validateSkillSource} from '../src/core/skill-operations.js';
 import {mediaOperationRegistry} from '../src/core/media-operation-registry.js';
+import {defineTool} from '@deepseek-ai/dsh-tools';
 
 test('shipped skill declarations route tools and preserve provider and delivery contracts', () => {
   const manifest = skillToolManifests.find(item => item.skill === 'media-analysis')!;
@@ -47,6 +48,16 @@ test('music catalog and delivery stay behind the dedicated tool',()=>{
   }
   const singing=skillToolManifests.find(item=>item.skill==='singing-conversion')!;
   assert.equal(resolveSkillOperation(singing,{action:'sing',song:'泡沫'}),'singing_convert');
+});
+
+test('music and singing publish the same candidate field returned by their result selectors',()=>{
+  for(const name of ['bot_music','bot_sing']){
+    const manifest=skillToolManifests.find(item=>item.tool.name===name)!;
+    const tool=defineTool({...manifest.tool,output:{schema:{type:'string'},render:()=>[]},execute:async args=>JSON.stringify(args)});
+    const properties=(tool.parameters as any).properties;
+    assert.equal(properties.candidate.type,'number');assert.equal(properties.candidateSet.type,'string');
+    assert.equal(properties.number,undefined);assert.match(properties.candidate.description,/candidates\[\]\.candidate/);
+  }
 });
 
 test('a published skill accepts only its fixed namespaced entry', async () => {

@@ -19,7 +19,7 @@ async function fixture(t:TestContext){
   const binding=store.sessions.binding(scope),assets=new Assets(store.repositories());assets.workspace=async()=>path.join(home,'workspace');
   const audio=await assets.save(binding.key,{kind:'audio',name:'generated.mp3',mime:'audio/mpeg'},Buffer.from('fixture bytes'),'generated-job');
   const tools=new Map<string,any>(),agent={id:'test-agent'};let generated=0;
-  const ctx:any={on:()=>{},agents:{list:()=>[agent]},tools:{guard:()=>{},register:(tool:any)=>{tools.set(tool.name,tool);return()=>tools.delete(tool.name);}}};
+  const ctx:any={on:()=>{},effect:()=>{},agents:{list:()=>[agent]},tools:{guard:()=>{},register:(tool:any)=>{tools.set(tool.name,tool);return()=>tools.delete(tool.name);}}};
   const media:any={run:async()=>{generated++;return{text:'已生成 AI 语音。',assetIds:[audio.id],music:{track:{source:'MiguMusicClient',id:'test-song',title:'Test song',artist:'Test artist',format:'mp3'}}};}};
   const bridge=new NativeHarness(ctx,store.repositories(),assets,media,{skills:{} as any});
   const live:any={binding,snapshot:freezeTurn(config,bot,scope,['request'],testServiceProfiles()),assets:[],voice:{attempted:false},singing:{attempted:false},images:{inFlight:false,completed:false},skills:{},cwd:path.join(home,'workspace')};

@@ -39,6 +39,8 @@ export interface BotHistoryPort {
   snapshot(botId: string): BotHistorySnapshot;
   deleteFiles(assetsRoot: string, snapshot: BotHistorySnapshot): Promise<void>;
   deleteRecords(botId: string, snapshot: BotHistorySnapshot): void;
+  deleteSessionFiles(scope: string, sessionIds: readonly string[]): Promise<void>;
+  deleteSessionRecords(scope: string, sessionIds: readonly string[]): void;
 }
 
 export interface MediaRepositories {

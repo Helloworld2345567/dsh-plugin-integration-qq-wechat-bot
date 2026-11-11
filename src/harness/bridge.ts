@@ -48,6 +48,7 @@ import {buildChatPrompt,CHAT_PROMPT_SECTIONS,CHAT_PROMPT_CONTEXTS,CHAT_SUPPRESSE
 import {TOOL_LOADER,loadTools,projectTools,toolInstructions} from './tool-disclosure.js';
 import {CapabilityRegistry} from '../core/capability-registry.js';
 import {deleteNativeSessions} from './session-deletion.js';
+import {SessionOwners} from './session-owners.js';
 
 import {executeSingingTool} from './singing-tool.js';
 import {executeMusicTool} from './music-tool.js';
@@ -112,7 +113,7 @@ export class NativeHarness implements HarnessPort {
     this.closedTerminals.delete(agent);
     live.shellDirectory=live.cwd;
   }
-  constructor(readonly ctx:Context,readonly repos:RuntimeRepositories,readonly assets:Assets,readonly media:MediaService,readonly extensions:HarnessExtensions={},readonly systemLocale:()=>SystemLocale=()=> 'zh'){
+  constructor(readonly ctx:Context,readonly repos:RuntimeRepositories,readonly assets:Assets,readonly media:MediaService,readonly extensions:HarnessExtensions={},readonly systemLocale:()=>SystemLocale=()=> 'zh',readonly sessionOwners=new SessionOwners(ctx)){
     this.operationRegistry=media.operations??mediaOperationRegistry;
     this.statsAdapter=new StatsEventAdapter(()=>this.extensions.stats);
     this.skillFiles=extensions.skills??new DynamicSkills(repos.personas,repos.storage.home);
@@ -167,7 +168,18 @@ export class NativeHarness implements HarnessPort {
   async registerMode():Promise<()=>Promise<void>>{return registerMode(this.ctx);}
   async models():Promise<Array<{provider:string;model:string;inputModalities?:string[];reasoning?:{supported:boolean;efforts:string[]}}>> {return (await Promise.all(this.ctx.llm.listProviders().map(async provider=>Promise.all((await this.ctx.llm.listModels(provider.id)).map(async model=>{let efforts:string[]=[];try{const info=await this.ctx.llm.resolveModelInfo(provider.id,model.id);efforts=info.reasoning?.efforts?.map(effort=>String(effort.id))??[];}catch{/* Catalog listing remains available when optional model metadata cannot resolve. */}return{provider:provider.id,model:model.id,...model.inputModalities?{inputModalities:[...model.inputModalities]}:{},reasoning:{supported:efforts.length>0,efforts}};}))))).flat();}
   async inspectSession(sessionId:string):Promise<void> {await this.ctx.sessionQuery.readSession(SessionId(sessionId));}
-  async exportHistory():Promise<void>{for(const record of this.repos.sessions.sessionsAll())if(record.persisted){const log=await this.ctx.sessionQuery.readSession(SessionId(record.id));await this.repos.chatHistory.write(record.scopeKey,record.id,log.events);}}
+  async exportHistory():Promise<void>{
+    for(const record of this.repos.sessions.sessionsAll())if(record.persisted){
+      let log;
+      try{log=await this.ctx.sessionQuery.readSession(SessionId(record.id));}
+      catch(error){
+        // An interrupted deletion can leave an index row after the native log is gone.
+        if(typeof error==='object'&&error!==null&&'code' in error&&error.code==='SESSION_QUERY_SESSION_NOT_FOUND')continue;
+        throw error;
+      }
+      await this.repos.chatHistory.write(record.scopeKey,record.id,log.events);
+    }
+  }
   async compact(binding:SessionBinding,signal:AbortSignal):Promise<string> {
     const live=await this.session(binding);signal.throwIfAborted();
     const execution=await this.ctx.commands.execute(live.handle.agent,'/compact',[],signal);
@@ -541,5 +553,5 @@ export class NativeHarness implements HarnessPort {
   }
   cancel(sessionId:string):void{const root=this.live.get(sessionId)?.handle.agent;if(!root)return;const pending=[root];const seen=new Set<Agent>();while(pending.length){const parent=pending.shift()!;if(seen.has(parent))continue;seen.add(parent);for(const child of this.ctx.agents.list())if(this.ctx.agents.isOwnedBy(child.id,parent))pending.push(child);parent.cancel({kind:'user'});}}
   async dispose(sessionId?:string):Promise<void>{for(const [id,live] of this.live){if(!sessionId||id===sessionId){await live.handle.dispose();this.live.delete(id);}}}
-  async deleteSessions(sessionIds:readonly string[]):Promise<void>{await deleteNativeSessions(this.ctx,sessionIds,id=>this.dispose(id));}
+  async deleteSessions(sessionIds:readonly string[]):Promise<readonly string[]>{return deleteNativeSessions(this.ctx,sessionIds,(ids,remove)=>this.sessionOwners.deleting(ids,async()=>{for(const id of ids)this.live.delete(id);return remove();}));}
 }

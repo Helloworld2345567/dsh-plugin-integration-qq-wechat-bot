@@ -13,6 +13,7 @@ export interface DeliveryWorker {
   /** Requeue an existing failed/unknown delivery without changing its ID. */
   retry(deliveryId:string):Promise<void>;
   cancelScope(scopeKey:string,reason?:string):void;
+  cancelSession(sessionId:string):Promise<void>;
   cancelBot(botId:string,reason?:string):void;
   registerProgress(runId:string,active:()=>boolean):void;
   cancelProgress(runId:string):void;
@@ -59,7 +60,7 @@ function mayAutoRetry(error:unknown,delivery:Delivery):boolean {
  */
 export class DurableDeliveryWorker implements DeliveryWorker {
   private readonly lanes=new Map<string,Promise<void>>();
-  private readonly outbound=new Map<string,{botId:string;scopeKey:string;runId?:string;controller:AbortController}>();
+  private readonly outbound=new Map<string,{botId:string;scopeKey:string;sessionId:string;runId?:string;controller:AbortController;finished:Promise<void>}>();
   private readonly progressRuns=new Map<string,()=>boolean>();
   private closed=false;
   constructor(readonly repos:DeliveryWorkerRepositories,readonly channels:ChannelRegistry,readonly credentials:Credentials,readonly wait:(milliseconds:number,signal:AbortSignal)=>Promise<void>=async(milliseconds,signal)=>{await delay(milliseconds,undefined,{signal});},readonly profiles?:ProfileStore,readonly accepting:()=>boolean=()=>true){}
@@ -74,6 +75,12 @@ export class DurableDeliveryWorker implements DeliveryWorker {
     if(delivery)await this.flush({botId:delivery.botId});
   }
   cancelScope(scopeKey:string,_reason='任务已取消'):void{for(const item of this.outbound.values())if(item.scopeKey===scopeKey)item.controller.abort();}
+  async cancelSession(sessionId:string):Promise<void>{
+    for(const delivery of this.repos.deliveries.deliveries(['pending']))if(delivery.sessionId===sessionId)this.repos.deliveries.deliveryState(delivery,'cancelled');
+    const active=[...this.outbound.values()].filter(item=>item.sessionId===sessionId);
+    for(const item of active)item.controller.abort();
+    await Promise.all(active.map(item=>item.finished));
+  }
   cancelBot(botId:string,_reason='机器人已停用'):void{for(const item of this.outbound.values())if(item.botId===botId)item.controller.abort();}
   registerProgress(runId:string,active:()=>boolean):void{this.progressRuns.set(runId,active);}
   cancelProgress(runId:string):void{
@@ -98,7 +105,8 @@ export class DurableDeliveryWorker implements DeliveryWorker {
         if(!this.progressActive(delivery)){this.repos.deliveries.deliveryState(delivery,'cancelled');continue;}
         const controller=new AbortController();
         const progressTimer=delivery.purpose==='progress'?setTimeout(()=>controller.abort(new Error('PROGRESS_SEND_TIMEOUT')),Math.min(PROGRESS_SEND_MS,delivery.progress!.expiresAt-Date.now())):undefined;
-        this.outbound.set(delivery.id,{botId,scopeKey:delivery.scopeKey,runId:delivery.progress?.runId,controller});
+        let finish!:()=>void;const finished=new Promise<void>(resolve=>{finish=resolve;});
+        this.outbound.set(delivery.id,{botId,scopeKey:delivery.scopeKey,sessionId:delivery.sessionId,runId:delivery.progress?.runId,controller,finished});
         try{
           const bot=this.repos.bots.bot(delivery.botId);
           const credentialRead=this.credentials.read(bot.id);
@@ -140,7 +148,7 @@ export class DurableDeliveryWorker implements DeliveryWorker {
         }catch(error){
           const pending=repository.find(delivery.id,'pending');if(!pending)continue;
           this.repos.deliveries.deliveryState(pending,'failed',undefined,failure(error).message);
-        }finally{if(progressTimer)clearTimeout(progressTimer);this.outbound.delete(delivery.id);}
+        }finally{if(progressTimer)clearTimeout(progressTimer);this.outbound.delete(delivery.id);finish();}
       }
     }
   }

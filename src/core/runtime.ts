@@ -28,6 +28,7 @@ import {hasPendingSingingUpload,clearSingingCandidates,clearPendingSingingUpload
 import {clearMusicState} from './music-state.js';
 import {edgeTtsVoiceIds,type EdgeTtsVoiceId} from './voice-config.js';
 import {sanitizePublicServiceText} from './service-errors.js';
+import {localizedError} from './errors.js';
 
 function modelFailureCode(error:unknown):string {
   const message=error instanceof Error?error.message:typeof error==='string'?error:'MODEL_REQUEST_FAILED';
@@ -172,6 +173,26 @@ export class BotRuntime {
     await Promise.all([this.processing.get(key)?.done?.catch(()=>{}),this.maintenance.get(key)?.done?.catch(()=>{})]);
   }
   async newSession(scope:CallerScope,preserveActionId?:string,authorize?:()=>void):Promise<SessionBinding>{await this.stopSession(scope,preserveActionId);const previous=this.repos.sessions.binding(scope);authorize?.();await this.harness.dispose(previous.sessionId);authorize?.();return this.repos.sessions.reset(scope);}
+  async deleteSession(id:string):Promise<{current:boolean;newSessionId?:string}>{
+    const record=this.repos.sessions.findSession(id);if(!record)throw localizedError('sessionMissing');
+    const key=record.scopeKey,previous=this.controls.get(key)??Promise.resolve();
+    let result:{current:boolean;newSessionId?:string}|undefined;
+    const task=previous.catch(()=>{}).then(async()=>{
+      const target=this.repos.sessions.findSession(id);if(!target)throw localizedError('sessionMissing');
+      const current=this.repos.sessions.findBinding(key)?.sessionId===id;
+      if(current)await this.stopSession(target.scope);
+      await this.deliveryWorker.cancelSession(id);
+      // Release native writers, including sessions opened in the web UI, before removing history.
+      const deleted=await this.harness.deleteSessions([id])??[id];
+      await this.repos.botHistory.deleteSessionFiles(key,deleted);
+      result=this.repos.unitOfWork.transaction(()=>{
+        const replacement=current?this.repos.sessions.reset(target.scope):undefined;
+        this.repos.botHistory.deleteSessionRecords(key,deleted);
+        return{current,...replacement?{newSessionId:replacement.sessionId}:{}};
+      });
+    }).finally(()=>{if(this.controls.get(key)===task){this.controls.delete(key);if(this.repos.inbox.messages(key).length)this.schedule(key);}});
+    this.controls.set(key,task);await task;return result!;
+  }
   async resumeSession(scope:CallerScope,id:string,authorize?:()=>void):Promise<SessionBinding>{
     const binding=this.repos.sessions.binding(scope);if(this.busy(binding.key))throw new SystemMessageError('busyStop');
     const target=this.repos.sessions.session(scope,id);if(target.id===binding.sessionId)return binding;

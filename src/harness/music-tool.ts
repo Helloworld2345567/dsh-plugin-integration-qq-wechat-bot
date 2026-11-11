@@ -25,13 +25,14 @@ function recordDownload(live:MusicContext,track:MusicCandidate,deps:MusicDepende
 }
 export async function acquireMusicSource(live:MusicContext,args:Record<string,any>,signal:AbortSignal,deps:MusicDependencies,extraAuthorize?:()=>void):Promise<MusicAcquisition>{
   const binding={...live.binding},authorizeMusic=musicAuthorization(live,signal,deps),authorize=()=>{authorizeMusic();extraAuthorize?.();};authorize();
+  const candidate=args.candidate??args.number;
   let parameters:Record<string,unknown>;
-  if(args.candidateSet!==undefined||args.candidate!==undefined){
+  if(args.candidateSet!==undefined||candidate!==undefined){
     if(args.song!==undefined||args.artist!==undefined)throw Error('MUSIC_QUERY_INVALID');
     const candidates=musicCandidates({bindings:deps.repos.bindings,music:deps.repos.music},binding);
     if(!candidates||args.candidateSet!==candidates.id)throw Error('MUSIC_CANDIDATES_STALE');
-    if(!Number.isInteger(args.candidate)||args.candidate<1||args.candidate>candidates.candidates.length)throw Error('MUSIC_CANDIDATE_INVALID');
-    parameters={selection:candidates.candidates[args.candidate-1]};
+    if(!Number.isInteger(candidate)||candidate<1||candidate>candidates.candidates.length)throw Error(`MUSIC_CANDIDATE_INVALID: Use candidate from candidates[].candidate, a positive integer in the current range 1-${candidates.candidates.length}.`);
+    parameters={selection:candidates.candidates[candidate-1]};
   }else parameters=query(args);
   parameters={...parameters,includeLyrics:live.snapshot.config.media.music?.includeLyrics===true};
   const selectionKey=JSON.stringify(parameters),request=musicRequestKey(binding,live.snapshot,'acquire');

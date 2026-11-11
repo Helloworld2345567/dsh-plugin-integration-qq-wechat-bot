@@ -15,8 +15,8 @@
         "action":{"type":"string","enum":["search","download"],"required":true},
         "song":{"type":"string"},
         "artist":{"type":"string"},
-        "candidateSet":{"type":"string"},
-        "candidate":{"type":"number"}
+        "candidateSet":{"type":"string","description":"Copy candidateSet from the latest search result when selecting a specific track."},
+        "candidate":{"type":"number","description":"Copy the chosen candidates[].candidate value from that search result; a positive integer starting at 1."}
       }
     },
     "defaults":{"action":"search"},

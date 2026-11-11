@@ -54,4 +54,5 @@ test('launcher confines plugin home and temporary defaults to workspace runtime'
   const env=JSON.parse(execFileSync(process.execPath,['--input-type=module','-e',code],{env:{...process.env,BOT_HOME:path.join(root,'home'),BOT_WORKSPACE_ROOT:path.join(root,'workspaces')},windowsHide:true,encoding:'utf8'}));
   for(const value of Object.values(env))assert.ok(String(value).startsWith(path.join(root,'workspaces','.runtime')+path.sep));
   assert.ok((await readdir(path.join(root,'workspaces','.runtime'))).includes('tmp'));
+  if(process.platform==='win32')assert.ok((await stat(path.join(env.USERPROFILE,'Desktop'))).isDirectory(),'Windows folder dialogs need a Desktop in the redirected user profile');
 });

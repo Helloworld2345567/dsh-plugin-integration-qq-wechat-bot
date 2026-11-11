@@ -19,11 +19,12 @@ export async function executeSingingTool(live:SingingContext,args:Record<string,
   const {assets,media}=deps,binding=live.binding;
   const authorize=()=>{signal.throwIfAborted();assertSingingSession(deps.repos.bindings,binding);if(!allowedNow('bot_sing',live.snapshot,deps.current(),deps.bot(),binding.scope))throw Error('SINGING_DISABLED');deps.authorizeMusic?.();};
   authorize();
+  const selectedCandidate=args.candidate??args.number;
   const action=args.action??'list';
   if(action==='list')return JSON.stringify(publicSingingCandidates(singingCandidates({bindings:deps.repos.bindings,singing:deps.repos.singing},binding)));
   if(action==='sing'){
     live.singing.attempted=true;
-    const selectionKey=JSON.stringify([args.song,args.artist,args.candidateSet,args.candidate]);
+    const selectionKey=JSON.stringify([args.song,args.artist,args.candidateSet,selectedCandidate]);
     const previous=deps.repos.singing.attempt(binding.key);
     if(previous?.request===singingRequestKey(binding,live.snapshot)){
       if(previous.state==='running')throw Error('SINGING_ALREADY_RUNNING');
@@ -36,7 +37,7 @@ export async function executeSingingTool(live:SingingContext,args:Record<string,
     const currentConfig=mediaConfigNow(live.snapshot,deps.current()),options=currentConfig.media.singing;
     const selection=live.snapshot.services.singing;if(!options?.enabled||!selection?.snapshot||!['ready','partial'].includes(selection.state))throw Error('SINGING_CONFIGURATION_INVALID');
     const authorizeMusic=musicAuthorization(live,signal,deps);authorizeMusic();
-    const acquired=await acquireMusicSource(live,args.candidateSet!==undefined||args.candidate!==undefined?{candidateSet:args.candidateSet,candidate:args.candidate}:{song:args.song,artist:args.artist},signal,deps,authorize);
+    const acquired=await acquireMusicSource(live,args.candidateSet!==undefined||selectedCandidate!==undefined?{candidateSet:args.candidateSet,candidate:selectedCandidate}:{song:args.song,artist:args.artist},signal,deps,authorize);
     authorize();authorizeMusic();
     const candidates=saveSingingCandidates({bindings:deps.repos.bindings,singing:deps.repos.singing},binding,[{title:acquired.track!.title,assetId:acquired.sourceAssetId}]);
     const response=JSON.parse(await executeSingingTool(live,{action:'convert',candidateSet:candidates.id,candidate:1,sourceType:'mixed',format:'mp3'},signal,{...deps,authorizeMusic,music:{selectionKey,track:acquired.track!}}));
@@ -71,8 +72,8 @@ export async function executeSingingTool(live:SingingContext,args:Record<string,
   }
   const candidates=singingCandidates({bindings:deps.repos.bindings,singing:deps.repos.singing},binding);
   if(!candidates||args.candidateSet!==candidates.id)throw Error('SINGING_CANDIDATES_STALE');
-  const candidate=candidates.candidates.find(item=>item.number===args.candidate);
-  if(!candidate)throw Error('SINGING_CANDIDATE_INVALID');
+  const candidate=candidates.candidates.find(item=>item.number===selectedCandidate);
+  if(!candidate)throw Error('SINGING_CANDIDATE_INVALID: Use candidate from candidates[].candidate; it must be a positive integer within the returned candidate list.');
   const candidateUrl=candidate.url?url(candidate.url):undefined;
   const config=mediaConfigNow(live.snapshot,deps.current()),format=args.format??config.media.singing?.defaultOutput??'mp3';
   if(!live.snapshot.services.singing?.snapshot||!['ready','partial'].includes(live.snapshot.services.singing.state))throw Error('SINGING_CONFIGURATION_INVALID');

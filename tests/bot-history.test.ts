@@ -38,18 +38,48 @@ test('history purge removes old sessions, memories, media, automation and stats 
 
 test('native deletion closes owners, clears cache, removes descendants and reconciles search without touching unrelated logs',async t=>{
   const root=await mkdtemp(path.resolve('.codex/native-history-'));t.after(()=>rm(root,{recursive:true,force:true}));
-  const headers=[{id:'parent'},{id:'child',parentSession:'parent'},{id:'grandchild',parentSession:'child'},{id:'other'}];
+  const headers=[{id:'parent'},{id:'child',parentSession:'parent',origin:'subagent'},{id:'grandchild',parentSession:'child',origin:'subagent'},{id:'other'},{id:'fork',parentSession:'parent'}];
   for(const header of headers){await mkdir(path.join(root,header.id));await writeFile(path.join(root,header.id,'session.v4.jsonl'),'history');}
-  const order:string[]=[];const ctx={sessionPersistence:{list:async()=>headers.map(header=>({header})),locate:(h:any)=>({kind:'jsonl',path:path.join(root,h.id,'session.v4.jsonl')}),flush:async()=>{order.push('flush');}},sessions:{get:()=>undefined},storageDomain:{get:()=>({table:()=>({delete:async(id:string)=>{order.push(`cache:${id}`);}})})},sessionQuery:{searchSessions:async()=>{order.push('search');}}};
-  await deleteNativeSessions(ctx as any,['parent'],async id=>{order.push(`dispose:${id}`);});
+  const order:string[]=[];const removed:string[]=[];const ctx={sessionPersistence:{list:async()=>headers.map(header=>({header})),locate:(h:any)=>({kind:'jsonl',path:path.join(root,h.id,'session.v4.jsonl')}),flush:async()=>{order.push('flush');}},emit:(name:string,id:string)=>{assert.equal(name,'api-session/removed');removed.push(id);},storageDomain:{get:()=>({table:()=>({delete:async(id:string)=>{order.push(`cache:${id}`);}})})},sessionQuery:{searchSessions:async()=>{order.push('search');}}};
+  await deleteNativeSessions(ctx as any,['parent'],async(ids,remove)=>{for(const id of ids)order.push(`dispose:${id}`);return remove();});
   for(const header of headers.slice(0,3))await assert.rejects(stat(path.join(root,header.id)),{code:'ENOENT'});
   assert.equal(await readFile(path.join(root,'other','session.v4.jsonl'),'utf8'),'history');
+  assert.equal(await readFile(path.join(root,'fork','session.v4.jsonl'),'utf8'),'history');
   assert.deepEqual(order,['dispose:parent','dispose:child','dispose:grandchild','flush','cache:parent','cache:child','cache:grandchild','search']);
+  assert.deepEqual(removed,['parent','child','grandchild']);
 });
 
-test('disabled native search needs no index cleanup, but actual index failures remain retryable',async()=>{
-  const ctx={sessionPersistence:{list:async()=>[],flush:async()=>{}},sessions:{get:()=>undefined},storageDomain:{get:()=>undefined},sessionQuery:{searchSessions:async()=>{throw new SessionQueryError('disabled','SESSION_QUERY_SEARCH_DISABLED');}}};
-  await deleteNativeSessions(ctx as any,['already-removed'],async()=>{});
-  ctx.sessionQuery.searchSessions=async()=>{throw new SessionQueryError('broken index','SESSION_QUERY_INDEX_FAILED');};
-  await assert.rejects(deleteNativeSessions(ctx as any,['already-removed'],async()=>{}),/broken index/);
+test('native deletion waits for an external owner to release its writer before removing logs or indexes',async t=>{
+  const root=await mkdtemp(path.resolve('.codex/native-history-busy-'));t.after(()=>rm(root,{recursive:true,force:true}));
+  await mkdir(path.join(root,'web-owned'));const file=path.join(root,'web-owned','session.v4.jsonl');await writeFile(file,'history');
+  let released=false,cacheDeletes=0;const ctx={sessionPersistence:{list:async()=>[{header:{id:'web-owned'}}],locate:()=>({kind:'jsonl',path:file}),flush:async()=>{assert.equal(released,true);}},emit:()=>{},storageDomain:{get:()=>({table:()=>({delete:async()=>{cacheDeletes++;}})})},sessionQuery:{searchSessions:async()=>{}}};
+  assert.deepEqual(await deleteNativeSessions(ctx as any,['web-owned'],async(ids,remove)=>{assert.deepEqual(ids,['web-owned']);assert.equal(await readFile(file,'utf8'),'history');assert.equal(cacheDeletes,0);released=true;return remove();}),['web-owned']);
+  await assert.rejects(stat(file),{code:'ENOENT'});assert.equal(cacheDeletes,1);
+});
+
+test('native deletion includes child logs published while its owner is being drained',async t=>{
+  const root=await mkdtemp(path.resolve('.codex/native-history-late-child-'));t.after(()=>rm(root,{recursive:true,force:true}));
+  const headers:any[]=[{id:'parent'}];await mkdir(path.join(root,'parent'));await writeFile(path.join(root,'parent','session.v4.jsonl'),'parent');
+  const removed:string[]=[];const ctx={sessionPersistence:{list:async()=>headers.map(header=>({header})),locate:(header:any)=>({kind:'jsonl',path:path.join(root,header.id,'session.v4.jsonl')}),flush:async()=>{}},emit:(_name:string,id:string)=>removed.push(id),storageDomain:{get:()=>undefined},sessionQuery:{searchSessions:async()=>{}}};
+  const result=await deleteNativeSessions(ctx as any,['parent'],async(ids,remove)=>{
+    assert.deepEqual(ids,['parent']);headers.push({id:'late-child',parentSession:'parent',origin:'subagent'});
+    await mkdir(path.join(root,'late-child'));await writeFile(path.join(root,'late-child','session.v4.jsonl'),'child');
+    return remove();
+  });
+  assert.deepEqual(result,['parent','late-child']);assert.deepEqual(removed,result);
+  for(const id of result)await assert.rejects(stat(path.join(root,id)),{code:'ENOENT'});
+});
+
+test('disabled native search from another module permits retry after logs were removed, but other errors propagate',async()=>{
+  const {SessionQueryError:HostSessionQueryError}=await import(`${import.meta.resolve('@deepseek-ai/dsh-session-query')}?native-deletion`);
+  const hostDisabled=new HostSessionQueryError('disabled','SESSION_QUERY_SEARCH_DISABLED');
+  assert.equal(hostDisabled instanceof SessionQueryError,false);
+  let failure:unknown=hostDisabled;
+  const ctx={sessionPersistence:{list:async()=>[],flush:async()=>{}},emit:()=>{},storageDomain:{get:()=>undefined},sessionQuery:{searchSessions:async()=>{throw failure;}}};
+  assert.deepEqual(await deleteNativeSessions(ctx as any,['already-removed'],async(_ids,remove)=>remove()),['already-removed']);
+  failure=new SessionQueryError('disabled','SESSION_QUERY_SEARCH_DISABLED');
+  assert.deepEqual(await deleteNativeSessions(ctx as any,['already-removed'],async(_ids,remove)=>remove()),['already-removed']);
+  for(failure of [new HostSessionQueryError('broken index','SESSION_QUERY_INDEX_FAILED'),new SessionQueryError('broken index','SESSION_QUERY_INDEX_FAILED'),new Error('session search is disabled')]){
+    await assert.rejects(deleteNativeSessions(ctx as any,['already-removed'],async(_ids,remove)=>remove()),error=>error===failure);
+  }
 });

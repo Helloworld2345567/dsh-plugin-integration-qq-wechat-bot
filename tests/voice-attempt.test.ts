@@ -5,7 +5,7 @@ import {NativeHarness} from '../src/harness/bridge.js';
 function fixture(){
   const handlers=new Map<string,Function>();
   const parent={id:'parent'},child={id:'child'};
-  const ctx:any={on:(event:string,handler:Function)=>handlers.set(event,handler),agents:{list:()=>[parent,child]},tools:{guard:()=>{}}};
+  const ctx:any={on:(event:string,handler:Function)=>handlers.set(event,handler),effect:()=>{},agents:{list:()=>[parent,child]},tools:{guard:()=>{}}};
   const repos:any={statsSessions:{sessionExists:()=>false},sessions:{findBinding:()=>undefined},personas:{effectiveConfig:()=>{throw Error('CONFIG_UNAVAILABLE');}},bots:{bot:()=>({})},media:{assets:{asset:()=>({})}},telemetry:{metrics:{findTurnMetric:()=>undefined,updateTurnMetric:()=>{}}},memory:{memories:()=>[]}};
   const bridge=new NativeHarness(ctx,repos,{} as any,{} as any,{skills:{} as any});
   const root:any={binding:{key:'scope',sessionId:'parent',scope:{botId:'bot'}},voice:{attempted:false},singing:{attempted:false}};

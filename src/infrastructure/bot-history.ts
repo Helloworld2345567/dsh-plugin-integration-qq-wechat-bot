@@ -1,4 +1,5 @@
 import {readdir, rm} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {scopeKey} from '../core/identity.js';
 import type {Asset, CallerScope} from '../core/types.js';
@@ -31,6 +32,58 @@ export interface BotHistorySnapshot {
  */
 export class BotHistoryService {
   constructor(private readonly deps: BotHistoryDeps) {}
+  /** Remove only exports named for these sessions; workspace assets remain channel-owned. */
+  async deleteSessionFiles(scope: string, sessionIds: readonly string[]): Promise<void> {
+    for (const id of sessionIds) {
+      const location = this.deps.database.records.get<{scopeKey:string;file:string}>('history-location', id);
+      if (!location) continue;
+      const file = path.resolve(location.file);
+      if (location.scopeKey !== scope || path.basename(file) !== `${id}.jsonl` || path.basename(path.dirname(file)) !== scope || path.basename(path.dirname(path.dirname(file))) !== 'history') throw Error('BOT_HISTORY_PATH_INVALID');
+      await rm(file, {force:true});
+      await rm(`${file}.tmp`, {force:true});
+    }
+  }
+  /** Purge exact-session evidence without deleting channel memories, attachments or schedules. */
+  deleteSessionRecords(scope: string, sessionIds: readonly string[]): void {
+    const ids = new Set(sessionIds), database = this.deps.database;
+    database.savepoint('delete_session_history', () => {
+      const rows = database.records.entries().map(row => ({...row, value:JSON.parse(row.json)}));
+      const owned = rows.filter(row => !['asset', 'binding'].includes(row.kind) && (
+        ids.has(String(row.value?.sessionId)) || ids.has(String(row.value?.rootSessionId)) ||
+        ids.has(row.id) && ['session', 'turn-snapshot', 'history-location', 'stats-session', 'stats-owned-start'].includes(row.kind)
+      ));
+      for (const row of owned) if (row.kind === 'session' && row.value.scopeKey !== scope) throw Error('SESSION_OWNERSHIP_MISMATCH');
+      const deliveries = this.deps.deliveries().deliveries(), removed = deliveries.filter(row => row.scopeKey === scope && ids.has(row.sessionId));
+      const sourceIds = new Set<string>(removed.map(row => row.sourceId));
+      for (const row of owned) {
+        if (row.kind === 'turn-metric' && row.value.scopeKey === scope) sourceIds.add(row.value.sourceId);
+        if (['failure', 'turn-snapshot'].includes(row.kind)) for (const sourceId of row.value.sourceIds ?? []) sourceIds.add(sourceId);
+      }
+      // A retained conversation can still own a retry of the same input.
+      for (const row of deliveries) if (row.scopeKey === scope && !ids.has(row.sessionId)) sourceIds.delete(row.sourceId);
+      for (const row of rows) if (row.kind === 'turn-metric' && row.value.scopeKey === scope && row.value.sessionId && !ids.has(row.value.sessionId)) sourceIds.delete(row.value.sourceId);
+      const db = database.db;
+      for (const sourceId of sourceIds) {
+        const message = this.deps.inbox().source(scope, sourceId);
+        if (message) {
+          const fact = createHash('sha256').update(JSON.stringify(['received', message.scope.botId, message.scope.platform, message.scope.accountId, message.scope.channelId, message.scope.senderId, message.id])).digest('hex');
+          db.prepare('DELETE FROM stats_message_facts WHERE id=?').run(fact);
+        }
+        db.prepare('DELETE FROM inbox WHERE scope=? AND id=?').run(scope, sourceId);
+      }
+      for (const row of removed) {
+        db.prepare('DELETE FROM deliveries WHERE id=?').run(row.id);
+        db.prepare('DELETE FROM stats_message_facts WHERE id=?').run(`delivery:${row.id}`);
+      }
+      for (const row of owned) db.prepare('DELETE FROM records WHERE kind=? AND id=?').run(row.kind, row.id);
+      for (const id of ids) {
+        const prefix = `session:${id}:`;
+        db.prepare('DELETE FROM stats_usage_calls WHERE substr(id,1,?)=?').run(prefix.length, prefix);
+        db.prepare('DELETE FROM stats_projection_meta WHERE id=?').run(`owner:${id}`);
+      }
+      database.bump('sessions');database.bump('deliveries');
+    });
+  }
   snapshot(botId: string): BotHistorySnapshot {
     const rows = this.deps.database.records.entries().map(row => ({...row, value:JSON.parse(row.json) as Record<string, unknown>}));
     const scopes = new Set<string>(), sessions = new Set<string>(), jobs = new Set<string>(), automations = new Set<string>();

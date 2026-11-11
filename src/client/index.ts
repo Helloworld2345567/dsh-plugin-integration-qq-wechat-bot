@@ -20,7 +20,7 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
   const serviceDraft=(settings:any)=>({modelsRoot:settings.modelsRoot,gptSovitsUrl:settings.gptSovitsUrl,breezeTtsUrl:settings.breezeTtsUrl??'http://127.0.0.1:8080',gptSovitsProjectRoot:settings.gptSovitsProjectRoot??'',breezeTtsProjectRoot:settings.breezeTtsProjectRoot??'',breezeTtsVoicesRoot:settings.breezeTtsVoicesRoot??''});
   async function api(action:string,input:any={},signal?:AbortSignal){
     const boot=window.__BOT_INTEGRATION__;if(!boot)throw uiError('serviceNotReady',t);
-    const strictCommand=action==='service.refresh'||action==='service.start'||action==='service.settings.save'||action==='service.settings.pick-directory'||action==='bot.service.start'||action==='bot.service.stop';
+    const strictCommand=action==='service.refresh'||action==='service.start'||action==='service.settings.save'||action==='service.settings.pick-directory'||action==='bot.service.start'||action==='bot.service.stop'||action==='session.delete';
     const response=await fetch(boot.endpoint,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${boot.token}`},body:JSON.stringify(strictCommand?{version:1,kind:'command',name:action,input}:{action,input}),signal});
     const body=await response.json();if(!response.ok)throw new PanelError(body.error||t('operationFailed'),body.message,body.issues);return body.result;
   }
@@ -72,6 +72,7 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
         const result=await api(action,input);
         if(action.startsWith('config.'))client().invalidate('catalog.config',{id:input.id??input.config?.id});
         if(action.startsWith('automation.'))client().invalidate('automation.list');
+        if(action==='session.delete'){client().invalidate('overview.summary');client().invalidate('overview.sessions',{limit:100});sessionRevisionRef.current='';}
         setNotice(noticeMessage);
         // Refresh failures must not turn a successful write into an apparent failed save.
         try{await refresh();if(action.startsWith('bot.'))await refreshBots();if(action==='bot.save')await refreshBotMediaStatus();}catch{setError(message('refreshFailed'));}
@@ -141,7 +142,14 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
       ].map(([label,value])=>h('div',{className:'stats-card',key:label},h('small',null,label),h('strong',null,value)))):h('p',{role:'status'},t('loading')),
       h('section',{className:'card'},h('div',{className:'row spread'},h('h3',null,t('usage')),ui.button(stats?t('collapse'):t('statistics'),()=>setStats(!stats),{'aria-expanded':stats,'aria-controls':'bot-statistics',className:'quiet'})),h('div',{id:'bot-statistics'},h(StatisticsPanel,{React,api,bots:summaryBots,t,locale:activeLocale,compact:!stats,onError:setError}))),
       h('section',{className:'card'},h('div',{className:'row spread'},h('h3',null,t('connections')),ui.button(t('manage'),()=>navigate('bots'),{className:'quiet'})),...summaryBots.map((bot:any)=>h('div',{key:bot.id,className:'item row spread'},identity(bot),badge(bot))),summary&&!summaryBots.length?h('p',{className:'empty'},t('noBots')):null),
-      summary?.sessions?.length?h('section',{className:'card'},h('h3',null,t('sessionModels')),...summary.sessions.slice(0,100).map((session:any)=>{const model=session.effectiveModel??session.modelOverride??session.model;return h('div',{className:'item row spread',key:session.id},h('span',null,t('sessionModel',{channel:session.channelId??session.platform??t('unknown'),model:model?`${model.provider} / ${model.model}`:t('none')})),h('small',{className:'muted'},session.personaId??''));})):null,
+      summary?.sessions?.length?h('section',{className:'card'},h('h3',null,t('sessionModels')),...summary.sessions.slice(0,100).map((session:any)=>{
+        const model=session.effectiveModel??session.modelOverride??session.model;
+        const created=session.createdAt?new Date(session.createdAt).toLocaleString(activeLocale==='en'?'en-US':'zh-CN'):'';
+        return h('div',{className:'item row spread',key:session.id},
+          h('div',null,h('span',null,t('sessionModel',{channel:session.channelId??session.platform??t('unknown'),model:model?`${model.provider} / ${model.model}`:t('none')})),h('div',null,h('small',{className:'muted',title:session.id},[session.personaId,session.id.slice(0,12),created].filter(Boolean).join(' · ')))),
+          ui.button(t('delete'),async()=>{if(await confirm(message('deleteSessionConfirm',{id:session.id})))await mutate('session.delete',{id:session.id},message('sessionDeleted'));},{className:'danger quiet','aria-label':t('deleteSessionLabel',{id:session.id}),disabled:busy||!!question}),
+        );
+      })):null,
       overviewServices,
       h('section',{className:'card'},h('h3',null,t('quickActions')),h('div',{className:'actions'},ui.button(t('newBot'),()=>navigate('bots'),{className:'primary'}),ui.button(t('createPersona'),()=>navigate('catalog')),ui.button(t('openServiceSettings'),()=>navigate('services')))),
     );

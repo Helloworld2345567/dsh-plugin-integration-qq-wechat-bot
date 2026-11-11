@@ -15,6 +15,10 @@ import {NativeHarness} from '../src/harness/bridge.js';
 import {runJsonProcess} from '../src/harness/json-process.js';
 import {ServiceContractError} from '../src/core/service-errors.js';
 import {seedAppliedConfig} from './sqlite-fixtures.js';
+import {Context} from '@deepseek-ai/cordis';
+import {defineTool,ToolRuntime} from '@deepseek-ai/dsh-tools';
+import {ToolCallId} from '@deepseek-ai/dsh-llm';
+import {skillToolManifests} from '../src/core/skill-operations.js';
 
 const track={source:'MiguMusicClient',id:'song-1',title:'晴天',artist:'周杰伦',format:'mp3',duration:269,size:100,locator:{privateDownloadUrl:'https://provider.invalid/private'}};
 async function fixture(t:TestContext){
@@ -44,12 +48,49 @@ async function fixture(t:TestContext){
 
 test('music search exposes scoped choices without provider URLs or identifiers',async t=>{
   const f=await fixture(t),result=JSON.parse(await f.call({action:'search',song:'晴天',artist:'周杰伦'}));
-  assert.equal(result.candidates.length,2);assert.equal(result.candidates[0].number,1);assert.equal(result.candidates[0].artist,'周杰伦');
+  assert.equal(result.candidates.length,2);assert.equal(result.candidates[0].candidate,1);assert.equal(result.candidates[0].number,undefined);assert.equal(result.candidates[0].artist,'周杰伦');
   assert.doesNotMatch(JSON.stringify(result),/private|locator|song-1/);assert.equal(f.live.assets.length,0);
   assert.ok(musicCandidates({bindings:f.store.sessions,music:f.store.musicState},f.binding)?.candidates[0].locator);
   const replaced=JSON.parse(await f.call({action:'search',song:'晴天'}));assert.notEqual(result.candidateSet,replaced.candidateSet);
   await assert.rejects(f.call({action:'download',candidateSet:result.candidateSet,candidate:1}),/MUSIC_CANDIDATES_STALE/);
   f.store.sessions.reset(f.binding.scope);await assert.rejects(f.call({action:'download',candidateSet:replaced.candidateSet,candidate:1}),/MUSIC_SESSION_CHANGED/);
+});
+
+test('music download accepts the selector returned by search without renaming its field',async t=>{
+  const f=await fixture(t),search=JSON.parse(await f.call({action:'search',song:'晴天'}));
+  const {candidate}=search.candidates[1];
+  const result=JSON.parse(await f.call({action:'download',candidateSet:search.candidateSet,candidate,number:1}));
+  assert.equal(result.status,'succeeded');
+  assert.equal((f.jobs.find(job=>job.operation==='music_acquire')!.parameters.selection as any).id,'song-2');
+  assert.deepEqual(f.calls,['music_search','music_acquire']);assert.equal(f.live.assets.length,1);
+});
+test('native tool execution accepts a historical number selector and reuses canonical download retries',async t=>{
+  const f=await fixture(t),ctx=new Context();t.after(()=>ctx.fiber.dispose());
+  ctx.provide('systemPrompt',{tools:()=>()=>{}});new ToolRuntime(ctx,{mode:'native'});
+  const manifest=skillToolManifests.find(item=>item.tool.name==='bot_music')!;
+  assert.equal(manifest.tool.parameters.number,undefined);
+  ctx.tools.register(defineTool({...manifest.tool,output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},execute:async args=>f.call(args)}));
+  let sequence=0;
+  const call=async(args:Record<string,unknown>)=>{
+    const result=await ctx.tools.execute({name:'bot_music',arguments:JSON.parse(JSON.stringify(args)),callId:ToolCallId(`music-selector-${++sequence}`),signal:new AbortController().signal});
+    assert.equal(result.isError,false,JSON.stringify(result));return JSON.parse(result.value as string);
+  };
+  const search=await call({action:'search',song:'晴天'}),candidate=search.candidates[1].candidate;
+  const result=await call({action:'download',candidateSet:search.candidateSet,number:candidate});
+  assert.equal(result.status,'succeeded');
+  assert.equal((f.jobs.find(job=>job.operation==='music_acquire')!.parameters.selection as any).id,'song-2');
+  for(const selector of [{candidate},{number:candidate}]){
+    const retry=await call({action:'download',candidateSet:search.candidateSet,...selector});
+    assert.equal(retry.reused,true);assert.deepEqual(retry.files,result.files);
+  }
+  assert.deepEqual(f.calls,['music_search','music_acquire']);assert.equal(f.live.assets.length,1);
+});
+test('invalid music choices explain the current candidate range before downloading',async t=>{
+  const f=await fixture(t),search=JSON.parse(await f.call({action:'search',song:'晴天'}));
+  for(const selector of [{},{candidate:0,number:1},{number:3},{number:1.5},{number:'1'}]){
+    await assert.rejects(f.call({action:'download',candidateSet:search.candidateSet,...selector}),/^Error: MUSIC_CANDIDATE_INVALID:.*candidates\[\]\.candidate.*positive integer.*1-2/);
+  }
+  assert.deepEqual(f.calls,['music_search']);assert.equal(f.live.assets.length,0);
 });
 test('small native MP3 is downloaded once and directly registered without another asset or encoding',async t=>{
   const f=await fixture(t),args={action:'download',song:'晴天',artist:'周杰伦'};
@@ -119,9 +160,14 @@ test('named singing reuses the downloaded original and never makes a delivery MP
   assert.equal(f.jobs[2].inputs[0].path,f.store.assets.asset(f.binding.key,acquired.sourceAssetId).path);assert.deepEqual(f.jobs[2].parameters,{sourceType:'mixed',format:'mp3'});
   await executeSingingTool(f.live,args,new AbortController().signal,f.deps);assert.equal(f.calls.filter(value=>value==='singing_convert').length,1);
 });
-test('selected candidate is preserved when directly singing and original audio is not sent',async t=>{
+test('legacy singing selection and canonical retries reuse one converted result without sending the original',async t=>{
   const f=await fixture(t),prepared=JSON.parse(await f.call({action:'search',song:'晴天'}));
-  await executeSingingTool(f.live,{action:'sing',candidateSet:prepared.candidateSet,candidate:2},new AbortController().signal,f.deps);
+  const candidate=prepared.candidates[1].candidate,args={action:'sing',candidateSet:prepared.candidateSet};
+  const result=JSON.parse(await executeSingingTool(f.live,{...args,number:candidate},new AbortController().signal,f.deps));
+  for(const selector of [{candidate,number:1},{number:candidate}]){
+    const retry=JSON.parse(await executeSingingTool(f.live,{...args,...selector},new AbortController().signal,f.deps));
+    assert.equal(retry.reused,true);assert.deepEqual(retry.files,result.files);
+  }
   assert.equal((f.jobs.find(job=>job.operation==='music_acquire')!.parameters.selection as any).id,'song-2');assert.deepEqual(f.calls,['music_search','music_acquire','singing_convert']);assert.equal(f.live.assets.length,1);
 });
 test('an existing attachment conversion attempt blocks a second named-song acquisition',async t=>{

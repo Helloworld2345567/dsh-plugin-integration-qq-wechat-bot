@@ -27,11 +27,23 @@ test('versioned query and command contracts reject unknown fields and invalid en
   assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'bot.delete',input:{}}));
   assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'bot.delete',input:{id:'1',all:true}}));
   assert.equal(adminCommandRequestSchema.parse({version:1,kind:'command',name:'delivery.retry',input:{id:'delivery'}}).name,'delivery.retry');
+  assert.equal(adminCommandRequestSchema.parse({version:1,kind:'command',name:'session.delete',input:{id:'session'}}).name,'session.delete');
+  assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'session.delete',input:{id:'session',scopeKey:'other'}}));
+  assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'session.delete',input:{id:''}}));
   assert.equal(adminCommandRequestSchema.parse({version:1,kind:'command',name:'bot.service.start',input:{}}).name,'bot.service.start');
   assert.equal(adminCommandRequestSchema.parse({version:1,kind:'command',name:'bot.service.stop',input:{}}).name,'bot.service.stop');
   assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'bot.service.start',input:{id:'unexpected'}}));
   assert.equal(adminCommandRequestSchema.parse({version:1,kind:'command',name:'service.start',input:{serviceId:'breeze-tts'}}).name,'service.start');
   assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'service.start',input:{serviceId:'rvc'}}));
+});
+
+test('session deletion command reports replacement only when deleting the current session',async t=>{
+  const {admin}=await fixture(t);let received='';
+  (admin.runtime as any).deleteSession=async(id:string)=>{received=id;return{current:true,newSessionId:'replacement'};};
+  assert.deepEqual(await admin.command({version:1,kind:'command',name:'session.delete',input:{id:'current'}}),{ok:true,current:true,newSessionId:'replacement'});
+  assert.equal(received,'current');
+  (admin.runtime as any).deleteSession=async()=>({current:false});
+  assert.deepEqual(await admin.command({version:1,kind:'command',name:'session.delete',input:{id:'history'}}),{ok:true,current:false});
 });
 
 test('model directory picker command returns the selected path without saving settings',async t=>{

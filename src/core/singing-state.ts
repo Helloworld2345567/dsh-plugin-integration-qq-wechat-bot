@@ -38,5 +38,5 @@ export function saveSingingCandidates(ports:SingingSessionPorts,binding:SessionB
   ports.singing.saveCandidates(binding.key,value);return value;
 }
 export function singingRequestKey(binding:SessionBinding,snapshot:TurnSnapshot):string {return JSON.stringify([binding.sessionId,binding.generation,snapshot.sourceIds,snapshot.sourceIds.length?undefined:snapshot.startedAt]);}
-export function publicSingingCandidates(value:SingingCandidates|undefined){return value?{status:value.waiting?'waiting_for_audio':'prepared',candidateSet:value.id,candidates:value.candidates.map(({assetId:_,...candidate})=>candidate)}:{status:'empty',candidates:[]};}
+export function publicSingingCandidates(value:SingingCandidates|undefined){return value?{status:value.waiting?'waiting_for_audio':'prepared',candidateSet:value.id,candidates:value.candidates.map(({assetId:_,number,...item})=>({...item,candidate:number}))}:{status:'empty',candidates:[]};}
 export type {MusicCandidate};

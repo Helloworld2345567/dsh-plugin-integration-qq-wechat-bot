@@ -15,7 +15,7 @@ import {scopeKey} from '../src/core/identity.js';
 import {freezeTurn} from '../src/core/policy.js';
 import {botSchema,type BotSettings,type InboundMessage} from '../src/core/types.js';
 import type {SessionActionRecord} from '../src/core/session-actions.js';
-export const inject=['botIntegration','llm','settings','credentials','sessionQuery','agents','agentPresets','tools','skills','systemPrompt','attachments','permissionPresets','sessions','sessionPersistence','storageDomain','workingDirectory'];
+export const inject=['botIntegration','llm','settings','credentials','sessionQuery','agents','agentPresets','tools','skills','systemPrompt','attachments','permissionPresets','sessions','sessionPersistence','storageDomain','workingDirectory','sessionController','subagents'];
 export const name='bot-native-fixture';
 export const Config=z.object({baseURL:z.string().default('https://fixture.invalid/v1').volatile(),apiKeyEnv:z.string().default('BOT_TEST_ANALYSIS_KEY').volatile(),api:z.string().default('openai-completions').volatile()});
 export async function apply(ctx:Context){
@@ -496,10 +496,64 @@ export async function apply(ctx:Context){
       await runtime.receive(controlMsg('management-fresh','新会话首轮的测试输入，仅回复确认。'));await runtime.process(controlKey);const freshRequest=requests.filter(request=>request.sessionId===freshControl.sessionId).at(-1)!;assert.ok(freshRequest);const freshHistory=JSON.stringify(freshRequest.messages);assert.ok(freshHistory.includes('新会话首轮的测试输入，仅回复确认。'));assert.ok(!freshHistory.includes(oldMarker));assert.doesNotMatch(freshHistory,/\[sourceId=/);assert.ok(!freshHistory.includes('本轮请通过会话工具执行 compact'));assert.ok(!freshHistory.includes('本轮请通过会话工具执行 new'));assert.ok(sentControlDeliveries.length>=5);
       featureChecks.push('ordinary native bot_session write returns queued while its own turn still runs','queued native compact finishes after the tool turn without deadlock and persists a real compaction event','queued new durably sends acknowledgment before reset and completion after reset','next runtime-received turn uses a new native session with empty prior context');
     }finally{beforeFinal=undefined;mediaCall=undefined;runtime.credentials.read=previousRead;qq.send=previousSend;}
+    const singleDelete=stagedFixture('single-session-delete');singleDelete.script.steps.push({text:'SINGLE_SESSION_DELETE_BODY'});
+    await bridge.run(singleDelete.binding,[singleDelete.input],AbortSignal.timeout(30000),{snapshot:singleDelete.snapshot});
+    const singleRoot=bridge.live.get(singleDelete.binding.sessionId)!.handle.agent;
+    const singleAsset=await runtime.assets.save(singleDelete.binding.key,{kind:'file',name:'retained-attachment.txt',mime:'text/plain'},Buffer.from('RETAINED_ATTACHMENT'));
+    const singleExport=historyLocations.find(singleDelete.binding.sessionId)!.file;
+    const ownedChild=await singleRoot.ctx.agents.create({sessionId:('delete-child-'+singleRoot.id) as any,parentAgent:singleRoot,meta:{cwd:customCwd,parentSession:singleRoot.id,origin:'subagent'},agentOptions:{provider:'bot-fixture',model:'first'}});
+    await ctx.sessions.flush(ownedChild.agent.session);
+    const retainedFork=await ctx.agents.create({sessionId:('retained-fork-'+singleRoot.id) as any,meta:{cwd:customCwd,parentSession:singleRoot.id},agentOptions:{provider:'bot-fixture',model:'first'}});
+    await ctx.sessions.flush(retainedFork.agent.session);await retainedFork.dispose();
+    assert.ok((await ctx.sessionQuery.searchSessions({query:'SINGLE_SESSION_DELETE_BODY',limit:20})).items.some(item=>item.header.id===singleRoot.id));
+    const singleResult=await runtime.deleteSession(singleDelete.binding.sessionId);
+    assert.equal(singleResult.current,true);assert.notEqual(singleResult.newSessionId,singleDelete.binding.sessionId);
+    assert.equal(sessions.findSession(singleDelete.binding.sessionId),undefined);assert.equal(ctx.agents.get(singleRoot.id),undefined);assert.equal(ctx.agents.get(ownedChild.agent.id),undefined);
+    const singleRemaining=new Set((await ctx.sessionPersistence.list()).map(item=>item.header.id));
+    assert.ok(!singleRemaining.has(singleRoot.id));assert.ok(!singleRemaining.has(ownedChild.agent.id));assert.ok(singleRemaining.has(retainedFork.agent.id),'an independent fork must survive deleting its source session');
+    await assert.rejects(readFile(singleExport),{code:'ENOENT'});assert.equal(await readFile(singleAsset.path,'utf8'),'RETAINED_ATTACHMENT');assert.ok(assets.findAsset(singleAsset.id));
+    assert.ok(!(await ctx.sessionQuery.searchSessions({query:'SINGLE_SESSION_DELETE_BODY',limit:20})).items.some(item=>item.header.id===singleRoot.id));
+    const foreignDelete=stagedFixture('foreign-session-delete');foreignDelete.script.steps.push({text:'FOREIGN_SESSION_DELETE_BODY'});
+    await bridge.run(foreignDelete.binding,[foreignDelete.input],AbortSignal.timeout(30000),{snapshot:foreignDelete.snapshot});await bridge.dispose(foreignDelete.binding.sessionId);
+    let foreignEntered!:()=>void;const foreignStarted=new Promise<void>(resolve=>{foreignEntered=resolve;});
+    let managedEntered!:()=>void;const managedStarted=new Promise<void>(resolve=>{managedEntered=resolve;}),cancelledSessions=new Set<string>();
+    class DeletingFixture extends Fixture{
+      async *stream(options:GenerateOptions):AsyncIterable<StreamChunk>{
+        if(options.purpose){yield*text('deletion fixture');return;}
+        foreignEntered();
+        if(options.sessionId!==foreignDelete.binding.sessionId)managedEntered();
+        await new Promise<void>(resolve=>{if(options.signal!.aborted)resolve();else options.signal!.addEventListener('abort',()=>resolve(),{once:true});});
+        cancelledSessions.add(String(options.sessionId));throw options.signal!.reason;
+      }
+    }
+    ctx.llm.registerAdapter(['bot-fixture-deleting'],new DeletingFixture());
+    await ctx.sessionController.selectModel({sessionId:foreignDelete.binding.sessionId as any,provider:'bot-fixture-deleting',model:'first'});
+    const foreignResolved=await ctx.sessionController.resolveAgent(foreignDelete.binding.sessionId as any);assert.ok('agent' in foreignResolved,'the web controller must resolve the historical session');
+    const foreignAgent=foreignResolved.agent;
+    const foreignExport=historyLocations.find(foreignDelete.binding.sessionId)!.file;
+    let managed:Awaited<ReturnType<typeof ctx.subagents.startActivation>>|undefined;
+    try{
+      foreignAgent.followup({id:MessageId('foreign-running-input'),role:'user',source:{kind:'user'},content:[{type:'text',text:'FOREIGN_RUNNING_SESSION'}]});
+      await foreignStarted;
+      managed=await ctx.subagents.startActivation({provider:'spawn',label:'delete-managed-child',request:{parent:foreignAgent,prompt:[{type:'text',text:'MANAGED_RUNNING_CHILD'}],agentOptions:{provider:'bot-fixture-deleting',model:'first'}},signal:AbortSignal.timeout(30000),delivery:'caller'});
+      void managed.result.catch(()=>{});
+      await managedStarted;
+      assert.equal((await runtime.deleteSession(foreignDelete.binding.sessionId)).current,true);
+      assert.ok(cancelledSessions.has(foreignAgent.id),'delete must cancel and drain the external owner task');
+      assert.ok(cancelledSessions.has(managed.childId),'delete must cancel and drain a real manager-owned child');
+      assert.notEqual(sessions.findBinding(foreignDelete.binding.key)?.sessionId,foreignDelete.binding.sessionId);assert.equal(sessions.findSession(foreignDelete.binding.sessionId),undefined);
+      assert.equal(ctx.agents.get(foreignAgent.id),undefined);assert.equal(ctx.sessions.get(foreignAgent.id),undefined);
+      assert.equal(ctx.agents.get(managed.childId),undefined);assert.equal(ctx.sessions.get(managed.childId),undefined);
+      await ctx.sessionPersistence.flush();
+      assert.ok(!(await ctx.sessionPersistence.list()).some(item=>[foreignAgent.id,managed!.childId].includes(item.header.id)),'released writers must not recreate deleted logs');
+      await assert.rejects(readFile(foreignExport),{code:'ENOENT'});
+      const reopened=await ctx.sessionController.resolveAgent(foreignAgent.id);assert.ok('error' in reopened,'an open web view must not revive a deleted session');
+    }finally{await managed?.dispose();await bridge.sessionOwners.deleting([foreignAgent.id],async()=>{});}
+    featureChecks.push('single-session deletion drains its owned native child and removes logs, search rows and readable export while preserving forks and channel assets','deletion cancels a running external native owner, closes its writer and removes its log without revival');
     const deletedIds=new Set([...sessions.sessionsAll().filter(item=>item.scope.botId===scope.botId).map(item=>item.id),...statsSessions.listOwners().filter(item=>item.botId===scope.botId).map(item=>item.sessionId)]);
     const independent=await ctx.agents.create({sessionId:('unrelated-'+binding.sessionId) as any,agentOptions:{provider:'bot-fixture',model:'first'}});await ctx.sessions.flush(independent.agent.session);await independent.dispose();
-    const coldChild=await ctx.agents.create({sessionId:('cold-child-'+binding.sessionId) as any,meta:{cwd:customCwd,parentSession:binding.sessionId as any},agentOptions:{provider:'bot-fixture',model:'first'}});await ctx.sessions.flush(coldChild.agent.session);await coldChild.dispose();
-    const nativeBefore=await ctx.sessionPersistence.list();for(let changed=true;changed;){changed=false;for(const {header} of nativeBefore)if(header.parentSession&&deletedIds.has(header.parentSession)&&!deletedIds.has(header.id)){deletedIds.add(header.id);changed=true;}}
+    const coldChild=await ctx.agents.create({sessionId:('cold-child-'+binding.sessionId) as any,meta:{cwd:customCwd,parentSession:binding.sessionId as any,origin:'subagent'},agentOptions:{provider:'bot-fixture',model:'first'}});await ctx.sessions.flush(coldChild.agent.session);await coldChild.dispose();
+    const nativeBefore=await ctx.sessionPersistence.list();for(let changed=true;changed;){changed=false;for(const {header} of nativeBefore)if(header.origin==='subagent'&&header.parentSession&&deletedIds.has(header.parentSession)&&!deletedIds.has(header.id)){deletedIds.add(header.id);changed=true;}}
     const unrelatedIds=nativeBefore.filter(item=>!deletedIds.has(item.header.id)).map(item=>item.header.id);assert.ok(unrelatedIds.length>0);
     const indexedBefore=await ctx.sessionQuery.searchSessions({query:'FINAL_ONLY',limit:100});assert.ok(indexedBefore.items.some(item=>deletedIds.has(item.header.id)));
     const locations=historyLocations.list().filter(item=>deletedIds.has(item.sessionId));assert.ok(locations.length>0);for(const location of locations){assert.match(await readFile(location.file,'utf8'),/user\/message/);assert.doesNotMatch(await readFile(location.file,'utf8'),/PRIVATE_REASONING/);}

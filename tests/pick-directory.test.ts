@@ -1,46 +1,63 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,realpath,rm} from 'node:fs/promises';
+import {mkdir,mkdtemp,realpath,rm,writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {pickDirectory,type DirectoryPickerCommand} from '../src/harness/pick-directory.js';
+import {pickDirectory,type DirectoryPickerHost} from '../src/harness/pick-directory.js';
+import {Admin} from '../src/harness/admin.js';
 
 async function fixture(t:any){
   const directory=await mkdtemp(path.resolve('.codex/pick-directory-test-'));
   t.after(()=>rm(directory,{recursive:true,force:true}));
   return directory;
 }
+const native=(pick:(signal:AbortSignal)=>Promise<string|null>):DirectoryPickerHost=>({capability:()=>({kind:'native',pick})});
 
-test('Windows model directory picker returns the selected real directory and preserves initial path',async t=>{
-  const directory=await fixture(t),expected=await realpath(directory);let calls=0;
-  const run:DirectoryPickerCommand=async(command,args,options)=>{
-    calls++;
-    assert.equal(path.win32.basename(command),'powershell.exe');
-    assert.ok(args.includes('-STA'));
-    const script=Buffer.from(args[args.indexOf('-EncodedCommand')+1],'base64').toString('utf16le');
-    assert.match(script,/FolderBrowserDialog/);
-    assert.match(script,/ShowNewFolderButton=\$false/);
-    assert.equal(options.env?.BOT_PICK_DIRECTORY_INITIAL,expected);
-    assert.equal(options.windowsHide,true);
-    return{stdout:JSON.stringify({path:expected})};
-  };
-  assert.equal(await pickDirectory(expected,run,'win32'),expected);assert.equal(calls,1);
+test('host directory picker returns the real selected directory with Chinese characters and spaces',async t=>{
+  const root=await fixture(t),directory=path.join(root,'中文 模型');await mkdir(directory);let calls=0;
+  const host=native(async signal=>{calls++;assert.equal(signal.aborted,false);return directory;});
+  assert.equal(await pickDirectory(host),await realpath(directory));assert.equal(calls,1);
 });
 
-test('cancelling the model directory picker leaves the draft unchanged',async()=>{
-  const run:DirectoryPickerCommand=async()=>({stdout:JSON.stringify({path:null})});
-  assert.equal(await pickDirectory(undefined,run,'win32'),undefined);
+test('cancelling the native directory picker leaves the draft unchanged',async()=>{
+  assert.equal(await pickDirectory(native(async()=>null)),undefined);
 });
 
-test('the native picker uses the requesting UI language independently of global bot language',async()=>{
-  const run:DirectoryPickerCommand=async(_command,_args,options)=>{
-    assert.equal(options.env?.BOT_PICK_DIRECTORY_TITLE,'Choose model directory');
-    return{stdout:JSON.stringify({path:null})};
-  };
-  assert.equal(await pickDirectory(undefined,run,'win32','en'),undefined);
+test('directory picking requires the host native capability instead of starting a separate shell',async()=>{
+  await assert.rejects(pickDirectory(undefined),/不支持/);
+  const host={capability:()=>({kind:'browse'})} as DirectoryPickerHost;
+  await assert.rejects(pickDirectory(host),/不支持/);
 });
 
-test('model directory picker rejects malformed or inaccessible selections',async t=>{
-  const directory=await fixture(t);
-  await assert.rejects(pickDirectory(undefined,async()=>({stdout:'not-json'}),'win32'),/无效结果/);
-  await assert.rejects(pickDirectory(undefined,async()=>({stdout:JSON.stringify({path:path.join(directory,'missing')})}),'win32'),/不存在或无法访问/);
+test('native selections must be absolute, accessible directories',async t=>{
+  const directory=await fixture(t),file=path.join(directory,'file.txt');await writeFile(file,'fixture');
+  await assert.rejects(pickDirectory(native(async()=> 'relative')),/路径无效/);
+  await assert.rejects(pickDirectory(native(async()=>path.join(directory,'missing'))),/不存在或无法访问/);
+  await assert.rejects(pickDirectory(native(async()=>file)),/不是文件夹/);
+});
+
+test('native picker errors expose only a stable diagnostic',async()=>{
+  const host=native(async()=>{throw Error('#< CLIXML\nprivate backend failure');});
+  await assert.rejects(pickDirectory(host),error=>{
+    assert.match(String(error),/DIRECTORY_PICKER_FAILED/);
+    assert.doesNotMatch(String(error),/CLIXML|private backend/);return true;
+  });
+});
+
+test('request cancellation reaches the native chooser and cannot return a stale selection',async()=>{
+  const controller=new AbortController();let received:AbortSignal|undefined;
+  const host=native(async signal=>{received=signal;controller.abort(Error('private cancellation reason'));return null;});
+  await assert.rejects(pickDirectory(host,controller.signal),/DIRECTORY_PICKER_CANCELLED/);
+  assert.equal(received?.aborted,true);
+  let opened=false;
+  await assert.rejects(pickDirectory(native(async()=>{opened=true;return null;}),controller.signal),/DIRECTORY_PICKER_CANCELLED/);
+  assert.equal(opened,false);
+});
+
+test('admin uses the composed host picker and forwards request cancellation',async()=>{
+  const controller=new AbortController();let called=false;
+  const host=native(async signal=>{called=true;controller.abort();assert.equal(signal.aborted,true);return null;});
+  const ctx={get:(name:string)=>{assert.equal(name,'directoryPicker');return host;}};
+  const admin=new Admin(ctx as any,{} as any,'fixture');
+  await assert.rejects(admin.command({version:1,kind:'command',name:'service.settings.pick-directory',input:{current:'unused',locale:'en'}},controller.signal),/DIRECTORY_PICKER_CANCELLED/);
+  assert.equal(called,true);
 });

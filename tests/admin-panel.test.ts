@@ -271,3 +271,46 @@ test('bot deletion still confirms, cancels and clears only matching authorizatio
     states[5]=true;tree=harness.render();assert.equal(tree.find(n=>n.props?.['aria-label']==='删除机器人 sakura（2）').props.disabled,true);
   }finally{harness.restore();}
 });
+
+test('overview session deletion confirms the exact session, cancels and refreshes the list',async()=>{
+  let remaining=['session-1','session-2'].map(id=>({id,channelId:'same-channel',personaId:'default',createdAt:Date.UTC(2026,10,11),effectiveModel:{provider:'fixture',model:'chat'}}));
+  const commands:any[]=[];let finishDelete:()=>void;
+  const summary=()=>({bots:[],configs:[],counts:{pendingDeliveries:0},health:{activeTasks:0},sessionRevision:String(remaining.length)});
+  const states:any[]=['overview',{...summary(),sessions:remaining},'','','',false];
+  const harness=panelHarness(states,async body=>{
+    if(body.kind==='command'){
+      commands.push(body);await new Promise<void>(resolve=>{finishDelete=resolve;});
+      remaining=remaining.filter(session=>session.id!==body.input.id);return{ok:true,current:false};
+    }
+    if(body.name==='overview.sessions')return{items:remaining,nextCursor:null};
+    return{data:summary()};
+  });
+  try{
+    await harness.start('session-delete');let tree=harness.render();
+    const button=(nodes:any[],id:string)=>nodes.find(n=>n.props?.['aria-label']===`删除会话 ${id}`);
+    assert.ok(tree.some(n=>n.type==='h3'&&n.children.includes('聊天会话')));
+    button(tree,'session-1').props.onClick();await settlePanel();tree=harness.render();
+    const dialog=tree.find(n=>n.props?.role==='dialog');assert.match(dialog.props['aria-label'],/session-1/);assert.match(dialog.props['aria-label'],/渠道附件和长期记忆会保留/);
+    assert.equal(button(tree,'session-2').props.disabled,true);
+    flattenPanel(dialog).find(n=>n.type==='button'&&n.children.includes('取消')).props.onClick();await settlePanel();assert.deepEqual(commands,[]);
+    button(harness.render(),'session-1').props.onClick();await settlePanel();
+    harness.render().find(n=>n.props?.role==='dialog').props.onSubmit({preventDefault:()=>{}});await settlePanel();
+    assert.equal(button(harness.render(),'session-2').props.disabled,true);
+    finishDelete!();await settlePanel();await settlePanel();tree=harness.render();
+    assert.deepEqual(commands,[{version:1,kind:'command',name:'session.delete',input:{id:'session-1'}}]);
+    assert.equal(button(tree,'session-1'),undefined);assert.ok(button(tree,'session-2'));assert.equal(button(tree,'session-2').props.disabled,false);
+    assert.ok(tree.some(n=>n.props?.className==='notice'&&n.children.includes('会话已删除')));
+  }finally{harness.restore();}
+});
+
+test('failed session deletion keeps the session visible and reports the failure',async()=>{
+  const states:any[]=['overview',{bots:[],configs:[],sessions:[{id:'owned-elsewhere'}],counts:{pendingDeliveries:0},health:{activeTasks:0}},'','','',false];
+  const harness=panelHarness(states,body=>{assert.equal(body.name,'session.delete');throw Error('Session is in use');},{locale:'en'});
+  try{
+    await harness.start('session-delete-failure');
+    harness.render().find(n=>n.props?.['aria-label']==='Delete session owned-elsewhere').props.onClick();await settlePanel();
+    harness.render().find(n=>n.props?.role==='dialog').props.onSubmit({preventDefault:()=>{}});await settlePanel();await settlePanel();
+    const tree=harness.render();assert.ok(tree.some(n=>n.props?.['aria-label']==='Delete session owned-elsewhere'&&!n.props.disabled));
+    assert.equal(states[3],'Session is in use');assert.equal(states[4],'');
+  }finally{harness.restore();}
+});

@@ -244,6 +244,8 @@ export class SqlitePersistence {
         snapshot:botId => this.botHistory.snapshot(botId),
         deleteFiles:(assetsRoot, snapshot) => this.botHistory.deleteFiles(assetsRoot, snapshot),
         deleteRecords:(botId, snapshot) => this.botHistory.deleteRecords(botId, snapshot),
+        deleteSessionFiles:(scope, ids) => this.botHistory.deleteSessionFiles(scope, ids),
+        deleteSessionRecords:(scope, ids) => this.botHistory.deleteSessionRecords(scope, ids),
       },
     };
   }

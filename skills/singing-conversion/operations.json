@@ -15,8 +15,8 @@
         "title":{"type":"string"},
         "url":{"type":"string"},
         "candidates":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"title":{"type":"string","required":true},"url":{"type":"string","required":true},"source":{"type":"string"},"license":{"type":"string"}}}},
-        "candidateSet":{"type":"string"},
-        "candidate":{"type":"number"},
+        "candidateSet":{"type":"string","description":"For convert, copy candidateSet from prepare/list. For sing, copy it from bot_music search."},
+        "candidate":{"type":"number","description":"Copy the chosen candidates[].candidate value from the matching result; a positive integer starting at 1."},
         "sourceType":{"type":"string","enum":["vocals","mixed","unknown"]},
         "format":{"type":"string","enum":["mp3","wav"]}
       }

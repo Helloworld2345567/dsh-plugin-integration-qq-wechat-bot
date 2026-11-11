@@ -56,6 +56,17 @@ Bots can share personas but channel scope always isolates identities, sessions, 
 
 `bot.delete` first disables/archives, cancels connections, model work and pending delivery through the stop flow, deletes credentials, stops automation and awaits writes. It locates native session directories through the pinned JSONL backend, releases sessions, removes logs/projection caches and refreshes the public search index, then deletes the bot's messages/sessions/memory/assets/tasks/stats. Only an identity tombstone/shared personas remain; user working directories are preserved. Lists omit deleted bots and ordinary save/connect cannot revive them. Cleanup failure restores a retryable stopped state. Deletion clears QR attempts; pending QR/connect operations recheck bot status before resuming.
 
+## Session and attachment management
+
+Storage currently has three layers: DSH native event logs hold complete conversations and recovery state; plugin SQLite holds channel ownership, active bindings, historical session indexes and delivery records; workspace `history/<scope>/<sessionId>.jsonl` is a readable export updated after each turn. Workspace folders hold attachment bytes, while SQLite records their IDs, source sessions, owning channels and actual paths. Automatic recent-attachment selection stays within the current session; explicit IDs resolve by channel ownership, so a new session can still use older channel attachments. Long-term memories also belong to the channel.
+
+Overview uses `session.delete {id}` for individual deletion. Deleting the current session stops its tasks and creates a blank session retaining persona, model and voice overrides; deleting an older session does not cancel current work. Cleanup covers native logs, owned child Agents, search projections, readable exports and related plugin records. Independent forks, channel attachments, long-term memories, schedules and user files remain. A Cordis service-read hook retains the real disposal handles returned by the native factory. Deletion also stops the target session held by another interface, waits for its writer to close, and prevents the same session from reloading until cleanup finishes.
+
+Two current DSH designs could simplify future storage. These are recommendations, not implemented migrations:
+
+- DSH lists cold sessions through persistence and projections without activating an Agent. Keep native logs as the only complete source of truth and make readable history an on-demand export to avoid rewriting it each turn.
+- DSH local attachments deduplicate by content and separate durable objects from request-transform caches. Immutable plugin attachments could use a shared object store while retaining channel ownership and session references. Add attachment usage and explicit cleanup controls before considering unreferenced-object collection. Current DSH does not automatically delete unreferenced attachments either; deleting a session does not reclaim attachment storage.
+
 ## Permissions
 
 Channel identity, persona grants and current runtime state jointly determine permissions. Trust comes only from channel events and only for private chats. Tool execution uses the intersection of frozen/current permissions; revocation prevents subsequent calls and cancels cancellable work.

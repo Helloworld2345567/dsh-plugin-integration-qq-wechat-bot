@@ -27,7 +27,7 @@ export interface HarnessPort {
   formatProgress?(binding:SessionBinding,snapshot:TurnSnapshot,facts:ProgressFacts,signal:AbortSignal):Promise<string>;
   cancel(sessionId:string):void;
   dispose(sessionId?:string):Promise<void>;
-  deleteSessions(sessionIds:readonly string[]):Promise<void>;
+  deleteSessions(sessionIds:readonly string[]):Promise<readonly string[]|void>;
   validateModel(config:BotConfig):Promise<void>;
   recheckPermissions?():void;
   compact?(binding:SessionBinding,signal:AbortSignal):Promise<string>;
