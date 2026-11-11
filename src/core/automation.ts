@@ -5,6 +5,7 @@ import { scopeKey } from './identity.js';
 import {trusted} from './policy.js';
 import {proactivePatchSchema,scheduleOptionsSchema} from './automation-contract.js';
 import {localTime,isQuiet,nextDailyTime} from './automation-time.js';
+import type {HarnessRunOptions} from './runtime-ports.js';
 
 export type AutomationKind = 'scheduled' | 'proactive';
 export type AutomationState = 'active' | 'paused' | 'blocked' | 'failed' | 'completed';
@@ -35,8 +36,8 @@ export function chunkText(text:string,max=1800):string[] {
 function chunkOutputs(outputs:Output[]):Output[] { const result:Output[]=[]; for(const output of outputs){ if(output.type==='text'&&output.text)for(const text of chunkText(output.text))result.push({type:'text',text}); else result.push(output); } return result; }
 
 export interface AutomationServices {
-  runPrompt(binding:SessionBinding,prompt:string,kind:AutomationKind,signal:AbortSignal):Promise<{turnId:string;outputs:Output[];snapshot?:TurnSnapshot}>;
-  flush():Promise<void>;
+  runPrompt(binding:SessionBinding,prompt:string,kind:AutomationKind,signal:AbortSignal,onText?:HarnessRunOptions['onText']):Promise<{turnId:string;outputs:Output[];snapshot?:TurnSnapshot}>;
+  flush(filter?:{botId?:string}):Promise<void>;
   available?(scopeKey:string):boolean;
 }
 export class AutomationScheduler {
@@ -181,18 +182,25 @@ export class AutomationScheduler {
   }
   private async execute(item:ScheduledJob|ProactiveConfig,run:AutomationRun,prompt:string,latest:InboundMessage):Promise<AutomationRun>{
     if(item.scope.platform==='weixin'&&!latest.replyEnvelope?.payload?.contextToken&&!latest.reply.contextToken)return this.finish(run,'blocked','WEIXIN_CONTEXT_TOKEN_MISSING');
-    const binding=this.repos.sessions.binding(item.scope);this.running.add(item.id);
-    try{
-      const result=await this.services.runPrompt(binding,prompt,item.kind,new AbortController().signal);
+    const binding=this.repos.sessions.binding(item.scope),outputs:Output[]=[];this.running.add(item.id);
+    const reply={...(latest.replyEnvelope?.payload??latest.reply)};
+    // Background QQ messages are active sends, not replies to an expired inbound message.
+    if(item.scope.platform==='qq')delete reply.msgId;
+    const envelope=latest.replyEnvelope?{...latest.replyEnvelope,payload:reply}:undefined;
+    const authorize=()=>{
       const bot=this.repos.bots.bot(item.botId),current=this.repos.sessions.findBinding(binding.key);
-      if(!bot.enabled||bot.archived||!trusted(bot,item.scope)||current?.sessionId!==binding.sessionId||current.generation!==binding.generation)throw Error('AUTOMATION_CONTEXT_CHANGED');
+      if(this.closed||!bot.enabled||bot.archived||!trusted(bot,item.scope)||current?.sessionId!==binding.sessionId||current.generation!==binding.generation)throw Error('AUTOMATION_CONTEXT_CHANGED');
       const active=item.kind==='proactive'?this.repos.automation.findProactive(item.id):this.repos.automation.findJob(item.id);
       if(!active||item.enabled&&!active.enabled)throw Error('AUTOMATION_DISABLED');
-      const reply={...(latest.replyEnvelope?.payload??latest.reply)};
-      // Background QQ messages are active sends, not replies to an expired inbound message.
-      if(item.scope.platform==='qq')delete reply.msgId;
-      const envelope=latest.replyEnvelope?{...latest.replyEnvelope,payload:reply}:undefined;
-      const outputs=chunkOutputs(result.outputs);if(!outputs.length)throw Error('AUTOMATION_EMPTY_OUTPUT');
+    };
+    try{
+      const result=await this.services.runPrompt(binding,prompt,item.kind,new AbortController().signal,async message=>{
+        authorize();const chunks=chunkOutputs([{type:'text',text:message.text}]);if(!chunks.length)return;
+        outputs.push(...chunks);run.turnId=message.turnId;
+        this.repos.deliveries.enqueue(binding,`automation:${run.id}`,`${item.kind}:${run.id}`,outputs,reply,envelope);
+        await this.services.flush({botId:item.botId});
+      });
+      authorize();outputs.push(...chunkOutputs(result.outputs));if(!outputs.length)throw Error('AUTOMATION_EMPTY_OUTPUT');
       this.repos.deliveries.enqueue(binding,`automation:${run.id}`,`${item.kind}:${run.id}`,outputs,reply,envelope);
       run.turnId=result.turnId;await this.services.flush();return this.finish(run,'succeeded');
     }catch(error){return this.finish(run,'failed',error instanceof Error?error.message:'AUTOMATION_FAILED');}

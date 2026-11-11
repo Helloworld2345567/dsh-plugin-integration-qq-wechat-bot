@@ -21,7 +21,7 @@ test('voice control schema and permission are restricted to trusted private user
 });
 
 test('voice control tool exposes only typed role/action/id and forwards validated arguments',async()=>{
-  const calls:unknown[]=[];const tool=defineBotVoiceControlTool(async(args)=>{calls.push(args);return{role:args.role,action:args.action,override:false,effective:'current'};});
+  const calls:unknown[]=[];const tool=defineBotVoiceControlTool(async(args)=>{calls.push(args);return{sessionId:'host-session',role:args.role,action:args.action,override:false,effective:'current'};});
   assert.equal(tool.name,'bot_voice_control');
   assert.deepEqual(Object.keys((tool.parameters as any).properties).sort(),['action','id','role']);
   assert.equal(tool.isConcurrencySafe?.({role:'tts',action:'list'}),true);

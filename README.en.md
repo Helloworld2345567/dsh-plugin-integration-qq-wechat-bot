@@ -77,6 +77,10 @@ The Persona page manages prompts and files only. Each bot independently stores i
 
 Trusted private-chat users may use permitted controlled tools. Permissions are checked again at execution, so revocation immediately blocks subsequent calls.
 
+Chat uses progressive tool disclosure: each turn starts with a short capability catalog, and the model loads the required schemas and instructions through `bot_tools`. Loading resets next turn. Persona and channel rules remain active; Web GUI instructions are excluded from bot prompts. New message text omits platform message IDs, and the host resolves memory sources from the current user's exact text. Existing message history is preserved; `/compact` or a new session can reduce older context.
+
+Complete assistant text before a tool call is sent before the tool runs. Once the tools and turn finish, the bot sends the remaining final text and attachments. This applies to all tools in regular chats, scheduled tasks and proactive chats. Reasoning and raw tool JSON are not forwarded. Automatic TTS reads only the final text, excluding the earlier text sent before tools.
+
 Bot IDs accept 1–80 English letters, digits, underscores and hyphens, including digits-only IDs. Credentials are isolated by the original ID in Harness credentials. Existing lowercase-letter-first IDs containing only lowercase letters, digits and hyphens continue to use their existing credentials.
 
 Each bot card has **Delete**, with its name and ID in the confirmation. Deletion stops connections and running tasks, clears account authorization, permanently removes all of the bot's sessions (including old and child sessions), messages, memories, attachments, media jobs and automation records, and removes it from the list. Persona configuration and user working directories remain. The bot ID stays reserved to prevent delayed old operations from regaining its identity; use a new ID for a new bot.

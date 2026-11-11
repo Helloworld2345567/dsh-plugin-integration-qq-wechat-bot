@@ -36,7 +36,7 @@ function modelFailureCode(error:unknown):string {
 
 export type {HarnessResult,HarnessPort,Credentials} from './runtime-ports.js';
 
-import type {HarnessPort,HarnessResult,Credentials} from './runtime-ports.js';
+import type {HarnessPort,HarnessResult,HarnessRunOptions,Credentials} from './runtime-ports.js';
 export type {CommandServices} from './command-bus.js';
 export class BotRuntime {
   readonly states=new Map<string,string>();
@@ -71,7 +71,7 @@ export class BotRuntime {
   sessionStatus(scope:CallerScope):'waiting_upgrade'|'compacting'|'running'|'idle'{const key=scopeKey(scope);return this.quiescing?'waiting_upgrade':this.maintenance.has(key)?'compacting':this.processing.has(key)||this.repos.telemetry.actions.sessionActions<SessionActionRecord>().some(r=>r.scopeKey===key&&r.state==='running')?'running':'idle';}
   health():{ready:true;serviceRunning:boolean;quiescing:boolean;activeTasks:number;pendingDeliveries:number;pendingSessionActions:number;connections:Record<string,string>;latency:{inboxToModel:{count:number;p50:number|null;p95:number|null;max:number|null};inboxToSent:{count:number;p50:number|null;p95:number|null;max:number|null}}}{return{ready:true,serviceRunning:this.serviceRunning(),quiescing:this.quiescing,activeTasks:this.processing.size+this.maintenance.size+this.controls.size,pendingDeliveries:this.repos.deliveries.deliveries(['pending','sending']).length,pendingSessionActions:this.repos.telemetry.actions.sessionActions<SessionActionRecord>().filter(r=>r.state==='queued').length,connections:Object.fromEntries(this.states),latency:{inboxToModel:this.repos.telemetry.metrics.metricPercentiles('modelStartedAt'),inboxToSent:this.repos.telemetry.metrics.metricPercentiles('sentAt')}};}
   constructor(readonly repos:RuntimeRepositories,readonly assets:Assets,readonly media:MediaService,readonly harness:HarnessPort,readonly channels:ChannelRegistry,readonly credentials:Credentials,readonly debounceMs=2000,readonly turnTimeoutMs=0,readonly profiles?:ProfileStore,readonly systemLocale:()=>SystemLocale=()=> 'zh'){
-    this.connectionSupervisor=new DurableConnectionSupervisor(repos.bots,this.channels,credentials,this.states,message=>this.receive(message));this.deliveryWorker=new DurableDeliveryWorker(repos,this.channels,credentials,undefined,this.profiles,()=>this.serviceRunning());this.commandBus=new CommandBus(this);this.automation=new AutomationScheduler(repos,{runPrompt:(binding,prompt,kind,signal)=>this.runAutomationPrompt(binding,prompt,kind,signal),flush:()=>this.flushDeliveries(),available:key=>this.serviceRunning()&&!this.quiescing&&!this.busy(key)&&!this.controls.has(key)&&!this.repos.inbox.messages(key).length});this.commandServices.automation={proactive:(binding,action,args,locale)=>this.automationCommand(binding,action,args,locale),schedule:(binding,action,args,locale)=>this.scheduleCommand(binding,action,args,locale)};
+    this.connectionSupervisor=new DurableConnectionSupervisor(repos.bots,this.channels,credentials,this.states,message=>this.receive(message));this.deliveryWorker=new DurableDeliveryWorker(repos,this.channels,credentials,undefined,this.profiles,()=>this.serviceRunning());this.commandBus=new CommandBus(this);this.automation=new AutomationScheduler(repos,{runPrompt:(binding,prompt,kind,signal,onText)=>this.runAutomationPrompt(binding,prompt,kind,signal,onText),flush:filter=>this.deliveryWorker.flush(filter),available:key=>this.serviceRunning()&&!this.quiescing&&!this.busy(key)&&!this.controls.has(key)&&!this.repos.inbox.messages(key).length});this.commandServices.automation={proactive:(binding,action,args,locale)=>this.automationCommand(binding,action,args,locale),schedule:(binding,action,args,locale)=>this.scheduleCommand(binding,action,args,locale)};
   }
   async initialize(options:{autoStart?:boolean}={}):Promise<void>{
     this.serviceActive=options.autoStart!==false;
@@ -383,7 +383,7 @@ export class BotRuntime {
       let autoAsrFailure=false;
       let progress:TaskProgress|undefined;
       try{
-      let stage:ProcessingFailure['stage']='attachments';
+      let stage:ProcessingFailure['stage']='attachments';const outputs:Output[]=[];let stagedTurnId:string|undefined;
       try{
         const snapshot=freezeTurn(this.effectiveConfig(binding),bot,binding.scope,messages.map(m=>m.id),this.profiles,locale);
         this.repos.telemetry.snapshots.saveTurnSnapshot(binding.sessionId,snapshot);
@@ -437,11 +437,18 @@ export class BotRuntime {
           this.repos.inbox.updateMessage(key,message);
         }
         this.repos.telemetry.metrics.markTurnStage(key,messages.map(m=>m.id),'attachmentsCompletedAt');
-        stage='model';progress?.update('model');const modelAt=Date.now();this.repos.telemetry.metrics.updateTurnMetrics(key,messages.map(m=>m.id),{sessionId:binding.sessionId,modelStartedAt:modelAt});const result=await this.harness.run(binding,messages,signal,{snapshot,onProgress:stage=>progress?.update(stage)});
+        stage='model';progress?.update('model');const modelAt=Date.now();this.repos.telemetry.metrics.updateTurnMetrics(key,messages.map(m=>m.id),{sessionId:binding.sessionId,modelStartedAt:modelAt});const result=await this.harness.run(binding,messages,signal,{snapshot,onProgress:stage=>progress?.update(stage),onText:async message=>{
+          signal.throwIfAborted();if(!active())throw new ReplyContextChangedError();if(!message.text.trim())return;
+          stagedTurnId=message.turnId;
+          // Keep already-enqueued chunks unchanged so their output indexes remain stable.
+          for(let index=0;index<message.text.length;index+=1800)outputs.push({type:'text',text:message.text.slice(index,index+1800)});
+          const source=pending.at(-1)!;this.repos.deliveries.enqueue(binding,source.id,stagedTurnId,outputs,source.reply,this.replyEnvelope(source));
+          await this.deliveryWorker.flush({botId:bot.id});
+        }});
         if(signal.aborted||this.repos.sessions.binding(binding.scope).sessionId!==binding.sessionId){this.repos.inbox.mark(key,messages.map(m=>m.id),'cancelled');return;}
         this.repos.telemetry.metrics.markTurnStage(key,messages.map(m=>m.id),'modelCompletedAt');
         stage='delivery';const prepared=await this.prepareReplyOutputs(binding,result,signal,()=>progress?.update('media'));signal.throwIfAborted();progress?.stop();
-        const outputs:Output[]=[];for(const output of prepared){if(output.type==='text'&&output.text){for(let index=0;index<output.text.length;index+=1800)outputs.push({type:'text',text:output.text.slice(index,index+1800)});}else if(output.type==='asset'){this.repos.media.assets.asset(key,output.assetId!);outputs.push(output);}}
+        for(const output of prepared){if(output.type==='text'&&output.text){for(let index=0;index<output.text.length;index+=1800)outputs.push({type:'text',text:output.text.slice(index,index+1800)});}else if(output.type==='asset'){this.repos.media.assets.asset(key,output.assetId!);outputs.push(output);}}
         if(!outputs.length)throw new Error('NO_DELIVERABLE_OUTPUT');
         this.repos.telemetry.metrics.updateTurnMetrics(key,messages.map(m=>m.id),{turnId:result.turnId,deliveryStartedAt:Date.now()});this.repos.unitOfWork.transaction(()=>{this.repos.deliveries.enqueue(binding,pending.at(-1)!.id,result.turnId,outputs,pending.at(-1)!.reply,this.replyEnvelope(pending.at(-1)!));this.repos.inbox.mark(key,messages.map(m=>m.id),'complete');});
       }catch(error){
@@ -452,7 +459,7 @@ export class BotRuntime {
         if(state==='failed'&&(stage!=='delivery'||noDeliverableOutput)&&this.repos.sessions.binding(binding.scope).sessionId===binding.sessionId){
           const image=messages.some(m=>[...m.attachments,...(m.quoted?.attachments??[])].some(a=>a.kind==='image'));
           const text=systemMessage(locale,noDeliverableOutput?'noOutput':timedOut?'requestTimeout':autoAsrFailure?'asrFailed':stage==='attachments'?(image?'imageReadFailed':'attachmentReadFailed'):'modelFailed',{code:modelFailureCode(error)});
-          this.repos.deliveries.enqueue(binding,pending.at(-1)!.id,`failure:${pending.at(-1)!.id}`,[{type:'text',text}],pending.at(-1)!.reply,this.replyEnvelope(pending.at(-1)!));
+          outputs.push({type:'text',text});this.repos.deliveries.enqueue(binding,pending.at(-1)!.id,stagedTurnId??`failure:${pending.at(-1)!.id}`,outputs,pending.at(-1)!.reply,this.replyEnvelope(pending.at(-1)!));
         }
       }
       // Queue workers own delivery failures; they must not relabel completed model requests.
@@ -508,7 +515,7 @@ export class BotRuntime {
       return replyNotice(result.outputs,systemMessage(snapshot.systemLocale??'zh','voiceGenerationFailed'));
     }
   }
-  private async runAutomationPrompt(binding:SessionBinding,prompt:string,kind:AutomationKind,signal:AbortSignal):Promise<{turnId:string;outputs:Output[];snapshot:TurnSnapshot}>{
+  private async runAutomationPrompt(binding:SessionBinding,prompt:string,kind:AutomationKind,signal:AbortSignal,onText?:HarnessRunOptions['onText']):Promise<{turnId:string;outputs:Output[];snapshot:TurnSnapshot}>{
     const key=binding.key;
     if(!this.serviceRunning()||this.quiescing||this.busy(key)||this.controls.has(key))throw Error('AUTOMATION_BUSY');
     this.assertTrusted(binding);
@@ -525,7 +532,19 @@ export class BotRuntime {
     let answer:{turnId:string;outputs:Output[];snapshot:TurnSnapshot}|undefined;
     const done=Promise.resolve().then(async()=>{
       runSignal.throwIfAborted();
-      const result=await this.harness.run(binding,[synthetic],runSignal,{snapshot});
+      let result:HarnessResult,stagedTurnId:string|undefined;
+      try{
+        result=await this.harness.run(binding,[synthetic],runSignal,{snapshot,onText:async message=>{
+          this.assertReplyContext(binding,snapshot,runSignal);if(!message.text.trim())return;
+          await onText?.(message);stagedTurnId=message.turnId;
+        }});
+      }catch(error){
+        if(stagedTurnId&&!controller.signal.aborted&&!signal.aborted&&!(error instanceof ReplyContextChangedError)){
+          this.assertReplyContext(binding,snapshot,controller.signal);
+          await onText?.({turnId:stagedTurnId,text:systemMessage(snapshot.systemLocale??'zh',deadline.aborted?'requestTimeout':'modelFailed',{code:modelFailureCode(error)})});
+        }
+        throw error;
+      }
       runSignal.throwIfAborted();const current=this.repos.sessions.findBinding(key);
       if(!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation||permissionsRevoked(snapshot,this.effectiveConfig(current),this.repos.bots.bot(binding.scope.botId),binding.scope))throw Error('AUTOMATION_CONTEXT_CHANGED');
       answer={turnId:result.turnId,outputs:await this.prepareReplyOutputs(binding,result,runSignal),snapshot};

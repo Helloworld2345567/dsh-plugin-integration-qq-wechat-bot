@@ -97,9 +97,16 @@ test('trusted catalogs include disabled published skills and project only public
   f.store.bots.saveBot({...f.store.bots.bot('bot'),settings:botSettingsFromConfig({...staged,skills:['media-analysis']})});
   const skills:any=await f.management.skills(f.binding(),f.snapshot(),{action:'list'},signal());assert.deepEqual(new Set(skills.skills.map((s:any)=>s.name)),new Set(['image-generation','media-analysis','voice-generation','singing-conversion','music-download','weather-helper']));
   assert.equal(skills.skills.find((s:any)=>s.name==='weather-helper').enabled,false);assert.equal(skills.skills.find((s:any)=>s.name==='weather-helper').available,true);assert.equal(skills.skills.find((s:any)=>s.name==='image-generation').builtin,true);
-  const persona:any=await f.management.persona(f.binding(),f.snapshot(),{action:'list'},signal());assert.ok(!persona.personas.some((p:any)=>p.id==='hidden'));assert.equal(persona.currentPersonaId,'sakura');
-  for(const output of [skills,persona]){const text=JSON.stringify(output);assert.ok(!text.includes('resourceBase'));assert.ok(!text.includes('"path"'));assert.ok(!text.includes('personaPrompt'));assert.ok(!text.includes(f.store.home));}
+  const persona:any=await f.management.persona(f.binding(),f.snapshot(),{action:'list'},signal());assert.ok(!persona.personas.some((p:any)=>p.id==='hidden'));assert.deepEqual(persona.personas.find((p:any)=>p.current),{id:'sakura',name:before.name,current:true});
+  assert.deepEqual(Object.keys(persona).sort(),['action','personas']);assert.deepEqual(Object.keys(skills).sort(),['action','skills']);
+  for(const output of [skills,persona]){const text=JSON.stringify(output);assert.ok(!text.includes('resourceBase'));assert.ok(!text.includes('"path"'));assert.ok(!text.includes('personaPrompt'));assert.ok(!text.includes('"revision"'));assert.ok(!text.includes('"version"'));assert.ok(!text.includes(f.store.home));}
   const ordinary={...owner,senderId:'ordinary',channelId:'ordinary'};const enabled:any=await f.management.skills(f.binding(ordinary),f.snapshot(ordinary),{action:'list'},signal());assert.deepEqual(enabled.skills.map((s:any)=>s.name),['media-analysis']);
+});
+
+test('persona catalog reports a different frozen persona only while it differs from the current configuration',async t=>{
+  const f=await fixture(t),binding=f.binding(),snapshot=f.snapshot();f.store.sessions.updateSession({...binding,personaId:'default'});
+  const result:any=await f.management.persona(binding,snapshot,{action:'list'},signal());
+  assert.equal(result.currentTurnPersonaId,'sakura');assert.equal(result.personas.find((item:any)=>item.current).id,'default');
 });
 
 test('mutations queue host-bound actions without changing the current session or shared persona',async t=>{

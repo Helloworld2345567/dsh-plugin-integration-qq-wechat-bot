@@ -2,7 +2,7 @@ import type {BotConfig,Credential,InboundMessage,Output,SessionBinding,TurnSnaps
 import type {EvolutionTask} from '../../packages/bot-lifecycle/src/contract/evolution-contract.js';
 import type {CoordinatorLifecycleDeclaration,LifecycleCompatibility} from '../../packages/bot-lifecycle/src/contract/compatibility.mjs';
 import type {ProgressFacts,ProgressStage} from './progress.js';
-export interface HarnessRunOptions {snapshot?:TurnSnapshot;onProgress?:(stage:ProgressStage)=>void;onEnd?:()=>void}
+export interface HarnessRunOptions {snapshot?:TurnSnapshot;onProgress?:(stage:ProgressStage)=>void;onEnd?:()=>void;onText?:(message:{turnId:string;text:string})=>Promise<void>}
 export interface HarnessResult {turnId:string;outputs:Output[];snapshot:TurnSnapshot;voiceAttempted?:boolean;singingAttempted?:boolean}
 export interface LifecycleHandshake {protocol:'dsh.lifecycle';schemaVersion:1;role:'main';packageName:string;packageVersion:string;runtimeProtocol:string;coordinatorApiRange:string;instance:string;artifactIdentity:string;capabilities:readonly string[];requiredCoordinatorCapabilities:readonly string[]}
 /** Core depends on this neutral, serializable port; the lifecycle bundle supplies the implementation. */

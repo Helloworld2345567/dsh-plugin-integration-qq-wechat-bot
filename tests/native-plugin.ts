@@ -27,6 +27,9 @@ export async function apply(ctx:Context){
   const updateSettings=(patch:Partial<BotSettings>)=>{const bot=bots.bot('fixture');return runtime.saveBot({...bot,settings:{...bot.settings!,...patch}});};
   const progressRequests:GenerateOptions[]=[];let progressFails=false;
   const requests:GenerateOptions[]=[];let phase=0;let compactions=0;let finalText="FINAL_ONLY";let mediaCall:{name:string;args:Record<string,unknown>}|undefined;let beforeTool:(()=>Promise<void>)|undefined;let beforeFinal:((options:GenerateOptions)=>void|Promise<void>)|undefined;
+  const pendingLoads=new Map<string,string>();
+  const requestTools=(options:GenerateOptions)=>(options.tools??[]).map(tool=>tool.name).sort();
+  const requestText=(options:GenerateOptions)=>[options.system??'',...options.messages.flatMap(message=>message.content.filter(block=>block.type==='text').map(block=>block.text))].join('\n');
   class Fixture extends LlmAdapter{
     providerInfo(provider:string){return{id:provider,name:'Local deterministic fixture'};}
     async listModels(provider:string){return ['first','second'].map(id=>({provider,id,name:id,inputModalities:['text','image'] as const}));}
@@ -35,24 +38,60 @@ export async function apply(ctx:Context){
       if(options.purpose){if(options.purpose==='compaction'){compactions++;yield*text('会话摘要：用户说我喜欢绿茶。之前的合成测试材料已压缩；保持当前人格并继续任务。');}else yield*text('fixture title');return;}
       if(options.system?.startsWith('Write a task progress reminder for the current persona,')){progressRequests.push(options);if(progressFails){yield{type:'block-start',index:0,blockType:'text'};yield{type:'block-end',index:0,block:{type:'text',text:'不完整的提示'}};throw Error('fixture progress failure');}yield*text('这一步还在处理喵，暂时没有最终结果。');return;}
       requests.push(options);
-      if(mediaCall){const call=mediaCall;mediaCall=undefined;const update=beforeTool;beforeTool=undefined;await update?.();yield{type:'block-start',index:0,blockType:'tool-call'};yield{type:'block-end',index:0,block:{type:'tool-call',id:ToolCallId('media-'+requests.length),name:call.name,arguments:JSON.stringify(call.args)}};yield{type:'finish',reason:{kind:'tool-calls'}};return;}
+      const session=String(options.sessionId),expected=pendingLoads.get(session);
+      if(expected){assert.ok(requestTools(options).includes(expected),`loading ${expected} must expose its schema on the next native step`);pendingLoads.delete(session);}
+      const needed=mediaCall?.name??(phase===0?'bot_remember':undefined);
+      if(needed&&!requestTools(options).includes(needed)){
+        assert.ok(requestTools(options).includes('bot_tools'),'the loader must remain visible');pendingLoads.set(session,needed);
+        yield*call('bot_tools',{names:[needed]},'load-'+requests.length);return;
+      }
+      if(mediaCall){const tool=mediaCall;mediaCall=undefined;const update=beforeTool;beforeTool=undefined;await update?.();yield*call(tool.name,tool.args,'media-'+requests.length);return;}
       if(phase++===0){
-        // Change the binding during a multi-step turn. The second step must keep its original model/persona.
+        // Change the binding after discovery. The execution and continuation keep the original model/persona.
         const bot=bots.bot('fixture');runtime.saveBot({...bot,configId:'sakura',settings:{...bot.settings!,model:{provider:'bot-fixture',model:'second'}}});
         await writeFile(path.join(personas.personaDirectory('sakura'),'persona.md'),'PERSONA_B_FILE');
         await runtime.applyPersonaFiles('sakura');
-        const args={key:'drink',value:'绿茶',sourceId:'first',quote:'我喜欢绿茶'};
-        yield{type:'block-start',index:0,blockType:'tool-call'};
-        yield{type:'block-end',index:0,block:{type:'tool-call',id:ToolCallId('remember-1'),name:'bot_remember',arguments:JSON.stringify(args)}};
-        yield{type:'finish',reason:{kind:'tool-calls'}};return;
+        yield*call('bot_remember',{key:'drink',value:'绿茶',quote:'我喜欢绿茶'},'remember-1');return;
       }
       const checkFinal=beforeFinal;beforeFinal=undefined;await checkFinal?.(options);
       yield*text(finalText);finalText='FINAL_ONLY';
     }
   }
+  function*call(name:string,args:Record<string,unknown>,id:string):Generator<StreamChunk>{yield{type:'block-start',index:0,blockType:'tool-call'};yield{type:'block-end',index:0,block:{type:'tool-call',id:ToolCallId(id),name,arguments:JSON.stringify(args)}};yield{type:'finish',reason:{kind:'tool-calls'}};}
   function*text(value:string):Generator<StreamChunk>{yield{type:'block-start',index:0,blockType:'reasoning'};yield{type:'block-end',index:0,block:{type:'reasoning',text:'PRIVATE_REASONING'}};yield{type:'block-start',index:1,blockType:'text'};yield{type:'block-end',index:1,block:{type:'text',text:value}};yield{type:'usage',usage:{inputTokens:20,outputTokens:8,cacheReadTokens:3,cacheWriteTokens:2,reasoningTokens:2,totalTokens:33}};yield{type:'finish',reason:{kind:'stop'}};}
   ctx.llm.registerAdapter(['bot-fixture'],new Fixture());
   ctx.llm.registerConfigurableProviders([{provider:'bot-fixture',displayName:'Fixture',settingsNs:'bot-native-fixture',settingsPath:[]}]);
+  const inHistoryRequests:GenerateOptions[]=[];
+  class InHistoryFixture extends LlmAdapter{
+    providerInfo(provider:string){return{id:provider,name:'Local in-history fixture'};}
+    async listModels(provider:string){return[{provider,id:'first',name:'first'}];}
+    async resolveModel(provider:string,id:string){return{provider,id,name:id,context:{contextWindow:24000},systemPromptUpdate:'in-history' as const,toolUpdate:'in-history' as const};}
+    async *stream(options:GenerateOptions):AsyncIterable<StreamChunk>{
+      if(options.purpose){yield*text('in-history fixture');return;}
+      inHistoryRequests.push(options);
+      if(inHistoryRequests.length===1){yield*call('bot_tools',{names:['bot_remember']},'history-load');return;}
+      yield*text('HISTORY_FIXTURE_DONE');
+    }
+  }
+  ctx.llm.registerAdapter(['bot-fixture-history'],new InHistoryFixture());
+  interface StagedStep {text?:string;tool?:{name:string;args:Record<string,unknown>}}
+  const stagedCases=new Map<string,{steps:StagedStep[];failAttempt?:boolean;calls:number}>();
+  class StagedFixture extends LlmAdapter{
+    providerInfo(provider:string){return{id:provider,name:'Local staged-output fixture'};}
+    async listModels(provider:string){return[{provider,id:'first',name:'first'}];}
+    async resolveModel(provider:string,id:string){return{provider,id,name:id,context:{contextWindow:24000}};}
+    async *stream(options:GenerateOptions):AsyncIterable<StreamChunk>{
+      if(options.purpose){yield*text('staged fixture');return;}
+      const script=stagedCases.get(String(options.sessionId));assert.ok(script,'a staged native request must have an explicit fixture script');script.calls++;
+      const step:StagedStep|undefined=script.failAttempt?{text:'FAILED_ATTEMPT_BODY'}:script.steps.shift();assert.ok(step,'the staged model must not continue beyond its expected final reply');
+      yield{type:'block-start',index:0,blockType:'reasoning'};yield{type:'block-end',index:0,block:{type:'reasoning',text:'STAGED_PRIVATE_REASONING'}};
+      if(step.text){yield{type:'block-start',index:1,blockType:'text'};yield{type:'block-end',index:1,block:{type:'text',text:step.text}};}
+      if(script.failAttempt)throw Error('STAGED_STREAM_FAILED');
+      if(step.tool){assert.ok(requestTools(options).includes(step.tool.name),`staged tool ${step.tool.name} must be disclosed before calling it`);yield{type:'block-start',index:2,blockType:'tool-call'};yield{type:'block-end',index:2,block:{type:'tool-call',id:ToolCallId(`staged-${options.sessionId}-${script.calls}`),name:step.tool.name,arguments:JSON.stringify(step.tool.args)}};}
+      yield{type:'finish',reason:{kind:step.tool?'tool-calls':'stop'}};
+    }
+  }
+  ctx.llm.registerAdapter(['bot-fixture-staged'],new StagedFixture());
   // Start after composition; errors are durable evidence for the parent test runner.
   const resultPath=process.env.NATIVE_TEST_RESULT!;
   const test=async()=>{
@@ -82,13 +121,84 @@ export async function apply(ctx:Context){
     const stages:string[]=[];let ends=0;
     const first=await bridge.run(binding,[msg('first','我喜欢绿茶')],AbortSignal.timeout(30000),{onProgress:stage=>stages.push(stage),onEnd:()=>ends++});
     assert.ok(stages.includes('tool'));assert.ok(stages.includes('model'));assert.equal(ends,1);
-    assert.deepEqual(first.outputs,[{type:'text',text:'FINAL_ONLY'}]);assert.equal(first.snapshot.config.id,'default');assert.equal(requests.length,2);assert.ok(requests.every(r=>r.model==='first'));
+    assert.deepEqual(first.outputs,[{type:'text',text:'FINAL_ONLY'}]);assert.equal(first.snapshot.config.id,'default');assert.equal(requests.length,3);assert.ok(requests.every(r=>r.model==='first'));
+    assert.deepEqual(requestTools(requests[0]),['bot_tools'],'plain first step must expose only the loader');
+    assert.deepEqual(requestTools(requests[1]),['bot_remember','bot_tools'],'discovery must expose only the requested schema');
+    assert.doesNotMatch(requestText(requests[0]),/Use present|call present|interacting with the user through the DeepSeek Harness Web GUI|Current DeepSeek Harness Web GUI URL|DeepSeek Harness implementation checkout|sourceId=/);
+    assert.ok(requests[0].messages.some(message=>message.role==='user'&&message.content.some(block=>block.type==='text'&&block.text==='我喜欢绿茶')),'the native user message must retain the original text without a source prefix');
+    assert.doesNotMatch(requestText(requests[0]),/Supply quote as a complete/,'remember guidance must stay deferred');
+    const rememberLoad=toolJson(requests[1].messages.findLast(message=>message.role==='tool'));
+    assert.deepEqual(rememberLoad.loaded,['bot_remember']);assert.match(rememberLoad.instructions.join('\n'),/Supply quote as a complete/,'loading remember must return its execution guidance');
+    assert.doesNotMatch((requests[1].system??'')+JSON.stringify(requests[1].messages.filter(message=>message.role==='system')),/Supply quote as a complete/,'loading must not append capability guidance to the system prompt');
+    assert.ok(!JSON.stringify(requests[1].tools!.find(tool=>tool.name==='bot_remember')!.parameters).includes('sourceId'),'source attribution must remain host-owned');
     assert.equal(memory.memories(scopeKey(scope))[0]?.value,'绿茶');
-    assert.ok(requests[1].messages.some(m=>m.role==='tool'));
+    assert.equal(memory.memories(scopeKey(scope))[0]?.source,'first');assert.ok(requests[2].messages.some(m=>m.role==='tool'&&JSON.stringify(m.content).includes('Saved the preference')));
     const second=await bridge.run(binding,[msg('second','接着聊')],AbortSignal.timeout(30000));
     assert.equal(second.snapshot.config.id,'sakura');assert.equal(requests.at(-1)!.model,'second');assert.equal(bridge.live.get(binding.sessionId)!.handle.agent.id,binding.sessionId);
-    const serialized=JSON.stringify(requests.at(-1)!.messages);assert.ok(serialized.includes('我喜欢绿茶'));assert.ok(serialized.includes('PERSONA_B_FILE'));assert.ok(!JSON.stringify(requests[1].messages).includes('PERSONA_B_FILE'));
+    assert.deepEqual(requestTools(requests.at(-1)!),['bot_tools'],'the next turn must reset loaded schemas while retaining history');
+    const serialized=JSON.stringify(requests.at(-1)!.messages);assert.ok(serialized.includes('我喜欢绿茶'));assert.ok(serialized.includes('PERSONA_B_FILE'));assert.ok(!JSON.stringify(requests[2].messages).includes('PERSONA_B_FILE'));
     const agent=bridge.live.get(binding.sessionId)!.handle.agent;
+    // This route retains deferred declarations; developer additions/removals decide which tools are active.
+    const historyScope={...scope,channelId:'in-history-tools',senderId:'in-history-tools'},historyBinding=sessions.binding(historyScope);
+    const historySnapshot=freezeTurn({...personas.config('default'),model:{provider:'bot-fixture-history',model:'first'}},bots.bot('fixture'),historyScope,['history-discovery']);
+    const activeDeclarations=(options:GenerateOptions)=>{
+      const active=new Set((options.tools??[]).filter(tool=>!tool.deferLoading).map(tool=>tool.name));
+      for(const message of options.messages)if(message.role==='developer')for(const block of message.content){if(block.type==='tool-addition')active.add(block.toolName);else if(block.type==='tool-removal')active.delete(block.toolName);}
+      return[...active].sort();
+    };
+    const systemTexts=(options:GenerateOptions)=>[options.system??'',...options.messages.filter(message=>message.role==='system').map(message=>message.content.filter(block=>block.type==='text').map(block=>block.text).join(''))].filter(Boolean);
+    const historyChanges=(options:GenerateOptions,type:'tool-addition'|'tool-removal')=>options.messages.some(message=>message.role==='developer'&&message.content.some(block=>block.type===type&&block.toolName==='bot_remember'));
+    await bridge.run(historyBinding,[{...msg('history-discovery','加载记忆工具，但不要保存任何记忆。'),scope:historyScope}],AbortSignal.timeout(30000),{snapshot:historySnapshot});
+    assert.equal(inHistoryRequests.length,2);assert.deepEqual(activeDeclarations(inHistoryRequests[0]),['bot_tools']);assert.deepEqual(activeDeclarations(inHistoryRequests[1]),['bot_remember','bot_tools']);
+    assert.ok(historyChanges(inHistoryRequests[1],'tool-addition'),'the in-history route must activate the loaded declaration');
+    assert.ok(systemTexts(inHistoryRequests[0]).length>0);assert.deepEqual(systemTexts(inHistoryRequests[1]),systemTexts(inHistoryRequests[0]),'loading tools must not append or expand the in-history system prompt');
+    await bridge.run(historyBinding,[{...msg('history-reset','下一轮直接回答。'),scope:historyScope}],AbortSignal.timeout(30000),{snapshot:historySnapshot});
+    assert.equal(inHistoryRequests.length,3);assert.deepEqual(activeDeclarations(inHistoryRequests[2]),['bot_tools']);assert.ok(historyChanges(inHistoryRequests[2],'tool-removal'),'the next turn must revoke the previous tool activation');
+    assert.deepEqual(systemTexts(inHistoryRequests[2]),systemTexts(inHistoryRequests[0]),'same-persona turn reset must not expand the system prompt');
+    assert.equal(memory.memories(historyBinding.key).length,0,'loading a tool must not execute its action');await bridge.dispose(historyBinding.sessionId);
+    const stagedFixture=(id:string)=>{
+      const stageScope={...scope,channelId:id,senderId:id},stageBinding=sessions.binding(stageScope),input={...msg(id,'执行本轮分阶段输出测试。'),scope:stageScope};
+      const snapshot=freezeTurn({...personas.config('default'),model:{provider:'bot-fixture-staged',model:'first'}},bots.bot('fixture'),stageScope,[id]);
+      const script:{steps:StagedStep[];calls:number;failAttempt?:boolean}={steps:[],calls:0};stagedCases.set(stageBinding.sessionId,script);
+      return{binding:stageBinding,input,snapshot,script};
+    };
+    const staged=stagedFixture('staged-delivery');
+    const stagedAsset=await runtime.assets.save(staged.binding.key,{kind:'file',name:'staged-output.txt',mime:'text/plain'},Buffer.from('STAGED_ARTIFACT'));
+    staged.script.steps.push({text:'FIRST_PROGRESS',tool:{name:'bot_tools',args:{names:['bot_send_file']}}},{text:'SECOND_PROGRESS',tool:{name:'bot_send_file',args:{assetId:stagedAsset.id}}},{text:'FINAL_PROGRESS'});
+    let enterStage!:()=>void,releaseStage!:()=>void;const stageEntered=new Promise<void>(resolve=>enterStage=resolve),stageGate=new Promise<void>(resolve=>releaseStage=resolve);
+    const stagedText:Array<{turnId:string;text:string}>=[];
+    const stagedWork=bridge.run(staged.binding,[staged.input],AbortSignal.timeout(30000),{snapshot:staged.snapshot,onText:async(event:{turnId:string;text:string})=>{
+      stagedText.push(event);assert.equal(bridge.live.get(staged.binding.sessionId)!.assets.length,0,'pre-tool text must be delivered before the business tool registers its artifact');
+      if(event.text==='FIRST_PROGRESS'){enterStage();await stageGate;}
+    }});
+    try{
+      await Promise.race([stageEntered,stagedWork.then(()=>{throw Error('the native pre-tool text callback was not reached');})]);
+      assert.deepEqual(stagedText.map(event=>event.text),['FIRST_PROGRESS']);assert.equal(staged.script.calls,1,'model execution must pause while text delivery is pending');
+      assert.equal(bridge.live.get(staged.binding.sessionId)!.loadedTools.size,0,'even the loader must wait for preceding text delivery');
+      const stagedParent=bridge.live.get(staged.binding.sessionId)!.handle.agent;
+      const childId='staged-child-'+staged.binding.sessionId;stagedCases.set(childId,{steps:[{text:'CHILD_PRIVATE_BODY'}],calls:0});
+      const stagedChild=await ctx.agents.create({sessionId:childId as any,parentAgent:stagedParent,agentOptions:{provider:'bot-fixture-staged',model:'first'}});
+      try{stagedChild.agent.followup({id:MessageId('staged-child-input'),role:'user',source:{kind:'user'},content:[{type:'text',text:'只向父任务返回子任务结果。'}]});await stagedChild.agent.whenIdle();assert.deepEqual(stagedText.map(event=>event.text),['FIRST_PROGRESS'],'child text must not enter the parent channel callback');}finally{await stagedChild.dispose();}
+      releaseStage();const result=await stagedWork;
+      assert.deepEqual(stagedText.map(event=>event.text),['FIRST_PROGRESS','SECOND_PROGRESS'],'pre-tool text must be delivered once in native message order');
+      assert.ok(stagedText.every(event=>event.turnId===result.turnId),'staged text must retain the native turn identity');
+      assert.deepEqual(result.outputs,[{type:'text',text:'FINAL_PROGRESS'},{type:'asset',assetId:stagedAsset.id}],'final output must contain only the unsent ending and one artifact');
+      assert.doesNotMatch(JSON.stringify({stagedText,outputs:result.outputs}),/STAGED_PRIVATE_REASONING|CHILD_PRIVATE_BODY|registeredForDelivery|deliveryState|"loaded"/);
+    }finally{releaseStage();await stagedWork.catch(()=>{});await bridge.dispose(staged.binding.sessionId);}
+    const collected=stagedFixture('staged-without-callback');
+    collected.script.steps.push({text:'COLLECTED_FIRST',tool:{name:'bot_tools',args:{names:['bot_session']}}},{text:'COLLECTED_SECOND',tool:{name:'bot_session',args:{action:'status'}}},{text:'COLLECTED_FINAL'});
+    const collectedResult=await bridge.run(collected.binding,[collected.input],AbortSignal.timeout(30000),{snapshot:collected.snapshot});
+    assert.equal(collectedResult.outputs.filter(output=>output.type==='text').map(output=>output.text).join('\n\n'),'COLLECTED_FIRST\n\nCOLLECTED_SECOND\n\nCOLLECTED_FINAL','a consumer without onText must receive every completed assistant body in order');
+    assert.doesNotMatch(JSON.stringify(collectedResult.outputs),/STAGED_PRIVATE_REASONING|"sessionId"|"loaded"/);await bridge.dispose(collected.binding.sessionId);
+    const failedAttempt=stagedFixture('staged-failed-attempt');failedAttempt.script.failAttempt=true;const failedAttemptText:string[]=[];
+    await assert.rejects(bridge.run(failedAttempt.binding,[failedAttempt.input],AbortSignal.timeout(30000),{snapshot:failedAttempt.snapshot,onText:async(event:{turnId:string;text:string})=>{failedAttemptText.push(event.text);}}));
+    assert.deepEqual(failedAttemptText,[],'text from a failed streaming attempt must never be delivered');await bridge.dispose(failedAttempt.binding.sessionId);
+    const rejected=stagedFixture('staged-rejected-callback');
+    const rejectedAsset=await runtime.assets.save(rejected.binding.key,{kind:'file',name:'not-delivered.txt',mime:'text/plain'},Buffer.from('MUST_NOT_REGISTER'));
+    rejected.script.steps.push({tool:{name:'bot_tools',args:{names:['bot_send_file']}}},{text:'REJECTED_PROGRESS',tool:{name:'bot_send_file',args:{assetId:rejectedAsset.id}}},{text:'MUST_NOT_CONTINUE'});
+    const rejectedText:string[]=[];
+    await assert.rejects(bridge.run(rejected.binding,[rejected.input],AbortSignal.timeout(30000),{snapshot:rejected.snapshot,onText:async(event:{turnId:string;text:string})=>{rejectedText.push(event.text);throw Error('STAGED_DELIVERY_REJECTED');}}));
+    assert.deepEqual(rejectedText,['REJECTED_PROGRESS']);assert.equal(bridge.live.get(rejected.binding.sessionId)!.assets.length,0,'a rejected text delivery must stop the following business tool');assert.equal(rejected.script.calls,2,'a rejected callback must stop model continuation');await bridge.dispose(rejected.binding.sessionId);
     const historySeq=agent.session.seq;
     const progressText=await bridge.formatProgress(binding,first.snapshot,{stage:'image',elapsedSeconds:60},AbortSignal.timeout(5000));
     assert.equal(progressText,'这一步还在处理喵，暂时没有最终结果。');assert.equal(agent.session.seq,historySeq);
@@ -118,6 +228,9 @@ export async function apply(ctx:Context){
     }finally{releaseTool();runtime.media.run=originalRun;}
 
     const tools=ctx.tools.schemas(agent).map(t=>t.name);assert.ok(tools.includes('bot_media'));assert.ok(tools.includes('media_transform'));assert.ok(!tools.includes('pwsh'));assert.ok(!tools.includes('spawn_agent'));
+    const beforeDeniedLoad=[...bridge.live.get(binding.sessionId)!.loadedTools];
+    const deniedLoad=await ctx.tools.execute({name:'bot_tools',arguments:{names:['pwsh']},callId:ToolCallId('ordinary-load-host-tool'),agent,signal:AbortSignal.timeout(5000)});
+    assert.equal(deniedLoad.isError,true);assert.match(JSON.stringify(deniedLoad),/TOOL_NOT_AVAILABLE/);assert.deepEqual([...bridge.live.get(binding.sessionId)!.loadedTools],beforeDeniedLoad,'a rejected load must not alter tool disclosure');
     for(const name of ['bot_stats','bot_evolve','bot_model','bot_persona']){assert.ok(!tools.includes(name),`${name} schema must be hidden from ordinary channel callers`);const denied=await ctx.tools.execute({name,arguments:name==='bot_stats'?{range:'all'}:{action:name==='bot_evolve'?'status':'list'},callId:ToolCallId('ordinary-'+name),agent,signal:AbortSignal.timeout(5000)});assert.equal(denied.isError,true,`${name} must deny ordinary channel callers`);}
     for(const name of ['bot_session','bot_skills'])assert.ok(tools.includes(name),`${name} basic schema must be available to ordinary users`);
     for(const action of ['help','status','list']){const result=toolJson(await ctx.tools.execute({name:'bot_session',arguments:{action},callId:ToolCallId('ordinary-session-'+action),agent,signal:AbortSignal.timeout(5000)}));assert.equal(result.action,action);if(action==='status')assert.equal(result.sessionId,binding.sessionId);if(action==='list')assert.ok(result.sessions.every((item:any)=>item.sessionId===binding.sessionId));}
@@ -135,8 +248,26 @@ export async function apply(ctx:Context){
     await bridge.run(binding,[msg('workspace-switch','在指定目录中继续对话')],AbortSignal.timeout(30000));assert.equal(agent.id,binding.sessionId);assert.equal(ctx.workingDirectory.get(agent.session),await realpath(customCwd));assert.ok(JSON.stringify(requests.at(-1)!.messages).includes('我喜欢绿茶'));
     const inDirectory=await ctx.tools.execute({name:'pwsh',arguments:{command:"Get-Content -LiteralPath './workspace-proof.txt'"},callId:ToolCallId('workspace-command'),agent,signal:AbortSignal.timeout(15000)});assert.equal(inDirectory.isError,false,JSON.stringify(inDirectory));assert.ok(JSON.stringify(inDirectory).includes('CUSTOM_WORKSPACE_PROOF'),JSON.stringify(inDirectory));
     const delivered=await ctx.tools.execute({name:'bot_send_file',arguments:{path:'workspace-proof.txt'},callId:ToolCallId('workspace-file'),agent,signal:AbortSignal.timeout(5000)});assert.equal(delivered.isError,false,JSON.stringify(delivered));
+    assert.deepEqual(toolJson(await ctx.tools.execute({name:'bot_tools',arguments:{names:['bot_send_file']},callId:ToolCallId('parent-load-before-child'),agent,signal:AbortSignal.timeout(5000)})).loaded,['bot_send_file']);
     const child=await ctx.agents.create({sessionId:('child-'+binding.sessionId) as any,parentAgent:agent,agentOptions:{provider:'bot-fixture',model:'second'}});
     assert.equal(ctx.workingDirectory.get(child.agent.session),await realpath(customCwd));
+    const disposeChildCompletion=child.agent.ctx.tools.register({name:'structured_output',description:'fixture completion',parameters:{type:'object',properties:{},additionalProperties:false},output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:String(value)}]},execute:async()=>'CHILD_COMPLETION_OK'});
+    try{
+      const childPrompt=await child.agent.ctx.systemPrompt.assemble({scope:child.agent});
+      assert.deepEqual(childPrompt.tools.map(tool=>tool.name).sort(),['bot_tools','structured_output'],'a child completion tool must be visible without loading');
+      assert.equal(ctx.tools.schemas(agent).some(tool=>tool.name==='structured_output'),false,'the child completion definition must not enter the root registry');
+      const rootPrompt=await agent.ctx.systemPrompt.assemble({scope:agent});assert.equal(rootPrompt.tools.some(tool=>tool.name==='structured_output'),false);
+      const completed=await ctx.tools.execute({name:'structured_output',arguments:{},callId:ToolCallId('child-completion'),agent:child.agent,signal:AbortSignal.timeout(5000)});
+      assert.equal(completed.isError,false,JSON.stringify(completed));assert.ok(completed.content.some(block=>block.type==='text'&&block.text==='CHILD_COMPLETION_OK'),'child completion must pass both channel guards');
+    }finally{disposeChildCompletion();}
+    assert.equal(ctx.tools.schemas(child.agent).some(tool=>tool.name==='structured_output'),false,'the temporary completion definition must be disposed');
+    child.agent.followup({id:MessageId('child-disclosure'),role:'user',content:[{type:'text',text:'确认子任务的独立上下文'}],source:{kind:'user'}});await child.agent.whenIdle();
+    const initialChildRequest=requests.filter(request=>request.sessionId===child.agent.id).at(-1)!;
+    assert.deepEqual(requestTools(initialChildRequest),['bot_tools'],'a child must not inherit its parent loaded schemas');
+    assert.doesNotMatch(requestText(initialChildRequest),/Use present|call present|interacting with the user through the DeepSeek Harness Web GUI|Current DeepSeek Harness Web GUI URL|DeepSeek Harness implementation checkout/);
+    assert.ok(bridge.live.get(binding.sessionId)!.loadedTools.has('bot_send_file'),'a child turn must not clear its parent loaded set');
+    assert.deepEqual(toolJson(await ctx.tools.execute({name:'bot_tools',arguments:{names:['skill']},callId:ToolCallId('child-load-only'),agent:child.agent,signal:AbortSignal.timeout(5000)})).loaded,['skill']);
+    assert.equal(bridge.live.get(binding.sessionId)!.loadedTools.has('skill'),false,'loading in a child must not disclose tools in the parent');
     runtime.saveBot({...bots.bot('fixture'),configId:'default'});updateSettings({model:{provider:'bot-fixture',model:'first'}});await bridge.run(binding,[msg('switch-back','父轮切回默认')],AbortSignal.timeout(30000));
     child.agent.followup({id:MessageId('child-input'),role:'user',content:[{type:'text',text:'子任务沿用创建时的配置'}],source:{kind:'user'}});await child.agent.whenIdle();
     const childRequest=requests.find(r=>r.sessionId===child.agent.id)!;assert.equal(childRequest?.model,'second');assert.ok(JSON.stringify(childRequest.messages).includes('PERSONA_B'));
@@ -161,7 +292,7 @@ export async function apply(ctx:Context){
       const output=assets.asset(binding.key,result.assetIds[0]);assert.equal(output.mime,i===0?'image/png':'image/webp');assert.ok((await runtime.assets.read(binding.key,output.id)).length>0);
     }
     const currentPhoto=msg('current-photo','直接查看这次消息上传的参考照片');currentPhoto.attachments=[{kind:'image',name:'reference.png',mime:'image/png',handle:asset.id}];
-    await bridge.run(binding,[currentPhoto],AbortSignal.timeout(30000));const currentPhotoUser=requests.at(-1)!.messages.findLast(m=>m.role==='user')!;assert.equal(currentPhotoUser.role,'user');assert.ok(currentPhotoUser.content.some(b=>b.type==='image'),'current user attachment must deliver native image pixels');assert.ok(currentPhotoUser.content.some(b=>b.type==='text'&&b.text.includes(`[Attachment] id=${asset.id}`)),'image pixels must share the same message with their host asset identity');assert.ok(currentPhotoUser.content.some(b=>b.type==='text'&&b.text.includes('[sourceId=current-photo]')));
+    await bridge.run(binding,[currentPhoto],AbortSignal.timeout(30000));const currentPhotoUser=requests.at(-1)!.messages.findLast(m=>m.role==='user'&&m.content.some(block=>block.type==='text'&&block.text===currentPhoto.text))!;assert.equal(currentPhotoUser.role,'user');assert.ok(currentPhotoUser.content.some(b=>b.type==='image'),'current user attachment must deliver native image pixels');assert.ok(currentPhotoUser.content.some(b=>b.type==='text'&&b.text.includes(`[Attachment] id=${asset.id}`)),'image pixels must share the same message with their host asset identity');assert.ok(currentPhotoUser.content.some(b=>b.type==='text'&&b.text===currentPhoto.text));assert.doesNotMatch(JSON.stringify(currentPhotoUser.content),/\[sourceId=/);
     // Exercise the production adapter's encoding seam with a local provider callback, never a network provider.
     const imageBlock=currentPhotoUser.content.find(b=>b.type==='image')!;assert.equal(imageBlock.offloaded,undefined);
     const pixelProvider=fauxProvider({provider:'pixel-wire-fixture',models:[{id:'vision',input:['text','image']}]});let encodedImage:{data:string;mimeType:string}|undefined;let providerMessageHasAsset=false;
@@ -232,6 +363,7 @@ export async function apply(ctx:Context){
       const duplicate=await ctx.tools.execute({name:'bot_media',arguments:{operation:'image_generate',prompt:'duplicate'},callId:ToolCallId('duplicate-image'),agent:parent,signal:AbortSignal.timeout(5000)});assert.equal(duplicate.isError,true);assert.equal(imageCalls,3);
       const settings=bots.bot('fixture').settings!;updateSettings({media:{...settings.media,image:{enabled:false}}});
       const disabled=await ctx.tools.execute({name:'image_generation',arguments:{prompt:'disabled'},callId:ToolCallId('disabled-image'),agent:parent,signal:AbortSignal.timeout(5000)});assert.equal(disabled.isError,true);assert.equal(imageCalls,3);
+      const disabledLoad=await ctx.tools.execute({name:'bot_tools',arguments:{names:['image_generation']},callId:ToolCallId('load-disabled-image'),agent:parent,signal:AbortSignal.timeout(5000)});assert.equal(disabledLoad.isError,true);assert.match(JSON.stringify(disabledLoad),/TOOL_NOT_AVAILABLE/);assert.equal(imageCalls,3);
     }finally{finishImage();runtime.media.run=mediaRun;}
     const audio=await runtime.assets.save(binding.key,{kind:'audio',name:'voice.wav',mime:'audio/wav'},Buffer.from('fixture'));
     let analysisCalls=0;runtime.media.run=async(_scope,operation,config,inputs)=>{assert.equal(operation,'transcribe');assert.deepEqual(inputs,[audio.id]);assert.equal(config.model?.model,'first');analysisCalls++;return{text:'SCRIPT_TRANSCRIPT',coverage:'AUDIO_MODEL_ANALYSIS',assetIds:[]};};
@@ -254,13 +386,13 @@ export async function apply(ctx:Context){
       const revoked=await ctx.tools.execute({name:'web_fetch',arguments:{url:'https://example.com/'},callId:ToolCallId('revoked-web'),agent:parent,signal:AbortSignal.timeout(5000)});assert.equal(revoked.isError,true);
       webChecks.push('installed dsh-web-tools exposes native web tools to ordinary bot session','actual public page fetch returns Example Domain without host access','missing search key remains explicit error','web permission revocation denies later calls');
     }
-    const featureChecks:string[]=[];
+    const featureChecks:string[]=['native first step exposes only bot_tools and defers requested schemas and guidance until the next step','tool loading resets each turn and is independent between parent and child agents','disabled or unauthorized tools cannot be loaded and keep their execution guards','channel prompts omit Web GUI delivery, present and Harness source orientation','user messages retain original text without platform source IDs and preference sources are resolved by the host','native pre-tool assistant bodies are delivered in order before tool execution while the final ending and artifact remain unduplicated','consumers without staged callbacks receive all completed assistant bodies','failed attempts, reasoning, raw tool output and child bodies do not enter staged delivery','rejected staged delivery stops the business tool and model continuation'];
     runtime.saveBot({...bots.bot('fixture'),trustedUsers:['alice']});
     await runtime.switchPersona(scope,'sakura');await bridge.run(sessions.binding(scope),[msg('session-persona','仅本会话人格覆盖')],AbortSignal.timeout(30000));
     assert.equal(bots.bot('fixture').configId,'default');assert.equal(requests.at(-1)!.model,'first');assert.equal(bridge.live.get(binding.sessionId)!.snapshot.config.id,'sakura');
     await runtime.setModel(scope,{provider:'bot-fixture',model:'second'});await bridge.run(sessions.binding(scope),[msg('session-model','仅本会话模型覆盖')],AbortSignal.timeout(30000));assert.equal(requests.at(-1)!.model,'second');
     const newBinding=await runtime.newSession(scope);assert.notEqual(newBinding.sessionId,binding.sessionId);assert.equal(newBinding.personaId,'sakura');assert.equal(newBinding.modelOverride?.model,'second');
-    await bridge.run(newBinding,[msg('override-new','新会话保留覆盖配置')],AbortSignal.timeout(30000));assert.equal(requests.at(-1)!.model,'second');assert.ok(!JSON.stringify(requests.at(-1)!.messages).includes('[sourceId=session-model]'));
+    await bridge.run(newBinding,[msg('override-new','新会话保留覆盖配置')],AbortSignal.timeout(30000));assert.equal(requests.at(-1)!.model,'second');assert.ok(!JSON.stringify(requests.at(-1)!.messages).includes('仅本会话模型覆盖'));assert.doesNotMatch(requestText(requests.at(-1)!),/\[sourceId=/);
     await runtime.setModel(scope,null);await bridge.run(sessions.binding(scope),[msg('model-reset','恢复机器人默认模型')],AbortSignal.timeout(30000));assert.equal(requests.at(-1)!.model,'first');assert.equal(personas.config('sakura').model?.model,'second');
     featureChecks.push('per-session persona changes preserve the independent bot model','new native session retains persona/model overrides and resets turn history','model reset uses the bot default instead of the persona model');
     updateSettings({model:{provider:'bot-fixture',model:'second'}});
@@ -308,8 +440,8 @@ export async function apply(ctx:Context){
     await ctx.tools.execute({name:'bot_schedule',arguments:{action:'delete',jobId:scheduled.id},callId:ToolCallId('schedule-delete'),agent:active,signal:AbortSignal.timeout(5000)});
     await ctx.tools.execute({name:'bot_proactive',arguments:{action:'off'},callId:ToolCallId('proactive-off'),agent:active,signal:AbortSignal.timeout(5000)});
     featureChecks.push('native chat exposes and invokes persistent daily scheduling and proactive tools without host permission');
-    const listedPersonas=toolJson(await ctx.tools.execute({name:'bot_persona',arguments:{action:'list'},callId:ToolCallId('trusted-persona-list'),agent:active,signal:AbortSignal.timeout(5000)}));assert.equal(listedPersonas.currentPersonaId,'sakura');assert.ok(listedPersonas.personas.some((item:any)=>item.id==='default'));assert.ok(listedPersonas.personas.some((item:any)=>item.id==='sakura'&&item.current));noHostPaths(listedPersonas);
-    const listedSkills=toolJson(await ctx.tools.execute({name:'bot_skills',arguments:{action:'list'},callId:ToolCallId('trusted-skills-list'),agent:active,signal:AbortSignal.timeout(5000)}));assert.equal(listedSkills.personaId,'sakura');assert.ok(listedSkills.skills.some((item:any)=>item.name===dynamicName&&item.enabled));assert.ok(listedSkills.skills.every((item:any)=>typeof item.description==='string'&&typeof item.available==='boolean'));noHostPaths(listedSkills);
+    const listedPersonas=toolJson(await ctx.tools.execute({name:'bot_persona',arguments:{action:'list'},callId:ToolCallId('trusted-persona-list'),agent:active,signal:AbortSignal.timeout(5000)}));assert.ok(listedPersonas.personas.some((item:any)=>item.id==='default'));assert.ok(listedPersonas.personas.some((item:any)=>item.id==='sakura'&&item.current));assert.doesNotMatch(JSON.stringify(listedPersonas),/"(?:currentPersonaId|sessionId|revision)":/);noHostPaths(listedPersonas);
+    const listedSkills=toolJson(await ctx.tools.execute({name:'bot_skills',arguments:{action:'list'},callId:ToolCallId('trusted-skills-list'),agent:active,signal:AbortSignal.timeout(5000)}));assert.ok(listedSkills.skills.some((item:any)=>item.name===dynamicName&&item.enabled));assert.ok(listedSkills.skills.every((item:any)=>typeof item.description==='string'&&typeof item.available==='boolean'));assert.doesNotMatch(JSON.stringify(listedSkills),/"(?:personaId|revision|version)":/);noHostPaths(listedSkills);
     const actionCountBeforeChild=actions.sessionActions().length;
     for(const call of [
       {name:'bot_session',arguments:{action:'new'}},{name:'bot_session',arguments:{action:'stop'}},{name:'bot_session',arguments:{action:'compact'}},{name:'bot_session',arguments:{action:'resume',sessionId:newBinding.sessionId}},
@@ -361,7 +493,7 @@ export async function apply(ctx:Context){
       const compactionsBeforeQueued=compactions;await queuedControl('compact','management-compact');assert.equal(compactions,compactionsBeforeQueued+1,'queued compact must execute real native compaction once without waiting for itself');assert.equal(sessions.binding(controlScope).sessionId,oldControl.sessionId);assert.ok(controlAgent.session.snapshotEvents().some(event=>event.type==='compaction/end'));
       await queuedControl('new','management-new');const freshControl=sessions.binding(controlScope);assert.notEqual(freshControl.sessionId,oldControl.sessionId);assert.equal(freshControl.personaId,oldControl.personaId);assert.deepEqual(freshControl.modelOverride,oldControl.modelOverride);
       assert.ok(deliveries.deliveries().some(delivery=>delivery.sourceId==='management-new'&&delivery.sessionId===freshControl.sessionId&&delivery.state==='sent'),'new session completion must be persisted and sent in the replacement session');
-      await runtime.receive(controlMsg('management-fresh','新会话首轮的测试输入，仅回复确认。'));await runtime.process(controlKey);const freshRequest=requests.filter(request=>request.sessionId===freshControl.sessionId).at(-1)!;assert.ok(freshRequest);const freshHistory=JSON.stringify(freshRequest.messages);assert.ok(freshHistory.includes('[sourceId=management-fresh]'));assert.ok(!freshHistory.includes(oldMarker));assert.ok(!freshHistory.includes('[sourceId=management-compact]'));assert.ok(!freshHistory.includes('[sourceId=management-new]'));assert.ok(sentControlDeliveries.length>=5);
+      await runtime.receive(controlMsg('management-fresh','新会话首轮的测试输入，仅回复确认。'));await runtime.process(controlKey);const freshRequest=requests.filter(request=>request.sessionId===freshControl.sessionId).at(-1)!;assert.ok(freshRequest);const freshHistory=JSON.stringify(freshRequest.messages);assert.ok(freshHistory.includes('新会话首轮的测试输入，仅回复确认。'));assert.ok(!freshHistory.includes(oldMarker));assert.doesNotMatch(freshHistory,/\[sourceId=/);assert.ok(!freshHistory.includes('本轮请通过会话工具执行 compact'));assert.ok(!freshHistory.includes('本轮请通过会话工具执行 new'));assert.ok(sentControlDeliveries.length>=5);
       featureChecks.push('ordinary native bot_session write returns queued while its own turn still runs','queued native compact finishes after the tool turn without deadlock and persists a real compaction event','queued new durably sends acknowledgment before reset and completion after reset','next runtime-received turn uses a new native session with empty prior context');
     }finally{beforeFinal=undefined;mediaCall=undefined;runtime.credentials.read=previousRead;qq.send=previousSend;}
     const deletedIds=new Set([...sessions.sessionsAll().filter(item=>item.scope.botId===scope.botId).map(item=>item.id),...statsSessions.listOwners().filter(item=>item.botId===scope.botId).map(item=>item.sessionId)]);

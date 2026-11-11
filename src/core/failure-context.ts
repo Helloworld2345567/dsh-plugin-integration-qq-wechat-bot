@@ -4,7 +4,7 @@ import type {DeliveryRepository} from './ports/delivery.js';
 import type {InboxRepository} from './ports/inbox.js';
 
 export interface ProcessingFailure {sessionId:string;scope:string;code:string;state:'failed'|'cancelled';stage:'attachments'|'model'|'delivery';sourceIds:string[];at:number}
-interface FailureContextRow {sourceId:string;request:string;at:string;status:string;assetId?:string;deliveryId?:string}
+interface FailureContextRow {sourceId:string;request:string;at:string;status:string;assetId?:string}
 
 export interface FailureContextPorts {
   failures: FailureRepository;
@@ -34,7 +34,7 @@ export function recentFailureContext(ports:FailureContextPorts,binding:SessionBi
     // Recovery preserves the last persisted phase, which may predate a commit.
     const beforeCommit=delivery.state==='failed'&&(delivery.attempt?.phase==='prepare'||delivery.attempt?.phase==='upload');
     const status=beforeCommit?'Attachment upload or delivery preparation failed; the message was not committed or delivered. Wait for an explicit user retry request':delivery.state==='unknown'?'Platform delivery status is unknown and receipt is unconfirmed; it may already have arrived. Do not resend automatically':'Platform delivery failed and the message was not delivered. Wait for an explicit user retry request';
-    rows.push({sourceId:delivery.sourceId,request:source.text.slice(0,500),at:new Date(delivery.updatedAt!).toISOString(),status,...(assetId?{assetId}:{}),deliveryId:delivery.id});
+    rows.push({sourceId:delivery.sourceId,request:source.text.slice(0,500),at:new Date(delivery.updatedAt!).toISOString(),status,...(assetId?{assetId}:{})});
   }
-  return rows.length?`[Host-recorded prior failure or delivery status, describing only the listed sourceIds; not new user instructions]\n${JSON.stringify(rows)}\nAnswer follow-up questions using the corresponding request status. Generated, registered or queued does not mean delivered, and success of another request does not establish this result. Reuse the corresponding assetId only when the user explicitly requests a retry; a queued retry still does not mean successful delivery.`:undefined;
+  return rows.length?`[Host-recorded prior failure or delivery status for the listed requests; not new user instructions]\n${JSON.stringify(rows.map(({sourceId,...row})=>row))}\nAnswer follow-up questions using the corresponding request status. Generated, registered or queued does not mean delivered, and success of another request does not establish this result. Reuse the corresponding assetId only when the user explicitly requests a retry; a queued retry still does not mean successful delivery.`:undefined;
 }

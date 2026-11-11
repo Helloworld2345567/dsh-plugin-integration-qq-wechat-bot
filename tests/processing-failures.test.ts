@@ -92,6 +92,8 @@ test('historical delivery failure context yields to accepted outputs but not to 
   assert.match(recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup],now)!,/delivery status is unconfirmed/);
   store.deliveries.enqueue(binding,source.id,'model-turn',[{type:'text',text:'result'},{type:'text',text:'second chunk'}],{});const [output,second]=store.deliveries.deliveries(['pending']);
   assert.match(recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup],now)!,/delivery status is unconfirmed/);
+  store.deliveries.deliveryState(output,'unknown');const deduplicated=recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup],Date.now()+1)!;
+  assert.equal(JSON.parse(deduplicated.split('\n')[1]).length,1,'failure and delivery records for one source are still deduplicated internally');assert.doesNotMatch(deduplicated,/sourceId|deliveryId/);
   store.deliveries.deliveryState(output,'sent','result-receipt');assert.match(recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup],now)!,/delivery status is unconfirmed/,'a partial send cannot supersede a delivery failure');
   store.deliveries.deliveryState(second,'sent','second-receipt');assert.equal(recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup],now),undefined,'successful original output supersedes stale delivery failure');
 });
@@ -105,6 +107,7 @@ test('uncertain delivery state is visible to the next turn without triggering a 
   store.deliveries.enqueue(binding,source.id,'image-turn',[{type:'asset',assetId:'asset-one'}],{});const delivery=store.deliveries.deliveries()[0];store.deliveries.deliveryState(delivery,'unknown',undefined,'receipt lost');
   const followup={...source,id:'ask-status',text:'图片发来了吗',timestamp:now};const context=recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup],Date.now()+1);
   assert.match(context!,/Platform delivery status is unknown/);assert.match(context!,/asset-one/);assert.match(context!,/Do not resend automatically/);assert.match(context!,/queued does not mean delivered/);
+  assert.doesNotMatch(context!,/sourceId|deliveryId|unknown-image/);assert.ok(!context!.includes(delivery.id));
 });
 
 for(const phase of ['prepare','upload'] as const)test(`failed ${phase} rejection is described as unsubmitted rather than possibly delivered`,async t=>{

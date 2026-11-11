@@ -88,7 +88,7 @@ export class BotManagement {
 
   async persona(binding:SessionBinding,snapshot:TurnSnapshot,input:unknown,signal:AbortSignal){
     const current=this.current(binding,snapshot,signal,true);const args=botPersonaArgumentsSchema.parse(input);const config=this.runtime.effectiveConfig(current);
-    if(args.action==='list')return{action:args.action,sessionId:current.sessionId,currentPersonaId:config.id,currentTurnPersonaId:snapshot.config.id,personas:this.runtime.repos.personas.configs().filter(item=>!item.archived).map(item=>({id:item.id,name:item.name,revision:item.revision,current:item.id===config.id}))};
+    if(args.action==='list')return{action:args.action,...(config.id!==snapshot.config.id?{currentTurnPersonaId:snapshot.config.id}:{}),personas:this.runtime.repos.personas.configs().filter(item=>!item.archived).map(item=>({id:item.id,name:item.name,current:item.id===config.id}))};
     this.runtime.repos.personas.config(args.personaId!);const command=managementCommand({name:'persona',args:args.personaId!})!;const result=await this.runtime.commandBus.execute({source:'tool',binding:current,snapshot,signal,authorize:()=>this.current(binding,snapshot,signal,true)},command);return result.kind==='queued'?result.value:result;
   }
 
@@ -99,10 +99,10 @@ export class BotManagement {
       const names=privileged?[...new Set([...config.skills,...Object.keys(packagedSkills),...Object.keys(config.skillVersions)])]:[...config.skills];
       const skills=names.map(name=>{
         const base={name,enabled:config.skills.includes(name),builtin:Object.hasOwn(packagedSkills,name)};
-        try{const item=this.features.skills.list({...config,skills:[name]})[0]!;return{...base,description:builtinSkillDescription(name,snapshot.systemLocale??'zh')??item.description,version:item.version,available:true};}
-        catch{return{...base,description:systemMessage(snapshot.systemLocale??'zh','skillUnavailable'),version:config.skillVersions[name]??null,available:false};}
+        try{const item=this.features.skills.list({...config,skills:[name]})[0]!;return{...base,description:builtinSkillDescription(name,snapshot.systemLocale??'zh')??item.description,available:true};}
+        catch{return{...base,description:systemMessage(snapshot.systemLocale??'zh','skillUnavailable'),available:false};}
       });
-      return{action:args.action,personaId:config.id,revision:config.revision,skills};
+      return{action:args.action,skills};
     }
     const name=args.name!;if(!Object.hasOwn(packagedSkills,name)&&!Object.hasOwn(config.skillVersions,name)&&!(args.action==='disable'&&config.skills.includes(name)))throw Error('SKILL_NOT_PUBLISHED');
     const command=managementCommand({name:'skill',args:`${args.action} ${name}`})!;const result=await this.runtime.commandBus.execute({source:'tool',binding:current,snapshot,signal,authorize:()=>this.current(binding,snapshot,signal,true)},command);return result.kind==='queued'?result.value:result;

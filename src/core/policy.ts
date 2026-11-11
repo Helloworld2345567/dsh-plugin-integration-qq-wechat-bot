@@ -4,13 +4,13 @@ import type { BotConfig, BotInstance, CallerScope, ServiceProfileRole, TurnServi
 import {imageSkillEnabled} from './image-skill.js';
 import {analysisEnabled} from './analysis.js';
 import type {ProfileStore} from './profile-store.js';
-export const BUSINESS_TOOLS = new Set([...skillToolManifests.map(manifest=>manifest.tool.name),'image_generation','bot_media','bot_voice','bot_voice_control','bot_send_file','bot_remember','bot_forget_memory','bot_read_social','skill','bot_stats','bot_evolve','bot_model','bot_session','bot_persona','bot_skills','bot_schedule','bot_proactive']);
+export const BUSINESS_TOOLS = new Set([...skillToolManifests.map(manifest=>manifest.tool.name),'bot_tools','image_generation','bot_media','bot_voice','bot_voice_control','bot_send_file','bot_remember','bot_forget_memory','bot_read_social','skill','bot_stats','bot_evolve','bot_model','bot_session','bot_persona','bot_skills','bot_schedule','bot_proactive']);
 export const NATIVE_HOST_TOOLS = new Set(['pwsh','bash','read','write','edit','read_file','write_file','str_replace','list_directory','glob','grep','terminal','read_terminal','write_terminal']);
 export const CHANNEL_WEB_TOOLS=new Set(['web_search','web_fetch']);
 export function trusted(bot:BotInstance,scope:CallerScope):boolean { return scope.kind==='private' && bot.trustedUsers.includes(scope.senderId); }
 export function permitted(name:string,config:BotConfig,bot:BotInstance,scope:CallerScope):boolean {
   if(!bot.enabled || bot.archived) return false;
-  if(name==='bot_session'||name==='bot_skills')return true;
+  if(name==='bot_tools'||name==='bot_session'||name==='bot_skills')return true;
   if(name==='bot_stats'||name==='bot_model'||name==='bot_persona'||name==='bot_voice_control'||name==='bot_schedule'||name==='bot_proactive')return trusted(bot,scope);
   if(name==='bot_evolve')return trusted(bot,scope)&&config.allowHostTools;
   if(name==='bot_voice')return config.skills.includes('voice-generation')&&config.tools.includes('bot_voice')&&config.media.voice?.enabled===true;

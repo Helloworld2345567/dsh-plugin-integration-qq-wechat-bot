@@ -35,7 +35,7 @@ async function fixture(t:any){
 test('model tool declaration exposes only list/set/reset and executes the host-bound service',async t=>{
   const f=await fixture(t);const frozen=f.snapshot();const tool=defineBotModelTool((args,exec)=>f.features.model(f.binding,frozen,args,exec.signal));
   assert.equal(tool.name,'bot_model');assert.deepEqual(Object.keys((tool.parameters as any).properties).sort(),['action','model','provider']);
-  const exec={signal:new AbortController().signal} as ToolRunContext;const result=JSON.parse(await tool.execute({action:'list'},exec) as string);assert.deepEqual(result.models,f.catalog);assert.equal(result.personaId,'sakura');assert.deepEqual(result.currentTurnModel,f.catalog[0]);
+  const exec={signal:new AbortController().signal} as ToolRunContext;const result=JSON.parse(await tool.execute({action:'list'},exec) as string);assert.deepEqual(result.models,f.catalog);assert.equal(result.personaId,undefined);assert.equal(result.sessionId,undefined);assert.deepEqual(result.currentTurnModel,f.catalog[0]);
   await assert.rejects(tool.execute({action:'set',provider:'Fixture',model:'Gemini-Case',sessionId:'another'},exec));assert.equal(f.store.sessions.binding(scope).modelOverride,undefined);
   assert.equal(tool.isConcurrencySafe?.({action:'set',provider:'Fixture',model:'Gemini-Case'}),false);
 });
