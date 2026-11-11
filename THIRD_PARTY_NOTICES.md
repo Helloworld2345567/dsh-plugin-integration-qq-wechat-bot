@@ -1,5 +1,7 @@
 # Third-party notices
 
+简体中文 | [English](THIRD_PARTY_NOTICES.en.md)
+
 本文件只声明当前 checkout 能确认的来源和边界。没有在 checkout、依赖元数据或上游公开许可证中确认的 tag、commit、版权归属不会凭空补写。版本范围依赖的许可证应以实际安装版本的上游声明为准。
 
 ## 随本项目发布或作为运行时依赖安装

@@ -1,3 +1,4 @@
+import type {SystemLocale} from '../src/i18n/common.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -17,17 +18,26 @@ let sequence=0;
 const input=(text:string):InboundMessage=>({id:`action-${++sequence}`,scope,text,attachments:[],reply:{target:'real-user'},timestamp:Date.now()});
 function gate(){let resolve!:()=>void;const promise=new Promise<void>(r=>resolve=r);return{promise,resolve};}
 async function until(check:()=>boolean){for(let i=0;i<300;i++){if(check())return;await new Promise(r=>setTimeout(r,5));}assert.fail('Timed out waiting for deferred action');}
-async function fixture(t:any){
+async function fixture(t:any,locale:()=>SystemLocale=()=> 'zh'){
   const home=await mkdtemp(path.resolve('.codex/session-actions-'));const store=new SqlitePersistence(home);store.bots.saveBot(botSchema.parse({id:'one',name:'One',channel:'qq',accountId:'one',enabled:true,trustedUsers:['alice']}));
   const sent:string[]=[];const assets=new Assets(store.repositories()),media=new MediaService(store.repositories(),assets);
   let onRun:((binding:SessionBinding,snapshot:TurnSnapshot,signal:AbortSignal)=>Promise<void>)|undefined;
-  const harness:HarnessPort={run:async(binding,messages,signal)=>{const snapshot=freezeTurn(store.personas.effectiveConfig(binding),store.bots.bot('one'),scope,messages.map(m=>m.id));seedTurnSnapshot(store,binding.sessionId,snapshot);await onRun?.(binding,snapshot,signal);store.sessions.markSessionPersisted(binding);return{turnId:`turn-${sequence}`,outputs:[],snapshot};},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async()=>{},inspectSession:async()=>{},compact:async()=> '压缩完成'};
+  const harness:HarnessPort={run:async(binding,messages,signal,options)=>{const snapshot=options?.snapshot??freezeTurn(store.personas.effectiveConfig(binding),store.bots.bot('one'),scope,messages.map(m=>m.id));seedTurnSnapshot(store,binding.sessionId,snapshot);await onRun?.(binding,snapshot,signal);store.sessions.markSessionPersisted(binding);return{turnId:`turn-${sequence}`,outputs:[],snapshot};},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async()=>{},inspectSession:async()=>{},compact:async()=> '压缩完成'};
   const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async()=>Buffer.from(''),send:async(_b,_c,d)=>{assert.deepEqual(d.reply,{target:'real-user'});sent.push(d.output.text??'');return'receipt';}};
   const credentials={read:async()=>({accountId:'one'}),write:async()=>{},remove:async()=>{}};
-  const runtime=new BotRuntime(store.repositories(),assets,media,harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),credentials,60000);
+  const runtime=new BotRuntime(store.repositories(),assets,media,harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),credentials,60000,0,undefined,locale);
   t.after(async()=>{await runtime.close();store.close();await rm(home,{recursive:true,force:true});});
   return{store,runtime,harness,sent,adapter,credentials,assets,media,onRun:(fn:typeof onRun)=>{onRun=fn;},records:()=>store.sessionActions.sessionActions<SessionActionRecord>(),run:async(text='please manage this session')=>{await runtime.receive(input(text));await runtime.process(scopeKey(scope));}};
 }
+
+test('queued actions retain the originating language across restart and legacy records default to Chinese',async t=>{
+  const f=await fixture(t,()=> 'en');f.onRun(async(b,s,signal)=>{assert.equal(s.systemLocale,'en');f.runtime.queueSessionAction(b,s,{action:'new'},signal);f.runtime.pauseProcessing();});
+  await f.run();await f.runtime.close();const queued=f.records()[0];assert.equal(queued.systemLocale,'en');
+  const legacy={...queued,id:'legacy-running',action:{action:'compact'} as DeferredSessionAction,state:'running' as const};delete legacy.systemLocale;seedSessionAction(f.store,legacy);
+  const next=new BotRuntime(f.store.repositories(),f.assets,f.media,f.harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter:f.adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),f.credentials,60000,0,undefined,()=> 'zh');
+  try{next.pauseProcessing();await next.initialize();assert.match(f.store.sessionActions.findSessionAction<SessionActionRecord>(legacy.id)!.result!,/会话操作在重启前被中断/);next.resumeProcessing();await until(()=>f.store.sessionActions.findSessionAction<SessionActionRecord>(queued.id)?.state==='succeeded');assert.match(f.store.sessionActions.findSessionAction<SessionActionRecord>(queued.id)!.result!,/^Started a new session:/);}
+  finally{await next.close();}
+});
 
 test('a new-session tool returns queued during its own turn and executes once afterward without self-wait',async t=>{
   const f=await fixture(t);assert.equal(typeof f.runtime.queueSessionAction,'function');const old=f.store.sessions.binding(scope);const release=gate(),entered=gate();

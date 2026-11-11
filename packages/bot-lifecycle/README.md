@@ -1,5 +1,7 @@
 # 独立产品生命周期协调器
 
+简体中文 | [English](README.en.md)
+
 `dsh-bot-lifecycle` 是独立产品 profile 使用的 Harness bundle。它由产品安装器与主插件成对安装，由 `scripts/start.mjs` 监督；它不是主插件内部服务、第三方运行时或外部 Adapter 平台。
 
 ## 源码与构建

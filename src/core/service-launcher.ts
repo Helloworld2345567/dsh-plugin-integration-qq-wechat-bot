@@ -1,3 +1,5 @@
+import type {MessageDescriptor} from '../i18n/common.js';
+import {diagnosticFields} from '../i18n/diagnostics.js';
 import {access,readdir} from 'node:fs/promises';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
@@ -12,6 +14,7 @@ export interface ServiceStartResult {
   serviceId:LaunchableService;
   state:'ready'|'already-running';
   safeDiagnostic:string;
+  message?:MessageDescriptor;
   pid?:number;
 }
 export interface ServiceLauncher {
@@ -112,7 +115,7 @@ export class ExternalServiceLauncher implements ServiceLauncher {
     if(!path.isAbsolute(settings.projectRoot)||/[\x00-\x1f]/.test(settings.projectRoot))throw Error('SERVICE_LAUNCH_ROOT_INVALID');
     const endpoint=new URL(settings.baseUrl),expectedPort=settings.serviceId==='breeze-tts'?'8080':'9880',actualPort=endpoint.port||(endpoint.protocol==='https:'?'443':'80');
     if(!['127.0.0.1','localhost','::1'].includes(endpoint.hostname)||actualPort!==expectedPort)throw Error('SERVICE_LAUNCH_ENDPOINT_MISMATCH');
-    if(await this.checkHealth(settings.serviceId,settings.baseUrl,signal))return{serviceId:settings.serviceId,state:'already-running',safeDiagnostic:'服务已经在运行。'};
+    if(await this.checkHealth(settings.serviceId,settings.baseUrl,signal))return{serviceId:settings.serviceId,state:'already-running',...diagnosticFields("serviceAlreadyRunning")};
     let command:string,args:string[],cwd:string;
     if(settings.serviceId==='breeze-tts'){
       const script=path.join(root,'Start-Breeze.ps1');await access(script);command=powershell;args=['-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',script];cwd=root;
@@ -124,7 +127,7 @@ export class ExternalServiceLauncher implements ServiceLauncher {
     const deadline=Date.now()+this.timeoutMs;
     while(Date.now()<deadline){
       signal.throwIfAborted();
-      if(await this.checkHealth(settings.serviceId,settings.baseUrl,signal))return{serviceId:settings.serviceId,state:'ready',safeDiagnostic:'服务已启动并通过健康检查。',...(pid?{pid}:{})};
+      if(await this.checkHealth(settings.serviceId,settings.baseUrl,signal))return{serviceId:settings.serviceId,state:'ready',...diagnosticFields("serviceStarted"),...(pid?{pid}:{})};
       await new Promise<void>((resolve,reject)=>{const timer=setTimeout(resolve,this.pollMs);const abort=()=>{clearTimeout(timer);reject(signal.reason??Error('SERVICE_START_CANCELLED'));};if(signal.aborted)abort();else signal.addEventListener('abort',abort,{once:true});});
     }
     throw Error('SERVICE_START_TIMEOUT');

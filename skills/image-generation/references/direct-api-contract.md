@@ -1,12 +1,12 @@
 # Bundled image client contract
 
-本文描述随插件发布的 `dsh_bot_runtime.skills.image_generation.image_api` 客户端，并不承诺所有兼容提供商都支持相同能力。插件和运营者的独立验证使用同一客户端。
+This document describes the bundled `dsh_bot_runtime.skills.image_generation.image_api` client. It does not promise identical capabilities from every compatible provider. The plugin and standalone operator checks use the same client.
 
 ## Connection and credentials
 
 - Default base URL: `https://api.openai.com/v1`; override through `--base-url` or `OPENAI_BASE_URL`.
 - Default model: `gpt-image-2`; override through `--model` for the chosen provider.
-- 默认凭据变量为 `IMAGE_ACCESS_KEY`；已有 `SAKURA_IMAGE_API_KEY` 环境时兼容使用该变量，也可通过 `--api-key-env VARIABLE_NAME` 显式选择。
+- The default credential variable is `IMAGE_ACCESS_KEY`; existing `SAKURA_IMAGE_API_KEY` remains a fallback. Explicitly select another variable with `--api-key-env VARIABLE_NAME`.
 - Credentials are read from the environment and sent as a Bearer header. Only HTTPS API URLs without embedded credentials, query or fragment are accepted. Redirects are disabled.
 - Standalone CLI use can prompt for a missing key; the plugin preflights the variable before starting the client. Configure unattended jobs with a process environment variable.
 
@@ -45,4 +45,4 @@ Providers must support the parameters being sent. Use an actual provider-support
 
 The client accepts an image body or JSON `data` items containing `b64_json` or an HTTPS image URL. It validates file signatures and caps downloads. It reports `requested_count` and `returned_count`, and preserves completed outputs.
 
-付费或结果不确定的请求不会自动重放；认证、限流或网络错误也不静默重试。CLI 失败只输出稳定错误码，record 不保存 endpoint、credential、prompt、输入路径或 provider 正文；模型调用、输出检查和平台投递仍分别报告。
+Billed requests and requests with uncertain outcomes are not automatically replayed. Authentication, rate-limit and network failures are not silently retried. CLI failures print stable error codes only; records do not save endpoints, credentials, prompts, input paths or provider bodies. Model invocation, output checks and platform delivery remain separately reported.

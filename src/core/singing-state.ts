@@ -26,9 +26,11 @@ export function clearSingingCandidates(singing:SingingStateRepository,scope:stri
 export function clearPendingSingingUpload(ports:SingingSessionPorts,binding:SessionBinding):void {const value=singingCandidates(ports,binding);if(value?.waiting)clearSingingCandidates(ports.singing,binding.key);}
 export function explicitSingingRequest(text:string):boolean {
   // Only user-authored request lines qualify; quoted material and fenced content do not.
-  const plain=text.replace(/```[\s\S]*?(?:```|$)/g,'').split(/\r?\n/).filter(line=>!/^\s*(?:>|引用|转发|网页|以下内容)/.test(line))
-    .flatMap(line=>line.split(/[，,。；;！？!?]/)).filter(clause=>!/(?:不要|不用|无需|别|暂不|先不|不想).{0,20}(?:翻唱|变声|换声|音色转换|STS)/i.test(clause)).join('\n');
-  return /(?:把|将|帮我|请|给我|我要|我想|用你).{0,80}(?:唱歌|唱一下|演唱|翻唱|变声|换声|音色转换|转换.{0,12}(?:音色|歌声))|(?:帮我|请|给我|我要|我想).{0,20}唱|(?:唱歌|演唱|翻唱|变声|音色转换|STS)(?:一下|这|该|此|请求|转换|\s*$)/i.test(plain);
+  const plain=text.replace(/```[\s\S]*?(?:```|$)/g,'').split(/\r?\n/).filter(line=>!/^\s*(?:>|引用|转发|网页|以下内容|quote(?:d)?\s*:|forwarded\s*:|web(?:page)?\s*:|following content\s*:)/i.test(line))
+    .map(line=>line.replace(/["“][^"”]*["”]/g,'').replace(/(?<![\p{L}\p{N}])'[^'\r\n]*'(?![\p{L}\p{N}])/gu,''))
+    .flatMap(line=>line.split(/[，,。；;！？!?]/)).filter(clause=>!/(?:不要|不用|无需|别|暂不|先不|不想).{0,20}(?:翻唱|变声|换声|音色转换|STS)|\b(?:do not|don[’']t|never|avoid|stop|without|no need to|not)\b.{0,60}\b(?:sing|cover|convert|change|use your voice|sts)\b/i.test(clause)).join('\n');
+  const english=/(?:^|\n)\s*(?:(?:please\s+)?(?:(?:can|could|would|will) you\s+|(?:i want|i would like|i[’']d like) you to\s+|help me\s+)?(?:please\s+)?)(?:sing(?:\s|$)|cover\s+(?:this|that|the|a|my)\s+song\b|(?:convert|change)\s+(?:(?:this|that|these|those|the|my)\s+)?(?:vocals?|voice|singing|song|audio)\b|use your voice\s+(?:to sing|for (?:this|that|the) (?:song|cover))\b)/i.test(plain);
+  return english||/(?:把|将|帮我|请|给我|我要|我想|用你).{0,80}(?:唱歌|唱一下|演唱|翻唱|变声|换声|音色转换|转换.{0,12}(?:音色|歌声))|(?:帮我|请|给我|我要|我想).{0,20}唱|(?:唱歌|演唱|翻唱|变声|音色转换|STS)(?:一下|这|该|此|请求|转换|\s*$)/i.test(plain);
 }
 export function saveSingingCandidates(ports:SingingSessionPorts,binding:SessionBinding,candidates:Omit<SingingCandidate,'number'>[],waiting=false):SingingCandidates {
   assertSingingSession(ports.bindings,binding);

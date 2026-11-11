@@ -1,6 +1,7 @@
+import {storageDescriptor} from '../../i18n/storage.js';
 import {configSchema, configForWrite,botSettingsFromConfig,configWithBotSettings, type BotConfig, type SessionBinding} from '../../core/types.js';
 import {sameConfig} from '../../core/personas.js';
-import {ConflictError} from '../../core/errors.js';
+import {ConflictError,LocalizedError} from '../../core/errors.js';
 import type {PersonaConfigRepository, PersonaDraft, PersonaStatus} from '../../core/ports/persona.js';
 import type {BotRepository} from '../../core/ports/bot.js';
 import type {BindingRepository} from '../../core/ports/session.js';
@@ -24,7 +25,7 @@ export class SqlitePersonaConfigRepository implements PersonaConfigRepository {
   configs(): BotConfig[] {return this.database.records.list<BotConfig>('config').map(config => configSchema.parse(config));}
   config(id: string): BotConfig {
     const value = this.findConfig(id);
-    if (!value || value.archived) throw new Error('配置不存在或已归档');
+    if (!value || value.archived) throw new LocalizedError(storageDescriptor('personaMissing'),'配置不存在或已归档');
     return configSchema.parse(value);
   }
   findConfig(id: string): BotConfig | undefined {return this.database.records.get<BotConfig>('config', id);}
@@ -57,7 +58,7 @@ export class SqlitePersonaConfigRepository implements PersonaConfigRepository {
     try {
       const directory = this.files.directory(id), file = this.files.read(id), baseline = this.baseline(id);
       return {id, directory, state:baseline?.digest === file.digest && sameConfig(file.config, this.findConfig(id)!) ? 'synced' : 'draft'};
-    } catch (error) { return {id, directory:path.join(this.files.root, id), state:'error', error:error instanceof Error ? error.message : 'PERSONA_FILES_INVALID'}; }
+    } catch (error) { return {id, directory:path.join(this.files.root, id), state:'error', error:error instanceof Error ? error.message : 'PERSONA_FILES_INVALID', ...(error instanceof LocalizedError ? {message:error.localizedMessage} : {})}; }
   }
   personaDirectory(id?: string): string {return this.files.directory(id);}
   personaRoot(): string {return this.files.root;}
@@ -73,12 +74,12 @@ export class SqlitePersonaConfigRepository implements PersonaConfigRepository {
     const check = () => {
       const previous = this.findConfig(value.id);
       if (previous && previous.revision !== expectedRevision) throw new ConflictError();
-      if (value.archived && (this.bots().bots().some(bot => !bot.archived && bot.configId === value.id) || this.bindings().bindings().some((binding:SessionBinding) => binding.personaId === value.id))) throw new Error('请先解除机器人或活动会话配置绑定');
+      if (value.archived && (this.bots().bots().some(bot => !bot.archived && bot.configId === value.id) || this.bindings().bindings().some((binding:SessionBinding) => binding.personaId === value.id))) throw new LocalizedError(storageDescriptor('personaStillBound'),'请先解除机器人或活动会话配置绑定');
       return previous;
     };
     this.files.recover(value.id, this.findConfig(value.id));
     const previous = check();
-    if (fileDigest !== undefined && this.files.read(value.id).digest !== fileDigest) throw new ConflictError('人格文件在校验期间被修改，请重新应用');
+    if (fileDigest !== undefined && this.files.read(value.id).digest !== fileDigest) throw new ConflictError('人格文件在校验期间被修改，请重新应用',storageDescriptor('personaValidationChanged'));
     if (fileDigest !== undefined && previous && sameConfig(previous, value)) {
       this.database.transaction(() => {
         check();

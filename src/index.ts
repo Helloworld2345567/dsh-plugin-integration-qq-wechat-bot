@@ -1,4 +1,5 @@
-import type { Context } from '@deepseek-ai/cordis';
+import type { Context, Volatile } from '@deepseek-ai/cordis';
+import type {SystemLocale} from './i18n/common.js';
 import type {} from '@deepseek-ai/dsh-host-webserver';
 import type {} from '@deepseek-ai/dsh-llm';
 import { randomBytes } from 'node:crypto';
@@ -38,12 +39,15 @@ export const Config=Schema.object({
   python:Schema.string().min(1).max(4096).description('媒体 worker 使用的 Python 3.12+ 解释器；留空使用 BOT_PYTHON 或 python。'),
   debounceMs:Schema.number().step(1).min(0).max(60_000).default(2000).description('同一会话入站消息的合并等待时间（毫秒）。'),
   autoStart:Schema.boolean().default(true).description('加载面板后自动启动机器人服务；关闭时保留配置和历史，等待单独启动服务。'),
-});
-export interface Config {dataDir?:string;python?:string;debounceMs?:number;autoStart?:boolean}
+  messageLocale:Schema.union(['zh','en']).default('zh').volatile().description('所有机器人固定提示的语言；保存后对新操作生效。'),
+}).i18n({zh:{dataDir:'机器人运行数据目录；留空使用产品或 Harness 默认目录。',python:'媒体 worker 使用的 Python 3.12+ 解释器；留空使用 BOT_PYTHON 或 python。',debounceMs:'同一会话入站消息的合并等待时间（毫秒）。',autoStart:'加载面板后自动启动机器人服务；关闭时保留配置和历史，等待单独启动服务。',messageLocale:'所有机器人固定提示的语言；保存后对新操作生效。'},en:{dataDir:'Bot runtime data directory. Leave blank for the product or Harness default.',python:'Python 3.12+ interpreter for media workers. Leave blank to use BOT_PYTHON or python.',debounceMs:'Wait time in milliseconds for combining incoming messages in the same session.',autoStart:'Start the bot service when the panel loads. When off, keep configuration and history until the service is started separately.',messageLocale:'Language for fixed messages from all bots. Applies to new operations after saving.'}});
+export interface Config {dataDir?:string;python?:string;debounceMs?:number;autoStart?:boolean;messageLocale?:Volatile<SystemLocale>}
 declare module '@deepseek-ai/cordis' {interface Context {botIntegration:BotRuntime}}
 /** First release: only code-reviewed adapters compiled into this package may load. */
 const HOST_SERVICE_POLICIES:ReadonlyMap<string,ApprovedServicePolicy>=BUILTIN_SERVICE_POLICIES;
 export async function apply(ctx:Context,config:Config={}):Promise<void>{
+  const systemLocale=():SystemLocale=>config.messageLocale?.get()??'zh';
+  ctx.effect(()=>ctx.settings.configure({auto:false}));
   const home=config.dataDir??process.env.BOT_DATA_HOME??path.join(process.env.DSH_HOME??path.join(process.cwd(),'.runtime','bot-data'),'storages','bot-integration');
   // The composition root is the only place that opens storage, builds adapters
   // and injects them into application services.
@@ -60,9 +64,9 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
   }catch(error){await serviceHost?.dispose().catch(()=>{});persistence.close();throw error;}
   const assets=new Assets(repos);const media=new MediaService(repos,assets,config.python,new HarnessMediaProvider(ctx),new ProcessWorker(config.python),mediaOperationRegistry,undefined,serviceRuntime);
   const credentials=createBotCredentials(ctx.credentials);
-  const extensions:HarnessExtensions={};const harness=new NativeHarness(ctx,repos,assets,media,extensions);let disposeMode;try{disposeMode=await harness.registerMode();}catch(error){await serviceHost.dispose().catch(()=>{});persistence.close();throw error;}
+  const extensions:HarnessExtensions={};const harness=new NativeHarness(ctx,repos,assets,media,extensions,systemLocale);let disposeMode;try{disposeMode=await harness.registerMode();}catch(error){await serviceHost.dispose().catch(()=>{});persistence.close();throw error;}
   const channels=createChannelRegistry([qqChannel(new QQAdapter(undefined,{emit:event=>extensions.stats?.observeGroup({botId:event.botId,groupId:event.groupId,name:event.name,event:event.type==='group.joined'?'joined':event.type==='group.left'?'left':'observed',at:event.at,eventId:event.eventId})},undefined,undefined,createQQAudioPreparer(assets,{processes:new NodeControlledProcessPort()}))),weixinChannel(new WeixinAdapter(persistence.cursors))]);
-  const runtime=new BotRuntime(repos,assets,media,harness,channels,credentials,config.debounceMs,0,profiles);
+  const runtime=new BotRuntime(repos,assets,media,harness,channels,credentials,config.debounceMs,0,profiles,systemLocale);
   const features=new BotFeatures(runtime,createLifecyclePort());extensions.stats=features.stats;extensions.model=(binding,snapshot,args,signal)=>features.model(binding,snapshot,args,signal);extensions.voice=(binding,snapshot,args,signal)=>features.voice(binding,snapshot,args,signal);extensions.evolve=(binding,snapshot,args,signal)=>features.execute(binding,snapshot,args,signal);
   extensions.management=new BotManagement(runtime,features);
   const voiceLibrary=createVoiceModelLibrary(persistence.voiceLibrarySettings,persistence.home,profiles);

@@ -1,13 +1,13 @@
 import type {BotConfig,PublicServiceProfile} from '../core/client-contracts.js';
 import type {createUI} from './ui.js';
-import {chinese,type Translate} from './locale.js';
+import {chinese,uiError,type Translate} from './locale.js';
 
 export type VoiceModelRole='voice'|'singing';
 const servicesFor:Record<VoiceModelRole,readonly string[]>={voice:['gpt-sovits','breeze-tts'],singing:['rvc']};
 const operationFor=(role:VoiceModelRole,serviceId:string)=>role==='singing'?'rvc.convert':serviceId==='breeze-tts'?'breeze-tts.speak':'gpt-sovits.speak';
 
 export function useVoiceModel(config:BotConfig,role:VoiceModelRole,profile:Pick<PublicServiceProfile,'serviceId'|'profileId'|'state'|'capabilities'>,t:Translate=chinese):BotConfig {
-  if(!servicesFor[role].includes(profile.serviceId)||!profile.capabilities.includes(operationFor(role,profile.serviceId))||profile.state!=='ready')throw Error(t('selectReadyVoice'));
+  if(!servicesFor[role].includes(profile.serviceId)||!profile.capabilities.includes(operationFor(role,profile.serviceId))||profile.state!=='ready')throw uiError('selectReadyVoice',t);
   const next=structuredClone(config),profileRef={serviceId:profile.serviceId,profileId:profile.profileId};
   if(role==='voice'){
     next.media.voice={...next.media.voice,enabled:true,engine:profile.serviceId as 'gpt-sovits'|'breeze-tts',profileRef,protocol:undefined,voice:undefined,replyMode:next.media.voice?.replyMode??'on_demand',format:'wav'};
@@ -22,7 +22,7 @@ export function useVoiceModel(config:BotConfig,role:VoiceModelRole,profile:Pick<
 export async function loadServiceProfiles(query:(name:string,input:any,signal?:AbortSignal)=>Promise<any>,signal?:AbortSignal,t:Translate=chinese):Promise<PublicServiceProfile[]> {
   const profiles:PublicServiceProfile[]=[];let cursor:string|undefined;
   do{
-    signal?.throwIfAborted();const page=await query('catalog.profiles',{limit:100,...cursor?{cursor}:{}},signal);if(!page)throw Error(t('modelListFailed'));
+    signal?.throwIfAborted();const page=await query('catalog.profiles',{limit:100,...cursor?{cursor}:{}},signal);if(!page)throw uiError('modelListFailed',t);
     profiles.push(...page.items);cursor=page.nextCursor??undefined;
   }while(cursor);
   return profiles;

@@ -1,3 +1,4 @@
+import {diagnosticFields} from '../i18n/diagnostics.js';
 import path from 'node:path';
 import {ServiceContractError,serviceFailure,toServiceError} from './service-errors.js';
 import type {CancelResult,ServiceAdapterJob,ServiceResult} from './service-contract.js';
@@ -10,7 +11,7 @@ export const SERVICE_OPERATION_MAP=Object.freeze({
 });
 export function assertOutputFile(job:ServiceAdapterJob,file:string):string {
   const root=path.resolve(job.outputDirectory),target=path.resolve(file),relative=path.relative(root,target);
-  if(!relative||relative.startsWith('..')||path.isAbsolute(relative)||relative.includes(path.sep))serviceFailure({category:'OUTPUT_INVALID',safeDiagnostic:'服务输出不在宿主管理的任务目录中。',retryable:false,blocksService:false});
+  if(!relative||relative.startsWith('..')||path.isAbsolute(relative)||relative.includes(path.sep))serviceFailure({category:'OUTPUT_INVALID',...diagnosticFields("outputOutsideDirectory"),retryable:false,blocksService:false});
   return relative;
 }
 export function providerFailure(error:unknown,providerCode?:string):never {
@@ -19,7 +20,7 @@ export function providerFailure(error:unknown,providerCode?:string):never {
   const cancelled=code?.includes('CANCEL')===true;
   const timeout=code?.includes('TIMEOUT')===true||code==='SERVICE_DEADLINE_EXCEEDED';
   const outputInvalid=code?.includes('OUTPUT')===true||code?.includes('PREVIEW')===true||code?.includes('NOT_FULL')===true;
-  const mapped=toServiceError(error,{category:unknown?'UNKNOWN_STATE':cancelled?'CANCELLED':timeout?'TIMEOUT':outputInvalid?'OUTPUT_INVALID':'PROVIDER_ERROR',providerCode:code,retryable:false,blocksService:unknown,safeDiagnostic:unknown?'服务执行状态未知，实例保持封锁。':cancelled?'服务任务已取消。':timeout?'服务任务超过截止时间。':outputInvalid?'服务输出未通过完整性校验。':'服务执行失败。'});throw new ServiceContractError(mapped,error);
+  const mapped=toServiceError(error,{category:unknown?'UNKNOWN_STATE':cancelled?'CANCELLED':timeout?'TIMEOUT':outputInvalid?'OUTPUT_INVALID':'PROVIDER_ERROR',providerCode:code,retryable:false,blocksService:unknown,...diagnosticFields(unknown?"serviceStateUnknown":cancelled?"serviceCancelled":timeout?"serviceTimeout":outputInvalid?"outputIntegrityFailed":"serviceFailed")});throw new ServiceContractError(mapped,error);
 }
 export abstract class IsolatedServiceAdapter {
   protected readonly active=new Map<string,Promise<void>>();

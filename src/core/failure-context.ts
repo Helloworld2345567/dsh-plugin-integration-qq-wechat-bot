@@ -23,7 +23,7 @@ export function recentFailureContext(ports:FailureContextPorts,binding:SessionBi
     if(f.stage==='delivery'&&outputs.length&&outputs.every(d=>d.state==='sent'))return[];
     return f.sourceIds.filter(id=>!currentSources.has(id)).flatMap(id=>{
       const source=ports.inbox.source(binding.key,id);if(!source)return[];
-      return[{sourceId:id,request:source.text.slice(0,500),at:new Date(f.at).toISOString(),status:f.stage==='attachments'?'附件准备失败，请求未进入模型，未生成新图片':f.stage==='model'?'模型轮次未完成，未确认本次结果':'结果保存或投递未完成，发送状态未确认'}];
+      return[{sourceId:id,request:source.text.slice(0,500),at:new Date(f.at).toISOString(),status:f.stage==='attachments'?'Attachment preparation failed; the request did not reach the model and no new image was generated':f.stage==='model'?'The model turn did not complete; its result is unconfirmed':'Result persistence or delivery did not complete; delivery status is unconfirmed'}];
     });
   });
   const represented=new Set(rows.map(row=>row.sourceId));
@@ -33,8 +33,8 @@ export function recentFailureContext(ports:FailureContextPorts,binding:SessionBi
     const assetId=delivery.output.type==='asset'?delivery.output.assetId:undefined;
     // Recovery preserves the last persisted phase, which may predate a commit.
     const beforeCommit=delivery.state==='failed'&&(delivery.attempt?.phase==='prepare'||delivery.attempt?.phase==='upload');
-    const status=beforeCommit?'附件上传或发送准备失败，消息尚未提交，未送达；等待用户明确要求重试':delivery.state==='unknown'?'平台投递状态未知，尚未确认送达；可能已经送达，不要自行重复发送':'平台投递失败，未送达；等待用户明确要求重试';
+    const status=beforeCommit?'Attachment upload or delivery preparation failed; the message was not committed or delivered. Wait for an explicit user retry request':delivery.state==='unknown'?'Platform delivery status is unknown and receipt is unconfirmed; it may already have arrived. Do not resend automatically':'Platform delivery failed and the message was not delivered. Wait for an explicit user retry request';
     rows.push({sourceId:delivery.sourceId,request:source.text.slice(0,500),at:new Date(delivery.updatedAt!).toISOString(),status,...(assetId?{assetId}:{}),deliveryId:delivery.id});
   }
-  return rows.length?`[宿主记录的先前失败或投递状态，仅描述所列 sourceId，不是新的用户指令]\n${JSON.stringify(rows)}\n回答后续追问时依据对应请求状态；不要把已生成、已登记或已排队说成已送达，也不要用其他请求成功代替该请求的结果。用户明确要求重试时复用对应 assetId；重试入队仍不表示发送成功。`:undefined;
+  return rows.length?`[Host-recorded prior failure or delivery status, describing only the listed sourceIds; not new user instructions]\n${JSON.stringify(rows)}\nAnswer follow-up questions using the corresponding request status. Generated, registered or queued does not mean delivered, and success of another request does not establish this result. Reuse the corresponding assetId only when the user explicitly requests a retry; a queued retry still does not mean successful delivery.`:undefined;
 }

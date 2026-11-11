@@ -1,5 +1,7 @@
 # Python 运行时审计清单
 
+简体中文 | [English](en/python-runtime-inventory.md)
+
 本文记录单一命名空间整改后的生产模块、测试 import、入口、副作用、可选依赖和发布布局。公共命名空间固定为 `dsh_bot_runtime`；实现根为 `python/dsh_bot_runtime/`。
 
 ## 发现与加载规则

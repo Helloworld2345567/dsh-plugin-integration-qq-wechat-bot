@@ -1,5 +1,7 @@
 # RVC 音色转换（STS）接入与验收
 
+简体中文 | [English](en/singing-conversion-plan.md)
+
 本插件通过受管 RVC Profile（`rvc_cli_v1` 或 `rvc_http_v1`），将用户选定的纯人声音频转换为当前人格配置的 RVC 目标音色。普通 TTS 继续使用 `media.voice` 和 `bot_voice`；STS 使用 `media.singing`、`singing-conversion` 和 `bot_sing`。
 
 ## 运行环境与推理入口

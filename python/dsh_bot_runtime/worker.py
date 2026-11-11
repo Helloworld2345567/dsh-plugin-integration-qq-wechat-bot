@@ -259,7 +259,7 @@ def document(job):
                 bitmap = page.render(scale=min(1.5, 1800 / max(width, height)))
                 output = Path(job["output"]) / f"page-{i+1}.jpg"
                 bitmap.to_pil().convert("RGB").save(output, "JPEG")
-                texts[i] = f"[第{i+1}页：无可提取文字，已附真实页面图像，请由当前聊天模型读取。]"
+                texts[i] = f"[Page {i+1}: No extractable text. The real page image is attached for the current chat model to read.]"
                 context_assets.append(dict(path=str(output), name=f"page-{i+1}.jpg", mime="image/jpeg", kind="image"))
                 bitmap.close(); page.close()
             pdf.close(); text = "\n".join(texts)

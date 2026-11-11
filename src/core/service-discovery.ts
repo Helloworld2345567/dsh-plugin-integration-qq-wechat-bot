@@ -1,3 +1,5 @@
+import type {MessageDescriptor} from '../i18n/common.js';
+import {diagnosticFields} from '../i18n/diagnostics.js';
 import {createHash} from 'node:crypto';
 import {constants as fsConstants} from 'node:fs';
 import {lstat,open,readdir,realpath} from 'node:fs/promises';
@@ -9,7 +11,7 @@ import {profileIdSchema,serviceIdSchema,serviceProfileDiscoverySchema,servicePro
 export interface DiscoveryLimits {maxFiles:number;maxFileBytes:number;maxTotalBytes:number;maxDepth:number;maxProfiles:number;deadlineMs:number}
 export interface DiscoveredFile {relativePath:string;size:number;sha256:string}
 export interface DiscoveryCandidate {profileId:string;displayName:string;modelLabel?:string;capabilities:readonly string[];managedConfig:Readonly<Record<string,unknown>>;state?:ServiceProfileRevision['state'];resourceHash?:string;resources?:readonly string[]}
-export interface ServiceDiscoveryStatus {serviceId:string;state:'ready'|'partial'|'blocked'|'missing';registeredRoots:number;scannedRoots:number;profileCount:number;checkedAt:number;safeDiagnostic?:string}
+export interface ServiceDiscoveryStatus {serviceId:string;state:'ready'|'partial'|'blocked'|'missing';registeredRoots:number;scannedRoots:number;profileCount:number;checkedAt:number;safeDiagnostic?:string;message?:MessageDescriptor}
 export type ProfileDiscoverer=(context:{serviceId:string;root:string;files:readonly DiscoveredFile[];rootContentHash:string;signal:AbortSignal})=>Promise<readonly DiscoveryCandidate[]>;
 const DEFAULT_LIMITS:DiscoveryLimits={maxFiles:10_000,maxFileBytes:4*1024*1024*1024,maxTotalBytes:16*1024*1024*1024,maxDepth:12,maxProfiles:1_000,deadlineMs:30_000};
 const isReparsePoint=(info:{isSymbolicLink():boolean;mode:number})=>info.isSymbolicLink()||(process.platform==='win32'&&(info.mode&0o170000)===0o120000);
@@ -25,7 +27,7 @@ export class ReadOnlyServiceDiscovery {
   private readonly statuses=new Map<string,ServiceDiscoveryStatus>();
   private readonly fileHashes=new Map<string,{info:Awaited<ReturnType<typeof lstat>>;sha256:string}>();
   constructor(readonly profiles:ProfileStore,readonly registeredRoots:ReadonlyMap<string,readonly string[]>,readonly limits:Partial<DiscoveryLimits>={}){}
-  status(serviceId:string):ServiceDiscoveryStatus{return this.statuses.get(serviceId)??{serviceId,state:'missing',registeredRoots:this.registeredRoots.get(serviceId)?.length??0,scannedRoots:0,profileCount:0,checkedAt:0,safeDiagnostic:'未发现已登记的服务根目录。'};}
+  status(serviceId:string):ServiceDiscoveryStatus{return this.statuses.get(serviceId)??{serviceId,state:'missing',registeredRoots:this.registeredRoots.get(serviceId)?.length??0,scannedRoots:0,profileCount:0,checkedAt:0,...diagnosticFields("discoveryNoRoots")};}
   catalog(serviceId?:string):readonly ServiceProfileRevision[]{const all=this.profiles.list(serviceId),latest=new Map<string,ServiceProfileRevision>();for(const profile of all){const key=`${profile.serviceId}/${profile.profileId}`,previous=latest.get(key);if(!previous||profile.revision>previous.revision)latest.set(key,profile);}return Object.freeze([...latest.values()].sort((a,b)=>a.serviceId.localeCompare(b.serviceId)||a.profileId.localeCompare(b.profileId)));}
   private owned(serviceId:string,sourceId:string):readonly ServiceProfileRevision[]{return this.catalog(serviceId).filter(profile=>this.profiles.require(profile).discovery?.sourceId===sourceId);}
   private prepare(serviceId:string,sourceId:string,candidates:readonly DiscoveryCandidate[]):PreparedCandidate[]{
@@ -56,7 +58,7 @@ export class ReadOnlyServiceDiscovery {
   failSource(serviceId:string,sourceId:string,state:'missing'|'blocked'):readonly ServiceProfileRevision[]{
     serviceIdSchema.parse(serviceId);serviceProfileDiscoverySchema.parse({sourceId,resourceHash:EMPTY_RESOURCES_HASH});
     for(const profile of this.owned(serviceId,sourceId))if(['ready','partial','blocked'].includes(profile.state)&&profile.state!==state)this.profiles.transition(profile,state);
-    this.statuses.set(serviceId,{serviceId,state,registeredRoots:1,scannedRoots:0,profileCount:this.owned(serviceId,sourceId).length,checkedAt:Date.now(),safeDiagnostic:state==='missing'?'已登记的模型目录缺失。':'模型目录读取或校验失败。'});return this.catalog(serviceId);
+    this.statuses.set(serviceId,{serviceId,state,registeredRoots:1,scannedRoots:0,profileCount:this.owned(serviceId,sourceId).length,checkedAt:Date.now(),...diagnosticFields(state==='missing'?"discoveryModelRootMissing":"discoveryModelRootInvalid")});return this.catalog(serviceId);
   }
   private withResources(candidate:DiscoveryCandidate,files:readonly DiscoveredFile[]):DiscoveryCandidate{
     if(candidate.resourceHash!==undefined)return candidate;
@@ -82,8 +84,8 @@ export class ReadOnlyServiceDiscovery {
       }
       combined.throwIfAborted();for(const batch of batches)this.apply(serviceId,batch.sourceId,batch.candidates);
       const discovered=batches.flatMap(batch=>batch.candidates),state:ServiceDiscoveryStatus['state']=!scannedRoots?'missing':discovered.length&&discovered.every(profile=>['blocked','missing','disabled','revoked'].includes(profile.state!))?'blocked':missingRoots||discovered.some(profile=>profile.state!=='ready')?'partial':discovered.length?'ready':'missing';
-      this.statuses.set(serviceId,{serviceId,state,registeredRoots:roots.length,scannedRoots,profileCount:discovered.length,checkedAt,...state==='missing'?{safeDiagnostic:'已登记服务当前缺失。'}:state==='blocked'?{safeDiagnostic:'已发现的服务 Profile 当前不可用。'}:{}});return this.catalog(serviceId);
-    }catch(error){if(currentSource)this.failSource(serviceId,currentSource,'blocked');this.statuses.set(serviceId,{serviceId,state:'blocked',registeredRoots:roots.length,scannedRoots,profileCount:seenProfiles.size,checkedAt,safeDiagnostic:combined.aborted?'服务发现超过安全时限或已取消。':'服务发现未通过路径或资源限制。'});throw error;}
+      this.statuses.set(serviceId,{serviceId,state,registeredRoots:roots.length,scannedRoots,profileCount:discovered.length,checkedAt,...state==='missing'?{...diagnosticFields("discoveryServiceMissing")}:state==='blocked'?{...diagnosticFields("discoveryProfileUnavailable")}:{}});return this.catalog(serviceId);
+    }catch(error){if(currentSource)this.failSource(serviceId,currentSource,'blocked');this.statuses.set(serviceId,{serviceId,state:'blocked',registeredRoots:roots.length,scannedRoots,profileCount:seenProfiles.size,checkedAt,...diagnosticFields(combined.aborted?"discoveryCancelled":"discoveryLimits")});throw error;}
   }
   private async scan(root:string,signal:AbortSignal,policy:DiscoveryLimits,budget:{files:number;totalBytes:number}):Promise<readonly DiscoveredFile[]>{
     const files:DiscoveredFile[]=[],seenFiles=new Set<string>();

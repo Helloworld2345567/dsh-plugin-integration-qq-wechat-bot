@@ -1,13 +1,14 @@
 import type {StatsResult} from '../core/client-contracts.js';
 import {botStatus} from './ui.js';
-import type {Translate} from './locale.js';
+import {errorText,uiError,renderText,type Translate} from './locale.js';
 
 type Api=(action:string,input?:unknown,signal?:AbortSignal)=>Promise<any>;
-const number=(n:number|undefined)=>new Intl.NumberFormat('zh-CN').format(n??0);
 
-export function StatisticsPanel({React,api,bots,t,compact=false}:{React:any;api:Api;bots:any[];t:Translate;onError?:(message:string)=>void;compact?:boolean}){
+
+export function StatisticsPanel({React,api,bots,t,compact=false,locale='zh'}:{React:any;api:Api;bots:any[];t:Translate;onError?:(message:string)=>void;compact?:boolean;locale?:'zh'|'en'}){
   const h=React.createElement;
-  const time=(n:number|undefined)=>n?new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',dateStyle:'short',timeStyle:'medium'}).format(n):t('unknown');
+  const number=(n:number|undefined)=>new Intl.NumberFormat(locale).format(n??0);
+  const time=(n:number|undefined)=>n?new Intl.DateTimeFormat(locale,{timeZone:'Asia/Shanghai',dateStyle:'short',timeStyle:'medium'}).format(n):t('unknown');
   const kindNames:Record<string,string>={agent:t('mainSession'),subagent:t('subagent'),compaction:t('compaction'),media:t('media'),progress:t('progress')};
   const [range,setRange]=React.useState('today');const [botId,setBot]=React.useState('');
   const [model,setModel]=React.useState('');const [kind,setKind]=React.useState('');const [from,setFrom]=React.useState('');const [to,setTo]=React.useState('');
@@ -16,7 +17,7 @@ export function StatisticsPanel({React,api,bots,t,compact=false}:{React:any;api:
   React.useEffect(()=>{
     const controller=new AbortController();let running=false;
     setData(null);setError('');
-    const refresh=async()=>{if(running||!compact&&range==='custom'&&(!from||!to))return;running=true;try{if(!compact&&range==='custom'&&from>to)throw Error(t('dateOrderInvalid'));const result=await api('stats.query',compact?{range:'today'}:{range,...(botId?{botId}:{}),...(model?{model}:{}),...(kind?{kind}:{}),...(range==='custom'?{from,to}:{})},controller.signal);if(!controller.signal.aborted){setData(result);setError('');}}catch(e){if(!controller.signal.aborted)setError((e as Error).message);}finally{running=false;}};
+    const refresh=async()=>{if(running||!compact&&range==='custom'&&(!from||!to))return;running=true;try{if(!compact&&range==='custom'&&from>to)throw uiError('dateOrderInvalid',t);const result=await api('stats.query',compact?{range:'today'}:{range,...(botId?{botId}:{}),...(model?{model}:{}),...(kind?{kind}:{}),...(range==='custom'?{from,to}:{})},controller.signal);if(!controller.signal.aborted){setData(result);setError('');}}catch(e){if(!controller.signal.aborted)setError(errorText(e));}finally{running=false;}};
     void refresh();const timer=setInterval(()=>void refresh(),4000);return()=>{controller.abort();clearInterval(timer);};
   },[range,botId,model,kind,from,to,compact]);
   const select=(label:string,value:string,change:(v:string)=>void,items:Array<[string,string]>)=>h('label',null,label,h('select',{value,onChange:(e:any)=>change(e.target.value)},...items.map(([id,text])=>h('option',{key:id,value:id},text))));
@@ -24,9 +25,9 @@ export function StatisticsPanel({React,api,bots,t,compact=false}:{React:any;api:
   const card=(label:string,value:string,detail:string)=>h('section',{className:'stats-card',key:label},h('small',null,label),h('strong',null,value),h('small',null,detail));
   const reported=(value:number,unknown:number)=>unknown?t('reportedUnknown',{value:number(value),unknown:number(unknown)}):number(value);
   const s=data?.summary;const max=Math.max(1,...(data?.trend??[]).map(row=>row.knownTokens));
-  if(compact)return h('div',null,error?h('p',{className:'error',role:'alert'},error):null,!s?h('p',{className:'muted',role:'status'},t('loading')):h('div',{className:'row spread',style:{marginTop:16}},h('span',null,`${t('received')} `,h('strong',null,number(s.received))),h('span',null,`${t('sent')} `,h('strong',null,number(s.sent))),h('span',null,'Token ',h('strong',null,number(s.knownTokens))),h('small',{className:'full'},t('todayUnknown',{count:number(s.unknownUsageCalls)}))));
+  if(compact)return h('div',null,error?h('p',{className:'error',role:'alert'},renderText(error,t,locale)):null,!s?h('p',{className:'muted',role:'status'},t('loading')):h('div',{className:'row spread',style:{marginTop:16}},h('span',null,`${t('received')} `,h('strong',null,number(s.received))),h('span',null,`${t('sent')} `,h('strong',null,number(s.sent))),h('span',null,'Token ',h('strong',null,number(s.knownTokens))),h('small',{className:'full'},t('todayUnknown',{count:number(s.unknownUsageCalls)}))));
   return h('section',{'aria-label':t('stats')},
-    error?h('p',{className:'error',role:'alert'},error):null,
+    error?h('p',{className:'error',role:'alert'},renderText(error,t,locale)):null,
     h('div',{className:'fields'},select(t('timeRange'),range,setRange,[['today',t('today')],['7d',t('days7')],['30d',t('days30')],['all',t('all')],['custom',t('custom')]]),select(t('bots'),botId,setBot,[['',t('all')],...bots.map(b=>[b.id,b.name] as [string,string])])),
     h('details',null,h('summary',null,t('filter')),h('div',{className:'fields'},select(t('category'),kind,setKind,[['',t('all')],...Object.entries(kindNames)]),h('label',null,t('model'),h('input',{value:model,onChange:(e:any)=>setModel(e.target.value),placeholder:t('all')})))),
     range==='custom'?h('div',{className:'fields'},h('label',null,t('startDate'),h('input',{type:'date',value:from,onChange:(e:any)=>setFrom(e.target.value)})),h('label',null,t('endDate'),h('input',{type:'date',value:to,onChange:(e:any)=>setTo(e.target.value)}))):null,

@@ -5,6 +5,14 @@ import {TaskProgress,progressText,progressFallback,type ProgressFacts} from '../
 const settle=()=>new Promise<void>(resolve=>setImmediate(resolve));
 function deferred<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(r=>resolve=r);return{promise,resolve};}
 
+test('English fallback reminders remain valid under the shared character limit',async t=>{
+  t.mock.timers.enable({apis:['Date','setTimeout','setInterval'],now:1000});
+  const sent:string[]=[];const progress=new TaskProgress({systemLocale:'en',signal:new AbortController().signal,active:()=>true,format:async()=>{throw Error('provider unavailable');},deliver:async text=>{sent.push(text);},cancel:()=>{}});
+  t.after(()=>progress.stop());progress.update('transcription');t.mock.timers.tick(60000);await settle();
+  assert.deepEqual(sent,['Still transcribing the audio. No final result yet.']);
+  for(const stage of ['attachments','transcription','model','tool','image','media','search'] as const){const text=progressFallback(stage,'en');assert.equal(progressText(text),text);assert.doesNotMatch(text,/\p{Script=Han}/u);}
+});
+
 test('private task heartbeat starts at 60 seconds and continues for twenty minutes without a cap',async t=>{
   t.mock.timers.enable({apis:['Date','setTimeout','setInterval'],now:1000});
   const sent:Array<{text:string;sequence:number;expiresAt:number}>=[],facts:ProgressFacts[]=[];

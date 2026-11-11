@@ -203,7 +203,7 @@ class GptSovitsVoiceTests(unittest.TestCase):
         with patch("requests.Session", return_value=session):
             result = voice_api.execute(self.job(style="轻快"))
         self.assertEqual(result["coverage"], "VOICE_SYNTHESIS_DEGRADED")
-        self.assertIn("普通语音", result["text"])
+        self.assertIn("ordinary speech", result["text"])
         self.assertNotIn("style", session.calls[-1][2]["json"])
 
     def test_malformed_silent_empty_and_truncated_audio_is_rejected(self):

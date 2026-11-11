@@ -1,5 +1,7 @@
 # 音乐接入
 
+简体中文 | [English](en/music-integration.md)
+
 插件通过 `musicdl_json_v1` JSON 子进程协议调用 Music 项目的搜索与下载能力。Music 保留独立 Python 环境和命令行用法，插件负责会话身份、候选选择、权限、作业、附件及平台投递。
 
 ## 配置

@@ -21,7 +21,7 @@ export function musicAuthorization(live:MusicContext,signal:AbortSignal,deps:Mus
 }
 function recordDownload(live:MusicContext,track:MusicCandidate,deps:MusicDependencies):void {
   const config=deps.repos.personas.config(live.snapshot.config.id);if(config.revision!==live.snapshot.config.revision)return;
-  deps.repos.capabilities.saveStatus(`${config.id}:${config.revision}:music`,{configId:config.id,revision:config.revision,role:'music',status:'PASS',source:'download',updatedAt:Date.now(),evidence:`完整下载并校验：${track.artist}《${track.title}》；音源 ${track.source}。`});
+  deps.repos.capabilities.saveStatus(`${config.id}:${config.revision}:music`,{configId:config.id,revision:config.revision,role:'music',status:'PASS',source:'download',updatedAt:Date.now(),evidence:`Downloaded and validated in full: ${track.artist} — ${track.title}; source: ${track.source}.`});
 }
 export async function acquireMusicSource(live:MusicContext,args:Record<string,any>,signal:AbortSignal,deps:MusicDependencies,extraAuthorize?:()=>void):Promise<MusicAcquisition>{
   const binding={...live.binding},authorizeMusic=musicAuthorization(live,signal,deps),authorize=()=>{authorizeMusic();extraAuthorize?.();};authorize();

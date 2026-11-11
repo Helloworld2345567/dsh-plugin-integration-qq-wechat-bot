@@ -82,7 +82,7 @@ def parse_post(html: str, url: str) -> dict:
         if not parser.posts:
             raise ValueError("POST_BODY_UNAVAILABLE_LOGIN_OR_BLOCKED")
         return {"site": "tieba", "url": url, "title": parser.title,
-                "posts_on_page": parser.posts[:30], "scope": "当前页可见楼层；不含未加载分页和楼中楼"}
+                "posts_on_page": parser.posts[:30], "scope": "Posts visible on this page; excludes unloaded pages and nested replies"}
     note_id = urlsplit(url).path.rstrip("/").split("/")[-1]
     match = re.search(r"(?:window\.)?__INITIAL_STATE__\s*=\s*", html)
     if not match:
@@ -103,7 +103,7 @@ def parse_post(html: str, url: str) -> dict:
     return {"site": "xiaohongshu", "url": url, "title": title[:1000], "body": body[:20000],
             "author": str(note.get("user", {}).get("nickname", "")),
             "type": note.get("type", "unknown"),
-            "scope": "笔记标题和正文；未读取图片像素、视频口播或完整评论"}
+            "scope": "Post title and body; image pixels, video speech, and the complete comments were not read"}
 
 
 async def _read_post(url: str) -> dict:
@@ -155,4 +155,4 @@ async def read_post(url: str) -> dict:
     except (aiohttp.ClientError, TimeoutError):
         code = "POST_NETWORK_FAILED_OR_TIMEOUT"
     return {"status": "unavailable", "error": code,
-            "next_step": "可用 Tavily 时用 advanced 提取原链接；仍受限则请用户提供正文或截图，不编造帖子内容。"}
+            "next_step": "If Tavily is available, use advanced extraction on the original URL. If access remains restricted, ask the user for the text or screenshots. Do not invent post content."}

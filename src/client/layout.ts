@@ -5,6 +5,7 @@ export interface PanelNavItem {
 }
 
 export interface PanelSidebarOptions {
+  title?: string;
   label?: string;
   items: readonly PanelNavItem[];
   active: string;
@@ -43,8 +44,8 @@ export function panelSidebar(h: any, options: PanelSidebarOptions): any {
   return h(
     'aside',
     {className: 'panel-sidebar'},
-    h('div', {className: 'sidebar-brand'}, h('span', {className: 'sidebar-mark', 'aria-hidden': true}, 'D'), h('span', null, '机器人')),
-    h('nav', {className: 'sidebar-nav', 'aria-label': options.label ?? '面板导航'}, ...items),
+    h('div', {className: 'sidebar-brand'}, h('span', {className: 'sidebar-mark', 'aria-hidden': true}, 'D'), h('span', null, options.title ?? 'Bots')),
+    h('nav', {className: 'sidebar-nav', 'aria-label': options.label ?? 'Panel navigation'}, ...items),
   );
 }
 

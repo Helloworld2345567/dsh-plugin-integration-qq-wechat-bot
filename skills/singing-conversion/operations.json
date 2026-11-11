@@ -6,7 +6,7 @@
     "permissionTool":"bot_sing",
     "tool": {
       "name":"bot_sing",
-      "description":"按用户要求用当前人格的 AI 音色演唱歌曲。按歌名用 sing，宿主从曲库选择最高匹配、下载原曲并执行分离与转换；默认只交付转换结果。附件或明确 HTTPS 来源用 prepare/list/convert。混音须先配置分离。",
+      "description":"Sing a requested song in the current persona AI voice. Use sing with a song title; the host selects the highest catalog match, downloads the original, separates vocals and converts them. Only the converted result is delivered by default. For attachments or explicit HTTPS sources, use prepare/list/convert. Mixed audio requires configured separation.",
       "parameters": {
         "action":{"type":"string","enum":["sing","prepare","list","convert"],"required":true},
         "song":{"type":"string"},

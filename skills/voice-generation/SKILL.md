@@ -1,27 +1,27 @@
 ---
 name: voice-generation
-description: 根据用户明确要求生成 AI 朗读语音回复，使用人格配置的 Edge TTS 或 GPT-SoVITS。
+description: Generate AI speech replies on the user's explicit request, using the configured Edge TTS or GPT-SoVITS voice.
 ---
 
 # Voice generation
 
-使用 `bot_voice` 生成并登记可播放的音频附件。只有用户明确要求语音、朗读或口播时才调用。人格开启自动语音后，运行时会为最终正文附加语音，无需模型主动调用；本轮已尝试语音工具时不会再次自动合成。工具成功后音频会自动加入本轮投递，不要输出内部 asset ID、工作目录路径或 `asset://` 地址。
+Use `bot_voice` to generate and register a playable audio attachment only when the user explicitly requests speech, reading aloud or narration. When automatic voice replies are enabled, the runtime appends speech to the final text without a separate model tool call; it does not synthesize again if a voice tool was already attempted in this turn. Successful audio is automatically added to this turn's delivery. Do not expose internal asset IDs, working-directory paths or `asset://` URLs.
 
-`registeredForDelivery=true`、`deliveryState=registered` 和 `platformSent=false` 表示音频已生成并登记，尚未取得平台发送回执。可以说“音频已生成，已登记发送”，不能说“已送达”或保证用户能收到。只有 `platformSent=true` 才表示平台确认接受，历史记录的 `sent` 标记本身不足以确认回执。用户明确要求重发时，用 `bot_send_file(assetId=原附件ID, resend=true)` 复用已有音频，不重新合成；返回 `pending` 仅表示已排队，失败或 `unknown` 均不能说已发送。
+`registeredForDelivery=true`, `deliveryState=registered` and `platformSent=false` mean the audio was generated and registered, but no platform receipt has been obtained. Say that the audio is generated and queued for sending, not that it was delivered or guaranteed to arrive. Only `platformSent=true` means the platform confirmed acceptance; a historical `sent` marker alone does not confirm a receipt. When the user explicitly asks to resend, reuse the existing audio through `bot_send_file(assetId=original_attachment_id, resend=true)` instead of synthesizing it again. A `pending` result only means queued; failure or `unknown` must not be described as sent.
 
-`mode="speak"` 用于普通朗读，省略时也是普通朗读。歌曲下载使用 `bot_music`；用户明确要求当前人格翻唱歌曲时使用 `bot_sing`。语音由 AI 生成，应在自然回复中明确说明这一点。
+`mode="speak"` is ordinary narration and is also the default. Use `bot_music` for song downloads and `bot_sing` when the user explicitly requests a cover in the current persona's voice. Clearly state in the natural-language reply that the voice is AI generated. Follow the persona and user's requested reply language.
 
 ```json
 {
   "mode": "speak",
-  "text": "要朗读的内容",
+  "text": "The text to read aloud",
   "speed": 1.0
 }
 ```
 
-省略 `voice`、`format` 时使用本轮人格配置，再使用协议默认值；显式工具参数优先。连接信息来自人格配置，技能调用不接受 API key、URL、模型权重或参考音频路径。
+Omitted `voice` and `format` inherit the current turn's configuration, then the protocol default. Explicit tool arguments take precedence. Connection information comes from configuration; skill calls do not accept API keys, URLs, model weights or reference-audio paths.
 
-- `edge_tts` 使用 Edge TTS，不需要 API key；音色来自人格配置，可在管理页选择或填写本机保存的 Edge 音色名称，输出 MP3。
-- `gpt_sovits` 使用人格配置的模型与参考音频，只支持普通朗读和 WAV。`voice` 只能是当前人格配置的音色标识，省略时自动继承；不要填 `alloy` 等其他提供商音色。显式 MP3 会返回不支持；`style` 会明确降级为普通朗读，不承诺改变风格。
+- `edge_tts` uses Edge TTS without an API key. The voice comes from configuration; operators can select or enter a locally stored Edge voice name in the panel. Output is MP3.
+- `gpt_sovits` uses the configured model and reference audio and supports ordinary narration and WAV only. `voice` must be the configured voice identifier; omission inherits it. Do not supply another provider's voice such as `alloy`. An explicit MP3 request is unsupported. `style` explicitly degrades to ordinary narration and does not promise a style change.
 
-音频输出预算与 QQ 音频硬上限均为 200 MiB。QQ 上传超过 5,000,000 字节时由宿主自动分片，不降低音质或截断内容；超过语音软限制可能按文件展示。微信附件仍限制为 20 MiB。只依据工具真实结果描述完成情况，不伪装成歌曲。
+The audio output budget and QQ hard audio limit are both 200 MiB. QQ uploads larger than 5,000,000 bytes are automatically chunked by the host, without reducing quality or truncating content. Audio above the soft voice limit may appear as a file. WeChat attachments remain limited to 20 MiB. Describe completion only from real tool results and do not present narration as a song.

@@ -107,6 +107,8 @@ test('explicit singing intent excludes quoted and webpage content',()=>{
   assert.equal(explicitSingingRequest('> 帮我翻唱这首歌'),false);
   assert.equal(explicitSingingRequest('网页：帮我翻唱这首歌'),false);
   assert.equal(explicitSingingRequest('普通语音'),false);
+  for(const text of ['Please sing this song','Can you sing Yesterday?','Convert these vocals to your voice','Use your voice to sing this','I want you to cover this song',"I'd like you to sing 'Song'"])assert.equal(explicitSingingRequest(text),true,text);
+  for(const text of ['Do not sing this song',"Please don't convert vocals","Please don't sing 'Song'",'What does singing mean?','If I say sing this song, what happens?','> Please sing this song','Quoted: Please sing this song','"Please sing this song"','```\nPlease sing this song\n```'])assert.equal(explicitSingingRequest(text),false,text);
 });
 
 test('compatibility media dispatch rejects singing before provider or identity lookups',async()=>{

@@ -1,5 +1,7 @@
 # Repository 职责矩阵
 
+简体中文 | [English](en/repository-responsibility-matrix.md)
+
 本页记录 Store／Repository 拆分后的稳定业务边界。它是对 `docs/architecture-boundaries.md` 的展开，不改变任何运行语义：schema、migration、cursor 编码、错误码、delivery／权限／session generation／取消与 lifecycle 行为均保持原样。
 
 每个边界只有一个 Port 定义（`src/core/ports/`）和一个 SQLite 或文件 adapter（`src/infrastructure/`）。调用方只能看到 Port。

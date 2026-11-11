@@ -1,3 +1,4 @@
+import type {MessageDescriptor} from '../../i18n/common.js';
 import type {CapabilityAcceptance, ResolvedServiceProfileRevision, ServiceJobState} from '../service-contract.js';
 
 export interface ProfileRecord extends ResolvedServiceProfileRevision {}
@@ -19,6 +20,7 @@ export interface ServiceInstanceFence {
   jobId?: string;
   updatedAt: number;
   safeDiagnostic?: string;
+  message?:MessageDescriptor;
 }
 
 export interface ServiceJobRecord {
@@ -76,6 +78,7 @@ export interface ServiceHealthRecord {
   checkedAt: number;
   expiresAt: number;
   safeDiagnostic?: string;
+  message?:MessageDescriptor;
 }
 
 /** Cached health results keyed by an exact profile revision and content hash. */

@@ -1,5 +1,7 @@
 # 静态架构边界与维护者契约
 
+简体中文 | [English](en/architecture-boundaries.md)
+
 本页把仓库当前已经存在的运行边界整理为可执行契约。它描述依赖方向，不改变 QQ／微信业务、数据库、权限、凭据、媒体、人格或 lifecycle 语义。维护者在修改生产模块后必须运行 `npm run check:architecture`；发布门禁会重复执行同一检查。
 
 ## 模块职责
@@ -15,6 +17,7 @@
 | `src/channels/` | QQ／微信协议、登录、收发和平台格式适配 | Harness 管理 API、人格规则、repository 或 SQLite |
 | `src/harness/` | Harness 服务接入、管理 API、工具注册及 Node 进程／worker 端口实现 | 浏览器渲染、渠道业务规则、直接 SQL 或 repository 实现 |
 | `src/client/` | 浏览器管理界面，仅消费管理 API 和可共享的纯类型契约 | Node 内建模块、SQLite、渠道、Harness 服务端实现或 repository |
+| `src/i18n/` | 浏览器与服务端共享的纯语言资源、消息描述和格式化 | Node I/O、存储、渠道、Harness Context 或 UI 状态 |
 | `packages/bot-lifecycle/src/` | 独立产品的升级、排空、恢复、回退与 bundle 入口；从自己的源码入口独立构建 | 根包 `src/`、QQ／微信业务、真实消息发送、人格实现、业务 repository |
 | `packages/bot-lifecycle/src/contract/` | 主包与 coordinator 共用的可序列化协议、artifact identity、journal 与源码完整性单一来源 | Store、Runtime、channel、delivery、persona 或 Harness 管理实现 |
 | `packages/bot-lifecycle/` | 可独立安装的 lifecycle bundle 源码、构建脚本与交付物 | 主插件内部实现和渠道实现 |
@@ -29,6 +32,7 @@
 
 ```text
 src/client       -> 浏览器 API、src/core/client-contracts.ts（仅 type）
+client/core/harness -> src/i18n（纯语言资源，无反向依赖）
 src/channels     -> src/core 的渠道 contract、纯策略与端口
 src/harness      -> src/core 的 contract、应用服务与端口
 packages/bot-lifecycle/src -> 同包 contract、Node 标准库、Cordis Plugin Manager type
@@ -161,7 +165,7 @@ Python skills    -> python 共享模块和 vendored 命名空间
 
 ## 能力边界
 
-- 当前只支持简体中文，不承诺英文 locale 或英文 UI。
+- 支持简体中文和英文；共享语言资源保持纯模块，不得引入 client/core 反向依赖。界面语言与全项目固定提示语言独立。
 - 当前内部 Service Adapter 接口不是第三方 Adapter ABI 承诺。
 - 不承诺 V3 人格迁移或回退。
 - 不承诺 QQ／微信外部平台、外部模型、Music、RVC、GPT-SoVITS 或其他外部服务验收。

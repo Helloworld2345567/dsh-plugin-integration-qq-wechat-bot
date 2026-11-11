@@ -1,3 +1,4 @@
+import type {SystemLocale} from '../i18n/common.js';
 import {z} from 'zod';
 import type {CallerScope} from './types.js';
 
@@ -11,6 +12,7 @@ export const deferredSessionActionSchema=z.discriminatedUnion('action',[
 ]);
 export type DeferredSessionAction=z.infer<typeof deferredSessionActionSchema>;
 export interface SessionActionRecord {
+  systemLocale?:SystemLocale;
   id:string;
   action:DeferredSessionAction;
   scopeKey:string;

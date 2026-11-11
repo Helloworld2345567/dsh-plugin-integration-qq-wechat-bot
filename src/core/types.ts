@@ -1,3 +1,5 @@
+import {systemDescriptor} from '../i18n/system.js';
+import type {SystemLocale} from '../i18n/common.js';
 import { z } from 'zod';
 import path from 'node:path';
 import {edgeTtsVoiceIds,normalizeGptSovitsBaseUrl,normalizeVoiceServiceBaseUrl} from './voice-config.js';
@@ -8,36 +10,36 @@ export const channelIdSchema=idSchema;
 export const modelSchema = z.object({ provider: z.string().min(1).max(150), model: z.string().min(1).max(200), reasoningEffort: z.string().optional() });
 export const skillNameSchema = z.string().max(64).regex(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/);
 export const endpointSchema = z.object({
-  baseUrl: z.url().refine(value=>{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&!u.search&&!u.hash&&(!u.port||u.port==='443');},'媒体 API 必须使用无凭据、查询、片段或非 443 端口的 HTTPS 地址'), model: z.string().min(1), keyEnv: z.string().regex(/^[A-Z_][A-Z0-9_]*$/),
+  baseUrl: z.url().refine(value=>{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&!u.search&&!u.hash&&(!u.port||u.port==='443');},{message:'媒体 API 必须使用无凭据、查询、片段或非 443 端口的 HTTPS 地址',params:{message:systemDescriptor('mediaApiUrlInvalid')}}), model: z.string().min(1), keyEnv: z.string().regex(/^[A-Z_][A-Z0-9_]*$/),
 });
 export const imageSkillOverrideSchema=endpointSchema.pick({baseUrl:true,model:true,keyEnv:true}).partial().extend({enabled:z.boolean().default(true)});
 /** Private inference parameters used by service adapters. */
-const voicePathSchema=z.string().trim().min(1).max(4096).refine(value=>!/[\x00-\x1f]/.test(value),'服务端路径不能包含控制字符');
+const voicePathSchema=z.string().trim().min(1).max(4096).refine(value=>!/[\x00-\x1f]/.test(value),{message:'服务端路径不能包含控制字符',params:{message:systemDescriptor('servicePathInvalid')}});
 export const gptSovitsModelVersions=['v1','v2','v2Pro','v2ProPlus','v3','v4','v5dev','v5turbo'] as const;
 export const gptSovitsLanguages=['auto','en','zh','ja','all_zh','all_ja','auto_yue','yue','ko','all_yue','all_ko'] as const;
 export const gptSovitsSchema=z.object({
-  baseUrl:z.url().max(2048).refine(value=>{try{normalizeGptSovitsBaseUrl(value);return true;}catch{return false;}},'推理服务须使用无凭据、查询和片段的 HTTP 或 HTTPS 地址').transform(normalizeGptSovitsBaseUrl),
+  baseUrl:z.url().max(2048).refine(value=>{try{normalizeGptSovitsBaseUrl(value);return true;}catch{return false;}},{message:'推理服务须使用无凭据、查询和片段的 HTTP 或 HTTPS 地址',params:{message:systemDescriptor('inferenceUrlInvalid')}}).transform(normalizeGptSovitsBaseUrl),
   modelVersion:z.enum(gptSovitsModelVersions),
   gptWeightsPath:voicePathSchema,
   sovitsWeightsPath:voicePathSchema,
   refAudioPath:voicePathSchema,
-  promptText:z.string().min(1).max(32000).refine(value=>value.trim().length>0,'请填写参考音频实际说出的文字').refine(value=>new TextEncoder().encode(value).length<=32*1024,'参考文本不能超过 32 KiB'),
+  promptText:z.string().min(1).max(32000).refine(value=>value.trim().length>0,{message:'请填写参考音频实际说出的文字',params:{message:systemDescriptor('referenceTextRequired')}}).refine(value=>new TextEncoder().encode(value).length<=32*1024,{message:'参考文本不能超过 32 KiB',params:{message:systemDescriptor('referenceTextTooLong')}}),
   promptLang:z.enum(gptSovitsLanguages),
   textLang:z.enum(gptSovitsLanguages),
 }).superRefine((value,ctx)=>{
   if(value.modelVersion==='v1')for(const field of ['promptLang','textLang'] as const){
-    if(!['auto','en','zh','ja','all_zh','all_ja'].includes(value[field]))ctx.addIssue({code:'custom',path:[field],message:'v1 仅支持中文、英文和日文语言模式'});
+    if(!['auto','en','zh','ja','all_zh','all_ja'].includes(value[field]))ctx.addIssue({code:'custom',path:[field],message:'v1 仅支持中文、英文和日文语言模式',params:{message:systemDescriptor('v1LanguageUnsupported')}});
   }
 });
 export type GptSovitsConfig=z.infer<typeof gptSovitsSchema>;
-const breezeVoiceSchema=z.string().trim().min(1).max(100).regex(/^[a-z0-9][a-z0-9_-]*$/,'Breeze 音色 ID 无效');
+const breezeVoiceSchema=z.string().trim().min(1).max(100).refine(value=>/^[a-z0-9][a-z0-9_-]*$/.test(value),{message:'Breeze 音色 ID 无效',params:{message:systemDescriptor('breezeVoiceIdInvalid')}});
 export const breezeTtsSchema=z.object({
   protocol:z.literal('breeze_tts'),
-  baseUrl:z.url().max(2048).refine(value=>{try{normalizeVoiceServiceBaseUrl(value);return true;}catch{return false;}},'Breeze TTS 服务须使用无凭据、查询和片段的 HTTP 或 HTTPS 地址').transform(normalizeVoiceServiceBaseUrl),
+  baseUrl:z.url().max(2048).refine(value=>{try{normalizeVoiceServiceBaseUrl(value);return true;}catch{return false;}},{message:'Breeze TTS 服务须使用无凭据、查询和片段的 HTTP 或 HTTPS 地址',params:{message:systemDescriptor('breezeUrlInvalid')}}).transform(normalizeVoiceServiceBaseUrl),
   voice:breezeVoiceSchema,
 }).strict();
 export type BreezeTtsConfig=z.infer<typeof breezeTtsSchema>;
-const edgeTtsVoiceSchema=z.string().trim().min(1).max(100).refine(value=>new TextEncoder().encode(value).length<=128,'Edge TTS 音色名称不能超过 128 字节');
+const edgeTtsVoiceSchema=z.string().trim().min(1).max(100).refine(value=>new TextEncoder().encode(value).length<=128,{message:'Edge TTS 音色名称不能超过 128 字节',params:{message:systemDescriptor('edgeVoiceTooLong')}});
 export const edgeTtsVoiceIdSchema=z.enum(edgeTtsVoiceIds);
 export type EdgeTtsVoiceId= z.infer<typeof edgeTtsVoiceIdSchema>;
 export const edgeTtsSchema=z.object({protocol:z.literal('edge_tts'),voice:edgeTtsVoiceSchema});
@@ -48,7 +50,7 @@ const commonConfigFields={
   id:idSchema,name:z.string().trim().min(1).max(100),revision:z.number().int().positive().default(1),
   personaPrompt:z.string().min(1).max(32000),model:modelSchema.nullable().default(null),
   tools:z.array(z.string().max(100)).max(100).default(['bot_media','bot_voice','bot_send_file','bot_remember','bot_forget_memory','bot_read_social']),
-  skills:z.array(skillNameSchema).max(100).refine(value=>new Set(value).size===value.length,'技能名称不得重复').default(['image-generation','media-analysis','voice-generation']),
+  skills:z.array(skillNameSchema).max(100).refine(value=>new Set(value).size===value.length,{message:'技能名称不得重复',params:{message:systemDescriptor('duplicateSkills')}}).default(['image-generation','media-analysis','voice-generation']),
   skillVersions:z.record(skillNameSchema,z.string().regex(/^[a-f0-9]{64}$/)).default({}),
   allowHostTools:z.boolean().default(true),hostTools:z.array(z.string().max(100)).max(100).default([]),
   imageStyle:z.string().max(4000).default(''),
@@ -64,7 +66,7 @@ const v4VoiceSchema=z.object({
   // Edge TTS is a built-in provider without an operator endpoint, path or credential.
   protocol:z.literal('edge_tts').optional(),voice:edgeTtsVoiceSchema.optional(),edgeTts:edgeTtsFallbackSchema.optional(),
   gptSovits:z.never().optional(),baseUrl:z.never().optional(),endpoint:z.never().optional(),credentials:z.never().optional(),
-}).strict().superRefine((value,ctx)=>{if(value.protocol==='edge_tts'&&value.profileRef)ctx.addIssue({code:'custom',path:['profileRef'],message:'内置 Edge TTS 不使用服务 Profile'});if(value.protocol==='edge_tts'&&value.engine&&value.engine!=='edge_tts')ctx.addIssue({code:'custom',path:['engine'],message:'Edge TTS 引擎标识不匹配'});if(value.engine==='edge_tts'&&value.protocol!=='edge_tts')ctx.addIssue({code:'custom',path:['engine'],message:'Edge TTS 需要 edge_tts 协议'});if(value.engine&&value.engine!=='edge_tts'&&value.profileRef&&value.profileRef.serviceId!==value.engine)ctx.addIssue({code:'custom',path:['engine'],message:'语音引擎与服务 Profile 不匹配'});if(value.protocol==='edge_tts'&&value.format==='wav')ctx.addIssue({code:'custom',path:['format'],message:'Edge TTS 语音输出仅支持 MP3'});});
+}).strict().superRefine((value,ctx)=>{if(value.protocol==='edge_tts'&&value.profileRef)ctx.addIssue({code:'custom',path:['profileRef'],message:'内置 Edge TTS 不使用服务 Profile',params:{message:systemDescriptor('edgeProfileInvalid')}});if(value.protocol==='edge_tts'&&value.engine&&value.engine!=='edge_tts')ctx.addIssue({code:'custom',path:['engine'],message:'Edge TTS 引擎标识不匹配',params:{message:systemDescriptor('edgeEngineMismatch')}});if(value.engine==='edge_tts'&&value.protocol!=='edge_tts')ctx.addIssue({code:'custom',path:['engine'],message:'Edge TTS 需要 edge_tts 协议',params:{message:systemDescriptor('edgeProtocolRequired')}});if(value.engine&&value.engine!=='edge_tts'&&value.profileRef&&value.profileRef.serviceId!==value.engine)ctx.addIssue({code:'custom',path:['engine'],message:'语音引擎与服务 Profile 不匹配',params:{message:systemDescriptor('voiceEngineProfileMismatch')}});if(value.protocol==='edge_tts'&&value.format==='wav')ctx.addIssue({code:'custom',path:['format'],message:'Edge TTS 语音输出仅支持 MP3',params:{message:systemDescriptor('edgeMp3Required')}});});
 const v4SingingSeparationSchema=z.object({
   enabled:z.boolean().default(false),instrumentalMix:z.boolean().default(false),volume:z.number().min(0).max(2).default(1),status:z.literal('unconfigured').default('unconfigured'),
   modelId:z.never().optional(),modelPath:z.never().optional(),weightsPath:z.never().optional(),
@@ -88,7 +90,7 @@ function forbiddenV4Path(value:unknown,segments:string[]=[]):string|undefined {
 export const v4ConfigSchema=z.object({
   schemaVersion:z.literal(4).default(4),...commonConfigFields,
   media:z.object({image:v4ImageSchema.optional(),asr:v4AnalysisSchema.optional(),video:v4AnalysisSchema.optional(),voice:v4VoiceSchema.optional(),singing:v4SingingSchema.optional(),music:v4MusicSchema.optional()}).strict().default({}),
-}).strict().superRefine((value,ctx)=>{const found=forbiddenV4Path(value);if(found)ctx.addIssue({code:'custom',path:found.split('.'),message:'v4 人格不得保存服务地址、端口、路径、权重、凭据或 locator'});});
+}).strict().superRefine((value,ctx)=>{const found=forbiddenV4Path(value);if(found)ctx.addIssue({code:'custom',path:found.split('.'),message:'v4 人格不得保存服务地址、端口、路径、权重、凭据或 locator',params:{message:systemDescriptor('personaPrivateServiceFields')}});});
 
 export type BotConfig=z.infer<typeof v4ConfigSchema>;
 export type V4BotConfig=BotConfig;
@@ -98,7 +100,7 @@ export const botSettingsSchema=z.object({
   media:v4ConfigSchema.shape.media,imageStyle:commonConfigFields.imageStyle,
   tools:commonConfigFields.tools,skills:commonConfigFields.skills,skillVersions:commonConfigFields.skillVersions,
   allowHostTools:commonConfigFields.allowHostTools,hostTools:commonConfigFields.hostTools,
-}).strict().superRefine((value,ctx)=>{const found=forbiddenV4Path(value);if(found)ctx.addIssue({code:'custom',path:found.split('.'),message:'机器人运行配置不得保存服务路径、权重或凭据'});});
+}).strict().superRefine((value,ctx)=>{const found=forbiddenV4Path(value);if(found)ctx.addIssue({code:'custom',path:found.split('.'),message:'机器人运行配置不得保存服务路径、权重或凭据',params:{message:systemDescriptor('botPrivateServiceFields')}});});
 export type BotSettings=z.infer<typeof botSettingsSchema>;
 export function botSettingsFromConfig(config:BotConfig):BotSettings {
   const {model,progressReply,media,imageStyle,tools,skills,skillVersions,allowHostTools,hostTools}=config;
@@ -133,7 +135,7 @@ export const botSchema = z.object({
   accountId: z.string().max(200).default(''), configId: idSchema.default('default'),
   enabled: z.boolean().default(false), archived: z.boolean().default(false),
   trustedUsers: z.array(z.string().min(1).max(200)).max(200).default([]),
-  workingDirectory:z.string().trim().max(32767).refine(value=>!value||path.isAbsolute(value)&&!/[\x00-\x1f]/.test(value),'工作目录须为绝对路径').transform(value=>value||undefined).optional(),
+  workingDirectory:z.string().trim().max(32767).refine(value=>!value||path.isAbsolute(value)&&!/[\x00-\x1f]/.test(value),{message:'工作目录须为绝对路径',params:{message:systemDescriptor('workspaceAbsoluteRequired')}}).transform(value=>value||undefined).optional(),
   settings:botSettingsSchema.optional(),
 });
 export type BotInstance = z.infer<typeof botSchema>;
@@ -146,7 +148,7 @@ export interface SessionRecord { id:string;scopeKey:string;scope:CallerScope;gen
 export type ServiceProfileRole='voice'|'singing'|'music';
 export type TurnServiceState=ProfileState|'disabled';
 export interface TurnServiceSelection {role:ServiceProfileRole;enabled:boolean;profileRef?:ServiceProfileRef;state:TurnServiceState;snapshot?:TurnServiceSnapshot}
-export interface TurnSnapshot {config:Readonly<BotConfig>;personaId:string;personaRevision:number;services:Readonly<Partial<Record<ServiceProfileRole,Readonly<TurnServiceSelection>>>>;botId:string;trusted:boolean;sourceIds:string[];startedAt:number}
+export interface TurnSnapshot {systemLocale?:SystemLocale;config:Readonly<BotConfig>;personaId:string;personaRevision:number;services:Readonly<Partial<Record<ServiceProfileRole,Readonly<TurnServiceSelection>>>>;botId:string;trusted:boolean;sourceIds:string[];startedAt:number}
 export interface Asset { id:string;scopeKey:string;name:string;mime:string;path:string;size:number;kind:MediaInput['kind'];createdAt:number;jobId?:string;sessionId?:string;workspace?:string;origin?:'received'|'generated'|'sent' }
 export type DeliveryAttemptPhase='prepare'|'upload'|'commit';
 export interface DeliveryAttempt {number:number;phase:DeliveryAttemptPhase;assetId?:string;fileKey?:string;uploadQuery?:string;aesKey?:string;encryptedSize?:number;fileInfo?:string;fileInfoExpiresAt?:number;startedAt?:number;lastError?:string;causeCode?:string;causeMessage?:string;httpStatus?:number;platformCode?:string;platformMessage?:string;platformTraceId?:string;autoRetryCount?:number}

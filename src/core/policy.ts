@@ -1,3 +1,4 @@
+import type {SystemLocale} from '../i18n/common.js';
 import {skillToolManifests} from './skill-operations.js';
 import type { BotConfig, BotInstance, CallerScope, ServiceProfileRole, TurnServiceSelection, TurnSnapshot } from './types.js';
 import {imageSkillEnabled} from './image-skill.js';
@@ -47,8 +48,8 @@ function freezeService(role:ServiceProfileRole,config:BotConfig,profiles?:Profil
   const selection:TurnServiceSelection={role,enabled:true,profileRef:Object.freeze({...options.profileRef}),state:profile.state,snapshot:Object.freeze({serviceId:profile.serviceId,profileId:profile.profileId,profileRevision:profile.revision,profileContentHash:profile.contentHash})};
   return Object.freeze(selection);
 }
-export function freezeTurn(config:BotConfig,bot:BotInstance,scope:CallerScope,sourceIds:string[],profiles?:ProfileStore):TurnSnapshot {
+export function freezeTurn(config:BotConfig,bot:BotInstance,scope:CallerScope,sourceIds:string[],profiles?:ProfileStore,systemLocale:SystemLocale='zh'):TurnSnapshot {
   const frozenConfig=deepFreeze(structuredClone(config));const services=Object.freeze(Object.fromEntries((['voice','singing','music'] as const).map(role=>[role,freezeService(role,config,profiles)]).filter(([,value])=>value!==undefined)));
-  return Object.freeze({config:frozenConfig,personaId:config.id,personaRevision:config.revision,services,botId:bot.id,trusted:trusted(bot,scope),sourceIds:Object.freeze([...sourceIds]) as string[],startedAt:Date.now()});
+  return Object.freeze({systemLocale,config:frozenConfig,personaId:config.id,personaRevision:config.revision,services,botId:bot.id,trusted:trusted(bot,scope),sourceIds:Object.freeze([...sourceIds]) as string[],startedAt:Date.now()});
 }
 function deepFreeze<T>(value:T):Readonly<T> { if(value && typeof value==='object') {Object.freeze(value); for(const child of Object.values(value)) deepFreeze(child);} return value; }

@@ -1,10 +1,12 @@
 # 安装到已有 DeepSeek Harness
 
+简体中文 | [English](en/install-existing-harness.md)
+
 统一前置检查、首次验证和能力边界见[快速开始](getting-started.md)；变量说明见[配置参考](configuration.md)，失败处理见[排障文档](troubleshooting.md)。
 
 本方式适合已经维护 Harness profile、希望把 QQ／微信机器人能力加入该 profile 的用户。它只安装主 bundle，不接管现有 profile，也不安装独立生命周期协调器。
 
-> 当前项目的文档和管理界面仅提供简体中文，当前版本不承诺英文 UI。
+> 文档和管理界面支持简体中文与英文；界面跟随 Harness 语言，机器人固定提示语言在服务页独立设置。
 
 ## 前置条件
 

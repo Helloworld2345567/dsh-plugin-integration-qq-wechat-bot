@@ -1,3 +1,5 @@
+import {storageDescriptor} from '../../i18n/storage.js';
+import {LocalizedError} from '../../core/errors.js';
 import {randomUUID} from 'node:crypto';
 import {createHash} from 'node:crypto';
 import {existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync} from 'node:fs';
@@ -19,14 +21,14 @@ export class PersonaFiles {
   }
   static forHome(home: string, personasRoot = defaultPersonasRoot(home)): PersonaFiles {return new PersonaFiles(personasRoot);}
   directory(id?: string): string {
-    if (lstatSync(this.root).isSymbolicLink() || !lstatSync(this.root).isDirectory()) throw new Error('人格根目录必须是普通目录');
+    if (lstatSync(this.root).isSymbolicLink() || !lstatSync(this.root).isDirectory()) throw new LocalizedError(storageDescriptor('personaRootDirectory'),'人格根目录必须是普通目录');
     if (id === undefined) return this.root;
     idSchema.parse(id);
-    if (/^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$/i.test(id)) throw new Error('人格 ID 不能使用系统保留名称');
+    if (/^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$/i.test(id)) throw new LocalizedError(storageDescriptor('personaIdReserved'),'人格 ID 不能使用系统保留名称');
     const collision = readdirSync(this.root).find(name => name.toLowerCase() === id.toLowerCase() && name !== id);
-    if (collision) throw new Error('人格 ID 大小写与已有目录冲突');
+    if (collision) throw new LocalizedError(storageDescriptor('personaIdCaseConflict'),'人格 ID 大小写与已有目录冲突');
     const folder = path.join(this.root, id);
-    if (existsSync(folder) && (lstatSync(folder).isSymbolicLink() || !lstatSync(folder).isDirectory())) throw new Error('人格目录必须是普通目录');
+    if (existsSync(folder) && (lstatSync(folder).isSymbolicLink() || !lstatSync(folder).isDirectory())) throw new LocalizedError(storageDescriptor('personaDirectory'),'人格目录必须是普通目录');
     return folder;
   }
   ids(): string[] {return readdirSync(this.directory()).filter(id => idSchema.safeParse(id).success);}
@@ -34,8 +36,8 @@ export class PersonaFiles {
     const file = path.join(this.directory(id), name);
     try {
       const stat = lstatSync(file);
-      if (stat.isSymbolicLink() || !stat.isFile()) throw new Error('人格文件必须是普通文件');
-      if (stat.size > 512 * 1024) throw new Error('人格文件超过 512 KiB');
+      if (stat.isSymbolicLink() || !stat.isFile()) throw new LocalizedError(storageDescriptor('personaFile'),'人格文件必须是普通文件');
+      if (stat.size > 512 * 1024) throw new LocalizedError(storageDescriptor('personaFileTooLarge'),'人格文件超过 512 KiB');
     } catch (error) {if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;}
     return file;
   }
@@ -58,12 +60,12 @@ export class PersonaFiles {
   }
   hasFiles(id: string): boolean {const pair = this.pair(id); return pair.config !== null || pair.persona !== null;}
   read(id: string): {config:BotConfig;digest:string} {
-    if (this.text(id, '.pending.json') !== null) throw new Error('人格文件有未完成的保存，请重新打开实例后核对');
+    if (this.text(id, '.pending.json') !== null) throw new LocalizedError(storageDescriptor('personaSavePending'),'人格文件有未完成的保存，请重新打开实例后核对');
     const pair = this.pair(id);
-    if (pair.config === null || pair.persona === null) throw new Error('人格目录必须同时包含 config.json 和 persona.md');
+    if (pair.config === null || pair.persona === null) throw new LocalizedError(storageDescriptor('personaFilesMissing'),'人格目录必须同时包含 config.json 和 persona.md');
     const settings = JSON.parse(pair.config.replace(/^\uFEFF/, ''));
     const config = parsePersonaSettings(settings, pair.persona.replace(/^﻿/, ''));
-    if (config.id !== id) throw new Error('config.json 的 ID 必须与人格目录名一致');
+    if (config.id !== id) throw new LocalizedError(storageDescriptor('personaIdMismatch'),'config.json 的 ID 必须与人格目录名一致');
     return {config, digest:digest(pair)};
   }
   currentDigest(id: string): string {return digest(this.pair(id));}
@@ -88,7 +90,7 @@ export class PersonaFiles {
   }
   private restore(id: string, target: Pair, before: Pair, after: Pair): void {
     const current = this.pair(id);
-    for (const key of ['config', 'persona'] as const) if (current[key] !== before[key] && current[key] !== after[key]) throw new Error('人格文件在保存期间被修改，已保留现场，请核对 .pending.json');
+    for (const key of ['config', 'persona'] as const) if (current[key] !== before[key] && current[key] !== after[key]) throw new LocalizedError(storageDescriptor('personaFilesChanged'),'人格文件在保存期间被修改，已保留现场，请核对 .pending.json');
     this.replace(id, 'persona.md', target.persona);
     this.replace(id, 'config.json', target.config);
   }
@@ -99,13 +101,13 @@ export class PersonaFiles {
     if (Number.isInteger(parsed.pid) && (parsed.pid as number) > 0) {
       let alive = true;
       try { process.kill(parsed.pid as number, 0); } catch (error) { alive = (error as NodeJS.ErrnoException).code !== 'ESRCH'; }
-      if (alive) throw new Error('人格文件仍由活动进程保存，暂不恢复，请稍后重试');
+      if (alive) throw new LocalizedError(storageDescriptor('personaSaveActive'),'人格文件仍由活动进程保存，暂不恢复，请稍后重试');
     }
     const valid = (pair: unknown): pair is Pair => {
       const value = pair as Partial<Record<'config' | 'persona', unknown>> | null | undefined;
       return !!value && (['config', 'persona'] as const).every(key => value[key] === null || typeof value[key] === 'string');
     };
-    if (!valid(parsed.before) || !valid(parsed.after)) throw new Error('人格保存日志无效，请核对 .pending.json');
+    if (!valid(parsed.before) || !valid(parsed.after)) throw new LocalizedError(storageDescriptor('personaJournalInvalid'),'人格保存日志无效，请核对 .pending.json');
     const {before, after} = parsed as {before:Pair;after:Pair};
     const target = applied && digest(this.encoded(applied)) === digest(after) ? after : before;
     this.restore(id, target, before, after);

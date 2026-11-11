@@ -192,7 +192,7 @@ def execute(job):
                     code = {"AUDIO_OUTPUT_TIMEOUT": "SINGING_TIMEOUT",
                             "AUDIO_OUTPUT_TOO_LARGE": "SINGING_OUTPUT_TOO_LARGE"}.get(error.code, "SINGING_OUTPUT_INVALID")
                     raise SingingError(code) from None
-        return {"text": "音色转换已完成。", "assets": [{"path": str(target), "name": target.name,
+        return {"text": "Voice conversion completed.", "assets": [{"path": str(target), "name": target.name,
                     "mime": "audio/wav" if selected_format == "wav" else "audio/mpeg", "kind": "audio"}],
                 "coverage": "SINGING_CONVERSION", "incomplete": False}
     except BaseException:

@@ -197,7 +197,7 @@ def _execute_gpt(job: dict, endpoint: dict, mode: str, text: str, voice: str,
     target.write_bytes(data)
     degraded = bool(style and style.strip())
     return {
-        "text": "已生成 AI 语音；GPT-SoVITS 不支持 style instructions，已降级为普通语音。" if degraded else "已生成 AI 语音。",
+        "text": "AI speech generated. GPT-SoVITS does not support style instructions; ordinary speech was used." if degraded else "AI speech generated.",
         "assets": [{"path": str(target), "name": target.name, "mime": "audio/wav", "kind": "audio"}],
         "coverage": "VOICE_SYNTHESIS_DEGRADED" if degraded else "VOICE_SYNTHESIS", "incomplete": False,
     }
@@ -310,7 +310,7 @@ def execute(job: dict) -> dict:
     target.write_bytes(data)
     degraded = bool(style and style.strip())
     return {
-        "text": "已生成 AI 语音；Edge TTS 不支持 style，已使用普通朗读。" if degraded else "已生成 AI 语音。",
+        "text": "AI speech generated. Edge TTS does not support style; ordinary narration was used." if degraded else "AI speech generated.",
         "assets": [{"path": str(target), "name": target.name, "mime": "audio/mpeg", "kind": "audio"}],
         "coverage": "VOICE_SYNTHESIS_DEGRADED" if degraded else "VOICE_SYNTHESIS",
         "incomplete": False,

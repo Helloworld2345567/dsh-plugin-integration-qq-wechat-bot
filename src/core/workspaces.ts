@@ -1,3 +1,4 @@
+import {localizedError} from './errors.js';
 import { mkdirSync, realpathSync, statSync } from 'node:fs';
 import { cp, mkdir, realpath, stat,rename,rm } from 'node:fs/promises';
 import path from 'node:path';
@@ -12,7 +13,7 @@ export function workingDirectory(bot:BotInstance,key:string,home?:string):string
 }
 export function validateWorkingDirectory(directory:string):void {
   mkdirSync(directory,{recursive:true});
-  if(!statSync(directory).isDirectory())throw new Error('工作目录必须是文件夹');
+  if(!statSync(directory).isDirectory())throw localizedError('workspaceNotDirectory');
   realpathSync(directory);
 }
 export async function prepareWorkingDirectory(bot:BotInstance,key:string,legacyHome:string):Promise<string> {

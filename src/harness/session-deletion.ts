@@ -1,3 +1,4 @@
+import {localizedError} from '../core/errors.js';
 import type {Context} from '@deepseek-ai/cordis';
 import {SessionId,type SessionHeader} from '@deepseek-ai/dsh-session';
 import type {} from '@deepseek-ai/dsh-session-persistence';
@@ -15,11 +16,11 @@ export async function deleteNativeSessions(ctx:Pick<Context,'sessionPersistence'
   const directories=new Set<string>();
   for(const {header} of snapshots)if(ids.has(header.id)){
     const artifact=backend.locate?.(header);
-    if(artifact?.kind!=='jsonl'||!/^session\.v\d+\.jsonl(?:\.zstd)?$/.test(path.basename(artifact.path)))throw Error('当前会话存储不支持删除，请使用随插件安装的 JSONL 存储');
+    if(artifact?.kind!=='jsonl'||!/^session\.v\d+\.jsonl(?:\.zstd)?$/.test(path.basename(artifact.path)))throw localizedError('sessionStorageUnsupported');
     directories.add(path.dirname(artifact.path));
   }
   for(const id of ids)await dispose(id);
-  for(const id of ids)if(ctx.sessions.get(SessionId(id)))throw Error('会话仍被使用，请停止相关任务后重试删除');
+  for(const id of ids)if(ctx.sessions.get(SessionId(id)))throw localizedError('sessionInUse');
   await persistence.flush();
   const cache=ctx.storageDomain?.get('session_projcache');
   for(const id of ids)await cache?.table('sessions').delete(id);

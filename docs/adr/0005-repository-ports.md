@@ -1,5 +1,7 @@
 # ADR 0005：Store 到 Repository 端口的全量拆分
 
+简体中文 | [English](../en/adr/0005-repository-ports.md)
+
 ## 状态
 
 已接受（阶段 6）。

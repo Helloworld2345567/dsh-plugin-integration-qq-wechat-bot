@@ -5,7 +5,7 @@ import {botVoiceArgumentsSchema,type BotVoiceArguments} from '../core/features.j
 export function defineBotSessionTool(execute:(args:BotSessionArguments,exec:ToolRunContext)=>Promise<unknown>){
   return defineTool({
     name:'bot_session',
-    description:'管理调用者自己的渠道会话。help/status/list 查询帮助、当前状态和所属历史。new/stop/compact/resume 只登记操作，在当前轮结束后执行；queued 不代表已完成。resume 的 sessionId 必须来自当前用户的 list 结果。不得替其他用户或父任务修改会话。',
+    description:"Manage only the caller-owned channel session. help/status/list query help, current state and owned history. new/stop/compact/resume register actions to execute after the current turn; queued does not mean completed. resume requires a sessionId from the current user list result. Do not modify another user session or a parent task.",
     parameters:{action:{type:'string',required:true,enum:['help','status','list','new','stop','compact','resume']},page:{type:'number'},sessionId:{type:'string'}},
     output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
     isConcurrencySafe:args=>['help','status','list'].includes(args.action),
@@ -16,7 +16,7 @@ export function defineBotSessionTool(execute:(args:BotSessionArguments,exec:Tool
 export function defineBotPersonaTool(execute:(args:BotPersonaArguments,exec:ToolRunContext)=>Promise<unknown>){
   return defineTool({
     name:'bot_persona',
-    description:'可信私聊查看或切换当前会话人格，无需本机工具权限。先 list 获取准确人格 ID，再 set。切换排队到当前轮结束，保留历史并清除临时模型覆盖；queued 不表示已经切换，本轮与已启动子任务保持冻结配置。不修改共享人格内容。',
+    description:"List or switch the current trusted private-chat persona without local-tool permissions. First list exact persona IDs, then set. The switch queues until the current turn ends, preserves history and clears temporary model overrides. queued does not mean switched. This turn and already-started subtasks keep their frozen configuration. Do not modify shared persona content.",
     parameters:{action:{type:'string',required:true,enum:['list','set']},personaId:{type:'string'}},
     output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
     isConcurrencySafe:args=>args.action==='list',
@@ -27,7 +27,7 @@ export function defineBotPersonaTool(execute:(args:BotPersonaArguments,exec:Tool
 export function defineBotSkillsTool(execute:(args:BotSkillsArguments,exec:ToolRunContext)=>Promise<unknown>){
   return defineTool({
     name:'bot_skills',
-    description:'查看当前人格技能。普通用户只能 list 已启用项；可信私聊可查看已发布但停用的技能，并 enable/disable。启停操作排队到当前轮结束，影响共享该人格的会话；queued 不代表已完成。新增或编辑技能使用 bot_evolve。',
+    description:"Inspect skills for the current persona. Ordinary users may only list enabled skills. Trusted private-chat users may also see published disabled skills and enable/disable them. Changes queue until the current turn ends and affect sessions sharing the persona; queued does not mean completed. Use bot_evolve to add or edit a skill.",
     parameters:{action:{type:'string',required:true,enum:['list','enable','disable']},name:{type:'string'}},
     output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
     isConcurrencySafe:args=>args.action==='list',
@@ -39,7 +39,7 @@ export function defineBotSkillsTool(execute:(args:BotSkillsArguments,exec:ToolRu
 export function defineBotVoiceControlTool(execute:(args:BotVoiceArguments,exec:ToolRunContext)=>Promise<unknown>){
   return defineTool({
     name:'bot_voice_control',
-    description:'管理当前可信私聊会话的 TTS/STS 音色。先用 list 查询准确音色 ID，再 set；TTS 使用 edge/<voice> 或 service/profile，STS 使用 rvc/<profile>。reset 恢复人格默认音色。只影响当前会话，从下一轮生效；本轮和已启动子任务继续使用冻结音色，不修改共享人格。',
+    description:"Manage TTS/STS voices for the current trusted private-chat session. First list exact voice IDs, then set. TTS uses edge/<voice> or service/profile; STS uses rvc/<profile>. reset restores the persona default. Changes affect only this session from the next turn; this turn and already-started subtasks keep their frozen voices. Do not modify the shared persona.",
     parameters:{role:{type:'string',required:true,enum:['tts','sts']},action:{type:'string',required:true,enum:['list','set','reset']},id:{type:'string'}},
     output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
     isConcurrencySafe:args=>args.action==='list',

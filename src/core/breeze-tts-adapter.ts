@@ -1,3 +1,4 @@
+import {diagnosticFields} from '../i18n/diagnostics.js';
 import {createWriteStream} from 'node:fs';
 import {stat} from 'node:fs/promises';
 import path from 'node:path';
@@ -37,12 +38,12 @@ export class BreezeTtsServiceAdapter extends IsolatedServiceAdapter {
     const checkedAt=Date.now();
     try{
       const config=profileSchema.parse(profile.managedConfig),ready=await this.healthPort.check(config,signal);
-      return{state:ready?'ready':'unavailable',checkedAt,expiresAt:checkedAt+(ready?30_000:5000),safeDiagnostic:ready?'Breeze TTS 服务可达；真实合成验收仍需单独记录。':'Breeze TTS 服务不可达。'};
-    }catch{return{state:'unavailable',checkedAt,expiresAt:checkedAt+5000,safeDiagnostic:'Breeze TTS 服务健康检查失败。'};}
+      return{state:ready?'ready':'unavailable',checkedAt,expiresAt:checkedAt+(ready?30_000:5000),...diagnosticFields(ready?"breezeReachable":"breezeUnreachable")};
+    }catch{return{state:'unavailable',checkedAt,expiresAt:checkedAt+5000,...diagnosticFields("breezeHealthFailed")};}
   }
   async execute(job:ServiceAdapterJob,signal:AbortSignal):Promise<ServiceResult>{return this.tracked(job,async()=>{
     const config=profileSchema.parse(job.profile.managedConfig),parameters=parametersSchema.parse(job.parameters);
-    if(job.operation!==SERVICE_OPERATION_MAP.breezeSpeak||job.inputs.length)throw new ServiceContractError({category:'INVALID_INPUT',safeDiagnostic:'Breeze TTS 请求参数无效。',retryable:false,blocksService:false});
+    if(job.operation!==SERVICE_OPERATION_MAP.breezeSpeak||job.inputs.length)throw new ServiceContractError({category:'INVALID_INPUT',...diagnosticFields("breezeInvalidRequest"),retryable:false,blocksService:false});
     const controller=new AbortController(),combined=AbortSignal.any([signal,controller.signal]);let settle!:()=>void;const settled=new Promise<void>(resolve=>settle=resolve);const active:ActiveVoice={phase:'waiting',controller,settled};this.jobs.set(job.jobId,active);let release:(()=>void)|undefined;
     try{
       release=await this.queue.acquire(config.baseUrl,combined);combined.throwIfAborted();
@@ -54,7 +55,7 @@ export class BreezeTtsServiceAdapter extends IsolatedServiceAdapter {
       if((await stat(output)).size<=44)throw Error('BREEZE_TTS_OUTPUT_EMPTY');
       return{outputs:[{kind:'audio',handle:assertOutputFile(job,output),name:'breeze.wav'}],observations:{coverage:parameters.speed===undefined?'VOICE_SYNTHESIS':'VOICE_SYNTHESIS_DEGRADED',speedUnsupported:parameters.speed!==undefined}};
     }catch(error){
-      if(active.phase==='submitted'&&(combined.aborted||/CANCEL|TIMEOUT|ABORT/i.test(error instanceof Error?error.message:'')))throw new ServiceContractError({category:'UNKNOWN_STATE',providerCode:'BREEZE_TTS_CANCEL_UNKNOWN',safeDiagnostic:'无法确认 Breeze TTS 服务端已停止，实例保持封锁。',retryable:false,blocksService:true},error);
+      if(active.phase==='submitted'&&(combined.aborted||/CANCEL|TIMEOUT|ABORT/i.test(error instanceof Error?error.message:'')))throw new ServiceContractError({category:'UNKNOWN_STATE',providerCode:'BREEZE_TTS_CANCEL_UNKNOWN',...diagnosticFields("breezeStopUnknown"),retryable:false,blocksService:true},error);
       providerFailure(error);
     }finally{release?.();this.jobs.delete(job.jobId);settle();}
   });}

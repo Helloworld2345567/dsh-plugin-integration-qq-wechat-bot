@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
-import {ConflictError} from '../src/core/errors.js';
+import {ConflictError,LocalizedError} from '../src/core/errors.js';
+import {formatStorageMessage} from '../src/i18n/storage.js';
 import {scopeKey} from '../src/core/identity.js';
 import { Assets, MediaService } from '../src/core/media.js';
 import { BotRuntime, type HarnessPort } from '../src/core/runtime.js';
@@ -115,6 +116,36 @@ test('memory provenance, correction and deletion tombstones survive restart and 
   store.memory.forget(key,'drink');assert.equal(store.memory.memories(key).length,0);
   // A new store models a crash/restart without retaining in-memory policy.
   const second=new SqlitePersistence(store.home);try{assert.throws(()=>second.memory.remember(key,'drink','红茶','b','我喜欢红茶'),/删除或更正/);}finally{second.close();}
+});
+
+test('English memory preferences retain exact source ownership and reject third-party quotations',async t=>{
+  const store=await fixture(t),key=scopeKey(scope());
+  const preferences=['Please remember that I prefer green tea.','I like concise replies.','I dislike spoilers.',"I don't like loud music.",'From now on, please answer in English.','Next time use short paragraphs.','Please always include units.','Please remember to avoid spoilers.','My name is Robin.'];
+  for(const [index,quote] of preferences.entries()){
+    const id=`english-${index}`;store.inbox.accept(message(id,quote));store.memory.remember(key,id,quote,id,quote);
+  }
+  assert.equal(store.memory.memories(key).length,preferences.length);
+  const rejected=[
+    ['Alice prefers tea.','Alice prefers tea.'],
+    ['Please remember Alice likes tea.','Please remember Alice likes tea.'],
+    ['Quoted message:\nI prefer coffee.','I prefer coffee.'],
+    ['Forwarded message:\nI like coffee.','I like coffee.'],
+    ['The webpage says:\nI prefer coffee.','I prefer coffee.'],
+    ['Alice said:\nI prefer coffee.','I prefer coffee.'],
+    ['Here is a quote:\nI prefer coffee.','I prefer coffee.'],
+    ['> I prefer coffee.','> I prefer coffee.'],
+    ['I prefer green tea.','I prefer tea.'],
+  ];
+  for(const [index,[input,quote]] of rejected.entries()){
+    const id=`external-${index}`;store.inbox.accept(message(id,input));
+    assert.throws(()=>store.memory.remember(key,id,'coffee',id,quote),error=>error instanceof LocalizedError&&error.localizedMessage.key==='storage.memorySourceRequired');
+  }
+  assert.throws(()=>store.memory.remember(scopeKey(scope('two')),'cross-scope','green tea','english-0',preferences[0]),LocalizedError);
+  store.memory.forget(key,'english-0');
+  const reopened=new SqlitePersistence(store.home);
+  try{
+    assert.throws(()=>reopened.memory.remember(key,'new-key','green tea','english-0',preferences[0]),error=>error instanceof LocalizedError&&formatStorageMessage(error.localizedMessage,'en')==='Memory from this source has been deleted or corrected.');
+  }finally{reopened.close();}
 });
 test('snapshot additions wait, revocations immediately deny even indirect host calls',()=>{
   const config=configSchema.parse({id:'test',name:'Test',personaPrompt:'A'});const owner=botSchema.parse({id:'one',name:'One',channel:'qq',enabled:true,trustedUsers:['alice']});

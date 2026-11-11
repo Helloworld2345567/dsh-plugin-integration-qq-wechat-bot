@@ -1,5 +1,7 @@
 # 历史本地媒体转换基准（dated，non-contract）
 
+简体中文 | [English](en/media-transform-performance.md)
+
 > **非产品契约。** 本文是一次经过脱敏的本机合成素材 benchmark，记录可复现性参考，不是 SLO、吞吐保证、延迟保证或平台验收证据。不要用表中数字承诺其他 CPU、编解码器、素材或负载下的性能。
 
 可使用 `python -B tests/benchmark_media_transform.py --repeats 3` 重新运行合成素材测试。脚本在临时目录生成素材和输出，退出时清理；测量包含输入探测、编码、合并及成功 GIF 的完整解码校验，不含模型、网络、平台投递或宿主启动 Python 的时间。具体机器标识、用户名和运行目录已省略。

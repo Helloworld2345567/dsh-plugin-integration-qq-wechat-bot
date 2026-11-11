@@ -1,5 +1,7 @@
 # 本机音色模型库
 
+简体中文 | [English](en/voice-model-library.md)
+
 在机器人面板打开“服务”栏管理安装级服务设置，再到“机器人 → 媒体”选择已登记的音色 Profile。“语音 TTS”和“变声 STS”各自提供音色下拉框；服务栏可修改：
 
 - **模型目录**：共享 TTS/STS 项目下的 `models` 目录，TTS 与 STS 共用。

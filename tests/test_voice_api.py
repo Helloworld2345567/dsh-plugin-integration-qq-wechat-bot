@@ -52,7 +52,7 @@ class VoiceApiTests(unittest.TestCase):
             result = voice_api.execute(job)
         self.assertEqual(result["assets"][0]["kind"], "audio")
         self.assertEqual(result["coverage"], "VOICE_SYNTHESIS_DEGRADED")
-        self.assertIn("普通朗读", result["text"])
+        self.assertIn("ordinary narration", result["text"])
 
     def test_removed_chant_operation_never_requests_audio(self):
         with patch.object(voice_api, "_request_edge_audio") as request:

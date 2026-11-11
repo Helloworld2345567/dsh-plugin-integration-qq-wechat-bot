@@ -1,7 +1,8 @@
 import type {Translate} from './locale.js';
+import type {MessageDescriptor} from '../i18n/common.js';
 
 type ServiceProfile={serviceId:string;profileId:string;state:string;capabilities:readonly string[]};
-export interface PanelServiceHealth {state:string;safeDiagnostic?:string;checkedAt?:number;expiresAt?:number}
+export interface PanelServiceHealth {state:string;safeDiagnostic?:string;message?:MessageDescriptor;checkedAt?:number;expiresAt?:number}
 type Query=(name:string,input:any,signal?:AbortSignal)=>Promise<any>;
 
 export async function loadPanelServiceHealth(query:Query,profiles:readonly ServiceProfile[],signal?:AbortSignal):Promise<Record<string,PanelServiceHealth>> {
@@ -16,7 +17,7 @@ export async function loadPanelServiceHealth(query:Query,profiles:readonly Servi
       return[serviceId,health??{state:'unknown'}] as const;
     }catch(error){
       signal?.throwIfAborted();
-      return[serviceId,{state:'unknown',safeDiagnostic:error instanceof Error?error.message:String(error)}] as const;
+      return[serviceId,{state:'unknown',safeDiagnostic:error instanceof Error?error.message:String(error),...((error as any)?.localizedMessage?{message:(error as any).localizedMessage}:{})}] as const;
     }
   }));
   return Object.fromEntries(entries);

@@ -5,7 +5,7 @@ description: Generate images or edit user-selected reference images through a co
 
 # Image generation and reference editing
 
-在 Harness 插件中调用 `image_generation`：`prompt` 使用英文，`operation` 为 `generate` 或 `edit`，`inputs` 只填当前会话的参考附件 ID。宿主通过固定模块 `dsh_bot_runtime.skills.image_generation.image_api` 执行图片客户端并自动登记成品；人格图片连接设置与宿主默认值保持原有优先级。聊天输入不得运行脚本、指定 Python 模块或提供本机路径。`bot_media(image_generate/image_edit)` 仍是等价兼容入口。
+Within the Harness plugin, call `image_generation` with an English `prompt`, `operation` set to `generate` or `edit`, and only current-session reference attachment IDs in `inputs`. The host runs the image client through the fixed module `dsh_bot_runtime.skills.image_generation.image_api` and automatically registers outputs. Configured image connections retain their existing precedence over host defaults. Chat input must never run scripts, select Python modules or supply local paths. `bot_media(image_generate/image_edit)` remains an equivalent compatibility entry.
 
 ## Decide whether to run
 
@@ -23,7 +23,7 @@ Credentials come from `IMAGE_ACCESS_KEY` by default; existing `SAKURA_IMAGE_API_
 
 The plugin and standalone client use the same environment contract. Optional per-persona overrides take precedence over the environment; absent values inherit, rather than disable, the skill. The UI has an explicit disable switch. Custom provider defaults belong in the operator's runtime environment, never in this portable source. Only the selected image key is forwarded to the media worker.
 
-生产 worker 只接受发布包中的固定模块 entry，不从 `SKILL.md`、人格、聊天内容、cwd 或工作区发现 Python 代码。下面命令仅供运营者在已知发布包 Python 根且安装 `requests` 的环境中独立验证客户端；模型不得自行运行。
+Production workers accept only fixed module entries from the published package. They never discover Python code from `SKILL.md`, personas, chat, the current directory or a workspace. The commands below are solely for operators independently verifying the client from a known published-package Python root with `requests` installed; the model must not run them itself.
 
 ## Generate one image
 
@@ -39,9 +39,9 @@ python -B -P -m dsh_bot_runtime.skills.image_generation.image_api edit --prompt 
 
 Repeat `--image` for additional user-selected references. State the role of each input in the prompt. `n` is the output count, not the number of inputs. Use `--mask mask.png` for an optional PNG mask. Paths in examples are placeholders for user-provided files.
 
-`--dry-run` 只验证参数，不发送请求也不读取密钥；编辑模式仍要求输入文件存在。`--record assets/request.json` 只保存稳定状态、错误码、输出路径和计数，不保存 prompt、endpoint、credential、输入路径或 provider 正文；该文件仍属于作业私有产物，不应提交。
+`--dry-run` validates arguments without sending requests or reading keys; edit mode still requires input files to exist. `--record assets/request.json` saves only stable status, error codes, output paths and counts, not prompts, endpoints, credentials, input paths or provider bodies. This remains a private job artifact and must not be committed.
 
-GPT Image 2.6 的生成请求可以使用 `--output-format svg` 或 `--output-format gif`。SVG 只支持生成、`n=1`，保存为 UTF-8 XML；GIF 只支持生成，可用 `--frame-count 2..64` 与 `--frame-duration-ms 20..2000` 控制动画。GIF/SVG 返回的实际签名必须与请求格式一致，provider 忽略格式时客户端会失败并不会把 PNG 冒充成目标格式。`--complexity low|medium|high` 可传递 GPT Image 2.6 的规划复杂度。
+GPT Image 2.6 generation supports `--output-format svg` or `--output-format gif`. SVG is generation-only with `n=1` and is saved as UTF-8 XML. GIF is generation-only, with animation controlled by `--frame-count 2..64` and `--frame-duration-ms 20..2000`. Actual GIF/SVG signatures must match the requested format; the client fails if the provider ignores the format, rather than presenting PNG as the target. `--complexity low|medium|high` passes GPT Image 2.6 planning complexity.
 
 ## Validate and deliver
 

@@ -56,7 +56,7 @@ export const panelStyles = `
 .bot-admin .page-heading { min-width: 0; }
 .bot-admin .page-subtitle { margin: 4px 0 0; color: var(--muted); }
 .bot-admin .page-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
-.bot-admin .global-status { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.bot-admin .global-status { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; min-height: 32px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
 .bot-admin .global-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--idle); }
 .bot-admin .global-status-dot.success { background: var(--success); }
 .bot-admin .global-status-dot.warning { background: var(--warning); }
@@ -65,7 +65,7 @@ export const panelStyles = `
 .bot-admin .spread { justify-content: space-between; }
 .bot-admin .toolbar { margin: 0 0 16px; }
 .bot-admin .toolbar label { flex: 1; }
-.bot-admin button { font: inherit; min-height: 36px; padding: 7px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); cursor: pointer; transition: background-color .15s ease, border-color .15s ease, color .15s ease; }
+.bot-admin button { font: inherit; max-width: 100%; white-space: normal; overflow-wrap: anywhere; min-height: 36px; padding: 7px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); cursor: pointer; transition: background-color .15s ease, border-color .15s ease, color .15s ease; }
 .bot-admin button:hover:not(:disabled) { background: var(--nested); }
 .bot-admin button:disabled { opacity: .5; cursor: not-allowed; }
 .bot-admin button.primary { border-color: var(--accent); background: var(--accent); color: var(--bg); font-weight: 600; }

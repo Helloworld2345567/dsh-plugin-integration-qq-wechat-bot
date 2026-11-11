@@ -1,3 +1,5 @@
+import type {SystemLocale} from '../i18n/common.js';
+import {systemDescriptor,systemMessage,SystemMessageError,builtinSkillDescription} from '../i18n/system.js';
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import type {BotRuntime} from './runtime.js';
@@ -13,14 +15,14 @@ import {managementCommand} from './command-bus.js';
 import type {LifecyclePort,SessionHistoryPort} from './runtime-ports.js';
 
 export const botModelArgumentsSchema=z.object({action:z.enum(['list','set','reset']),provider:z.string().min(1).max(150).optional(),model:z.string().min(1).max(200).optional()}).strict().superRefine((value,ctx)=>{
-  if(value.action==='set'&&(!value.provider||!value.model))ctx.addIssue({code:'custom',message:'set 需要 list 返回的准确 provider 和 model'});
-  if(value.action!=='set'&&(value.provider!==undefined||value.model!==undefined))ctx.addIssue({code:'custom',message:'list/reset 不接受 provider 或 model'});
+  if(value.action==='set'&&(!value.provider||!value.model))ctx.addIssue({code:'custom',message:'set 需要 list 返回的准确 provider 和 model',params:{message:systemDescriptor('modelSetRequired')}});
+  if(value.action!=='set'&&(value.provider!==undefined||value.model!==undefined))ctx.addIssue({code:'custom',message:'list/reset 不接受 provider 或 model',params:{message:systemDescriptor('modelListResetInvalid')}});
 });
 export type BotModelArguments=z.infer<typeof botModelArgumentsSchema>;
 export interface BotModelResult {action:BotModelArguments['action'];sessionId:string;personaId:string;currentTurnModel:BotConfig['model'];nextTurnModel:BotConfig['model'];override:boolean;effective:'current'|'next_turn';models?:Array<{provider:string;model:string;inputModalities?:string[];reasoning?:{supported:boolean;efforts:string[]}}>}
 export const botVoiceArgumentsSchema=z.object({role:z.enum(['tts','sts']),action:z.enum(['list','set','reset']),id:z.string().trim().min(1).max(200).optional()}).strict().superRefine((value,ctx)=>{
-  if(value.action==='set'&&!value.id)ctx.addIssue({code:'custom',message:'set 需要 list 返回的准确音色 ID'});
-  if(value.action!=='set'&&value.id!==undefined)ctx.addIssue({code:'custom',message:'list/reset 不接受音色 ID'});
+  if(value.action==='set'&&!value.id)ctx.addIssue({code:'custom',message:'set 需要 list 返回的准确音色 ID',params:{message:systemDescriptor('voiceSetRequired')}});
+  if(value.action!=='set'&&value.id!==undefined)ctx.addIssue({code:'custom',message:'list/reset 不接受音色 ID',params:{message:systemDescriptor('voiceListResetInvalid')}});
 });
 export type BotVoiceArguments=z.infer<typeof botVoiceArgumentsSchema>;
 export interface BotVoiceResult {role:BotVoiceArguments['role'];action:BotVoiceArguments['action'];sessionId:string;current?:string;next?:string;override:boolean;effective:'current'|'next_turn';items?:ReadonlyArray<{id:string;displayName:string;modelLabel?:string;state:string;selectable:boolean;serviceId?:string;profileId?:string}>}
@@ -29,16 +31,17 @@ interface ContentChange {id:string;kind:'persona'|'skill'|'reload';scopeKey:stri
 export function parseStatsArguments(args:string):StatsQueryInput {
   if(!args.trim())return{};
   const result:Record<string,unknown>={};
-  for(const word of args.trim().split(/\s+/)){if(['today','7d','30d','all','custom'].includes(word))result.range=word;else if(word==='groups')result.groups=true;else{const match=/^(bot|model|provider|kind|from|to)=(.+)$/.exec(word);if(!match)throw Error('/stats [today|7d|30d|all|custom] [bot=ID] [model=名称] [kind=agent|subagent|compaction|media|progress] [from=日期 to=日期] [groups]');result[match[1]==='bot'?'botId':match[1]]=match[2];}}
+  for(const word of args.trim().split(/\s+/)){if(['today','7d','30d','all','custom'].includes(word))result.range=word;else if(word==='groups')result.groups=true;else{const match=/^(bot|model|provider|kind|from|to)=(.+)$/.exec(word);if(!match)throw new SystemMessageError('statsUsage');result[match[1]==='bot'?'botId':match[1]]=match[2];}}
   return statsQuerySchema.parse(result);
 }
-export function renderStats(value:StatsResult):string {
-  const s=value.summary;const lines=[`统计（北京时间）：${value.range.preset}`,`机器人在线 ${s.onlineBots}/${s.totalBots}`,`消息：收到 ${s.received}，平台接受 ${s.sent}，结果未知 ${s.unknown}，失败 ${s.failed}，取消 ${s.cancelled}`,`已知 token ${s.knownTokens}（未缓存输入 ${s.inputTokens}，输出 ${s.outputTokens}，缓存读 ${s.cacheReadTokens}，缓存写 ${s.cacheWriteTokens}）；用量未知 ${s.unknownUsageCalls}/${s.calls} 次`];
-  lines.push(`缓存读/写未报告 ${s.unknownCacheReadCalls}/${s.unknownCacheWriteCalls} 次；推理未报告 ${s.unknownReasoningCalls} 次。`);
-  for(const model of value.models)lines.push(`${model.botId} · ${model.provider}/${model.model} · ${model.kind}：${model.knownTokens} token，${model.calls} 次，${model.unknownUsageCalls} 次用量未知`);
-  for(const bot of value.bots)lines.push(`${bot.name}：${bot.status}；${bot.groupSupport==='unsupported'?'群聊不支持':`已知群 ${bot.groupCount}（非完整名单）`}`);
-  for(const group of value.groups)lines.push(`群 ${group.name??group.groupId} (${group.botId})：${group.state}`);
-  if(value.coverage.unknownSentTime)lines.push(`另有 ${value.coverage.unknownSentTime} 条历史发送缺少时间，不计入指定日期。`);
+export function renderStats(value:StatsResult,locale:SystemLocale='zh'):string {
+  const t=(key:Parameters<typeof systemMessage>[1],params?:Parameters<typeof systemMessage>[2])=>systemMessage(locale,key,params);
+  const s=value.summary;const lines=[t('statsHeading',{range:value.range.preset}),t('statsBots',{online:s.onlineBots,total:s.totalBots}),t('statsMessages',{received:s.received,sent:s.sent,unknown:s.unknown,failed:s.failed,cancelled:s.cancelled}),t('statsTokens',{tokens:s.knownTokens,input:s.inputTokens,output:s.outputTokens,read:s.cacheReadTokens,write:s.cacheWriteTokens,unknown:s.unknownUsageCalls,calls:s.calls})];
+  lines.push(t('statsUnreported',{read:s.unknownCacheReadCalls,write:s.unknownCacheWriteCalls,reasoning:s.unknownReasoningCalls}));
+  for(const model of value.models)lines.push(t('statsModel',{bot:model.botId,provider:model.provider,model:model.model,kind:model.kind,tokens:model.knownTokens,calls:model.calls,unknown:model.unknownUsageCalls}));
+  for(const bot of value.bots)lines.push(t('statsBot',{name:bot.name,status:bot.status,groups:bot.groupSupport==='unsupported'?t('groupsUnsupported'):t('knownGroups',{count:bot.groupCount})}));
+  for(const group of value.groups)lines.push(t('statsGroup',{name:group.name??group.groupId,bot:group.botId,state:group.state}));
+  if(value.coverage.unknownSentTime)lines.push(t('statsMissingTime',{count:value.coverage.unknownSentTime}));
   return lines.join('\n');
 }
 
@@ -49,10 +52,10 @@ export class BotFeatures {
     const repos=runtime.repos;this.skills=new DynamicSkills(repos.personas,repos.storage.home);this.stats=new StatsService(repos.stats,()=>runtime.states,()=>repos.bots.bots(),Date.now,runtime.channels);this.evolution=new EvolutionService(repos.evolution,packageRoot(),{lifecycle});
     for(const record of runtime.repos.evolution.contentChanges<ContentChange>())if(record.phase==='preparing'){
       const current=(()=>{try{return runtime.repos.personas.config(record.configId);}catch{return undefined;}})();
-      record.phase=current&&record.after&&JSON.stringify(current)===JSON.stringify(record.after)?'succeeded':'failed';record.error=record.phase==='failed'?'发布被中断，请核对当前版本和草稿':undefined;runtime.repos.evolution.saveContentChange(record.id,record);
+      record.phase=current&&record.after&&JSON.stringify(current)===JSON.stringify(record.after)?'succeeded':'failed';record.error=record.phase==='failed'?'Publication was interrupted. Check the current revision and draft.':undefined;runtime.repos.evolution.saveContentChange(record.id,record);
     }
     runtime.commandServices={...runtime.commandServices,
-      skills:{list:async b=>this.skills.list(runtime.effectiveConfig(b)).map(s=>`${s.name}：${s.description}`).join('\n')||'当前未启用技能。',toggle:async(b,name,enabled,authorize?:()=>void)=>{
+      skills:{list:async (b,locale='zh')=>this.skills.list(runtime.effectiveConfig(b)).map(s=>`${s.name}: ${builtinSkillDescription(s.name,locale)??s.description}`).join('\n')||systemMessage(locale,'noSkills'),toggle:async(b,name,enabled,authorize?:()=>void,locale:SystemLocale='zh')=>{
         const current=runtime.effectiveConfig(b),owner=runtime.repos.bots.bot(b.scope.botId);
         const check=()=>{
           const binding=runtime.repos.sessions.findBinding(b.key);
@@ -63,15 +66,15 @@ export class BotFeatures {
           authorize?.();
         };
         check();const next={...current,skills:enabled?[...new Set([...current.skills,name])]:current.skills.filter(n=>n!==name)};
-        await runtime.harness.validateModel(next);check();runtime.saveBot({...runtime.repos.bots.bot(owner.id),settings:{...owner.settings!,skills:next.skills}});return `技能 ${name} 已${enabled?'启用':'停用'}。`;
-      },reload:async b=>{this.authorize(b);const result=await this.reload(b);return `已应用 ${result.after!.name} v${result.after!.revision}，下一轮生效。`; }},
-      evolution:{request:async(b,goal)=>{this.authorize(b,undefined,true);return `用户要求修改小樱自身：${goal}\n请完成修改和验证。人格修改使用 bot_evolve(persona)，技能新增或更新使用 skill_write。插件代码使用 create 获取隔离 candidateRoot，编辑后 validate，再 apply 排队生效。记录真实结果，不要直接重启或修改线上安装文件。`;},status:async(b,id)=>{this.authorize(b,undefined,true);return JSON.stringify(id?this.task(b,id):this.history(b)[0]??{status:'暂无改进任务'});},history:async b=>{this.authorize(b,undefined,true);return JSON.stringify(this.history(b));},rollback:async(b,id)=>{this.authorize(b,undefined,true);return JSON.stringify(await this.rollback(b,id));},restart:async b=>{this.authorize(b,undefined,true);return JSON.stringify(this.evolution.queueRestart(b.key,this.config(b).id));}},
-      stats:async(b,args)=>{this.authorize(b);return renderStats(this.stats.query(parseStatsArguments(args)));},
+        await runtime.harness.validateModel(next);check();runtime.saveBot({...runtime.repos.bots.bot(owner.id),settings:{...owner.settings!,skills:next.skills}});return systemMessage(locale,enabled?'skillEnabled':'skillDisabled',{name});
+      },reload:async (b,locale='zh')=>{this.authorize(b);const result=await this.reload(b);return systemMessage(locale,'filesApplied',{name:result.after!.name,revision:result.after!.revision}); }},
+      evolution:{request:async(b,goal)=>{this.authorize(b,undefined,true);return `The user requests a change to the bot: ${goal}\nComplete the change and verification. Use bot_evolve(persona) for persona updates and skill_write for skill additions or updates. For plugin code, create an isolated candidateRoot, edit it, validate, then queue apply. Report actual results; do not restart directly or edit the live installation.`;},status:async(b,id,locale='zh')=>{this.authorize(b,undefined,true);return JSON.stringify(id?this.task(b,id):this.history(b)[0]??{status:systemMessage(locale,'noEvolution')});},history:async b=>{this.authorize(b,undefined,true);return JSON.stringify(this.history(b));},rollback:async(b,id)=>{this.authorize(b,undefined,true);return JSON.stringify(await this.rollback(b,id));},restart:async b=>{this.authorize(b,undefined,true);return JSON.stringify(this.evolution.queueRestart(b.key,this.config(b).id));}},
+      stats:async(b,args,locale='zh')=>{this.authorize(b);return renderStats(this.stats.query(parseStatsArguments(args)),locale);},
     };
   }
   private config(binding:SessionBinding):BotConfig {return this.runtime.repos.personas.config(this.runtime.repos.personas.effectiveConfig(this.runtime.repos.sessions.findBinding(binding.key)??binding).id);}
   private authorize(binding:SessionBinding,snapshot?:TurnSnapshot,host=false):void {
-    const bot=this.runtime.repos.bots.bot(binding.scope.botId);const config=this.runtime.effectiveConfig(this.runtime.repos.sessions.findBinding(binding.key)??binding);const before=snapshot??freezeTurn(config,bot,binding.scope,[],this.runtime.profiles);
+    const bot=this.runtime.repos.bots.bot(binding.scope.botId);const config=this.runtime.effectiveConfig(this.runtime.repos.sessions.findBinding(binding.key)??binding);const before=snapshot??freezeTurn(config,bot,binding.scope,[],this.runtime.profiles,this.runtime.systemLocale());
     // Persona and skill maintenance only changes the configured bot data. Shell,
     // candidate activation and lifecycle operations remain host-authorized.
     const permission=host?'bot_evolve':'bot_stats';
@@ -107,7 +110,7 @@ export class BotFeatures {
     this.runtime.repos.evolution.saveContentChange(record.id,record);
     try{
       if(kind!=='persona')await this.runtime.harness.validateModel(this.runtime.effectiveConfig(binding));this.authorize(binding,snapshot);
-      if(draftFingerprint!==undefined&&draftFingerprint!==this.skills.draftFingerprint(before.id))throw Error('SKILL_DRAFT_CHANGED: 技能文件在校验期间发生变化');
+      if(draftFingerprint!==undefined&&draftFingerprint!==this.skills.draftFingerprint(before.id))throw Error('SKILL_DRAFT_CHANGED: Skill files changed during validation');
       // Revision and persona-file fingerprints are checked again after async model validation.
       const commit=()=>this.runtime.repos.personas.saveConfig(next,before.revision,fileDigest);
       record.after=restoreDrafts?this.skills.restoreDrafts(next,before,commit):commit();
@@ -125,11 +128,11 @@ export class BotFeatures {
   }
   async reload(binding:SessionBinding,snapshot?:TurnSnapshot):Promise<ContentChange>{
     this.authorize(binding,snapshot);const current=this.config(binding);const file=this.runtime.repos.personas.readPersonaDraft(current.id);if(file.config.revision!==current.revision)throw Error('PERSONA_REVISION_CONFLICT');
-    const next=this.skills.stageDrafts(file.config);return this.publish(binding,'reload','应用人格与技能文件',next,current,file.digest,snapshot);
+    const next=this.skills.stageDrafts(file.config);return this.publish(binding,'reload','Apply persona and skill files',next,current,file.digest,snapshot);
   }
   private async rollback(binding:SessionBinding,id:string,snapshot?:TurnSnapshot){
     this.authorize(binding,snapshot);const task=this.task(binding,id);
-    if('before'in task){const current=this.runtime.repos.personas.config(task.configId);if(task.phase!=='succeeded'||current.revision!==task.after?.revision)throw Error('已有后续修改，不能覆盖回退');const result=await this.publish(binding,task.kind,`回退 ${id}`,{...task.before,revision:current.revision},current,undefined,snapshot,true);task.phase='rolled-back';this.runtime.repos.evolution.saveContentChange(task.id,task);return result;}
+    if('before'in task){const current=this.runtime.repos.personas.config(task.configId);if(task.phase!=='succeeded'||current.revision!==task.after?.revision)throw new SystemMessageError('rollbackChanged');const result=await this.publish(binding,task.kind,`Rollback ${id}`,{...task.before,revision:current.revision},current,undefined,snapshot,true);task.phase='rolled-back';this.runtime.repos.evolution.saveContentChange(task.id,task);return result;}
     return this.evolution.rollback(id);
   }
   async execute(binding:SessionBinding,snapshot:TurnSnapshot,args:Record<string,unknown>,signal:AbortSignal):Promise<unknown>{
@@ -138,7 +141,7 @@ export class BotFeatures {
     const id=()=>z.string().min(1).max(80).parse(args.taskId);
     switch(action){
       case 'create':return this.evolution.create(binding.key,current.id,z.string().min(1).max(20000).parse(args.goal),{trustedAdmin:true});
-      case 'status':case 'inspect':return args.taskId?this.task(binding,id()):this.history(binding)[0]??{status:'暂无改进任务'};
+      case 'status':case 'inspect':return args.taskId?this.task(binding,id()):this.history(binding)[0]??{status:systemMessage(snapshot.systemLocale??'zh','noEvolution')};
       case 'history':return this.history(binding);
       case 'validate':this.task(binding,id());return this.evolution.validate(id(),signal);
       case 'apply':this.task(binding,id());return this.evolution.queueApply(id());

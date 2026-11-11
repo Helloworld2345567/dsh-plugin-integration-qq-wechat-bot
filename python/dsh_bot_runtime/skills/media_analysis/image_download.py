@@ -145,4 +145,4 @@ async def download_images(urls, referer, directory, coverage):
         raise VideoError('PAGE_IMAGE_DOWNLOAD_FAILED')
     return {'assets': assets, 'coverage': coverage, 'incomplete': len(assets) < len(urls),
             'text': json.dumps({'downloaded': len(assets), 'discovered': len(urls), 'failed': failures,
-                                'note': '保留下载字节；优先页面提供的原图地址，未声明原图时使用最高可用尺寸。'}, ensure_ascii=False)}
+                                'note': 'Downloaded bytes are preserved. Prefer original image URLs provided by the page; otherwise use the largest available size.'}, ensure_ascii=False)}

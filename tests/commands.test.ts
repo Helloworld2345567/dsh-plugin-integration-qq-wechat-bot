@@ -1,3 +1,4 @@
+import type {SystemLocale} from '../src/i18n/common.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -16,14 +17,39 @@ const scope=(senderId='alice',kind:'private'|'group'='private'):CallerScope=>({b
 let seq=0;
 const input=(text:string,s=scope()):InboundMessage=>({id:`m-${++seq}`,scope:s,text,attachments:[],reply:{target:s.channelId},timestamp:Date.now()});
 function gate(){let resolve!:(value?:any)=>void;const promise=new Promise<any>(r=>resolve=r);return{promise,resolve};}
-async function fixture(t:any,overrides:Partial<HarnessPort>={}){
+async function fixture(t:any,overrides:Partial<HarnessPort>={},locale:()=>SystemLocale=()=> 'zh'){
   const home=await mkdtemp(path.resolve('.codex/commands-'));const store=new SqlitePersistence(home);store.bots.saveBot(botSchema.parse({id:'one',name:'One',channel:'qq',accountId:'one',enabled:true,trustedUsers:['alice']}));
   const runs:InboundMessage[][]=[];const sent:string[]=[];const assets=new Assets(store.repositories()),media=new MediaService(store.repositories(),assets);
   const harness:HarnessPort={run:async(binding,messages)=>{runs.push(messages);binding.persisted=true;store.sessions.updateSession(binding);return{turnId:`turn-${runs.length}`,outputs:[],snapshot:freezeTurn(store.personas.effectiveConfig(binding),store.bots.bot('one'),binding.scope,messages.map(m=>m.id))};},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async config=>{if(config.model?.model==='bad')throw Error('BAD_MODEL');},inspectSession:async()=>{},models:async()=>[{provider:'ProviderA',model:'ModelCase'}],...overrides};
   const adapter:ChannelAdapter={beginLogin:async()=>({status:'pending'}),pollLogin:async()=>({status:'expired'}),connect:async()=>{},materialize:async()=>Buffer.from('media'),send:async(_b,_c,d)=>{sent.push(d.output.text??'asset');return'receipt';}};
-  const runtime=new BotRuntime(store.repositories(),assets,media,harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),{read:async()=>({accountId:'one'}),write:async()=>{},remove:async()=>{}},60000);
+  const runtime=new BotRuntime(store.repositories(),assets,media,harness,createChannelRegistry([{id:'qq',displayName:'QQ',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}},{id:'weixin',displayName:'Weixin',adapter,capabilities:{conversations:['private','group'],login:[],groupSupport:'observed_only'}}]),{read:async()=>({accountId:'one'}),write:async()=>{},remove:async()=>{}},60000,0,undefined,locale);
   t.after(async()=>{await runtime.close();store.close();await rm(home,{recursive:true,force:true});});return{store,runtime,harness,runs,sent,media,assets};
 }
+
+test('global message language controls help and errors without changing persona or media settings',async t=>{
+  let locale:SystemLocale='en';const f=await fixture(t,{},()=>locale);
+  const before=structuredClone(f.store.bots.bot('one')),persona=f.store.personas.config('default');
+  await f.runtime.receive(input('/help'));assert.match(f.sent.at(-1)!,/Start a new session/);assert.doesNotMatch(f.sent.at(-1)!,/帮助/);
+  await f.runtime.receive(input('/model P M',scope('bob')));assert.match(f.sent.at(-1)!,/trusted users in private chats/);
+  await f.runtime.receive(input('/status'));assert.match(f.sent.at(-1)!,/Session:.*\nPersona:/s);
+  locale='zh';await f.runtime.receive(input('/help'));assert.match(f.sent.at(-1)!,/开启新会话/);
+  assert.deepEqual(f.store.bots.bot('one'),before);assert.deepEqual(f.store.personas.config('default'),persona);
+});
+
+test('an asynchronous command retains its starting language and the next command uses the new value',async t=>{
+  let locale:SystemLocale='en';const entered=gate(),release=gate();
+  const f=await fixture(t,{validateModel:async()=>{entered.resolve();await release.promise;}},()=>locale);
+  const command=f.runtime.receive(input('/model P M'));await entered.promise;locale='zh';release.resolve();await command;
+  assert.match(f.sent.at(-1)!,/Switched model to P \/ M/);
+  await f.runtime.receive(input('/status'));assert.match(f.sent.at(-1)!,/会话：/);
+});
+
+test('model failure feedback uses the language frozen before the request starts',async t=>{
+  let locale:SystemLocale='en';const entered=gate(),release=gate();let snapshotLocale:SystemLocale|undefined;
+  const f=await fixture(t,{run:async(_binding,_messages,_signal,options)=>{snapshotLocale=options?.snapshot?.systemLocale;entered.resolve();await release.promise;throw Error('FIXTURE_FAILURE');}},()=>locale);
+  await f.runtime.receive(input('work'));const request=f.runtime.process(scopeKey(scope()));await entered.promise;locale='zh';release.resolve();await request;
+  assert.equal(snapshotLocale,'en');assert.match(f.sent.at(-1)!,/model request failed \(FIXTURE_FAILURE\)/);
+});
 
 test('commands preserve argument case, escape slashes, never send unknown commands to model and deduplicate',async t=>{
   assert.deepEqual(parseCommand('/PeRsOnA SakuraCase'),{name:'persona',args:'SakuraCase'});assert.equal(parseCommand('//status'),undefined);

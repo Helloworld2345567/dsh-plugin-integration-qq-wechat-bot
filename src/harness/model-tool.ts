@@ -5,7 +5,7 @@ import {botModelArgumentsSchema,type BotModelArguments} from '../core/features.j
 export function defineBotModelTool(execute:(args:BotModelArguments,exec:ToolRunContext)=>Promise<unknown>){
   return defineTool({
     name:'bot_model',
-    description:'管理当前可信私聊会话的模型。用户自然语言要求换模型时先 list 查询准确提供商和模型 ID，再 set；若存在多个符合候选，应让用户明确选择。reset 恢复当前人格默认模型。只修改当前会话，下轮生效；本轮及已启动子任务继续使用冻结模型。',
+    description:"Manage the model for the current trusted private-chat session. When the user asks to switch models, first list exact provider and model IDs, then set. If several candidates match, ask the user to choose. reset restores the current persona default. Changes affect only this session from the next turn; this turn and already-started subtasks keep their frozen model.",
     parameters:{action:{type:'string',required:true,enum:['list','set','reset']},provider:{type:'string'},model:{type:'string'}},
     output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
     isConcurrencySafe:args=>args.action==='list',

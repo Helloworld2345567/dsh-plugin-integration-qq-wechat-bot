@@ -1,3 +1,5 @@
+import type {SystemLocale} from '../i18n/common.js';
+import {systemMessage,type SystemMessageKey} from '../i18n/system.js';
 import {randomUUID} from 'node:crypto';
 
 export type ProgressStage='attachments'|'transcription'|'model'|'tool'|'image'|'media'|'search';
@@ -5,8 +7,8 @@ export interface ProgressFacts {stage:ProgressStage;elapsedSeconds:number;previo
 export const PROGRESS_INTERVAL_MS=60_000;
 export const PROGRESS_GENERATION_MS=8_000;
 export const PROGRESS_SEND_MS=10_000;
-const descriptions:Record<ProgressStage,string>={attachments:'附件还在准备中',transcription:'语音还在转写中',model:'请求还在处理中',tool:'当前任务步骤还在执行中',image:'图片还在处理中',media:'媒体还在处理中',search:'资料还在查找中'};
-export function progressFallback(stage:ProgressStage):string{return `${descriptions[stage]}，暂时还没有最终结果。`;}
+const descriptions:Record<ProgressStage,SystemMessageKey>={attachments:'progressAttachments',transcription:'progressTranscription',model:'progressModel',tool:'progressTool',image:'progressImage',media:'progressMedia',search:'progressSearch'};
+export function progressFallback(stage:ProgressStage,locale:SystemLocale='zh'):string{return systemMessage(locale,descriptions[stage]);}
 export function progressText(value:string):string|undefined {
   const text=value.trim();
   if(!text||[...text].length>80||/[\r\n]|```|!\[|\]\(|<[^>]+>/.test(text))return;
@@ -21,6 +23,7 @@ export function abortable<T>(work:Promise<T>,signal:AbortSignal):Promise<T>{
   });
 }
 export interface ProgressOptions {
+  systemLocale?:SystemLocale;
   signal:AbortSignal;
   active:()=>boolean;
   intervalMs?:number;
@@ -66,7 +69,7 @@ export class TaskProgress {
       finally{clearTimeout(timeout);}
       if(!this.active()||Date.now()>=expiresAt)return;
       if(version!==this.version)text=undefined;
-      text??=progressFallback(this.stage);
+      text??=progressFallback(this.stage,this.options.systemLocale);
       await this.options.deliver(text,this.runId,++this.sequence,expiresAt);
       this.previousText=text;
     }catch{/* Reminder errors never change the foreground task's outcome. */}

@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createUI,dateInput,scheduledTime} from '../src/client/ui.js';
-import {chinese} from '../src/client/locale.js';
+import {chinese,english,message,type LocaleKey} from '../src/client/locale.js';
 import {botSettingsFromConfig,botSettingsSchema,configSchema} from '../src/core/types.js';
 
 test('switches expose their state and handle failed actions',async()=>{
@@ -66,19 +66,58 @@ test('an enabled bot in a stopped service shows an off switch that starts the bo
 const flattenPanel=(node:any):any[]=>Array.isArray(node)?node.flatMap(flattenPanel):node&&typeof node==='object'?[node,...(node.children??[]).flatMap(flattenPanel)]:[];
 const settlePanel=()=>new Promise(resolve=>setImmediate(resolve));
 
-function panelHarness(states:any[],respond:(body:any)=>any){
-  let app:any,cursor=0;
-  const React={Fragment:'fragment',createElement:(type:any,props:any,...children:any[])=>({type,props,children}),useState:(initial:any)=>{const i=cursor++;if(!(i in states))states[i]=initial;return[states[i],(value:any)=>{states[i]=typeof value==='function'?value(states[i]):value;}];},useRef:()=>({current:null}),useEffect:()=>{}};
+function panelHarness(states:any[],respond:(body:any)=>any,options:{locale?:'zh'|'en';settingsForm?:any}={}){
+  let app:any,cursor=0,active=options.locale??'zh';
+  const React={Fragment:'fragment',createElement:(type:any,props:any,...children:any[])=>({type,props,children}),useState:(initial:any)=>{const i=cursor++;if(!(i in states))states[i]=initial;return[states[i],(value:any)=>{states[i]=typeof value==='function'?value(states[i]):value;}];},useRef:()=>({current:null}),useEffect:()=>{},useSyncExternalStore:(_subscribe:any,snapshot:any)=>snapshot()};
   const previousWindow=(globalThis as any).window,previousFetch=globalThis.fetch;
-  const locale={getSnapshot:()=>({revision:1}),subscribe:()=>()=>{},register:()=>()=>{},bind:()=>chinese};
-  (globalThis as any).window={__BOT_INTEGRATION__:{endpoint:'http://fixture.invalid',token:'fixture'},__ModuleLoader__:{load:({factory}:any)=>factory(()=>React).apply({locale,effect:(callback:any)=>callback(),slots:{inject:(_slot:any,register:any)=>register(),register:(_meta:any,component:any)=>{app=component;}}})}};
+  const locale={getSnapshot:()=>({revision:1,active}),subscribe:()=>()=>{},register:()=>()=>{},bind:()=>(key:LocaleKey,params?:Record<string,unknown>)=>(active==='en'?english:chinese)(key,params)};
+  (globalThis as any).window={__BOT_INTEGRATION__:{endpoint:'http://fixture.invalid',token:'fixture'},__ModuleLoader__:{load:({factory}:any)=>factory(()=>React).apply({locale,configForms:options.settingsForm?{get:()=>options.settingsForm}:undefined,effect:(callback:any)=>callback(),slots:{inject:(_slot:any,register:any)=>register(),register:(_meta:any,component:any)=>{app=component;}}})}};
   globalThis.fetch=async(_url,init)=>Response.json({result:await respond(JSON.parse(String(init?.body)))});
   return{
     start:async(name:string)=>{await import(new URL('../src/client/index.ts?'+name,import.meta.url).href);},
     render:()=>{cursor=0;return flattenPanel(app());},
+    setLocale:(value:'zh'|'en')=>{active=value;},
     restore:()=>{(globalThis as any).window=previousWindow;globalThis.fetch=previousFetch;},
   };
 }
+
+test('language switching redraws notices and dialogs without rewriting persona drafts',async()=>{
+  const states:any[]=['catalog',{bots:[],configs:[],counts:{pendingDeliveries:0},health:{activeTasks:0}},'','',message('saved'),false,[]];
+  const harness=panelHarness(states,()=>{throw Error('Rendering must not fetch');},{locale:'en'});
+  try{
+    await harness.start('locale-draft');let tree=harness.render();
+    assert.ok(tree.some(n=>n.props?.className==='notice'&&n.children.includes('Saved')));
+    tree.find(n=>n.type==='button'&&n.props?.['aria-label']==='New persona').props.onClick();await settlePanel();
+    assert.equal(states[7].personaPrompt,english('defaultPersonaPrompt'));
+    harness.render().find(n=>n.type==='textarea').props.onChange({target:{value:'User-authored prompt'}});
+    tree=harness.render();tree.find(n=>n.type==='button'&&n.children.includes('Bots')).props.onClick();await settlePanel();
+    assert.equal(harness.render().find(n=>n.props?.role==='dialog').props['aria-label'],english('unsavedChanges'));
+    harness.setLocale('zh');tree=harness.render();
+    assert.equal(tree.find(n=>n.props?.role==='dialog').props['aria-label'],chinese('unsavedChanges'));
+    assert.equal(states[7].personaPrompt,'User-authored prompt');assert.equal(states[8],true);
+    flattenPanel(tree.find(n=>n.props?.role==='dialog')).find(n=>n.type==='button'&&n.children.includes('取消')&&!n.props.disabled).props.onClick();await settlePanel();
+    assert.equal(states[0],'catalog');assert.equal(states[7].personaPrompt,'User-authored prompt');
+  }finally{harness.restore();}
+});
+
+test('global bot message language uses the Host form, stays independent of UI and reports refused saves',async()=>{
+  let snapshot={status:'ready',writable:true,value:{messageLocale:'zh'},revision:1};let accepted=false;const writes:any[]=[];
+  const form={subscribe:()=>()=>{},getSnapshot:()=>snapshot,set:async(field:string,value:string)=>{writes.push({field,value});if(accepted)snapshot={...snapshot,value:{messageLocale:value},revision:snapshot.revision+1};return accepted;}};
+  const states:any[]=['services',{bots:[],configs:[],counts:{pendingDeliveries:0},health:{activeTasks:0,serviceRunning:false}}];
+  const harness=panelHarness(states,()=>{throw Error('Host settings must not use Admin API');},{locale:'en',settingsForm:form});
+  const select=()=>harness.render().find(n=>n.type==='label'&&n.children[0]===english('messageLocale')).children[1];
+  try{
+    await harness.start('global-message-locale');assert.equal(select().props.value,'zh');assert.equal(select().props.disabled,false);
+    select().props.onChange({target:{value:'en'}});await settlePanel();
+    assert.deepEqual(writes,[{field:'messageLocale',value:'en'}]);assert.equal(select().props.value,'zh');
+    assert.ok(harness.render().some(n=>n.props?.role==='alert'&&n.children[0]===english('messageLocaleSaveFailed')));
+    accepted=true;select().props.onChange({target:{value:'en'}});await settlePanel();assert.equal(select().props.value,'en');
+    assert.ok(harness.render().some(n=>n.props?.className==='notice'&&n.children[0]==='Saved'));
+    harness.setLocale('zh');let tree=harness.render();assert.ok(tree.some(n=>n.props?.className==='notice'&&n.children[0]==='已保存'));
+    assert.equal(tree.find(n=>n.type==='label'&&n.children[0]===chinese('messageLocale')).children[1].props.value,'en');
+    snapshot={...snapshot,writable:false};tree=harness.render();assert.equal(tree.find(n=>n.type==='label'&&n.children[0]===chinese('messageLocale')).children[1].props.disabled,true);
+  }finally{harness.restore();}
+});
 
 test('bot page renders creation before data arrives and with no bots, then edits the loaded bot settings',async()=>{
   const states:any[]=['bots',null,'','','',false,null];

@@ -1,4 +1,5 @@
 import type {BotConfig, SessionBinding} from '../types.js';
+import type {MessageDescriptor} from '../../i18n/common.js';
 
 export type PersonaFilesState = 'synced' | 'draft' | 'error';
 
@@ -7,6 +8,7 @@ export interface PersonaStatus {
   directory: string;
   state: PersonaFilesState;
   error?: string;
+  message?: MessageDescriptor;
 }
 
 export interface PersonaDraft {

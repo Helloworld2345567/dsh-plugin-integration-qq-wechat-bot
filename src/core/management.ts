@@ -1,3 +1,4 @@
+import {systemDescriptor,systemMessage,builtinSkillDescription} from '../i18n/system.js';
 import {z} from 'zod';
 import type {BotRuntime} from './runtime.js';
 import type {BotFeatures} from './features.js';
@@ -15,17 +16,17 @@ export const botSessionArgumentsSchema=z.object({
   page:z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   sessionId:z.string().min(1).max(200).regex(/^[a-zA-Z0-9_-]+$/).optional(),
 }).strict().superRefine((value,ctx)=>{
-  if(value.action!=='list'&&value.page!==undefined)ctx.addIssue({code:'custom',message:'page 仅用于 list'});
-  if(value.action==='resume'&&!value.sessionId)ctx.addIssue({code:'custom',message:'resume 需要所属历史会话的 sessionId'});
-  if(value.action!=='resume'&&value.sessionId!==undefined)ctx.addIssue({code:'custom',message:'sessionId 仅作为 resume 目标'});
+  if(value.action!=='list'&&value.page!==undefined)ctx.addIssue({code:'custom',message:'page 仅用于 list',params:{message:systemDescriptor('pageListOnly')}});
+  if(value.action==='resume'&&!value.sessionId)ctx.addIssue({code:'custom',message:'resume 需要所属历史会话的 sessionId',params:{message:systemDescriptor('resumeSessionIdRequired')}});
+  if(value.action!=='resume'&&value.sessionId!==undefined)ctx.addIssue({code:'custom',message:'sessionId 仅作为 resume 目标',params:{message:systemDescriptor('sessionIdResumeOnly')}});
 });
 export const botPersonaArgumentsSchema=z.object({action:z.enum(['list','set']),personaId:idSchema.optional()}).strict().superRefine((value,ctx)=>{
-  if(value.action==='set'&&!value.personaId)ctx.addIssue({code:'custom',message:'set 需要 list 返回的人格 ID'});
-  if(value.action==='list'&&value.personaId!==undefined)ctx.addIssue({code:'custom',message:'list 不接受 personaId'});
+  if(value.action==='set'&&!value.personaId)ctx.addIssue({code:'custom',message:'set 需要 list 返回的人格 ID',params:{message:systemDescriptor('personaSetRequired')}});
+  if(value.action==='list'&&value.personaId!==undefined)ctx.addIssue({code:'custom',message:'list 不接受 personaId',params:{message:systemDescriptor('personaIdListInvalid')}});
 });
 export const botSkillsArgumentsSchema=z.object({action:z.enum(['list','enable','disable']),name:skillNameSchema.optional()}).strict().superRefine((value,ctx)=>{
-  if(value.action!=='list'&&!value.name)ctx.addIssue({code:'custom',message:'启停技能需要准确名称'});
-  if(value.action==='list'&&value.name!==undefined)ctx.addIssue({code:'custom',message:'list 不接受 name'});
+  if(value.action!=='list'&&!value.name)ctx.addIssue({code:'custom',message:'启停技能需要准确名称',params:{message:systemDescriptor('skillNameRequired')}});
+  if(value.action==='list'&&value.name!==undefined)ctx.addIssue({code:'custom',message:'list 不接受 name',params:{message:systemDescriptor('skillNameListInvalid')}});
 });
 export type BotSessionArguments=z.infer<typeof botSessionArgumentsSchema>;
 export type BotPersonaArguments=z.infer<typeof botPersonaArgumentsSchema>;
@@ -74,7 +75,7 @@ export class BotManagement {
   async session(binding:SessionBinding,snapshot:TurnSnapshot,input:unknown,signal:AbortSignal){
     const current=this.current(binding,snapshot,signal);const args=botSessionArgumentsSchema.parse(input);const busResult=await this.busSession(current,snapshot,args,signal);if(busResult)return busResult;const config=this.runtime.effectiveConfig(current);
     switch(args.action){
-      case 'help':return{action:args.action,text:commandHelp(snapshot.trusted&&trusted(this.runtime.repos.bots.bot(current.scope.botId),current.scope),snapshot.config.allowHostTools&&config.allowHostTools)};
+      case 'help':return{action:args.action,text:commandHelp(snapshot.trusted&&trusted(this.runtime.repos.bots.bot(current.scope.botId),current.scope),snapshot.config.allowHostTools&&config.allowHostTools,snapshot.systemLocale)};
       case 'status':return{action:args.action,sessionId:current.sessionId,persona:{id:config.id,name:config.name},model:config.model,modelOverride:!!current.modelOverride,currentTurnPersonaId:snapshot.config.id,currentTurnModel:snapshot.config.model,state:this.runtime.sessionStatus(current.scope)};
       case 'list':{
         const page=args.page??1;const all=this.runtime.repos.sessions.sessions(current.scope);const sessions=all.slice((page-1)*10,page*10).map(record=>({sessionId:record.id,current:record.id===current.sessionId,persisted:record.persisted,createdAt:record.createdAt,updatedAt:record.updatedAt,...record.personaId?{personaId:record.personaId}:{}}));
@@ -98,8 +99,8 @@ export class BotManagement {
       const names=privileged?[...new Set([...config.skills,...Object.keys(packagedSkills),...Object.keys(config.skillVersions)])]:[...config.skills];
       const skills=names.map(name=>{
         const base={name,enabled:config.skills.includes(name),builtin:Object.hasOwn(packagedSkills,name)};
-        try{const item=this.features.skills.list({...config,skills:[name]})[0]!;return{...base,description:item.description,version:item.version,available:true};}
-        catch{return{...base,description:'技能资源当前不可读取。',version:config.skillVersions[name]??null,available:false};}
+        try{const item=this.features.skills.list({...config,skills:[name]})[0]!;return{...base,description:builtinSkillDescription(name,snapshot.systemLocale??'zh')??item.description,version:item.version,available:true};}
+        catch{return{...base,description:systemMessage(snapshot.systemLocale??'zh','skillUnavailable'),version:config.skillVersions[name]??null,available:false};}
       });
       return{action:args.action,personaId:config.id,revision:config.revision,skills};
     }

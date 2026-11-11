@@ -11,6 +11,7 @@ import {ServiceManagement} from '../src/core/service-management.js';
 import {Admin} from '../src/harness/admin.js';
 import {adminCommandRequestSchema,adminQueryRequestSchema} from '../src/harness/admin-contract.js';
 import {configSchema,botSettingsFromConfig} from '../src/core/types.js';
+import {formatDiagnostic} from '../src/i18n/diagnostics.js';
 
 const resources=[
   '.codex/venv/'+(process.platform==='win32'?'Scripts/python.exe':'bin/python'),'scripts/model_catalog.py',
@@ -51,6 +52,19 @@ test('operator settings discover independent strict adapter profiles without cha
   let received:any;const adapter=new GptSovitsServiceAdapter({run:async()=>({})},{check:async config=>{received=config;return true;}});
   assert.equal((await adapter.health(gpt,new AbortController().signal)).state,'ready');assert.equal(received.promptText,'参考文本。');
   assert.equal(JSON.stringify(f.store.personas.configs()),before);assert.doesNotMatch(JSON.stringify(f.profiles.list()),/model\.pth|baseUrl|sourceId|resourceHash|modelsRoot/);
+});
+
+test('model failures preserve structured bilingual reasons and external scanner text',async t=>{
+  const f=await fixture(t),previous=globalThis.fetch;t.after(()=>globalThis.fetch=previous);
+  globalThis.fetch=async()=>Response.json({voices:[]});
+  const rows=models();rows[0].diagnostics=['External scanner detail'] as never[];
+  f.setResult({version:1,models:rows,diagnostics:[]});
+  await rm(path.join(f.project,'models/rvc/voice/v2/model.pth'));
+  const view=await f.save(),model=view.reports.rvc.models[0];
+  assert.equal(model.state,'blocked');assert.ok(model.diagnostics.includes('External scanner detail'));
+  assert.ok(model.diagnosticDetails?.some(item=>item.text==='External scanner detail'&&!item.message));
+  assert.ok(model.diagnosticDetails?.some(item=>formatDiagnostic(item.message,'en')==='Missing or unreadable resource: RVC voice weights.'));
+  assert.match(model.diagnostics.join(' '),/RVC 角色权重/);
 });
 
 test('Breeze voice discovery registers saved voices without requiring the shared model root',async t=>{

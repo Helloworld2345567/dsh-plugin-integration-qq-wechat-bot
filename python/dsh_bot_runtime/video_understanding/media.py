@@ -98,4 +98,4 @@ class MediaProcessor:
         if abs(normalized.duration_seconds - duration) > max(0.25, duration * .01):
             raise VideoError("MEDIA_TRUNCATED")
         return PreparedMedia(target, normalized, probe.duration_seconds, start, end,
-                             ("媒体已转码；时间点为近似定位，画面分辨率可能调整。",))
+                             ("The media was transcoded; timestamps are approximate and the resolution may have changed.",))

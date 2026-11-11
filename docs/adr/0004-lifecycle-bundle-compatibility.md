@@ -1,5 +1,7 @@
 # ADR 0004：主插件与生命周期协调器使用版本化兼容协议
 
+简体中文 | [English](../en/adr/0004-lifecycle-bundle-compatibility.md)
+
 - 状态：已接受
 - 日期：2026-11-04
 

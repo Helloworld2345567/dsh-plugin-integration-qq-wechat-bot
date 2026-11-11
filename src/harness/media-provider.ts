@@ -1,3 +1,4 @@
+import {localizedError} from '../core/errors.js';
 import type {Context} from '@deepseek-ai/cordis';
 import {credentialKey,credentialRef,isCredentialKeySegment} from '@deepseek-ai/dsh-credentials';
 import type {} from '@deepseek-ai/dsh-settings';
@@ -19,7 +20,7 @@ export class HarnessMediaProvider implements AnalysisProvider{
     const options=media[role];
     const provider=config.model?.provider;
     const model=config.model?.model;
-    if(!provider||!model)throw new Error('请选择聊天模型或媒体分析模型');
+    if(!provider||!model)throw localizedError('mediaModelRequired');
     const directory=this.ctx.llm.listConfigurableProviders().find(p=>p.provider===provider);
     if(!directory)throw new Error('MEDIA_PROVIDER_SETTINGS_UNAVAILABLE');
     const section=this.ctx.settings.describe({redactSecrets:true}).find(s=>s.ns===directory.settingsNs);

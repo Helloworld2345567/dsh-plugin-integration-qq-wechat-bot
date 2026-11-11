@@ -1,4 +1,6 @@
 import {z} from 'zod';
+import {messageDescriptorSchema} from './message-contract.js';
+import type {MessageDescriptor} from '../i18n/common.js';
 
 export const serviceErrorCategorySchema=z.enum([
   'NOT_CONFIGURED','DEPENDENCY_UNAVAILABLE','INVALID_INPUT','TIMEOUT','CANCELLED','PROVIDER_ERROR','OUTPUT_INVALID','UNKNOWN_STATE',
@@ -8,6 +10,7 @@ export const serviceErrorSchema=z.object({
   category:serviceErrorCategorySchema,
   providerCode:z.string().regex(/^[A-Za-z0-9_.:-]{1,120}$/).optional(),
   safeDiagnostic:z.string().max(1000).optional(),
+  message:messageDescriptorSchema.optional(),
   retryable:z.boolean(),
   blocksService:z.boolean(),
   correlationId:z.string().regex(/^[A-Za-z0-9_.:-]{1,160}$/).optional(),
@@ -36,9 +39,10 @@ export function sanitizePublicServiceText(value:unknown,fallback='Service inform
 
 export class ServiceContractError extends Error {
   readonly serviceError:ServiceError;
+  readonly localizedMessage?:MessageDescriptor;
   constructor(error:ServiceError,cause?:unknown){
-    const parsed=serviceErrorSchema.parse({...error,safeDiagnostic:error.safeDiagnostic===undefined?undefined:sanitizeServiceDiagnostic(error.safeDiagnostic)});
-    super(parsed.safeDiagnostic??parsed.category,{cause});this.name='ServiceContractError';this.serviceError=parsed;
+    const parsed=serviceErrorSchema.parse({...error,safeDiagnostic:error.safeDiagnostic===undefined?undefined:sanitizeServiceDiagnostic(error.safeDiagnostic),...error.message?{message:sanitizeMessageDescriptor(error.message)}:{}});
+    super(parsed.safeDiagnostic??parsed.category,{cause});this.name='ServiceContractError';this.serviceError=parsed;this.localizedMessage=parsed.message;
   }
 }
 
@@ -51,3 +55,9 @@ export function toServiceError(error:unknown,defaults:Partial<ServiceError>={}):
 }
 
 export function serviceFailure(error:ServiceError,cause?:unknown):never {throw new ServiceContractError(error,cause);}
+
+/** Message parameters cross the same public diagnostic boundary as plain text. */
+export function sanitizeMessageDescriptor(value:unknown):MessageDescriptor|undefined {
+  const parsed=messageDescriptorSchema.safeParse(value);if(!parsed.success)return;
+  return{key:parsed.data.key,...parsed.data.params?{params:Object.fromEntries(Object.entries(parsed.data.params).map(([key,value])=>[key,typeof value==='number'?value:sanitizePublicServiceText(value,'[redacted]')]))}:{}};
+}

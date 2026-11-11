@@ -1,5 +1,6 @@
 import type {RuntimeOwnershipRepository} from '../../core/ports/runtime.js';
 import type {SqliteDatabase} from './database.js';
+import {localizedError} from '../../core/errors.js';
 
 /** Exclusive runtime data directory ownership across Harness consumer instances. */
 export class SqliteRuntimeOwnershipRepository implements RuntimeOwnershipRepository {
@@ -11,7 +12,7 @@ export class SqliteRuntimeOwnershipRepository implements RuntimeOwnershipReposit
         let alive = true;
         try { process.kill(previous.pid, 0); }
         catch (error) { alive = (error as NodeJS.ErrnoException).code !== 'ESRCH'; }
-        if (alive) throw new Error('此数据目录已有活动 Harness 消费实例');
+        if (alive) throw localizedError('runtimeOwnerActive');
       }
       this.database.records.put('runtime', 'owner', {owner, pid:process.pid});
     });

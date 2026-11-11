@@ -1,5 +1,7 @@
 # ADR 0002：仅加载受信适配器并冻结 Profile revision
 
+简体中文 | [English](../en/adr/0002-trusted-adapters-and-profiles.md)
+
 - 状态：已接受
 - 日期：2026-11-03
 

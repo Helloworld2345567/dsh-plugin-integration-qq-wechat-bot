@@ -169,7 +169,7 @@ export class AutomationScheduler {
     if(!force&&Date.now()-latest.timestamp<config.cooldownMinutes*60000)return this.finish(run,'skipped','PROACTIVE_USER_ACTIVE');
     const last=success.at(-1);if(!force&&last&&Date.now()-last.startedAt<config.minIntervalMinutes*60000)return this.finish(run,'skipped','PROACTIVE_MIN_INTERVAL');
     const now=localTime(Date.now(),config.timezone);
-    const prompt=`你是当前会话中的角色。现在是 ${now.date}（${config.timezone}），请根据已有对话自然开启一个新话题，或进行简短关心问候。不要声称未验证的现实经历，不要重复最近主动消息。只输出一条适合继续聊天的中文消息，长度不超过 ${config.maxLength} 字。`;
+    const prompt=`You are the persona in this conversation. It is ${now.date} (${config.timezone}). Naturally introduce a topic based on the conversation or offer a brief thoughtful greeting. Do not claim unverified real-world experiences or repeat recent proactive messages. Output one message suitable for continuing the conversation, in the language requested by the persona and user, no longer than ${config.maxLength} characters.`;
     return this.execute(config,run,prompt,latest);
   }
   async runJob(job:ScheduledJob):Promise<AutomationRun>{

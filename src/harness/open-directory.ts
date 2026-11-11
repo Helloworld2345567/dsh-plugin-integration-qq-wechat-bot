@@ -1,3 +1,4 @@
+import {localizedError} from '../core/errors.js';
 import {execFile,type ExecFileOptions} from 'node:child_process';
 import {realpath,stat} from 'node:fs/promises';
 import path from 'node:path';
@@ -5,7 +6,7 @@ import path from 'node:path';
 export type DirectoryCommand=(command:string,args:string[],options:ExecFileOptions)=>Promise<{stdout:string}>;
 const runCommand:DirectoryCommand=(command,args,options)=>new Promise((resolve,reject)=>{
   execFile(command,args,{...options,encoding:'utf8'},(error,stdout,stderr)=>{
-    if(error){reject(new Error(`打开配置目录失败：${stderr.trim()||error.message}`));return;}
+    if(error){reject(localizedError('openDirectoryFailed',{detail:stderr.trim()||error.message}));return;}
     resolve({stdout});
   });
 });
@@ -39,12 +40,12 @@ try {
 `;
 
 export async function openDirectory(directory:string,run:DirectoryCommand=runCommand,platform:NodeJS.Platform=process.platform):Promise<void> {
-  const target=await realpath(directory);if(!(await stat(target)).isDirectory())throw new Error('配置目录不存在');
+  const target=await realpath(directory);if(!(await stat(target)).isDirectory())throw localizedError('configurationDirectoryMissing');
   const options:ExecFileOptions={shell:false,windowsHide:true,timeout:15000,maxBuffer:64*1024};
   if(platform==='win32'){
     const command=path.win32.join(process.env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
     const {stdout}=await run(command,['-NoProfile','-NonInteractive','-STA','-EncodedCommand',Buffer.from(windowsOpenScript,'utf16le').toString('base64')],{...options,env:{...process.env,BOT_OPEN_DIRECTORY:target}});
     let result;try{result=JSON.parse(stdout.trim().replace(/^\uFEFF/,''));}catch{}
-    if(result?.opened!==true||result.directory!==target)throw new Error('未确认配置目录窗口已打开，请手动打开面板显示的路径');
+    if(result?.opened!==true||result.directory!==target)throw localizedError('directoryWindowUnconfirmed');
   }else await run(platform==='darwin'?'open':'xdg-open',[target],options);
 }

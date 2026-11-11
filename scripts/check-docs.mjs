@@ -49,8 +49,34 @@ function localTarget(raw) {
 
 const failures = [];
 const linkPattern = /!?\[[^\]]*\]\(\s*(?:<([^>\n]+)>|([^\s)\n]+))/g;
+const rootDocuments = new Set(['README', 'CONTRIBUTING', 'SECURITY', 'CODE_OF_CONDUCT', 'CHANGELOG', 'SUPPORT', 'THIRD_PARTY_NOTICES']);
+function languageCounterpart(relative) {
+  if (relative.startsWith('docs/en/')) return `docs/${relative.slice('docs/en/'.length)}`;
+  if (relative.startsWith('docs/')) return `docs/en/${relative.slice('docs/'.length)}`;
+  const rootDocument = /^([^/]+?)(\.en)?\.md$/.exec(relative);
+  if (rootDocument && rootDocuments.has(rootDocument[1])) return `${rootDocument[1]}${rootDocument[2] ? '' : '.en'}.md`;
+  if (/^packages\/[^/]+\/README(?:\.en)?\.md$/.test(relative)) return relative.endsWith('.en.md') ? relative.replace(/\.en\.md$/, '.md') : relative.replace(/\.md$/, '.en.md');
+}
+const markdownPaths = new Set(markdown.map(file => path.relative(root, file).replaceAll('\\', '/')));
+let languagePairs = 0;
 for (const file of markdown) {
   const text = await readFile(file, 'utf8');
+  const relative = path.relative(root, file).replaceAll('\\', '/');
+  const counterpart = languageCounterpart(relative);
+  if (counterpart) {
+    if (!markdownPaths.has(counterpart)) failures.push(`${relative}: missing language counterpart ${counterpart}`);
+    else {
+      const header = text.split(/\r?\n/).slice(0, 8).join('\n');
+      const linked = [...header.matchAll(linkPattern)].some(match => {
+        try {
+          const target = localTarget(match[1] ?? match[2]).target;
+          return path.relative(root, path.resolve(path.dirname(file), target)).replaceAll('\\', '/') === counterpart;
+        } catch { return false; }
+      });
+      if (!header.includes('简体中文') || !header.includes('English') || !linked) failures.push(`${relative}: missing top language navigation to ${counterpart}`);
+      if (relative < counterpart) languagePairs++;
+    }
+  }
   const slugs = headingSlugs(text);
   for (const match of text.matchAll(linkPattern)) {
     const raw = (match[1] ?? match[2]).trim();
@@ -134,5 +160,5 @@ for (const file of workflows) {
   }
 }
 
-console.log(JSON.stringify({status: failures.length ? 'FAIL' : 'PASS', markdownFiles: markdown.length, yamlFiles: workflows.length, failures}, null, 2));
+console.log(JSON.stringify({status: failures.length ? 'FAIL' : 'PASS', markdownFiles: markdown.length, languagePairs, yamlFiles: workflows.length, failures}, null, 2));
 if (failures.length) process.exitCode = 1;

@@ -31,6 +31,14 @@ test('cancelling the model directory picker leaves the draft unchanged',async()=
   assert.equal(await pickDirectory(undefined,run,'win32'),undefined);
 });
 
+test('the native picker uses the requesting UI language independently of global bot language',async()=>{
+  const run:DirectoryPickerCommand=async(_command,_args,options)=>{
+    assert.equal(options.env?.BOT_PICK_DIRECTORY_TITLE,'Choose model directory');
+    return{stdout:JSON.stringify({path:null})};
+  };
+  assert.equal(await pickDirectory(undefined,run,'win32','en'),undefined);
+});
+
 test('model directory picker rejects malformed or inaccessible selections',async t=>{
   const directory=await fixture(t);
   await assert.rejects(pickDirectory(undefined,async()=>({stdout:'not-json'}),'win32'),/无效结果/);

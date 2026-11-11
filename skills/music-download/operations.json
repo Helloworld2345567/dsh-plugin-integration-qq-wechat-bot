@@ -10,7 +10,7 @@
     "permissionTool":"bot_music",
     "tool":{
       "name":"bot_music",
-      "description":"搜索或下载音乐曲库中的真实歌曲。download 按歌名自动选择最高匹配，也可下载此前 search 的候选编号；成功自动登记可发送的完整音频。仅使用宿主启用且验证过的来源，模型不能提供下载URL或路径。",
+      "description":"Search for or download real songs from the music catalog. download selects the highest match by title or downloads a candidate from an earlier search; success automatically registers complete audio suitable for sending. Only host-enabled verified sources are used. The model cannot supply download URLs or paths.",
       "parameters":{
         "action":{"type":"string","enum":["search","download"],"required":true},
         "song":{"type":"string"},

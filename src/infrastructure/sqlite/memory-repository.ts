@@ -1,7 +1,11 @@
+import {storageDescriptor} from '../../i18n/storage.js';
 import type {MemoryRecord, MemoryRepository} from '../../core/ports/memory.js';
 import type {InboxRepository} from '../../core/ports/inbox.js';
-import {ConflictError} from '../../core/errors.js';
+import {ConflictError,LocalizedError} from '../../core/errors.js';
 import type {SqliteDatabase} from './database.js';
+
+const STABLE_PREFERENCE=/^(?:我(?:喜欢|不喜欢|希望|习惯|偏好|叫|是)|请记住|以后|下次|每次|不要再|(?:please\s+)?remember(?:\s+that)?\s+(?:I\b|my\b)|please\s+remember\s+to\s+(?:use|keep|write|reply|respond|answer|avoid)\b|I\s+(?:prefer|like|dislike|love|hate|usually|always|never|(?:do\s+not|don't)\s+like)\b|my\s+name\s+is\b|(?:from\s+now\s+on|in\s+(?:the\s+)?future|next\s+time|every\s+time)[,:]?\s+(?:please\s+)?(?:use|keep|write|reply|respond|answer|avoid|do\s+not|don't)\b|(?:please\s+)?(?:always|never)\s+(?:use|write|reply|respond|answer|include|avoid)\b)/i;
+const EXTERNAL_CONTENT=/(?:网页|转发|引用|工具结果|以下内容|```|https?:\/\/)|(?:^|\n)\s*>|\b(?:quoted\s+(?:text|message)|forwarded(?:\s+message)?|tool\s+(?:result|output)|(?:webpage|website)\s+(?:says|said)|(?:here is|the following is)\s+(?:a\s+)?quote|said|says|wrote)\s*:/i;
 
 /**
  * Long-term preferences.  A remembered value must be quoted verbatim from a
@@ -10,10 +14,10 @@ import type {SqliteDatabase} from './database.js';
 export class SqliteMemoryRepository implements MemoryRepository {
   constructor(private readonly database: SqliteDatabase, private readonly inbox: () => InboxRepository) {}
   remember(scope: string, key: string, value: string, source: string, quote: string): void {
-    if (!key.trim() || key.length > 100 || value.length > 500) throw new Error('记忆长度无效');
+    if (!key.trim() || key.length > 100 || value.length > 500) throw new LocalizedError(storageDescriptor('memoryLength'),'记忆长度无效');
     const input = this.inbox().source(scope, source);
-    if (!input || !quote.trim() || !input.text.split(/\r?\n/).some(line => line.trim() === quote.trim()) || !/^(?:我(?:喜欢|不喜欢|希望|习惯|偏好|叫|是)|请记住|以后|下次|每次|不要再)/.test(quote.trim()) || /(?:网页|转发|引用|工具结果|以下内容|```|https?:\/\/)/.test(input.text)) throw new Error('记忆必须来自用户本人表达的稳定偏好，并提供完整原文行');
-    if (this.database.db.prepare("SELECT 1 FROM forgotten WHERE scope=? AND source=? AND key IN (?, '*')").get(scope, source, key)) throw new Error('该来源的记忆已被删除或更正');
+    if (!input || !quote.trim() || !input.text.split(/\r?\n/).some(line => line.trim() === quote.trim()) || !STABLE_PREFERENCE.test(quote.trim()) || EXTERNAL_CONTENT.test(input.text)) throw new LocalizedError(storageDescriptor('memorySourceRequired'),'记忆必须来自用户本人表达的稳定偏好，并提供完整原文行');
+    if (this.database.db.prepare("SELECT 1 FROM forgotten WHERE scope=? AND source=? AND key IN (?, '*')").get(scope, source, key)) throw new LocalizedError(storageDescriptor('memorySourceForgotten'),'该来源的记忆已被删除或更正');
     this.database.db.prepare('INSERT OR IGNORE INTO memory_sources VALUES(?,?,?)').run(scope, key, source);
     this.database.db.prepare('INSERT INTO memory VALUES(?,?,?,?,?,1,0,?) ON CONFLICT(scope,key) DO UPDATE SET value=excluded.value,source=excluded.source,quote=excluded.quote,version=memory.version+1,deleted=0,updated=excluded.updated').run(scope, key, value, source, quote, Date.now());
   }

@@ -12,6 +12,8 @@ import {freezeTurn,allowedNow} from '../src/core/policy.js';
 import {Admin} from '../src/harness/admin.js';
 import {fixtureChannels} from './test-channel.js';
 import {installFailingPersonaTrigger,seedAppliedConfig} from './sqlite-fixtures.js';
+import {LocalizedError} from '../src/core/errors.js';
+import {formatStorageMessage} from '../src/i18n/storage.js';
 
 function fixture(t:any){
   const root=mkdtempSync(path.resolve('.codex/personas-test-'));const home=path.join(root,'storages','bot-integration');const store=new SqlitePersistence(home);
@@ -25,6 +27,16 @@ function fixture(t:any){
   t.after(()=>runtime.close());
   return{root,home,store,folder,settings,edit,runtime,cancellations:()=>cancellations};
 }
+
+test('persona file diagnostics retain descriptors through status and keep legacy Chinese errors',t=>{
+  const f=fixture(t);
+  assert.throws(()=>f.store.personaFiles.directory('con'),error=>error instanceof LocalizedError&&error.message==='人格 ID 不能使用系统保留名称'&&formatStorageMessage(error.localizedMessage,'en')==='The persona ID cannot be a reserved system name.');
+  rmSync(path.join(f.folder,'persona.md'));
+  const status=f.store.personas.personaStatus('sakura');
+  assert.equal(status.state,'error');
+  assert.equal(status.error,'人格目录必须同时包含 config.json 和 persona.md');
+  assert.equal(formatStorageMessage(status.message,'en'),'The persona directory must contain both config.json and persona.md.');
+});
 
 test('existing applied configurations export once at the product root, preserving revisions, history and sessions',_t=>{
   const root=mkdtempSync(path.resolve('.codex/personas-migration-'));const home=path.join(root,'storages','bot-integration');mkdirSync(home,{recursive:true});

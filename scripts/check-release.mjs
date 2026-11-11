@@ -28,6 +28,8 @@ async function declaredMarkdown(directory='docs'){
   }return result;
 }
 for(const document of await declaredMarkdown())if(!files.includes(document))throw new Error(`Declared documentation missing from npm pack: ${document}`);
+for(const stem of ['README','CONTRIBUTING','SECURITY','CODE_OF_CONDUCT','CHANGELOG','SUPPORT','THIRD_PARTY_NOTICES'])for(const suffix of ['.md','.en.md'])if(!files.includes(`${stem}${suffix}`))throw new Error(`Missing bilingual project document: ${stem}${suffix}`);
+for(const document of ['packages/bot-lifecycle/README.md','packages/bot-lifecycle/README.en.md'])if(!files.includes(document))throw new Error(`Missing lifecycle documentation: ${document}`);
 for(const file of files)if(isReleaseTextFile(file)){const text=await readFile(file,'utf8');const findings=scanReleaseText(file,text);if(findings.length)throw new Error(`Sensitive release content in ${file}: ${findings.join(', ')}`);}
 if(files.includes('.env.example')){
   const example=await readFile('.env.example','utf8');
@@ -46,7 +48,7 @@ for(const expected of ['python/rvc_service.py','python/rvc_runner.py','python/ds
 for(const expected of ['docs/singing-conversion-plan.md'])if(!files.includes(expected))throw new Error(`Missing STS documentation: ${expected}`);
 for(const expected of ['python/dsh_bot_runtime/audio_output.py','skills/music-download/SKILL.md','skills/music-download/operations.json','python/dsh_bot_runtime/skills/music_download/entry.py','docs/music-integration.md'])if(!files.includes(expected))throw new Error(`Missing music runtime file: ${expected}`);
 for(const expected of ['docs/install-existing-harness.md','docs/deploy-product-profile.md','docs/adr/0001-delivery-modes.md','docs/adr/0002-trusted-adapters-and-profiles.md','docs/adr/0003-lifecycle-and-uncertain-outcomes.md','docs/adr/0004-lifecycle-bundle-compatibility.md'])if(!files.includes(expected))throw new Error(`Missing delivery or architecture decision document: ${expected}`);
-for(const expected of ['locale/zh.json','icon.svg','packages/bot-lifecycle/locale/zh.json','packages/bot-lifecycle/icon.svg'])if(!files.includes(expected))throw new Error(`Missing plugin display resource: ${expected}`);
+for(const expected of ['locale/zh.json','locale/en.json','icon.svg','packages/bot-lifecycle/locale/zh.json','packages/bot-lifecycle/locale/en.json','packages/bot-lifecycle/icon.svg'])if(!files.includes(expected))throw new Error(`Missing plugin display resource: ${expected}`);
 for(const expected of ['packages/bot-lifecycle/src/index.ts','packages/bot-lifecycle/src/coordinator.ts','packages/bot-lifecycle/src/contract/protocol.ts','packages/bot-lifecycle/src/contract/compatibility.mjs','packages/bot-lifecycle/scripts/build.mjs','packages/bot-lifecycle/scripts/verify-build.mjs','packages/bot-lifecycle/dist/lifecycle-build.json'])if(!files.includes(expected))throw new Error(`Missing lifecycle source, contract or build evidence: ${expected}`);
 if(files.includes('docs/capability-service-plugin-plan.md'))throw new Error('Removed implementation plan returned to the package');
 if(files.includes('fix_plan.md')||files.some(file=>/(?:^|\/)(?:node_modules|\.codex|\.runtime|outputs|coverage|data|artifacts|tests?|fixtures?)(?:\/|$)/i.test(file)))throw new Error('Runtime, test, temporary or ignored file returned to the package');

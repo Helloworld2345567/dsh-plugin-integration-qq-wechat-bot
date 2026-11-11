@@ -1,5 +1,7 @@
 # Service Adapter ABI v1 威胁模型
 
+简体中文 | [English](en/service-adapter-abi-threat-model.md)
+
 本文是第三方 Service Adapter ABI v1 的安全审计基线。ABI 是宿主与受控子进程之间的序列化协议；内部 TypeScript `ServiceAdapter` 仍只是宿主实现细节。
 
 ## 资产与信任边界

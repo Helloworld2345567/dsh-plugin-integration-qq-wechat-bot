@@ -1,3 +1,5 @@
+import {localizedError} from './errors.js';
+import {diagnostic} from '../i18n/diagnostics.js';
 import {createHash,randomUUID} from 'node:crypto';
 import {existsSync,lstatSync,mkdirSync,readFileSync,readdirSync,renameSync,writeFileSync} from 'node:fs';
 import path from 'node:path';
@@ -8,11 +10,11 @@ import {packageRoot} from './paths.js';
 import type {BotConfig} from './types.js';
 
 export const packagedSkills:Readonly<Record<string,string>>={
-  'image-generation':'生成或参考图编辑，继承 skill 环境配置，成功自动回传',
-  'media-analysis':'通过受管脚本识别音频、分析视频，复用原生模型提供商',
-  'voice-generation':'按用户要求生成并发送 AI 语音',
-  'singing-conversion':'通过人声分离和独立 RVC 角色模型转换歌曲或人声音频',
-  'music-download':'搜索歌曲、选择真实候选并下载音乐，可将歌曲交给音色转换',
+  'image-generation':'Generate images or edit reference images using the skill environment; return successful results automatically',
+  'media-analysis':'Transcribe audio and analyze video through managed scripts using native model providers',
+  'voice-generation':'Generate and deliver AI speech when requested by the user',
+  'singing-conversion':'Convert songs or vocals using vocal separation and independent RVC voice models',
+  'music-download':'Search for songs, select real candidates, download music, and pass songs to voice conversion',
 };
 const nameSchema=z.string().min(1).max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 const reserved=/^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i;
@@ -78,7 +80,7 @@ export class DynamicSkills {
   stageFiles(config:BotConfig,name:string,files:SkillFile[]):BotConfig {
     nameSchema.parse(name);if(Object.hasOwn(packagedSkills,name))throw new Error('BUILTIN_SKILL_REQUIRES_CODE_UPDATE');
     const folder=this.draft(config.id,name);const before=existsSync(folder)?readTree(folder):undefined;
-    if(before&&fingerprint(before)!==config.skillVersions?.[name])throw new Error('SKILL_DRAFT_CONFLICT: 请先应用或保留现有文件草稿');
+    if(before&&fingerprint(before)!==config.skillVersions?.[name])throw localizedError('skillDraftApply');
     const tree:Tree=new Map();const used=new Set<string>();let total=0;
     if(!files.length||files.length>200)throw new Error('SKILL_FILE_LIMIT');
     for(const file of files){const p=relative(file.path);if(used.has(p.toLowerCase()))throw new Error('SKILL_CASE_COLLISION');used.add(p.toLowerCase());const data=Buffer.from(file.content);total+=data.length;if(data.length>2*1024*1024||total>10*1024*1024)throw new Error('SKILL_SIZE_LIMIT');tree.set(p,data);}
@@ -97,14 +99,14 @@ export class DynamicSkills {
     return fingerprint(trees);
   }
   assertDrafts(config:BotConfig):void {
-    for(const name of readdirSync(this.draftRoot(config.id))){nameSchema.parse(name);if(fingerprint(readTree(this.draft(config.id,name)))!==config.skillVersions[name])throw Error('SKILL_DRAFT_CHANGED: 技能文件在校验期间发生变化');}
+    for(const name of readdirSync(this.draftRoot(config.id))){nameSchema.parse(name);if(fingerprint(readTree(this.draft(config.id,name)))!==config.skillVersions[name])throw localizedError('skillDraftChanged');}
   }
   /** Restore only untouched drafts; a manual edit is never silently overwritten. */
   restoreDrafts<T>(before:BotConfig,after:BotConfig,commit:()=>T):T {
     const changes:Array<{name:string;folder:string;archive?:string;staged?:string;installed?:boolean;tree?:Tree;version?:string}>=[];
     for(const name of new Set([...Object.keys(before.skillVersions),...Object.keys(after.skillVersions)])){
       if(before.skillVersions[name]===after.skillVersions[name])continue;
-      const folder=this.draft(after.id,name);if(existsSync(folder)&&fingerprint(readTree(folder))!==after.skillVersions[name])throw Error('SKILL_DRAFT_CONFLICT: 回退前请保留或处理手工修改');
+      const folder=this.draft(after.id,name);if(existsSync(folder)&&fingerprint(readTree(folder))!==after.skillVersions[name])throw localizedError('skillDraftRollback');
       const version=before.skillVersions[name];changes.push({name,folder,version,tree:version?readTree(this.publishedRoot(before.id,name,version)):undefined});
     }
     const archive=path.join(this.home,'skill-draft-archives');directory(archive);
@@ -123,13 +125,13 @@ export class DynamicSkills {
         if(!change.archive&&!change.installed)continue;
         try{
           if(existsSync(change.folder)){
-            if(!change.installed||fingerprint(readTree(change.folder))!==change.version)throw Error('SKILL_ROLLBACK_CONFLICT: 已保留现场及归档');
+            if(!change.installed||fingerprint(readTree(change.folder))!==change.version)throw localizedError('skillRollbackConflict');
             renameSync(change.folder,path.join(archive,randomUUID()));
           }
           if(change.archive)renameSync(change.archive,change.folder);
         }catch(conflict){conflicts.push(conflict);}
       }
-      if(conflicts.length)throw new AggregateError([error,...conflicts],'SKILL_ROLLBACK_CONFLICT: 已保留现场及归档');
+      if(conflicts.length)throw Object.assign(new AggregateError([error,...conflicts],'SKILL_ROLLBACK_CONFLICT: 已保留现场及归档'),{localizedMessage:diagnostic('skillRollbackConflict')});
       throw error;
     }
   }

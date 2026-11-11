@@ -1,3 +1,4 @@
+import type {SystemLocale} from '../src/i18n/common.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -10,14 +11,14 @@ import {botSchema,type CallerScope,type Delivery} from '../src/core/types.js';
 import {fixtureChannels} from './test-channel.js';
 
 const scope:CallerScope={botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'owner',senderId:'owner'};
-async function fixture(t:any){
+async function fixture(t:any,locale:()=>SystemLocale=()=> 'zh'){
   const directory=await mkdtemp(path.resolve('.codex/automation-runtime-')),store=new SqlitePersistence(directory),assets=new Assets(store.repositories());
   store.bots.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',accountId:'account',configId:'sakura',enabled:true,trustedUsers:['owner']}));
   store.inbox.accept({id:'context',scope,text:'我们刚聊过天',attachments:[],timestamp:Date.now()-3600000,reply:{target:'owner',kind:'private',msgId:'old'},replyEnvelope:{channelId:'qq',version:1,payload:{target:'owner',kind:'private',msgId:'old'}}});store.inbox.mark(scopeKey(scope),['context'],'complete');
   const sent:Delivery[]=[];
   const harness:HarnessPort={run:async(_b,_m,_s,options)=>({turnId:'background',outputs:[{type:'text',text:'晚安'}],snapshot:options!.snapshot!}),cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async()=>{}};
   const adapter={beginLogin:async()=>({status:'pending' as const}),pollLogin:async()=>({status:'expired' as const}),connect:async()=>{},materialize:async()=>Buffer.alloc(0),send:async(_b:any,_c:any,delivery:Delivery)=>{sent.push(delivery);return'receipt';}};
-  const runtime=new BotRuntime(store.repositories(),assets,new MediaService(store.repositories(),assets),harness,fixtureChannels(adapter),{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}},60000);
+  const runtime=new BotRuntime(store.repositories(),assets,new MediaService(store.repositories(),assets),harness,fixtureChannels(adapter),{read:async()=>({accountId:'account'}),write:async()=>{},remove:async()=>{}},60000,0,undefined,locale);
   t.after(async()=>{await runtime.close();store.close();await rm(directory,{recursive:true,force:true});});
   return{runtime,store,harness,sent};
 }
@@ -66,4 +67,13 @@ test('manual proactive command queues behind its own command instead of rejectin
   assert.match(f.sent[0].output.text!,/已排队/);
   t.mock.timers.tick(1);await f.runtime.automation.drain();
   assert.equal(f.sent[1].output.text,'晚安');assert.equal(f.store.automation.listRuns('proactive')[0].state,'succeeded');
+});
+
+test('each automatic execution captures the latest global language without rewriting its prompt',async t=>{
+  let locale:SystemLocale='en';const f=await fixture(t,()=>locale);const captured:Array<SystemLocale|undefined>=[];
+  f.harness.run=async(_binding,messages,_signal,options)=>{captured.push(options!.snapshot!.systemLocale);assert.equal(messages[0].text,'Preserve this user task');return{turnId:`auto-${captured.length}`,outputs:[{type:'text',text:'User-language output'}],snapshot:options!.snapshot!};};
+  const job=f.runtime.automation.createJob(scope,'Preserve this user task',{intervalMs:60000});
+  assert.equal((await f.runtime.automation.runJob(job)).state,'succeeded');locale='zh';
+  assert.equal((await f.runtime.automation.runJob(f.runtime.automation.listJobs().find(item=>item.id===job.id)!)).state,'succeeded');
+  assert.deepEqual(captured,['en','zh']);assert.equal(f.runtime.automation.listJobs().find(item=>item.id===job.id)!.prompt,'Preserve this user task');
 });

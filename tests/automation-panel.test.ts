@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {AutomationPanel} from '../src/client/automation.js';
+import {renderText,type DisplayText} from '../src/client/locale.js';
 
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 function mount(overrides:Record<string,any>={}){
@@ -27,7 +28,7 @@ test('automation refreshes on re-entry and after persona binding changes',async(
 
 test('successful creation followed by refresh failure cannot resubmit the same form',async()=>{
   let failRead=false,creates=0;const errors:string[]=[];const messages:string[]=[];
-  const m=mount({query:async()=>{if(failRead)throw Error('网络不可用');return snapshot();},mutate:async(action:string,input:any,message:string)=>{assert.equal(action,'automation.schedule');assert.equal(input.scopeKey,'scope');assert.equal(JSON.parse(input.args).prompt,'只创建一次');creates++;messages.push(message);failRead=true;},onError:(e:string)=>errors.push(e)});
+  const m=mount({query:async()=>{if(failRead)throw Error('网络不可用');return snapshot();},mutate:async(action:string,input:any,message:DisplayText)=>{assert.equal(action,'automation.schedule');assert.equal(input.scopeKey,'scope');assert.equal(JSON.parse(input.args).prompt,'只创建一次');creates++;messages.push(renderText(message));failRead=true;},onError:(e:DisplayText)=>errors.push(renderText(e))});
   m.render();await settle();let nodes=m.render();nodes.find(n=>n.type==='button'&&n.children.includes('新建')).props.onClick();await settle();nodes=m.render();
   nodes.find(n=>n.type==='textarea').props.onChange({target:{value:'只创建一次'}});nodes=m.render();
   nodes.find(n=>n.type==='button'&&n.children.includes('创建')).props.onClick();await settle();nodes=m.render();

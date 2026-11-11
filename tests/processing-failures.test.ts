@@ -26,7 +26,7 @@ test('attachment download failure sends an explicit durable failure instead of s
   assert.equal(store.deliveries.deliveries(['sent'])[0].sourceId,message.id);
   const failure=store.failures.failures()[0];assert.equal(failure.stage,'attachments');assert.deepEqual(failure.sourceIds,[message.id]);
   const followup={...message,id:'followup',text:'调用失败了吗',attachments:[],timestamp:failure.at!+1};
-  const binding=store.sessions.binding(scope);const context=recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup]);assert.match(context!,/未生成新图片/);assert.match(context!,/参考此图/);
+  const binding=store.sessions.binding(scope);const context=recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup]);assert.match(context!,/no new image was generated/);assert.match(context!,/参考此图/);
   assert.equal(recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},{...binding,sessionId:'different-session'},[followup]),undefined);
   assert.equal(recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},{...binding,key:'different-scope'},[followup]),undefined);
   assert.equal(recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup],failure.at!+600001),undefined);
@@ -89,10 +89,10 @@ test('historical delivery failure context yields to accepted outputs but not to 
   const failure={sessionId:binding.sessionId,scope:binding.key,state:'failed',stage:'delivery',sourceIds:[source.id],at:now-100,code:'FLUSH_FAILED'};store.failures.saveFailure('historical',failure);
   const followup={...source,id:'followup',timestamp:now};
   store.deliveries.enqueue(binding,source.id,'failure:original',[{type:'text',text:'could not process'}],{});store.deliveries.deliveryState(store.deliveries.deliveries()[0],'sent','failure-receipt');
-  assert.match(recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup],now)!,/发送状态未确认/);
+  assert.match(recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup],now)!,/delivery status is unconfirmed/);
   store.deliveries.enqueue(binding,source.id,'model-turn',[{type:'text',text:'result'},{type:'text',text:'second chunk'}],{});const [output,second]=store.deliveries.deliveries(['pending']);
-  assert.match(recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup],now)!,/发送状态未确认/);
-  store.deliveries.deliveryState(output,'sent','result-receipt');assert.match(recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup],now)!,/发送状态未确认/,'a partial send cannot supersede a delivery failure');
+  assert.match(recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup],now)!,/delivery status is unconfirmed/);
+  store.deliveries.deliveryState(output,'sent','result-receipt');assert.match(recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup],now)!,/delivery status is unconfirmed/,'a partial send cannot supersede a delivery failure');
   store.deliveries.deliveryState(second,'sent','second-receipt');assert.equal(recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup],now),undefined,'successful original output supersedes stale delivery failure');
 });
 
@@ -104,7 +104,7 @@ test('uncertain delivery state is visible to the next turn without triggering a 
   const source:InboundMessage={id:'unknown-image',scope,text:'生成一张图片',attachments:[],reply:{},timestamp:now-100};store.inbox.accept(source);
   store.deliveries.enqueue(binding,source.id,'image-turn',[{type:'asset',assetId:'asset-one'}],{});const delivery=store.deliveries.deliveries()[0];store.deliveries.deliveryState(delivery,'unknown',undefined,'receipt lost');
   const followup={...source,id:'ask-status',text:'图片发来了吗',timestamp:now};const context=recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup],Date.now()+1);
-  assert.match(context!,/平台投递状态未知/);assert.match(context!,/asset-one/);assert.match(context!,/不要自行重复发送/);assert.match(context!,/已排队说成已送达/);
+  assert.match(context!,/Platform delivery status is unknown/);assert.match(context!,/asset-one/);assert.match(context!,/Do not resend automatically/);assert.match(context!,/queued does not mean delivered/);
 });
 
 for(const phase of ['prepare','upload'] as const)test(`failed ${phase} rejection is described as unsubmitted rather than possibly delivered`,async t=>{
@@ -115,8 +115,8 @@ for(const phase of ['prepare','upload'] as const)test(`failed ${phase} rejection
   store.deliveries.enqueue(binding,source.id,'voice-turn',[{type:'asset',assetId:'long-audio'}],{});const delivery=store.deliveries.deliveries()[0];
   store.deliveries.deliveryState({...delivery,attempt:{number:1,phase,assetId:'long-audio',startedAt:now-50}},'failed',undefined,'REMOTE_HTTP_400');
   const context=recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[{...source,id:'followup',text:'没有收到语音',timestamp:now}],Date.now()+1)!;
-  assert.match(context,/消息尚未提交，未送达/);assert.match(context,/等待用户明确要求重试/);assert.match(context,/long-audio/);
-  assert.doesNotMatch(context,/可能已经送达|队列继续处理|自动重试/);assert.equal(store.deliveries.deliveries()[0].state,'failed');
+  assert.match(context,/message was not committed or delivered/);assert.match(context,/Wait for an explicit user retry request/);assert.match(context,/long-audio/);
+  assert.doesNotMatch(context,/may already have arrived|queue will continue|automatically retry/);assert.equal(store.deliveries.deliveries()[0].state,'failed');
 });
 
 for(const phase of ['prepare','upload'] as const)test(`crash recovery with a persisted ${phase} snapshot remains unknown`,async t=>{
@@ -128,8 +128,8 @@ for(const phase of ['prepare','upload'] as const)test(`crash recovery with a per
   store.deliveries.deliveryState({...delivery,attempt:{number:1,phase,assetId:'long-audio',startedAt:now-50}},'sending');
   store.recover();
   const context=recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[{...source,id:'followup',text:'没有收到语音',timestamp:now}],Date.now()+1)!;
-  assert.match(context,/平台投递状态未知，尚未确认送达/);assert.match(context,/可能已经送达，不要自行重复发送/);assert.match(context,/long-audio/);
-  assert.doesNotMatch(context,/消息尚未提交|未送达|队列继续处理|自动重试/);assert.equal(store.deliveries.deliveries()[0].state,'unknown');
+  assert.match(context,/Platform delivery status is unknown and receipt is unconfirmed/);assert.match(context,/may already have arrived. Do not resend automatically/);assert.match(context,/long-audio/);
+  assert.doesNotMatch(context,/message was not committed|not delivered|queue will continue|automatically retry/);assert.equal(store.deliveries.deliveries()[0].state,'unknown');
 });
 
 test('failed delivery context asks for explicit recovery instead of promising a background retry',async t=>{
@@ -139,7 +139,7 @@ test('failed delivery context asks for explicit recovery instead of promising a 
   const source:InboundMessage={id:'original',scope,text:'发送音频',attachments:[],reply:{},timestamp:now-100};store.inbox.accept(source);
   store.deliveries.enqueue(binding,source.id,'voice-turn',[{type:'asset',assetId:'audio'}],{});store.deliveries.deliveryState(store.deliveries.deliveries()[0],'failed',undefined,'DELIVERY_PREPARATION_FAILED');
   const context=recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[{...source,id:'followup',timestamp:now}],Date.now()+1)!;
-  assert.match(context,/平台投递失败，未送达/);assert.match(context,/等待用户明确要求重试/);assert.doesNotMatch(context,/队列继续处理|自动重试/);
+  assert.match(context,/Platform delivery failed and the message was not delivered/);assert.match(context,/Wait for an explicit user retry request/);assert.doesNotMatch(context,/queue will continue|automatically retry/);
 });
 
 
@@ -153,5 +153,5 @@ test('failed progress never enters model failure context or masks a failed resul
   const delivery=store.deliveries.deliveries()[0];store.deliveries.deliveryState(delivery,'unknown',undefined,'receipt lost');const followup={...source,id:'followup',text:'结果呢'};
   assert.equal(recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup]),undefined);
   store.deliveries.deliveryState(delivery,'sent','receipt');store.failures.saveFailure('failed-result',{sessionId:binding.sessionId,scope:binding.key,state:'failed',stage:'delivery',sourceIds:[source.id],at:now,code:'RESULT_FAILED'});
-  assert.match(recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup])!,/发送状态未确认/);
+  assert.match(recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup])!,/delivery status is unconfirmed/);
 });

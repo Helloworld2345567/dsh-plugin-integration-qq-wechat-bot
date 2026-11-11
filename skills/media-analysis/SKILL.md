@@ -1,58 +1,58 @@
 ---
 name: media-analysis
-description: 分析和下载音视频及图片；快速并发转换、压缩、缩小图片，将完整视频分段并发转为10MB以下GIF，通过受管脚本交付附件。
+description: Analyze and download audio, video and images; concurrently convert, compress and resize images, and convert complete videos into GIFs below 10 MB through managed attachment tools.
 ---
 
-需要理解音视频，或下载链接中的原图、图集、视频时使用。统一调用 `media_analysis`；已有图片、扫描页的内容理解直接交给聊天模型。
+Use this skill to understand audio/video or download original images, galleries and videos from links. Call `media_analysis`; send existing images and scanned pages directly to the chat model for visual understanding.
 
-已有附件的转换、压缩和缩放调用独立的 `media_transform`，无需模型服务或密钥。每次处理一个附件，可同时发起多个调用；工具根据机器 CPU 分配执行槽位并排队，勿为提高并发绕过工具自行启动脚本。
+Use the separate `media_transform` for attachment conversion, compression and resizing. No model service or key is required. Each call handles one attachment and multiple calls may run concurrently. The tool assigns CPU execution slots and queues work; do not bypass it by starting scripts to increase concurrency.
 
-## 本地转换
+## Local conversion
 
-- 转换格式：`media_transform(operation="image_convert", inputs=["附件ID"], format="webp")`。支持 `jpeg`、`png`、`webp`、`avif`。
-- 压缩图片：`media_transform(operation="image_compress", inputs=["附件ID"], format="jpeg", quality=70, maxBytes=1000000)`。
-- 缩小尺寸：`media_transform(operation="image_resize", inputs=["附件ID"], maxWidth=1280, maxHeight=1280, format="webp")`。
-- 完整视频转 GIF：`media_transform(operation="convert_gif", inputs=["视频附件ID"])`。
-- 明确指定的片段：`media_transform(operation="convert_gif", inputs=["视频附件ID"], startSeconds=10, durationSeconds=20, fps=15, maxWidth=640)`。
+- Convert format: `media_transform(operation="image_convert", inputs=["attachment-id"], format="webp")`. Supported formats: `jpeg`, `png`, `webp`, `avif`.
+- Compress an image: `media_transform(operation="image_compress", inputs=["attachment-id"], format="jpeg", quality=70, maxBytes=1000000)`.
+- Resize down: `media_transform(operation="image_resize", inputs=["attachment-id"], maxWidth=1280, maxHeight=1280, format="webp")`.
+- Convert a complete video to GIF: `media_transform(operation="convert_gif", inputs=["video-attachment-id"])`.
+- An explicitly requested excerpt: `media_transform(operation="convert_gif", inputs=["video-attachment-id"], startSeconds=10, durationSeconds=20, fps=15, maxWidth=640)`.
 
-图片操作可组合格式、质量和尺寸参数，一次解码完成；默认质量 80，保持比例且不放大。`image_resize` 必须提供至少一个尺寸；未选输出格式时保留受支持的源格式，其余静态格式转 JPEG。PNG 使用快速无损编码；JPEG 使用白底，其他格式保留透明度。`maxBytes` 是图片成品上限，最多尝试四次；降质量后仍超限会缩小尺寸，未达到则失败。
+Image operations can combine format, quality and dimensions in one decode. Quality defaults to 80, aspect ratio is preserved, and images are not upscaled. `image_resize` requires at least one dimension. When no output format is selected, preserve a supported source format; convert other static formats to JPEG. PNG uses fast lossless encoding; JPEG uses a white background, while other formats preserve transparency. `maxBytes` caps the final image, with at most four attempts. If quality reduction is insufficient, reduce dimensions; fail if the cap still cannot be met.
 
-GIF 默认保留整段视频，12 fps、最长边 480 像素。只有用户明确指定片段时才传起点或时长。长视频在至少两个可用槽位且时长达到 30 秒时，约每 15 秒分段并发编码，随后复制 GIF 帧块合并，无完整二次编码。最终文件严格小于 **10,000,000 字节**；超限最多四轮降低尺寸、颜色数和高于 12 的帧率，始终保留所选时长，最低 12 fps。GIF 不接受 `maxBytes`。音轨不属于 GIF 内容。
+GIF defaults preserve the full video at 12 fps with a longest edge of 480 pixels. Supply a start time or duration only for an explicitly requested excerpt. For videos at least 30 seconds long with at least two available slots, encoding runs concurrently in segments of roughly 15 seconds, followed by GIF frame-block merging without a full second encode. The final file must be strictly below **10,000,000 bytes**. At most four rounds reduce dimensions, color count and frame rates above 12, always preserving the selected duration and a minimum of 12 fps. GIF does not accept `maxBytes`. Audio is not part of GIF output.
 
-结果报告实际格式、尺寸、体积、尝试次数和耗时；GIF 另报时段范围、帧率、颜色数、分段数、实际并发和合并耗时。成功会自动登记附件；无需再次登记同一文件。兼容入口 `bot_media(operation="convert_gif", ...)` 使用相同限制和完整时长默认值。
+Results report actual format, dimensions, size, attempts and elapsed time. GIF also reports the time range, frame rate, color count, segment count, actual concurrency and merge duration. Success automatically registers attachments; do not register the same file again. The compatibility entry `bot_media(operation="convert_gif", ...)` has the same limits and full-duration default.
 
-## 调用
+## Calls
 
-- 语音转写：`media_analysis(kind="audio", inputs=["本会话附件ID"], question="忠实转写")`。已有平台转写时先用现有文字。
-- 视频链接分析：`media_analysis(kind="video", url="https://v.douyin.com/…/", question="这个视频讲了什么？")`。支持抖音/B站作品地址及分享短链 `v.douyin.com`、`b23.tv`。从分享文案提取 HTTPS 链接；不要用网页摘要代替视频分析。抖音 `note`/`slides` 图文链接应使用 `kind="image"`。
-- 视频附件分析：`media_analysis(kind="video", inputs=["本会话附件ID"], question="…")`。音视频不填来源时选择同会话最近的同类附件。
-- 下载链接原图：`media_analysis(kind="image", url="https://…")`。支持抖音图集、B站图文、图片直链及公开网页图片。
-- 只下载视频：`media_analysis(kind="video", action="download", url="https://…")`。返回视频附件，不调用分析模型。
+- Transcribe speech: `media_analysis(kind="audio", inputs=["current-session-attachment-id"], question="Transcribe faithfully")`. Use an existing platform transcription first when available.
+- Analyze a video link: `media_analysis(kind="video", url="https://v.douyin.com/…/", question="What happens in this video?")`. Supports Douyin/Bilibili post URLs and share links on `v.douyin.com`/`b23.tv`. Extract the HTTPS URL from shared text. Do not substitute a web-page summary for video analysis. Douyin `note`/`slides` gallery links require `kind="image"`.
+- Analyze a video attachment: `media_analysis(kind="video", inputs=["current-session-attachment-id"], question="…")`. With no source, audio/video requests select the latest same-kind attachment in this session.
+- Download original images: `media_analysis(kind="image", url="https://…")`. Supports Douyin galleries, Bilibili image posts, direct image links and public web-page images.
+- Download video only: `media_analysis(kind="video", action="download", url="https://…")`. Returns a video attachment without calling an analysis model.
 
-`url` 与 `inputs` 二选一。普通媒体处理无需逐次授权或本机命令权限；不得使用模型提供的身份或磁盘路径访问其他会话附件。
+`url` and `inputs` are mutually exclusive. Ordinary media processing does not require per-call approval or permission to execute local commands. Never use model-supplied identity or filesystem paths to access another session's attachments.
 
-## 执行与回复
+## Execution and replies
 
-宿主运行固定模块 `dsh_bot_runtime.skills.media_analysis.media_api`；其中 `platform_links` 模块对抖音直接访问抖音分享页并解析页面数据，再下载真实媒体字节；视频继续使用本地隔离的 `yt-dlp` extractor。抖音路径不调用第三方代解析服务。默认不读取 Cookie；配置 `DOUYIN_COOKIE_FILE` 时，仅向抖音网页请求发送匹配域名的本地 Netscape Cookie 文件。B站图集仍使用现有解析路径，来源见 [解析说明](references/platform-links.md)。
+The host runs the fixed module `dsh_bot_runtime.skills.media_analysis.media_api`. Its `platform_links` module directly retrieves Douyin share pages and parses page data before downloading real media bytes. Video continues through the locally isolated `yt-dlp` extractor. Douyin processing does not use third-party parsing services. Cookies are not read by default. With `DOUYIN_COOKIE_FILE`, only matching Douyin page requests receive cookies from the local Netscape cookie file. Bilibili galleries retain the existing parser; see [platform-link parsing](references/platform-links.md).
 
-工具参数、操作路由、模型角色、固定命名空间 entry 和附件交付由技能内的 [operations.json](operations.json) 声明。`tools` 分别声明分析、转换工具；新增操作在该声明和 `dsh_bot_runtime.skills.media_analysis` 包中实现。宿主不接受模型、人格或工作区提供的模块／脚本路径。
+The skill's [operations.json](operations.json) declares tool arguments, operation routes, model roles, fixed namespaced entries and attachment delivery. `tools` declares analysis and transformation separately. Add operations in that declaration and the `dsh_bot_runtime.skills.media_analysis` package. The host never accepts module/script paths from models, personas or workspaces.
 
-分析复用本轮选定模型提供商的 URL、凭据和视频/语音模型配置，凭据仅在子进程环境中传入。视频发送完整 MP4 画面与音轨；只有取得真实模型结果后才能说已分析。语音按模型选择兼容载荷：Gemini 系列通过 `image_url` 传入带音频 MIME 的数据 URL，其他模型使用 `input_audio`；也支持已配置的转写接口。模型未收到音频时明确报错，不自动换载荷重试。
+Analysis reuses the current turn's model provider URL, credentials and video/speech model configuration. Credentials are passed only in the subprocess environment. Video sends the complete MP4 image and audio streams; claim analysis only after a real model result. Speech selects the model-compatible payload: Gemini models receive an audio-MIME data URL through `image_url`, while other models use `input_audio`; configured transcription endpoints are also supported. If the model did not receive audio, report an error rather than automatically retrying a different payload.
 
-下载原图由命名空间内的 `image_download` 模块执行。抖音图集从官方分享页嵌入数据中提取图片列表；普通网页优先明确的原图链接和最大 srcset。原始下载字节不重新编码，下载的图片和视频自动登记为平台回复附件。文字回复不要输出图片 Markdown、`asset://` 地址或附件 ID。
+The namespaced `image_download` module downloads original images. Douyin galleries use image lists embedded in official share pages. Ordinary pages prefer explicit original-image links and the largest srcset. Downloaded bytes are not re-encoded. Downloaded images/videos are automatically registered as platform reply attachments. Do not output image Markdown, `asset://` URLs or attachment IDs in the text reply.
 
-根据结果区分原话、画面观察、推断与不确定性。`incomplete=true` 时明确说明只完成了一部分；视频封面不等于图集原图，页面标题不等于视频内容。工具失败应简述实际错误，不编造已下载或已理解，也不自动重试可能已计费的模型请求。
+Distinguish quotations, visual observations, inferences and uncertainty. With `incomplete=true`, explicitly say only part was completed. A video cover is not an original gallery image; a page title is not the video's content. Briefly report actual tool failures without inventing completed downloads or understanding, and do not automatically retry potentially billed model requests. Follow the persona and user's requested reply language; faithful transcription retains the original speech language unless translation was requested.
 
-消息、定时任务和媒体作业没有默认总处理时限，用户仍可取消。关闭本技能或撤销工具权限后，后续调用立即受阻。`bot_media` 中的 `transcribe`、`video_analyze`、`image_download`、`video_download` 使用相同实现和权限。
+Messages, scheduled tasks and media jobs have no default total processing deadline; users can still cancel. Disabling the skill or revoking tool permission blocks subsequent calls immediately. The `bot_media` operations `transcribe`, `video_analyze`, `image_download` and `video_download` share these implementations and permissions.
 
-可信私聊用户不受每日媒体调用次数或每日视频分析累计时长限制，宿主依据本轮冻结的身份和执行时的信任状态判定；工具参数不能声明可信身份。单次大小、分析时长、并发和存储限制仍适用。
+Trusted private-chat users have no daily media-call count or daily accumulated video-analysis duration limit. The host uses the turn's frozen identity and current trust at execution; tool arguments cannot claim trusted identity. Per-request size, analysis duration, concurrency and storage limits still apply.
 
 ## Limitations / Known Issues
 
-- 抖音官方网页及媒体 CDN 可能临时失败；默认仅处理公开内容，可通过本地 Cookie 文件访问用户有权查看的内容。
-- B站分 P 视频保留原解析器以核对分 P 身份，不能把第 1 P 当成用户指定的其他分 P。
-- 一次最多返回 100 张图片；单张图片最多 20 MiB，整批图片下载最多 50 MiB。视频下载和分析源文件最多 500 MiB，发送到 QQ／微信的单个视频最多 200 MiB；视频分析每次一个、最长 300 秒，分析前按需转码，模型内联视频最多 8 MiB、请求载荷最多 12 MiB。超出时明确报告，不截断后冒充完整结果。
-- 累计附件存储仍受当前聊天作用域 512 MiB、全局 2 GiB 配额约束；已有附件占用可能使新视频登记失败。
-- 分析模型必须支持 MP4 多模态载荷。上游拒绝或不可用时，下载能力和分析能力分别报告。
-- 图片转换暂不接受动画图片；AVIF/WebP 需要 Pillow 对应编解码支持，缺失时明确报错。AVIF 有损透明通道可能出现微小精度差异。
-- GIF 的完整时长、最低 12 fps 和 10 MB 上限可能无法同时满足，尤其是极长视频；降至最长边 64、16 色后仍超限会失败。视频转 GIF 不沿用分析的 300 秒限制，时间按 GIF 百分之一秒精度量化。速度随 CPU、素材和并发负载变化。
+- Douyin's official pages and media CDN may fail temporarily. Only public content is processed by default; local cookies can access content the user is authorized to view.
+- Multi-part Bilibili videos retain the original extractor to verify part identity. Never treat part 1 as another requested part.
+- Return at most 100 images, at most 20 MiB per image and 50 MiB per downloaded batch. Video download/analysis sources are limited to 500 MiB; a video sent to QQ/WeChat is limited to 200 MiB. Analyze one video per request, at most 300 seconds. Transcode before analysis when needed; inline model video is limited to 8 MiB and the request payload to 12 MiB. Report exceeded limits rather than truncating and claiming a complete result.
+- Attachment storage remains limited to 512 MiB per chat scope and 2 GiB globally. Existing attachments can prevent new video registration.
+- Analysis models must support MP4 multimodal payloads. Report download capability and analysis capability separately when an upstream rejects a request or is unavailable.
+- Image conversion currently rejects animated images. AVIF/WebP need their Pillow codecs; missing support produces an explicit error. Lossy AVIF alpha channels may have small precision differences.
+- Full duration, a 12 fps minimum and the 10 MB GIF cap may be incompatible, especially for very long videos. Fail if a longest edge of 64 pixels and 16 colors still exceeds the cap. Video-to-GIF does not inherit the 300-second analysis limit; timestamps use GIF's hundredth-second precision. Speed depends on CPU, source material and concurrent load.

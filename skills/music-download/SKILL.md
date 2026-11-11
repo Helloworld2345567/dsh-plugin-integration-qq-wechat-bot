@@ -1,22 +1,22 @@
 ---
 name: music-download
-description: 从宿主配置的音乐曲库搜索、选择并下载完整歌曲，自动交付适合聊天平台的音频；可按需附歌词。
+description: Search, select and download complete songs from host-configured music catalogs, automatically registering chat-compatible audio and optionally lyrics.
 ---
 
-# 音乐搜索与下载
+# Music search and download
 
-用户要求点歌、听原曲或下载歌曲时使用 `bot_music`。用户明确要求当前人格演唱、翻唱或转换音色时，使用 `bot_sing(action="sing", song="歌名", artist="可选歌手")`，由宿主获取原曲并接入 STS，默认只交付转换结果。
+Use `bot_music` when the user requests a song, the original recording or a music download. If they explicitly ask the current persona to sing, cover a song or convert its voice, use `bot_sing(action="sing", song="song title", artist="optional artist")`. The host acquires the original and invokes STS, delivering only the converted result by default.
 
-- 直接下载：`action="download"` 并填写 `song`，已知歌手时填写 `artist`。宿主自动选择最高匹配，不重复询问用户。回复中使用工具返回的真实曲名、歌手和版本。
-- 查看候选：用户要求搜索、比较版本或列出结果时使用 `action="search"`；后续可用返回的 `candidateSet` 与 `candidate` 下载。旧候选不能用于另一会话或新的搜索结果。
-- 歌词：仅在用户需要时设置 `includeLyrics=true`；歌词不可用时如实说明，不能编造。
-- 宿主使用已配置且验证过的来源，默认咪咕优先。工具不接受下载 URL、服务地址、路径或凭据，不能通过网页抓取猜测音源。
-- 原曲先保存为会话内音源。可直接交付的原生小文件保留原格式；需要转码时保持完整时长并输出严格小于 20,000,000 字节的 MP3。工具会说明实际格式和音质，不把转码结果称为无损。
+- Direct download: use `action="download"` with `song`, adding `artist` when known. The host selects the highest match without another confirmation. Use the real title, artist and version returned by the tool in the reply.
+- Candidate search: use `action="search"` when the user wants search results, a version comparison or a list. Download a returned `candidateSet` and `candidate` afterward. Old candidates cannot be used in another session or with new search results.
+- Lyrics: set `includeLyrics=true` only when requested. Report unavailable lyrics honestly; never invent them.
+- The host uses configured, verified sources, preferring Migu by default. The tool accepts no download URL, service address, path or credentials. Do not guess audio sources through web scraping.
+- The original is first saved as a session-scoped source. Small native files suitable for direct delivery keep their format. If transcoding is required, preserve the complete duration and produce MP3 strictly below 20,000,000 bytes. The tool reports actual format and quality; do not call transcoded output lossless.
 
-成功会自动登记附件投递，不要再次调用 `bot_send_file`、重复下载或向用户展示内部资产ID、路径。失败、取消或会话切换时只说明工具真实结果；不得自动换成另一首歌、另一个版本或截断歌曲。原曲已经取得后，后续投递或转换失败不重新下载。
+Success automatically registers the attachment for delivery. Do not call `bot_send_file` again, redownload it or show internal asset IDs and paths. On failure, cancellation or a session switch, report only the real tool result. Never automatically substitute another song/version or truncate the song. Once the original is acquired, a subsequent delivery or conversion failure does not justify downloading it again.
 
-`registeredForDelivery=true` 或 `deliveryState=registered` 仅表示已登记，尚未取得平台回执。`platformSent=false` 时只说明下载完成及待投递，不声称已经发送或保证送达。用户明确要求重发时复用原附件；重试返回 `pending` 仍不表示送达。
+`registeredForDelivery=true` or `deliveryState=registered` means registered without a platform receipt. With `platformSent=false`, say the download completed and is pending delivery; do not claim it was sent or guarantee arrival. An explicit resend request reuses the original attachment; a retry returning `pending` still does not confirm delivery. Reply in the language requested by the user or persona.
 
 ```json
-{"action":"download","song":"泡沫","artist":"邓紫棋","includeLyrics":false}
+{"action":"download","song":"Bubble","artist":"G.E.M.","includeLyrics":false}
 ```

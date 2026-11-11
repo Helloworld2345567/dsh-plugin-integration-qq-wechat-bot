@@ -1,5 +1,7 @@
 # Python 依赖支持矩阵
 
+简体中文 | [English](en/python-dependencies.md)
+
 本项目支持 Python 3.12 和 3.13。`requirements.txt` 是用户输入文件，使用兼容范围；CI 使用对应的 `*-ci.txt` 精确快照来减少同一 CI 运行中的解析漂移。`requirements-audit-ci.txt` 只包含临时审计工具，不属于运行时包。精确快照不是对所有平台 wheel、外部服务或模型的长期保证。
 
 ## 基础环境

@@ -1,3 +1,5 @@
+import {storageDescriptor} from '../../i18n/storage.js';
+import {LocalizedError} from '../../core/errors.js';
 import type {Asset} from '../../core/types.js';
 import type {AssetRepository, AssetUsage} from '../../core/ports/media.js';
 import type {SqliteDatabase} from './database.js';
@@ -19,7 +21,7 @@ export class SqliteAssetRepository implements AssetRepository {
   findAsset(id: string): Asset | undefined {return this.database.records.get<Asset>('asset', id);}
   asset(scope: string, id: string): Asset {
     const asset = this.findAsset(id);
-    if (!asset || asset.scopeKey !== scope) throw new Error('附件不存在或不属于当前会话');
+    if (!asset || asset.scopeKey !== scope) throw new LocalizedError(storageDescriptor('assetNotOwned'),'附件不存在或不属于当前会话');
     return asset;
   }
   recentAssets(scope: string, sessionId: string, kind?: string, limit = 24): Asset[] {

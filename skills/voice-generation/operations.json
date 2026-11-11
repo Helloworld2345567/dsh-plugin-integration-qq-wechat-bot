@@ -14,7 +14,7 @@
     {
       "tool": {
         "name": "bot_voice",
-        "description": "按用户明确要求生成 AI 朗读语音并登记待发送附件。成功仅表示生成和登记完成，平台在本轮结束后尝试投递，不能提前声称已送达。歌曲下载用 bot_music，按人格音色翻唱歌曲用 bot_sing。",
+        "description": "Generate AI narration on an explicit user request and register an attachment for sending. Success means generation and registration only; the platform attempts delivery after this turn. Do not claim delivery in advance. Use bot_music for original song downloads and bot_sing for covers in the persona voice.",
         "parameters": {
           "mode": {
             "type": "string",

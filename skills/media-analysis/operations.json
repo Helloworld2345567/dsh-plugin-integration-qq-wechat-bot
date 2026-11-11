@@ -102,7 +102,7 @@
     {
       "tool": {
         "name": "media_analysis",
-        "description": "执行media-analysis脚本；kind=image从url下载原图并自动作为图片附件交付，kind=audio识别语音，kind=video分析视频（action=download则仅下载并回传原视频），复用原生模型提供商的URL和凭据，无需单独配置密钥。视频支持抖音/B站作品链接或分享短链；抖音note/slides图文链接必须使用kind=image。提取分享文字中的https链接填url，不要用网页抓取代替视频分析。输入本会话附件ID；url与inputs二选一，均留空选同类型最近附件。返回实际分析结果与覆盖范围。",
+        "description": "Run managed media analysis: kind=image downloads original images from url and registers image attachments; kind=audio transcribes speech; kind=video analyzes video, or only downloads and returns video with action=download. Reuses native model provider URLs and credentials without another key. Video supports Douyin/Bilibili post and share links; Douyin note/slides links require kind=image. Extract the HTTPS link from shared text into url; do not replace video analysis with web scraping. Use current-session attachment IDs; url and inputs are mutually exclusive. With neither, select the latest same-kind attachment. Returns actual analysis and coverage.",
         "parameters": {
           "kind": {
             "type": "string",
@@ -174,7 +174,7 @@
     {
       "tool": {
         "name": "media_transform",
-        "description": "快速本地处理一个本会话附件，可并发调用。image_convert/image_compress/image_resize支持JPEG/PNG/WebP/AVIF转换、压缩及等比例缩小，可组合format/quality/maxWidth/maxHeight/maxBytes。convert_gif默认完整视频、12fps、最长边480，长视频自动分段并发合并，成品严格小于10MB；降尺寸和颜色但不缩短时长、不低于12fps。startSeconds/durationSeconds仅用于用户明确指定的片段。成功自动交付附件，无需模型或密钥。",
+        "description": "Quickly process one current-session attachment locally; concurrent calls are supported. image_convert/image_compress/image_resize convert, compress and proportionally downsize JPEG/PNG/WebP/AVIF, combining format/quality/maxWidth/maxHeight/maxBytes. convert_gif defaults to the complete video at 12 fps and a 480-pixel longest edge. Long videos encode in concurrent segments and merge into a GIF strictly below 10 MB. Reduce size/colors without shortening duration or dropping below 12 fps. startSeconds/durationSeconds require an explicitly requested excerpt. Success automatically registers attachments; no model or key is required.",
         "parameters": {
           "operation": {
             "type": "string",

@@ -1,3 +1,5 @@
+import {storageDescriptor} from '../../i18n/storage.js';
+import {LocalizedError} from '../../core/errors.js';
 import {randomUUID} from 'node:crypto';
 import type {CallerScope, Delivery, SessionBinding, SessionRecord} from '../../core/types.js';
 import {scopeKey} from '../../core/identity.js';
@@ -52,7 +54,7 @@ export class SqliteSessionRepository implements SessionRepository, BindingReposi
   findSession(id: string): SessionRecord | undefined {return this.records.get<SessionRecord>('session', id);}
   session(scope: CallerScope, id: string): SessionRecord {
     const record = this.findSession(id);
-    if (!record || record.scopeKey !== scopeKey(scope)) throw new Error('会话不存在或不属于当前渠道身份');
+    if (!record || record.scopeKey !== scopeKey(scope)) throw new LocalizedError(storageDescriptor('sessionNotOwned'),'会话不存在或不属于当前渠道身份');
     return record;
   }
   sessions(scope: CallerScope): SessionRecord[] {

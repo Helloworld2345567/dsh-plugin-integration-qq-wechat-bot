@@ -1,3 +1,4 @@
+import {chinese,type Translate} from './locale.js';
 import type {BotConfig} from '../core/client-contracts.js';
 
 export type StatusTone='success'|'warning'|'danger'|'neutral';
@@ -121,18 +122,18 @@ export function mapBotRows(input:{summaryBots?:readonly PanelSummaryBot[];bots?:
   });
 }
 
-export function mapPersonaSummaries(configs:readonly Partial<BotConfig>[]=[],bots:readonly Pick<PanelSummaryBot,'configId'|'archived'>[]=[]):PersonaSummaryViewModel[]{
+export function mapPersonaSummaries(configs:readonly Partial<BotConfig>[]=[],bots:readonly Pick<PanelSummaryBot,'configId'|'archived'>[]=[],t:Translate=chinese):PersonaSummaryViewModel[]{
   const linked=new Map<string,number>();
   for(const bot of bots)if(!bot.archived)linked.set(bot.configId,(linked.get(bot.configId)??0)+1);
   return configs.filter(config=>!config.archived&&typeof config.id==='string').map(config=>({
     id:config.id!,name:text(config.name,config.id!),revision:number(config.revision,1),archived:config.archived===true,
-    modelLabel:config.model?`${text(config.model.provider)} / ${text(config.model.model)}`:'未选择模型',
+    modelLabel:config.model?`${text(config.model.provider)} / ${text(config.model.model)}`:t('noModelSelected'),
     linkedBotCount:linked.get(config.id!)??0,toolCount:config.tools?.length??0,skillCount:config.skills?.length??0,
     voiceEnabled:config.media?.voice?.enabled===true,singingEnabled:config.media?.singing?.enabled===true,musicEnabled:config.media?.music?.enabled===true,
   }));
 }
 
-export function mapServiceCards(input:{serviceRunning?:boolean;activeTasks?:number;settings?:{modelsRoot?:string;gptSovitsUrl?:string;gptSovitsProjectRoot?:string;breezeTtsUrl?:string;breezeTtsProjectRoot?:string;breezeTtsVoicesRoot?:string};reports?:Partial<Record<'rvc'|'gpt-sovits'|'breeze-tts',{state?:string;profileCount?:number;safeDiagnostic?:string}>>;serviceHealth?:Partial<Record<string,{state?:string;safeDiagnostic?:string}>>;dirty?:boolean}={}):ServiceCardViewModel[]{
+export function mapServiceCards(input:{serviceRunning?:boolean;activeTasks?:number;settings?:{modelsRoot?:string;gptSovitsUrl?:string;gptSovitsProjectRoot?:string;breezeTtsUrl?:string;breezeTtsProjectRoot?:string;breezeTtsVoicesRoot?:string};reports?:Partial<Record<'rvc'|'gpt-sovits'|'breeze-tts',{state?:string;profileCount?:number;safeDiagnostic?:string}>>;serviceHealth?:Partial<Record<string,{state?:string;safeDiagnostic?:string}>>;dirty?:boolean}={},t:Translate=chinese):ServiceCardViewModel[]{
   const reports=input.reports??{};
   const health=input.serviceHealth??{};
   const report=(id:'rvc'|'gpt-sovits'|'breeze-tts')=>reports[id];
@@ -141,9 +142,9 @@ export function mapServiceCards(input:{serviceRunning?:boolean;activeTasks?:numb
   const gpt=report('gpt-sovits'),breeze=report('breeze-tts'),rvc=report('rvc');
   const gptHealth=health['gpt-sovits'],breezeHealth=health['breeze-tts'];
   return [
-    card('runtime','机器人运行时',input.serviceRunning?'connected':'stopped',true,0,undefined,true),
+    card('runtime',t('botRuntime'),input.serviceRunning?'connected':'stopped',true,0,undefined,true),
     card('gpt-sovits','GPT-SoVITS',gptHealth?.state??gpt?.state??'missing',Boolean(settings?.gptSovitsUrl&&settings.gptSovitsProjectRoot),number(gpt?.profileCount),gptHealth?.safeDiagnostic??gpt?.safeDiagnostic,Boolean(settings?.gptSovitsProjectRoot)),
     card('breeze-tts','Breeze TTS',breezeHealth?.state??breeze?.state??'missing',Boolean(settings?.breezeTtsUrl&&settings.breezeTtsProjectRoot),number(breeze?.profileCount),breezeHealth?.safeDiagnostic??breeze?.safeDiagnostic,Boolean(settings?.breezeTtsProjectRoot)),
-    card('rvc','RVC 模型库',rvc?.state??'missing',Boolean(settings?.modelsRoot),number(rvc?.profileCount),rvc?.safeDiagnostic),
+    card('rvc',t('rvcModelLibrary'),rvc?.state??'missing',Boolean(settings?.modelsRoot),number(rvc?.profileCount),rvc?.safeDiagnostic),
   ];
 }

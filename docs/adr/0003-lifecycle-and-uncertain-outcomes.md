@@ -1,5 +1,7 @@
 # ADR 0003：生命周期独立，未知结果不自动重放
 
+简体中文 | [English](../en/adr/0003-lifecycle-and-uncertain-outcomes.md)
+
 - 状态：已接受
 - 日期：2026-11-03
 

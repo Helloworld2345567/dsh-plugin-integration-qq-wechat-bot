@@ -92,7 +92,7 @@ class VideoService:
             if self.active.get(caller.user) == job_id:
                 self.active.pop(caller.user, None)
             self.store.update(job_id, "CANCELLED", {"error": "CANCELLED", "warning":
-                "本地等待及处理已停止；上游已接收的请求可能继续执行和计费。"})
+                "Local waiting and processing have stopped; upstream requests already accepted may continue running and incur charges."})
         return self.get(job_id, caller)
 
     async def delete(self, job_id, caller):
@@ -129,7 +129,7 @@ class VideoService:
                 self.store.db.execute("DELETE FROM jobs WHERE owner=? AND cache_key=? AND state IN ('COMPLETE','PARTIAL','FAILED','CANCELLED')",
                                       (row["owner"], row["cache_key"]))
             self.store.db.execute("DELETE FROM jobs WHERE id=?", (job_id,))
-        return {"job_id": job_id, "status": "DELETED", "warning": "上游副本的保留由提供商管理。"}
+        return {"job_id": job_id, "status": "DELETED", "warning": "The provider controls retention of upstream copies."}
 
     async def _run(self, job_id, request, caller, source, deadline):
         directory = self.work / job_id
@@ -183,7 +183,7 @@ class VideoService:
                         "elapsed_seconds": round(time.monotonic() - started, 3), "cache_hit": False,
                         "stage_timings": dict(timings), "uploaded_bytes": prepared.probe.size_bytes})
                     result["warnings"] = [*result.get("warnings", []), *prepared.warnings,
-                        "FULL_MEDIA表示已发送此范围媒体，不保证逐帧、逐字准确；媒体内容属于外部材料。"]
+                        "FULL_MEDIA means media for this range was sent; frame-by-frame or word-for-word accuracy is not guaranteed. Media content is external material."]
                     self.store.update(job_id, "COMPLETE", result)
         except asyncio.CancelledError:
             self.store.update(job_id, "CANCELLED", {"error": "CANCELLED_MAY_BE_BILLED", "failed_stage": stage_name})

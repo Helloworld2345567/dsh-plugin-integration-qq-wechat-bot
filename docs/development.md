@@ -1,6 +1,8 @@
 # 开发指南
 
-本页是贡献者的开发入口，不是生产部署说明。项目当前只支持简体中文；英文 locale/UI、V3 人格迁移或回退、第三方 Adapter ABI 和外部平台/模型验收不在本阶段范围内。
+简体中文 | [English](en/development.md)
+
+本页是贡献者的开发入口，不是生产部署说明。项目维护简体中文与英文；V3 人格迁移或回退、第三方 Adapter ABI 和外部平台/模型验收不在本阶段范围内。双语目录、术语和同批同步规则见[贡献指南](../CONTRIBUTING.md#双语维护规范)。
 
 ## Windows 前置条件
 
@@ -90,7 +92,7 @@ npm run test:install-smoke
 | Python worker | `npm run check:architecture`、`npm run test:python`、`npm run check:python-dependencies`、`npm run build`；媒体相关变更需确认 FFmpeg/ffprobe，并验证归档内 `-P -m dsh_bot_runtime.worker` |
 | lifecycle | 上述源码门禁、`npm run test:lifecycle-native`；涉及安装时加 `npm run test:install-smoke` |
 | 安装器/发布 | `npm run check:release`、`npm run verify:release`、`npm run release:pack`、`npm run test:install-smoke` |
-| UI/locale | `npm run typecheck`、`npm test`、`npm run build`、`npm run check:docs`、`npm run check:release`；当前阶段仍只支持中文 |
+| UI/locale | `npm run typecheck`、`npm test`、`npm run build`、`npm run check:docs`、`npm run check:release`；验证中英文词条、参数、语言切换和草稿保留 |
 
 外部平台、外部模型、真实 TTS/Music/RVC/GPT-SoVITS 结果由运营者按独立验收流程完成，不得用本地 fixture 结果替代。
 

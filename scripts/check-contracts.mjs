@@ -3,21 +3,28 @@ import path from 'node:path';
 
 const root = process.cwd();
 const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
-const files = ['CONTRIBUTING.md', 'docs/development.md', 'docs/testing.md', '.github/workflows/ci.yml', 'scripts/test-typescript.mjs', 'scripts/test-native.mjs', 'scripts/test-lifecycle-native.mjs', 'scripts/test-install-smoke.mjs', 'scripts/test-process.mjs'];
+const documentation = ['CONTRIBUTING.md', 'CONTRIBUTING.en.md', 'docs/development.md', 'docs/en/development.md', 'docs/testing.md', 'docs/en/testing.md'];
+const files = [...documentation, '.github/workflows/ci.yml', 'scripts/test-typescript.mjs', 'scripts/test-native.mjs', 'scripts/test-lifecycle-native.mjs', 'scripts/test-install-smoke.mjs', 'scripts/test-process.mjs'];
 const text = Object.fromEntries(await Promise.all(files.map(async file => [file, await readFile(path.join(root, file), 'utf8')])));
 const failures = [];
 const scripts = packageJson.scripts ?? {};
-const commands = [...new Set([...text['CONTRIBUTING.md'].matchAll(/npm run ([a-z0-9:_-]+)/gi), ...text['docs/development.md'].matchAll(/npm run ([a-z0-9:_-]+)/gi), ...text['docs/testing.md'].matchAll(/npm run ([a-z0-9:_-]+)/gi)].map(match => match[1]))];
+const commands = [...new Set(documentation.flatMap(file => [...text[file].matchAll(/npm run ([a-z0-9:_-]+)/gi)].map(match => match[1])))];
 for (const command of commands) if (!scripts[command]) failures.push(`documented npm script missing: ${command}`);
 for (const command of ['check:architecture', 'typecheck', 'test', 'test:python', 'check:python-dependencies', 'check:environment', 'build', 'check:docs', 'check:contracts', 'check:licenses', 'check:release', 'verify:release', 'release:pack', 'test:native', 'test:lifecycle-native', 'test:install-smoke']) {
-  if (!text['docs/testing.md'].includes(`npm run ${command}`)) failures.push(`testing contract missing: ${command}`);
+  for (const file of ['docs/testing.md', 'docs/en/testing.md']) if (!text[file].includes(`npm run ${command}`)) failures.push(`${file}: testing contract missing: ${command}`);
+}
+for (const [chinese, english] of [['CONTRIBUTING.md', 'CONTRIBUTING.en.md'], ['docs/development.md', 'docs/en/development.md'], ['docs/testing.md', 'docs/en/testing.md']]) {
+  const documented = file => [...new Set([...text[file].matchAll(/npm run ([a-z0-9:_-]+)/gi)].map(match => match[1]))].sort().join(',');
+  if (documented(chinese) !== documented(english)) failures.push(`${english}: npm command contract differs from ${chinese}`);
 }
 if (packageJson.engines?.node !== '>=24.0.0') failures.push('package Node engine is not Node 24+');
 if (packageJson.engines?.dsh !== '0.2.1-rc.5') failures.push('package Harness engine changed');
 if (!text['.github/workflows/ci.yml'].includes("NODE_VERSION: '24'") || !text['.github/workflows/ci.yml'].includes("HARNESS_VERSION: '0.2.1-rc.5'")) failures.push('CI Node/Harness versions do not match package contract');
 for (const version of ['3.12', '3.13']) if (!text['.github/workflows/ci.yml'].includes(`'${version}'`)) failures.push(`CI Python matrix missing ${version}`);
-for (const variable of ['BOT_TEST_PYTHON', 'BOT_TEST_TMP', 'BOT_TEST_WEB_TOOLS_SOURCE', 'BOT_TEST_IMAGE_KEY', 'NATIVE_TEST_RESULT', 'LIFECYCLE_NATIVE_FOLDER']) if (!text['docs/testing.md'].includes(variable)) failures.push(`testing variable not classified: ${variable}`);
+for (const variable of ['BOT_TEST_PYTHON', 'BOT_TEST_TMP', 'BOT_TEST_WEB_TOOLS_SOURCE', 'BOT_TEST_IMAGE_KEY', 'NATIVE_TEST_RESULT', 'LIFECYCLE_NATIVE_FOLDER']) for (const file of ['docs/testing.md', 'docs/en/testing.md']) if (!text[file].includes(variable)) failures.push(`${file}: testing variable not classified: ${variable}`);
 if (!/(?:不得|不)发送平台消息/.test(text['docs/testing.md'])) failures.push('testing boundary must forbid real platform messages');
+if (!/do not send platform messages/i.test(text['docs/en/testing.md'])) failures.push('English testing boundary must forbid real platform messages');
+for (const file of documentation) if (!text[file].includes('0.2.1-rc.5') || !/3\.12/.test(text[file]) || !/3\.13/.test(text[file])) failures.push(`${file}: supported runtime versions missing`);
 for (const file of ['scripts/test-typescript.mjs', 'scripts/test-native.mjs', 'scripts/test-lifecycle-native.mjs', 'scripts/test-install-smoke.mjs']) {
   if (text[file].includes('{...process.env}') || text[file].includes('{ ...process.env }')) failures.push(`${file}: copies the complete host environment`);
   if (!text[file].includes('safeSubprocessEnv')) failures.push(`${file}: does not use the test environment allowlist`);

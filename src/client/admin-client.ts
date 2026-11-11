@@ -1,3 +1,5 @@
+import {PanelError} from './locale.js';
+
 export interface AdminTransport {
   fetch(input:RequestInfo|URL,init?:RequestInit):Promise<Response>;
 }
@@ -24,7 +26,7 @@ export class AdminClient {
     const request=(async():Promise<T|undefined>=>{
       const revision=this.revisions.get(key);const body={version:1,kind:'query',name,input:revision&&CONDITIONAL_QUERIES.has(name)&&!('changedSince'in input)?{...input,changedSince:revision}:input};
       const response=await this.transport.fetch(this.options.endpoint,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${this.options.token}`},body:JSON.stringify(body),signal:combined});
-      const responseBody=await response.json() as {result?:VersionedResponse<T>;error?:unknown}|VersionedResponse<T>;if(!response.ok)throw new Error(typeof (responseBody as any).error==='string'?(responseBody as any).error:'ADMIN_QUERY_FAILED');const payload=('result'in responseBody&&responseBody.result?responseBody.result:responseBody) as VersionedResponse<T>;
+      const responseBody=await response.json() as {result?:VersionedResponse<T>;error?:unknown}|VersionedResponse<T>;if(!response.ok)throw new PanelError(typeof (responseBody as any).error==='string'?(responseBody as any).error:'ADMIN_QUERY_FAILED',(responseBody as any).message,(responseBody as any).issues);const payload=('result'in responseBody&&responseBody.result?responseBody.result:responseBody) as VersionedResponse<T>;
       if(this.sequences.get(key)!==sequence)return undefined;
       // Collection pages use cursor revisions, not conditional-response hashes.
       if('items' in payload)return payload as T;

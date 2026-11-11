@@ -228,7 +228,7 @@ class WorkerTests(unittest.TestCase):
         job = self.job('document_read', file); job['endpoint'] = None
         with patch('requests.Session') as request:
             result = worker.execute(job); request.assert_not_called()
-        self.assertFalse(result['incomplete']); self.assertIn('当前聊天模型', result['text'])
+        self.assertFalse(result['incomplete']); self.assertIn('current chat model', result['text'])
         self.assertEqual(result['coverage'], 'DOCUMENT_TEXT_AND_PAGE_PIXELS')
         from PIL import Image
         with Image.open(result['contextAssets'][0]['path']) as page:

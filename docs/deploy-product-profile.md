@@ -1,10 +1,12 @@
 # 部署独立机器人产品 profile
 
+简体中文 | [English](en/deploy-product-profile.md)
+
 统一前置检查、首次验证和能力边界见[快速开始](getting-started.md)；变量说明见[配置参考](configuration.md)，失败处理见[排障文档](troubleshooting.md)。
 
 本方式适合希望由项目创建并管理隔离 `bots` profile 的运营者。安装器会创建产品数据目录、媒体 Python 环境、独立工作区、主 bundle 和生命周期协调 bundle；不会修改其他 Harness profile。
 
-> 当前项目的文档和管理界面仅提供简体中文，当前版本不承诺英文 UI。
+> 文档和管理界面支持简体中文与英文；界面跟随 Harness 语言，机器人固定提示语言在服务页独立设置。
 
 ## 前置条件
 

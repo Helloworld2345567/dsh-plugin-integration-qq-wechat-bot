@@ -1,8 +1,15 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {AdminClient} from '../src/client/admin-client.js';
+import {PanelError} from '../src/client/locale.js';
 
 function response(body:unknown,status=200):Response{return new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});}
+
+test('AdminClient preserves structured diagnostics and their original fallback',async()=>{
+  const message={key:'diagnostic.invalidInput',params:{fields:'modelsRoot'}};
+  const client=new AdminClient({endpoint:'/admin',token:'token',transport:{fetch:async()=>response({error:'Original diagnostic',message},400)}});
+  await assert.rejects(client.query('service.settings'),error=>error instanceof PanelError&&error.message==='Original diagnostic'&&assert.deepEqual(error.localizedMessage,message)===undefined);
+});
 
 test('AdminClient single-flights identical queries and remembers revision',async()=>{
   const requests:any[]=[];let resolve!: (value:Response)=>void;const pending=new Promise<Response>(r=>resolve=r);

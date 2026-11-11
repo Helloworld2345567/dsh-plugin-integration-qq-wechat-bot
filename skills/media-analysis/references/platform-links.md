@@ -1,12 +1,12 @@
-# 平台链接解析
+# Platform-link parsing
 
-抖音路径不调用第三方代解析服务。短链由本地 HTTPS 客户端跟随最多 6 跳重定向，最终页面必须仍属于抖音域名；视频交给本地隔离 `yt-dlp` extractor，图文读取抖音分享页中的 JSON-LD、`__UNIVERSAL_DATA_FOR_REHYDRATION__`、`RENDER_DATA`、`_ROUTER_DATA` 或 `_SSR_DATA`，提取图片列表中的最高质量 HTTPS 地址；同一 `url_list` 同时声明 PNG 时优先选择 PNG，并结合原图/尺寸提示排序。页面没有可用数据时，使用抖音自己的移动端详情通道作为本地直连降级路径。
+Douyin processing does not call third-party parsing services. The local HTTPS client follows at most six redirects for a short link; the final page must remain on a Douyin domain. Videos go through the locally isolated `yt-dlp` extractor. Image posts read JSON-LD, `__UNIVERSAL_DATA_FOR_REHYDRATION__`, `RENDER_DATA`, `_ROUTER_DATA` or `_SSR_DATA` embedded in Douyin share pages and extract the highest-quality HTTPS addresses from their image lists. Prefer PNG when the same `url_list` declares PNG, and rank candidates using original-image and dimension hints. When no usable page data is available, a direct connection to Douyin's own mobile detail endpoint is the fallback.
 
-下载地址只在当前作业内存中使用，不持久化为永久资源。下载仍执行 HTTPS、公开地址和每跳重定向校验，文件解码通过后才登记附件。默认不读取 Cookie；`DOUYIN_COOKIE_FILE` 可指向本地 Netscape Cookie 文件，解析器只向匹配的抖音网页域名发送 Cookie，不发送到图片 CDN 或其他主机。
+Download addresses exist only in the current job's memory, not as permanent resources. Downloads retain HTTPS, public-address and per-redirect checks; files become attachments only after decoding succeeds. Cookies are not read by default. `DOUYIN_COOKIE_FILE` can identify a local Netscape cookie file; the parser sends cookies only to matching Douyin page domains, never image CDNs or other hosts.
 
-当前 B 站图集路径仍使用原有解析实现。抖音图文链接应使用 `kind=image`；将图文链接传给视频下载会返回 `LINK_IS_IMAGE_GALLERY_USE_IMAGE`。
+Bilibili galleries retain the existing parser. Douyin image-post links require `kind=image`; passing one to video download returns `LINK_IS_IMAGE_GALLERY_USE_IMAGE`.
 
-实现参考：
+Implementation references:
 
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp)：本地 Douyin 视频 extractor，按项目依赖运行，不调用代解析服务。
-- [ucmao/media-parser](https://github.com/ucmao/media-parser)：MIT 许可的本地页面/数据解析思路，仅作为研究参考，不作为运行时依赖。
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp): the local Douyin video extractor, run through project dependencies without a remote parsing service.
+- [ucmao/media-parser](https://github.com/ucmao/media-parser): MIT-licensed local page/data parsing ideas, used only as a research reference, not a runtime dependency.

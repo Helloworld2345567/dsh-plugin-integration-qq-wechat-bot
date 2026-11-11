@@ -1,3 +1,4 @@
+import {messageDescriptorSchema} from './message-contract.js';
 import path from 'node:path';
 import {z} from 'zod';
 
@@ -118,7 +119,7 @@ export const serviceJobSchema=z.object({
 });
 export type ServiceJob=z.infer<typeof serviceJobSchema>;
 
-export const healthResultSchema=z.object({state:z.enum(['unknown','ready','degraded','unavailable','blocked','disabled']),checkedAt:z.number().int().nonnegative(),expiresAt:z.number().int().nonnegative(),safeDiagnostic:z.string().max(1000).optional()}).strict().refine(value=>value.expiresAt>=value.checkedAt,{path:['expiresAt'],message:'health expiry cannot precede check time'});
+export const healthResultSchema=z.object({state:z.enum(['unknown','ready','degraded','unavailable','blocked','disabled']),checkedAt:z.number().int().nonnegative(),expiresAt:z.number().int().nonnegative(),safeDiagnostic:z.string().max(1000).optional(),message:messageDescriptorSchema.optional()}).strict().refine(value=>value.expiresAt>=value.checkedAt,{path:['expiresAt'],message:'health expiry cannot precede check time'});
 export type HealthResult=z.infer<typeof healthResultSchema>;
 export const acceptanceStateSchema=z.enum(['NOT_RUN','PASS','FAIL','EXPIRED','BLOCKED']);
 export const capabilityAcceptanceSchema=z.object({serviceId:serviceIdSchema,profileId:profileIdSchema,profileRevision:z.number().int().positive(),profileContentHash:sha256Schema,personaId:z.string().min(1).max(80),personaRevision:z.number().int().positive(),operation:namespacedOperationSchema,state:acceptanceStateSchema,evidenceType:identifierSchema,evidence:z.string().max(2000),checkedAt:z.number().int().nonnegative(),expiresAt:z.number().int().nonnegative(),source:z.enum(['operator','automated','migration'])}).strict().refine(value=>value.expiresAt>=value.checkedAt,{path:['expiresAt'],message:'acceptance expiry cannot precede check time'}).superRefine((value,ctx)=>{if(!value.operation.startsWith(`${value.serviceId}.`))ctx.addIssue({code:'custom',path:['operation'],message:'acceptance operation must use the service namespace'});});
