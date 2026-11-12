@@ -14,78 +14,31 @@ concurrency:
 
 env:
   NODE_VERSION: '24'
-  HARNESS_VERSION: '0.2.1-rc.5'
 
 jobs:
   quality:
-    name: 纯逻辑与依赖门禁
+    name: Linux 发布门禁与依赖审计
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: 检出源码
-        uses: actions/checkout@v4
-
-      - name: 安装 Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          registry-url: https://registry.npmjs.org
-
-      - name: 安装 Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: |
-            requirements-ci.txt
-            requirements-voice-generation-ci.txt
-            requirements-audit-ci.txt
-
-      - name: 确认 FFmpeg
-        run: |
-          if command -v ffmpeg >/dev/null 2>&1; then
-            ffmpeg -version | head -n 1
-            ffprobe -version | head -n 1
-          else
-            echo 'FFmpeg is unavailable on this quality runner; media unit tests use fixtures.'
-          fi
+          cache-dependency-path: requirements*-ci.txt
 
       - name: 安装可复现依赖
         run: |
-          npm ci --ignore-scripts --registry=https://registry.npmjs.org
-          python -m pip install -r requirements-ci.txt -r requirements-voice-generation-ci.txt
-          python -m pip install -r requirements-audit-ci.txt
+          npm ci --ignore-scripts
+          python -m pip install -r requirements-ci.txt -r requirements-voice-generation-ci.txt -r requirements-audit-ci.txt
 
-      - name: 检查架构
-        run: npm run check:architecture
-
-      - name: 类型检查
-        run: npm run typecheck
-
-      - name: 构建
-        run: npm run build
-
-      - name: TypeScript 测试
-        run: npm test
-
-      - name: Python 测试
-        run: npm run test:python
-
-      - name: Python 依赖检查
-        run: npm run check:python-dependencies
-
-      - name: 文档检查
-        run: npm run check:docs
-
-      - name: 契约检查
-        run: npm run check:contracts
-
-      - name: 许可证检查
-        run: npm run check:licenses
-
-      - name: 发布内容检查
-        run: npm run check:release
+      - name: 执行源码发布门禁
+        run: npm run verify:release
 
       - name: 运行依赖审计
         run: |
@@ -95,7 +48,7 @@ jobs:
 
       - name: 上传审计证据
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dependency-audit-${{ github.run_id }}
           path: |
@@ -106,7 +59,7 @@ jobs:
 
       - name: 上传失败测试证据
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: quality-test-evidence-${{ github.run_id }}
           path: .codex/**/*-evidence/**
@@ -115,88 +68,25 @@ jobs:
           retention-days: 7
 
   release-gate:
-    name: Windows 发布门禁
-    runs-on: windows-latest
-    timeout-minutes: 35
-    steps:
-      - name: 检出源码
-        uses: actions/checkout@v4
-
-      - name: 安装 Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          registry-url: https://registry.npmjs.org
-
-      - name: 安装 Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: |
-            requirements-ci.txt
-            requirements-voice-generation-ci.txt
-            requirements-audit-ci.txt
-
-      - name: 确认 FFmpeg
-        shell: pwsh
-        run: |
-          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-            choco install ffmpeg -y --no-progress
-          }
-          ffmpeg -version | Select-Object -First 1
-          ffprobe -version | Select-Object -First 1
-
-      - name: 安装可复现依赖
-        run: |
-          npm ci --ignore-scripts --registry=https://registry.npmjs.org
-          python -m pip install -r requirements-ci.txt -r requirements-voice-generation-ci.txt
-
-      - name: 运行只读环境预检
-        run: npm run check:environment
-
-      - name: 执行发布门禁并生成临时归档
-        # npm run release:pack invokes npm run verify:release before packaging.
-        run: npm run release:pack
-
-      - name: 运行依赖审计
-        run: npm run audit:dependencies
-
-  harness-integration:
-    name: Harness 集成与安装验收
-    needs: release-gate
+    name: Windows 发布与集成验收
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
-      - name: 检出源码
-        uses: actions/checkout@v4
-
-      - name: 安装 Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          registry-url: https://registry.npmjs.org
-
-      - name: 安装 pnpm
-        shell: pwsh
-        run: |
-          npm install --global pnpm@12.16.1
-          pnpm --version
-
-      - name: 安装 Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
+        id: python
         with:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: |
             requirements-ci.txt
             requirements-voice-generation-ci.txt
-            requirements-audit-ci.txt
 
-      - name: 确认 FFmpeg
-        shell: pwsh
+      - name: 安装 FFmpeg
         run: |
           if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
             choco install ffmpeg -y --no-progress
@@ -204,57 +94,57 @@ jobs:
           ffmpeg -version | Select-Object -First 1
           ffprobe -version | Select-Object -First 1
 
-      - name: 安装可复现依赖
-        run: |
-          npm ci --ignore-scripts --registry=https://registry.npmjs.org
-          python -m pip install -r requirements-ci.txt -r requirements-voice-generation-ci.txt
+      - name: 安装 Node 依赖
+        run: npm ci --ignore-scripts
 
-      - name: 运行只读环境预检
-        run: npm run check:environment
+      - name: 安装 pnpm
+        run: npm install --global pnpm@12.16.1
+
+      - name: 安装 Python 依赖
+        run: python -m pip install -r requirements-ci.txt -r requirements-voice-generation-ci.txt
+
+      - name: 执行发布门禁并验证临时归档
+        run: npm run release:pack
 
       - name: 运行 Harness 原生集成测试
-        shell: pwsh
-        run: |
-          $env:BOT_TEST_PYTHON = (Get-Command python).Source
-          npm run test:native
-          npm run test:lifecycle-native
+        env:
+          BOT_TEST_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: npm run test:native
+
+      - name: 运行 lifecycle 原生集成测试
+        env:
+          BOT_TEST_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: npm run test:lifecycle-native
 
       - name: 运行独立产品安装验收
-        shell: pwsh
-        run: |
-          $env:BOT_TEST_PYTHON = (Get-Command python).Source
-          npm run test:install-smoke
+        env:
+          BOT_TEST_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: npm run test:install-smoke
 
-      - name: 上传失败集成证据
+      - name: 上传失败测试证据
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: harness-test-evidence-${{ github.run_id }}
+          name: windows-test-evidence-${{ github.run_id }}
           path: .codex/**/*-evidence/**
           if-no-files-found: ignore
           include-hidden-files: true
           retention-days: 7
 
   python-compatibility:
-    name: Python ${{ matrix.python-version }} 依赖检查
+    name: Python 3.13 依赖检查
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.12', '3.13']
+    timeout-minutes: 10
     steps:
-      - name: 检出源码
-        uses: actions/checkout@v4
-      - name: 安装 Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.13'
           cache: pip
           cache-dependency-path: |
             requirements-ci.txt
             requirements-voice-generation-ci.txt
-            requirements-audit-ci.txt
-      - name: 安装并检查 Python 依赖
-        run: |
-          python -m pip install -r requirements-ci.txt -r requirements-voice-generation-ci.txt
-          python -m pip check
+      - name: 安装 Python 依赖
+        run: python -m pip install -r requirements-ci.txt -r requirements-voice-generation-ci.txt
+      - name: 检查依赖兼容性
+        run: python -m pip check

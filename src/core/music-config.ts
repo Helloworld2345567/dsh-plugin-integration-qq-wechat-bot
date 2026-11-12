@@ -20,7 +20,7 @@ const windowsAbsolute = (value: string): boolean => path.win32.isAbsolute(value)
 export const musicHomeSchema = z.string().trim().min(1).max(4096)
   .refine(value => !/[\x00-\x1f]/.test(value), {message: 'Music project root contains control characters'})
   .refine(value => path.isAbsolute(value) || windowsAbsolute(value), {message: 'Music project root must be an absolute path'})
-  .transform(value => windowsAbsolute(value) ? path.win32.normalize(value) : path.resolve(value));
+  .transform(value => path.isAbsolute(value) ? path.resolve(value) : path.win32.normalize(value));
 
 export const musicSourcesSchema = z.array(z.enum(MUSIC_SOURCE_IDS)).min(1).max(MUSIC_SOURCE_IDS.length)
   .refine(value => new Set(value).size === value.length, {message: 'Music sources must be unique'});

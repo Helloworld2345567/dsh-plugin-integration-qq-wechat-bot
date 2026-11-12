@@ -19,8 +19,6 @@ for (const [chinese, english] of [['CONTRIBUTING.md', 'CONTRIBUTING.en.md'], ['d
 }
 if (packageJson.engines?.node !== '>=24.0.0') failures.push('package Node engine is not Node 24+');
 if (packageJson.engines?.dsh !== '0.2.1-rc.5') failures.push('package Harness engine changed');
-if (!text['.github/workflows/ci.yml'].includes("NODE_VERSION: '24'") || !text['.github/workflows/ci.yml'].includes("HARNESS_VERSION: '0.2.1-rc.5'")) failures.push('CI Node/Harness versions do not match package contract');
-for (const version of ['3.12', '3.13']) if (!text['.github/workflows/ci.yml'].includes(`'${version}'`)) failures.push(`CI Python matrix missing ${version}`);
 for (const variable of ['BOT_TEST_PYTHON', 'BOT_TEST_TMP', 'BOT_TEST_WEB_TOOLS_SOURCE', 'BOT_TEST_IMAGE_KEY', 'NATIVE_TEST_RESULT', 'LIFECYCLE_NATIVE_FOLDER']) for (const file of ['docs/testing.md', 'docs/en/testing.md']) if (!text[file].includes(variable)) failures.push(`${file}: testing variable not classified: ${variable}`);
 if (!/(?:不得|不)发送平台消息/.test(text['docs/testing.md'])) failures.push('testing boundary must forbid real platform messages');
 if (!/do not send platform messages/i.test(text['docs/en/testing.md'])) failures.push('English testing boundary must forbid real platform messages');

@@ -149,11 +149,10 @@ for (const file of workflows) {
   if (path.relative(root, file).replaceAll('\\', '/') === '.github/workflows/ci.yml') {
     if (!document || typeof document !== 'object' || Array.isArray(document)) failures.push('.github/workflows/ci.yml: root must be an object');
     else {
-      const jobs = document.jobs;
-      for (const job of ['quality', 'release-gate', 'harness-integration', 'python-compatibility']) if (!jobs?.[job]) failures.push(`.github/workflows/ci.yml: missing job ${job}`);
-      if (document.env?.NODE_VERSION !== '24' || document.env?.HARNESS_VERSION !== '0.2.1-rc.5') failures.push('.github/workflows/ci.yml: Node/Harness version contract changed');
-      const pythonMatrix=jobs?.['python-compatibility']?.strategy?.matrix?.['python-version']?.map(String)??[];
-      if (!pythonMatrix.includes('3.12') || !pythonMatrix.includes('3.13')) failures.push('.github/workflows/ci.yml: Python 3.12/3.13 matrix missing');
+      if (document.env?.NODE_VERSION !== '24') failures.push('.github/workflows/ci.yml: Node version contract changed');
+      const pythonVersions = Object.values(document.jobs ?? {}).flatMap(job => job.steps ?? [])
+        .filter(step => step.uses?.startsWith('actions/setup-python@')).map(step => String(step.with?.['python-version']));
+      for (const version of ['3.12', '3.13']) if (!pythonVersions.includes(version)) failures.push(`.github/workflows/ci.yml: Python ${version} coverage missing`);
       for (const command of ['npm run verify:release', 'npm run release:pack', 'npm run test:native', 'npm run test:lifecycle-native', 'npm run test:install-smoke']) if (!text.includes(command)) failures.push(`.github/workflows/ci.yml: missing ${command}`);
       if (!/ffmpeg\s+-version[\s\S]*ffprobe\s+-version/m.test(text)) failures.push('.github/workflows/ci.yml: ffmpeg/ffprobe verification missing');
     }

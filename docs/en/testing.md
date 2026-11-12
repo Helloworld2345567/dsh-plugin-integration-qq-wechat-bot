@@ -69,13 +69,14 @@ Structured diagnostics pass strict schemas, caches and management responses; old
 
 | CI layer | Work |
 | --- | --- |
-| Linux `quality` | Explicit architecture gate, pure logic, Python 3.12, dependency/license/docs/release gates and audit on Node 24 |
-| Windows `release-gate` | Node 24, FFmpeg/ffprobe, Python 3.12, Windows release gate and actual `release:pack` |
-| Windows `harness-integration` | Harness `0.2.1-rc.5` native plugin/lifecycle tests and standalone install smoke |
-| Windows `python-compatibility` | Reproducible dependencies and `pip check` on Python 3.12/3.13 |
+| Linux `quality` | Node 24, Python 3.12, the shared `verify:release` source gate and npm/Python dependency audits |
+| Windows `release-gate` | Node 24, FFmpeg/ffprobe, Python 3.12 and actual `release:pack`; reuse the environment for Harness `0.2.1-rc.5` native plugin, lifecycle and standalone install acceptance |
+| Windows `python-compatibility` | Reproducible dependencies and `pip check` on Python 3.13; the Windows release gate already covers 3.12 |
 
-CI uploads only sanitized dependency-audit JSON. Windows `release:pack` prints archive names, SHA-256 and entry summaries, then deletes temporary `.tgz` files rather than uploading archives. Evidence must not contain credentials, Authorization, cookies, user/group IDs, runtime data, databases, full logs, absolute local paths or model weights.
+Each Windows native/install test runs in its own step so a later command cannot mask a failed exit code. Failed TypeScript tests retain sanitized output from the original run without automatically rerunning individual files.
+
+CI uploads dependency-audit JSON and sanitized diagnostics for failed tests. Windows `release:pack` prints archive names, SHA-256 and entry summaries, then deletes temporary `.tgz` files rather than uploading archives. Evidence must not contain credentials, Authorization, cookies, user/group IDs, runtime data, databases, full logs, absolute local paths or model weights.
 
 ## Failure handling
 
-Retain the error category, stage, first version line and short sanitized output tail. Terminate complete Windows process trees, prefer dynamic ports, and clean launcher state, servers, timers and temporary directories in `finally`. Retain sanitized evidence directories only when needed to diagnose failure; successful runs remove all temporary test files. Do not upload `.codex`, `.runtime`, test logs, databases, fixture credentials or complete Harness profiles.
+Retain the error category, stage, first version line and short sanitized output tail. Terminate complete Windows process trees, prefer dynamic ports, and clean launcher state, servers, timers and temporary directories in `finally`. Retain sanitized evidence directories only when needed to diagnose failure; successful runs remove all temporary test files. Upload only generated sanitized diagnostics under `.codex/*-evidence/`, never the entire `.codex`, `.runtime`, raw logs, databases, fixture credentials or complete Harness profiles.

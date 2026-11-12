@@ -38,19 +38,6 @@ try {
   evidence = {'test-output.log': error.result?.output ?? error.message};
   const diagnostic = error.result?.output ?? error.stack ?? error.message;
   if (diagnostic) console.error(redactEvidence(diagnostic));
-  // GitHub's public job view does not expose the test subprocess log. On a
-  // failed aggregate run, isolate the first failing file and publish its
-  // identity as a workflow annotation for actionable CI diagnostics.
-  for (const file of files) {
-    try {
-      await spawnCapture(process.execPath, [cli, '--test', '--test-concurrency=1', file], {cwd: root, env:testEnvironment, timeoutMs: 10 * 60 * 1000});
-    } catch (fileError) {
-      const detail = redactEvidence(fileError.result?.output ?? fileError.message).replace(/[\r\n]+/g, ' ').slice(0, 1000);
-      console.error(`::error file=${file}::TypeScript test file failed: ${detail}`);
-      evidence = {'test-output.log': diagnostic, 'failing-file.log': `${file}\n${fileError.result?.output ?? fileError.message}`};
-      break;
-    }
-  }
   process.exitCode = 1;
 }
 await finalizeTestRoot(temporary, {failed, evidence});
