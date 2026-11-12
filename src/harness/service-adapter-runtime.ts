@@ -1,5 +1,6 @@
 import path from 'node:path';
 import {mkdir} from 'node:fs/promises';
+import {credentialRef,type CredentialProvider} from '@deepseek-ai/dsh-credentials';
 import {runJsonProcess,jobEnvironment} from './json-process.js';
 import {NodeControlledProcessPort} from './controlled-process.js';
 import {ProcessWorker} from './process-worker.js';
@@ -16,19 +17,43 @@ import type {VoiceLibrarySettingsRepository} from '../core/ports/media.js';
 import {BUILTIN_SERVICE_MANIFESTS} from '../core/builtin-service-adapters.js';
 
 export class ProcessMusicFacade implements MusicFacadePort {
+  constructor(readonly credentials?:Pick<CredentialProvider,'resolve'>) {}
+
+  private resolveEnvironment(outputDirectory:string,names:readonly string[]):Promise<NodeJS.ProcessEnv>{
+    return resolveMusicEnvironment(outputDirectory,names,this.credentials);
+  }
+
   async exchange(config:MusicProfileConfig,request:MusicFacadeRequest,signal:AbortSignal):Promise<any>{
     const timeoutMs=Math.max(1,request.deadline-Date.now());
     const python=path.join(config.home,'.venv',process.platform==='win32'?'Scripts/python.exe':'bin/python');
     const entry=path.join(config.home,'scripts','music_api.py');
+    const credentialNames=[
+      ...(request.sources.includes('QQMusicClient')?['MUSIC_QQ_COOKIES']:[]),
+      ...(request.sources.includes('NeteaseMusicClient')?['MUSIC_NETEASE_COOKIES']:[]),
+      'MUSIC_HTTP_PROXY',
+    ];
     const response=await runJsonProcess(python,['-B','-u',entry],{
       protocol:MUSIC_PROTOCOL,version:1,action:request.action,song:request.song,artist:request.artist,
       selection:request.selection,purpose:'source',includeLyrics:request.includeLyrics??false,
       output:request.outputDirectory,deadline:request.deadline,sources:request.sources,
-    },{cwd:request.outputDirectory,signal,timeoutMs,env:jobEnvironment(request.outputDirectory)});
+    },{cwd:request.outputDirectory,signal,timeoutMs,env:await this.resolveEnvironment(request.outputDirectory,credentialNames)});
     if(response.protocol!==MUSIC_PROTOCOL||response.version!==1)throw Error('MUSIC_PROTOCOL_UNSUPPORTED');
     if(response.ok!==true)throw Error(/^MUSIC_[A-Z_]+$/.test(response.error?.code??'')?response.error.code:'MUSIC_OPERATION_FAILED');
     return response.result;
   }
+}
+
+export async function resolveMusicEnvironment(outputDirectory:string,names:readonly string[],credentials?:Pick<CredentialProvider,'resolve'>):Promise<NodeJS.ProcessEnv>{
+  const environment=jobEnvironment(outputDirectory);
+  for(const name of names){
+    let value:string|undefined;
+    try{value=(await credentials?.resolve(credentialRef(name)))?.value;}catch{value=undefined;}
+    value??=process.env[name];
+    // Cookies can be large, but an accidental unbounded value should never
+    // become a process-spawn failure or an observable diagnostic.
+    if(typeof value==='string'&&value.length>0&&value.length<=128*1024)environment[name]=value;
+  }
+  return environment;
 }
 
 export class ProcessVoiceModelScanner implements VoiceModelScanner {
@@ -45,10 +70,10 @@ export class ProcessVoiceModelScanner implements VoiceModelScanner {
   }
 }
 
-export function createBuiltinServiceAdapters(python?:string){
+export function createBuiltinServiceAdapters(python?:string,credentials?:Pick<CredentialProvider,'resolve'>){
   const worker=new ProcessWorker(python),processes=new NodeControlledProcessPort();
   return Object.freeze([
-    {manifest:BUILTIN_SERVICE_MANIFESTS.music,createAdapter:()=>new MusicServiceAdapter(new ProcessMusicFacade())},
+    {manifest:BUILTIN_SERVICE_MANIFESTS.music,createAdapter:()=>new MusicServiceAdapter(new ProcessMusicFacade(credentials))},
     {manifest:BUILTIN_SERVICE_MANIFESTS.voice,createAdapter:()=>new GptSovitsServiceAdapter(worker)},
     {manifest:BUILTIN_SERVICE_MANIFESTS.breeze,createAdapter:()=>new BreezeTtsServiceAdapter()},
     {manifest:BUILTIN_SERVICE_MANIFESTS.rvc,createAdapter:()=>new RvcServiceAdapter(new RvcCliServiceAdapter(processes),new RvcHttpCompatibilityAdapter(worker))},

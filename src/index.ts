@@ -61,7 +61,7 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
   try{
     // Validate every fixed source and create the immutable catalog before any
     // executable operation or Harness tool is exposed.
-    serviceHost=await ServicePluginHost.createBuiltin(createBuiltinServiceAdapters(config.python));
+    serviceHost=await ServicePluginHost.createBuiltin(createBuiltinServiceAdapters(config.python,ctx.credentials));
     const validators=new OutputValidatorRegistry();
     serviceRuntime=new ServiceRuntime(serviceHost,profiles,validators,HOST_SERVICE_POLICIES,persistence.serviceState,path.join(persistence.home,'.tmp','service-health'));
     serviceRuntime.assertApprovedMediaOperations(mediaOperationRegistry);

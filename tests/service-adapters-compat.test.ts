@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {MusicServiceAdapter,type MusicFacadePort} from '../src/core/music-adapter.js';
+import {resolveMusicEnvironment} from '../src/harness/service-adapter-runtime.js';
 import {GptSovitsServiceAdapter} from '../src/core/gpt-sovits-adapter.js';
 import {BreezeTtsServiceAdapter} from '../src/core/breeze-tts-adapter.js';
 import {RvcCliServiceAdapter} from '../src/core/rvc-cli-adapter.js';
@@ -18,6 +19,17 @@ function profile(serviceId:string,capability:string,managedConfig:Record<string,
 function job(root:string,operation:string,selected:ResolvedServiceProfileRevision,parameters:Record<string,unknown>={},inputs:ServiceAdapterJob['inputs']=[]):ServiceAdapterJob{return{jobId:'job-fixture',operation,profile:selected,inputHandles:inputs.map(input=>input.handle),inputs,parameters,outputDirectory:root,idempotencyKey:'fixture-key',deadline:Date.now()+30_000};}
 
 const musicConfig={home:'C:/managed/music',sources:['MiguMusicClient','KuwoMusicClient']};
+test('Music child environment resolves provider credentials without widening the safe environment',async t=>{
+  const output=await directory(t,'phase5-music-env');
+  const seen:string[]=[];
+  const credentials={resolve:async(ref:unknown)=>{seen.push(String(ref));return {value:ref==='MUSIC_NETEASE_COOKIES'?'MUSIC_COOKIE_VALUE':undefined,source:'test'};}} as any;
+  const environment=await resolveMusicEnvironment(output,['MUSIC_NETEASE_COOKIES','MUSIC_HTTP_PROXY'],credentials);
+  assert.equal(environment.MUSIC_NETEASE_COOKIES,'MUSIC_COOKIE_VALUE');
+  assert.equal(environment.MUSIC_HTTP_PROXY,undefined);
+  assert.deepEqual(seen,['MUSIC_NETEASE_COOKIES','MUSIC_HTTP_PROXY']);
+  assert.equal(environment.HOME,output);
+  assert.doesNotMatch(JSON.stringify(environment),/MUSIC_QQ_COOKIES/);
+});
 test('Music adapter forwards frozen includeLyrics=false, omits lyrics, and distinguishes search, preview and full acquisition',async t=>{const root=await directory(t,'phase5-music'),requests:any[]=[];let preview=false;const facade:MusicFacadePort={exchange:async(_config,request)=>{requests.push(request);if(request.action==='search')return{candidates:[{source:'MiguMusicClient',id:'private-id',title:'Song',artist:'Artist',locator:{private:'x'}}],diagnostics:[{source:'MiguMusicClient',status:'success'},{source:'KuwoMusicClient',status:'success'}]};const audio=path.join(root,'song.mp3'),lyric=path.join(root,'song.lrc');await writeFile(audio,'complete-audio');await writeFile(lyric,'lyrics');return{track:{source:'MiguMusicClient',id:'private-id',title:'Song',artist:'Artist'},audio:{kind:'audio',path:audio,name:'song.mp3',complete:!preview,preview},lyric:{kind:'file',path:lyric,name:'song.lrc'},diagnostics:[{source:'MiguMusicClient',status:'success'},{source:'KuwoMusicClient',status:'success'}]};}};const compared:any[]=[];const adapter=new MusicServiceAdapter(facade,{compare:value=>{compared.push(value);}}),selected=profile('music','music.search',musicConfig);
   const search=await adapter.execute(job(root,'music.search',selected,{song:'Song'}),new AbortController().signal);assert.equal(search.outputs.length,0);assert.equal((search.observations as any).music.resultType,'search');
   const acquireProfile=profile('music','music.acquire',musicConfig),full=await adapter.execute(job(root,'music.acquire',acquireProfile,{song:'Song',includeLyrics:false}),new AbortController().signal);assert.deepEqual(requests.at(-1).includeLyrics,false);assert.deepEqual(full.outputs.map(output=>output.kind),['audio']);assert.equal((full.observations as any).music.resultType,'full');assert.equal(compared.length,2,'shadow comparison only consumes produced results');
