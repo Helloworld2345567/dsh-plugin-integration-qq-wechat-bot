@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {mkdir,mkdtemp,readdir,rm,writeFile} from 'node:fs/promises';
 import path from 'node:path';
+import {pathToFileURL} from 'node:url';
 test('environment evaluator blocks unsupported versions and missing tools', async () => {
   const {evaluateEnvironment} = await import('../scripts/test-environment.mjs' as string);
   const result = evaluateEnvironment({platform: 'win32', nodeVersion: '23.0.0', harness: {engine: '0.2.1-rc.1', dependency: '0.2.1-rc.1'}, packageLock: false, ffmpeg: false, ffprobe: false, python: {validVersion: false, version: 'Python 3.11.0', packages: [{name: 'requests', optional: false, missing: true, satisfies: false}, {name: 'edge-tts', optional: true, missing: true, satisfies: false}], pip: true}});
@@ -42,6 +43,10 @@ test('evidence redaction removes paths, URLs, identities and credentials', async
   const value = redactEvidence('file:///E:/private/run.js E:/private/out.log \\\\server\\share\\private\\out.log /home/operator/run.log /workspace/private/out.log /github/workspace/repo/out.log endpoint=https://private.invalid/v1 USER_ID=123 GROUP_ID=456 Authorization: Basic cHJpdmF0ZQ== Bearer standalone-secret Basic standalone-basic {"user_id":"123","group_id":"456","token":"secret","appSecret":"hidden"}');
   assert.doesNotMatch(value, /operator|workspace|github|server|share|123|456|hidden|cHJp|standalone|private\.invalid|(?:^|\s)[A-Za-z]:[\\/]|\\\\server|\/(?:home|workspace|github)\//i);
   assert.match(value, /<path>|<url>|<redacted>/);
+  const root = path.resolve('.codex/diagnostic root');
+  const stack = redactEvidence(`at ${pathToFileURL(path.join(root, 'dist', 'index.js')).href}:12:34\nat ${pathToFileURL(path.join(root + '-external', 'private.js')).href}:56:78`, root);
+  assert.match(stack, /at <repo>\/dist\/index\.js:12:34/);
+  assert.doesNotMatch(stack, /diagnostic|external|private\.js/);
 });
 
 test('test subprocess environment excludes inherited secrets and runtime identity', async () => {

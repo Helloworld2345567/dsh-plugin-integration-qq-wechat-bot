@@ -1,6 +1,7 @@
 import {spawnSync} from 'node:child_process';
 import {access, readFile, realpath, stat} from 'node:fs/promises';
 import path from 'node:path';
+import {pathToFileURL} from 'node:url';
 
 const SAFE_ENVIRONMENT_KEYS = /^(?:PATH|PATHEXT|SystemRoot|WINDIR|COMSPEC|TEMP|TMP|HOME|USERPROFILE|LOCALAPPDATA|APPDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROCESSOR_ARCHITECTURE)$/i;
 const ALLOWED_TEST_KEYS = new Set(['BOT_TEST_IMAGE_KEY', 'BOT_TEST_ANALYSIS_KEY', 'BOT_TEST_PYTHON', 'BOT_TEST_TMP', 'BOT_TEST_WEB_TOOLS_SOURCE', 'NATIVE_TEST_RESULT', 'LIFECYCLE_NATIVE_FOLDER', 'BOT_HOME', 'BOT_WORKSPACE_ROOT', 'BOT_PERSONAS_ROOT', 'BOT_DATA_HOME', 'BOT_PYTHON', 'BOT_SOURCE_ROOT', 'DSH_HOME', 'DSH_AGENTS_HOME', 'BOT_IMAGE_KEY_ENV', 'npm_config_store_dir', 'npm_config_userconfig', 'PIP_CONFIG_FILE', 'XDG_CONFIG_HOME', 'PYTHONPATH']);
@@ -34,6 +35,7 @@ export function relativeEvidencePath(root, candidate) {
 
 export function redactEvidence(value, root = process.cwd()) {
   return String(value)
+    .replaceAll(pathToFileURL(path.resolve(root) + path.sep).href, '<repo>/')
     .replaceAll(root, '<repo>')
     .replace(/\bfile:\/\/(?:\/[A-Za-z]:\/|\/)[^\s"'<>]+/gi, 'file://<path>')
     .replace(/\\\\[^\s"'<>]+/g, '<path>')

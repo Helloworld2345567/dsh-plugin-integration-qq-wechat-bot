@@ -14,10 +14,12 @@ export async function runJsonProcess(command:string,args:string[],request:unknow
     const timer=options.timeoutMs?setTimeout(abort,options.timeoutMs):undefined;timer?.unref();
     options.signal.addEventListener('abort',abort,{once:true});
     const clean=()=>{if(timer)clearTimeout(timer);options.signal.removeEventListener('abort',abort);};
+    const fail=async(error:Error)=>{abort();await killing;clean();reject(error);};
+    child.stdout.on('error',fail);child.stderr.on('error',fail);
     child.stdout.on('data',(chunk:Buffer)=>{size+=chunk.length;if(size>(options.maxOutputBytes??2*1024*1024)){overflow=true;abort();}else chunks.push(chunk);});
     // Drain stderr without returning provider URLs, credentials or tracebacks.
     child.stderr.resume();child.stdin.on('error',()=>{});
-    child.once('error',error=>{clean();reject(error);});
+    child.once('error',fail);
     child.once('close',async code=>{clean();await killing;if(overflow)return reject(Error('WORKER_OUTPUT_TOO_LARGE'));if(aborted||options.signal.aborted)return reject(Error('MEDIA_CANCELLED_OR_TIMEOUT'));try{const response=JSON.parse(Buffer.concat(chunks).toString('utf8'));if(code&&!response.error)throw Error('WORKER_PROCESS_FAILED');resolve(response);}catch{reject(Error('WORKER_RESPONSE_INVALID'));}});
     child.stdin.end(JSON.stringify(request));if(options.signal.aborted)abort();
   });
