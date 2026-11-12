@@ -55,6 +55,7 @@ export const adminCommandRequestSchema=z.discriminatedUnion('name',[
   commandRequest('skill.music.probe',z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive()}).strict()),
   commandRequest('service.settings.save',voiceLibrarySettingsInputSchema),
   commandRequest('service.settings.pick-directory',z.object({current:z.string().trim().max(32767).refine(value=>!/[\x00-\x1f]/.test(value),{message:'目录路径包含无效字符',params:{message:diagnostic('pathInvalid')}}).optional(),locale:z.enum(['zh','en']).default('zh')}).strict()),
+  commandRequest('service.settings.pick-file',z.object({current:z.string().trim().max(32767).refine(value=>!/[\x00-\x1f]/.test(value),{message:'文件路径包含无效字符',params:{message:diagnostic('pathInvalid')}}).optional(),locale:z.enum(['zh','en']).default('zh')}).strict()),
   commandRequest('service.refresh',serviceRefreshInputSchema),commandRequest('service.start',serviceStartInputSchema),commandRequest('capability.acceptance',acceptanceRecordInputSchema),
   commandRequest('delivery.retry',deliveryRetryInput),
   commandRequest('automation.proactive',z.object({scopeKey:z.string().min(1).max(128),action:z.enum(['on','off','status','now','set']),args:z.string().max(1000).default('')}).strict()),

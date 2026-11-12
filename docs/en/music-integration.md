@@ -8,6 +8,8 @@ The plugin invokes Music search/download through the `musicdl_json_v1` JSON subp
 
 A Music Service Profile's private `home` points to the project root, and `sources` orders `MiguMusicClient`, `KuwoMusicClient`, `QQMusicClient`, `NeteaseMusicClient`. Defaults enable Migu/Kuwo after full-download verification; enable others after complete search/download checks. No chat model, music HTTP port or per-persona interpreter is required.
 
+The Services panel manages source priority only, with a compact horizontal list for adding, removing and moving sources. The Music project directory comes from the deployment default or a legacy backend setting and is not selected again in the panel. The selected order is passed unchanged to the Music JSON interface.
+
 Persona `media.music` holds `profileRef`, `enabled` and `includeLyrics`, with both toggles defaulting to `false`. Enabling in the panel adds `bot_music` and `music-download`. Disabling immediately revokes further permissions for active jobs; grants take effect next turn. The current task keeps its frozen lyrics preference.
 
 Operators/the host determine root directories, interpreters and output paths; model arguments cannot override them. Initial sources pass download acceptance without extra login. Future sources needing cookies/authorization must use Harness credentials, not persona/candidate/tool-result storage.

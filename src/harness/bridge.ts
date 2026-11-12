@@ -341,7 +341,7 @@ export class NativeHarness implements HarnessPort {
     const imageState=live.images;
     if(image){
       if(!allowedNow('image_generation',live.snapshot,current,bot,live.binding.scope))throw new Error('IMAGE_SKILL_DISABLED');
-      const endpoint=resolveImageSkill(config);if(!process.env[endpoint.keyEnv])throw new Error(`MISSING_PROVIDER_KEY: ${endpoint.keyEnv}`);
+      const endpoint=resolveImageSkill(config);if(endpoint.protocol!=='comfyui'&&(!endpoint.keyEnv||!process.env[endpoint.keyEnv]))throw new Error(`MISSING_PROVIDER_KEY: ${endpoint.keyEnv??'IMAGE_ACCESS_KEY'}`);
       if(imageState.completed)throw new Error('An image has already been generated successfully in this turn');
       if(imageState.inFlight)throw new Error('Image generation is in progress for this turn. Wait for its result.');
       imageState.inFlight=true;

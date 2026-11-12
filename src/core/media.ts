@@ -132,7 +132,7 @@ export class MediaService {
     provider=connection?.provider??(endpoint&&typeof endpoint.baseUrl==='string'?new URL(endpoint.baseUrl).hostname:undefined);requestedModel=(edgeEndpoint?.voice??(endpoint&&'model' in endpoint&&typeof endpoint.model==='string'?endpoint.model:undefined));
     persist({provider,requestedModel});
     const credentials:Record<string,string>={};
-    if(endpoint&&'keyEnv' in endpoint&&typeof endpoint.keyEnv==='string'){const keyEnv=endpoint.keyEnv;const value=connection?.apiKey??process.env[keyEnv];if(!value)throw new Error(`MISSING_PROVIDER_KEY: ${keyEnv}`);credentials[keyEnv]=value;}
+    if(endpoint&&endpoint.protocol!=='comfyui'&&'keyEnv' in endpoint&&typeof endpoint.keyEnv==='string'){const keyEnv=endpoint.keyEnv;const value=connection?.apiKey??process.env[keyEnv];if(!value)throw new Error(`MISSING_PROVIDER_KEY: ${keyEnv}`);credentials[keyEnv]=value;}
     if(descriptor.inputKinds?.includes('audio')&&source[0]){
       // Tencent can label SILK as AMR, including an optional AMR wrapper.
       // Inspect the codec header so genuine AMR and other audio stay with ffmpeg.

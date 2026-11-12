@@ -32,7 +32,10 @@ All statically visible imports are listed, including lazy imports inside functio
 | `social_posts` | `__future__`, `aiohttp`, `asyncio`, `html.parser`, `json`, `re`, `urllib.parse` |
 | `worker` | `__future__`, `asyncio`, `contextlib`, `docx`, `dsh_bot_runtime.errors`, `dsh_bot_runtime.singing_common`, `dsh_bot_runtime.social_posts`, `importlib`, `io`, `json`, `math`, `openpyxl`, `os`, `pathlib`, `pypdf`, `pypdfium2`, `re`, `subprocess`, `sys`, `time`, `zipfile` |
 | `skills` and the five skill `__init__` modules | None |
-| `skills.image_generation.image_api` | `PIL`, `__future__`, `argparse`, `base64`, `dsh_bot_runtime.model_usage`, `getpass`, `hashlib`, `io`, `ipaddress`, `json`, `mimetypes`, `os`, `pathlib`, `re`, `requests`, `socket`, `sys`, `time`, `urllib.parse` |
+| `skills.image_generation.image_api` | `__future__`, `dsh_bot_runtime.skills.image_generation.common`, `dsh_bot_runtime.skills.image_generation.comfyui.image_api`, `dsh_bot_runtime.skills.image_generation.openai.image_api`, `os`, `sys` |
+| `skills.image_generation.common` | `PIL`, `__future__`, `io`, `ipaddress`, `mimetypes`, `pathlib`, `re`, `socket`, `time`, `urllib.parse` |
+| `skills.image_generation.openai.image_api` | `PIL`, `__future__`, `argparse`, `base64`, `dsh_bot_runtime.model_usage`, `dsh_bot_runtime.skills.image_generation.common`, `getpass`, `json`, `os`, `pathlib`, `requests`, `urllib.parse` |
+| `skills.image_generation.comfyui.image_api` | `PIL`, `__future__`, `argparse`, `dsh_bot_runtime.model_usage`, `dsh_bot_runtime.skills.image_generation.common`, `json`, `os`, `pathlib`, `requests`, `time`, `urllib.parse`, `uuid` |
 | `skills.media_analysis.douyin_links` | `aiohttp`, `dsh_bot_runtime.video_understanding.models`, `dsh_bot_runtime.video_understanding.network`, `html`, `json`, `os`, `pathlib`, `re`, `urllib.parse` |
 | `skills.media_analysis.image_download` | `PIL`, `aiohttp`, `dsh_bot_runtime.skills.media_analysis.douyin_links`, `dsh_bot_runtime.skills.media_analysis.platform_links`, `dsh_bot_runtime.video_understanding.models`, `dsh_bot_runtime.video_understanding.network`, `html.parser`, `json`, `pathlib`, `re`, `urllib.parse` |
 | `skills.media_analysis.image_transform` | `PIL`, `dsh_bot_runtime.skills.media_analysis.transform_common`, `math`, `pathlib`, `time` |
@@ -76,6 +79,7 @@ Production internal imports use `dsh_bot_runtime...` or package-relative names. 
 | `test_singing_worker.py` | `dsh_bot_runtime`, `dsh_bot_runtime.singing_common`, `io`, `json`, `pathlib`, `requests`, `struct`, `tempfile`, `unittest`, `unittest.mock`, `wave` |
 | `test_video_limits.py` | `asyncio`, `dsh_bot_runtime.skills.media_analysis`, `dsh_bot_runtime.video_understanding`, `dsh_bot_runtime.video_understanding.media`, `dsh_bot_runtime.video_understanding.models`, `dsh_bot_runtime.video_understanding.sources`, `os`, `pathlib`, `tempfile`, `types`, `unittest`, `unittest.mock` |
 | `test_voice_api.py` | `dsh_bot_runtime.skills.voice_generation`, `pathlib`, `tempfile`, `unittest`, `unittest.mock` |
+| `test_comfyui.py` | `dsh_bot_runtime.skills.image_generation`, `dsh_bot_runtime.skills.image_generation.comfyui`, `dsh_bot_runtime.skills.image_generation.openai`, `json`, `pathlib`, `tempfile`, `unittest`, `unittest.mock` |
 | `test_worker.py` | `PIL`, `asyncio`, `base64`, `docx`, `dsh_bot_runtime`, `dsh_bot_runtime.model_usage`, `dsh_bot_runtime.skills.image_generation`, `dsh_bot_runtime.skills.media_analysis`, `dsh_bot_runtime.skills.media_analysis.image_download`, `dsh_bot_runtime.skills.media_analysis.platform_links`, `dsh_bot_runtime.video_understanding`, `dsh_bot_runtime.video_understanding.backend`, `dsh_bot_runtime.video_understanding.models`, `dsh_bot_runtime.video_understanding.sources`, `io`, `json`, `openpyxl`, `os`, `pathlib`, `pypdf`, `requests`, `shutil`, `subprocess`, `sys`, `tempfile`, `time`, `unittest`, `unittest.mock`, `wave` |
 
 Tests no longer inject production modules through `sys.path`. Only external-RVC fixtures temporarily inject paths to simulate an operator-installed third-party `rvc` package, restoring them afterward.
@@ -89,7 +93,9 @@ Tests no longer inject production modules through `sys.path`. Only external-RVC 
 | RVC runner | `python/rvc_runner.py` or `-m dsh_bot_runtime.rvc_runner` | main reads fixed job JSON, writes status JSON, exits 0/1 |
 | RVC output | `python/rvc_output.py` or `-m dsh_bot_runtime.rvc_output` | main performs fixed output encoding, exits 0/1/2 |
 | Video metadata | `python/extract_worker.py` or `-m dsh_bot_runtime.video_understanding.extract_worker` | main processes one fixed URL and outputs JSON only |
-| Image client | `-m dsh_bot_runtime.skills.image_generation.image_api` | main provides generate/edit CLI; models cannot invoke CLI or supply paths |
+| Image dispatcher | `-m dsh_bot_runtime.skills.image_generation.image_api`; compatible `python/image_api.py` | main selects one configured service adapter; models cannot invoke CLI or supply paths |
+| OpenAI image adapter | `-m dsh_bot_runtime.skills.image_generation.openai.image_api` | OpenAI-compatible generate/edit implementation |
+| ComfyUI image adapter | `-m dsh_bot_runtime.skills.image_generation.comfyui.image_api` | ComfyUI API workflow submission and output download |
 | Media/voice skill CLI | `-m ...media_api`, `-m ...voice_api` | Compatible stdin/stdout debug entries; production manifests call execute(job) |
 | Skill-only entries | music/singing `entry.execute(job)` | Worker-only, not independent persistent CLIs |
 | Shared libraries | audio, usage, social, singing, video core, transform helpers | Functions/types only; import never runs main |
@@ -106,7 +112,7 @@ Tests no longer inject production modules through `sys.path`. Only external-RVC 
 ## Optional-dependency branches
 
 - PDF/DOCX/XLSX load `pypdf`, `pypdfium2`, `python-docx`, `openpyxl` on first matching document_read format.
-- Image generation imports requests at actual CLI execution, Pillow on decoding/JPEG normalization; ordinary worker import does neither.
+- The dispatcher loads only the selected image adapter; image generation imports requests at actual CLI execution, Pillow on decoding/JPEG normalization; ordinary worker import does neither.
 - GPT-SoVITS imports requests in its branch; first Edge synthesis imports edge_tts, retaining `EDGE_TTS_NOT_INSTALLED` when absent.
 - Audio/video analysis/download imports requests, Pillow, aiohttp/yarl or video service only for the relevant operation. Local documents/unrelated skills do not depend on these entries loading successfully.
 - Isolated metadata extractor imports yt_dlp inside extract(), yielding `YTDLP_UNAVAILABLE` if absent.

@@ -8,6 +8,8 @@
 
 Music Service Profile 的私有配置 `home` 指向 Music 项目根目录，`sources` 指定来源顺序，依次支持 `MiguMusicClient`（咪咕）、`KuwoMusicClient`（酷我）、`QQMusicClient`（QQ 音乐）、`NeteaseMusicClient`（网易云音乐）。默认启用已通过完整下载验证的咪咕、酷我；其他来源经过完整搜索和下载验证后再启用。配置中不需要聊天模型、音乐 HTTP 端口或每个人格单独的 Python 解释器。
 
+服务面板的“音乐下载服务”区域只管理来源优先级，可横向添加、删除和移动来源；Music 项目目录由部署默认值或后端兼容配置确定，不在面板中重复选择。顺序会原样传给 Music JSON 接口。
+
 人格配置 `media.music` 保存 `profileRef`、`enabled` 与 `includeLyrics`，开关均默认 `false`。面板开启音乐能力时同步加入 `bot_music` 与 `music-download`；关闭即时撤销正在执行任务的后续权限，新增权限从下一轮生效。当前任务沿用本轮冻结的歌词偏好。
 
 项目根目录、解释器和输出路径由运营者或宿主确定，不接受模型参数覆盖。首期启用无需额外登录即可通过下载验收的来源。后续来源需要 Cookie 或授权时，接入 Harness credentials，不将凭据保存进人格、候选或工具结果。

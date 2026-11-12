@@ -1,373 +1,75 @@
 #!/usr/bin/env python3
-"""Call the configured OpenAI-compatible image API directly.
-
-Credentials are read from an environment variable. Edit requests may repeat
---image to send multiple multipart fields with the same name.
-"""
+"""Compatibility dispatcher for configured image service adapters."""
 from __future__ import annotations
 
-import argparse
-import base64
-import getpass
-import io
-import ipaddress
-import json
-import mimetypes
 import os
-import re
-import socket
 import sys
-import time
-from pathlib import Path
-from urllib.parse import urlparse
 
-DEFAULT_BASE_URL = "https://api.openai.com/v1"
-DEFAULT_MODEL = "gpt-image-2"
-MAX_IMAGE_BYTES = 24 * 1024 * 1024
-MAX_MULTIPART_BYTES = 22 * 1024 * 1024
-MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+from .common import *  # noqa: F401,F403 - compatibility exports
+from .comfyui.image_api import _comfy_image_records, _inject_comfy_prompt, normalize_comfyui_base_url
+# Keep the historical OpenAI client symbols importable from the canonical
+# module. The worker now selects an adapter explicitly, while integrations
+# importing the canonical module continue to see the legacy helpers.
+from .openai.image_api import (  # noqa: F401
+    DEFAULT_BASE_URL,
+    DEFAULT_MODEL,
+    common_parser,
+    decode_item,
+    normalize_base_url,
+    read_api_key,
+    response_items,
+)
+
+# Retained for callers that imported the legacy retry policy constant.
 TRANSIENT_STATUSES = {502, 503}
-SUPPORTED_INPUT_TYPES = {"image/png", "image/jpeg", "image/webp"}
-SUPPORTED_OUTPUT_TYPES = SUPPORTED_INPUT_TYPES | {"image/gif", "image/svg+xml"}
-EXTENSIONS = {
-    "image/png": ".png",
-    "image/jpeg": ".jpg",
-    "image/webp": ".webp",
-    "image/gif": ".gif",
-    "image/svg+xml": ".svg",
-}
-OUTPUT_MIME_TYPES = {
-    "png": "image/png",
-    "jpeg": "image/jpeg",
-    "webp": "image/webp",
-    "gif": "image/gif",
-    "svg": "image/svg+xml",
-}
 
 
-def normalize_base_url(value: str) -> str:
-    value = value.strip().rstrip("/")
-    parsed = urlparse(value)
-    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
-        raise ValueError("base URL must be an HTTPS URL without credentials")
-    if parsed.query or parsed.fragment:
-        raise ValueError("base URL must not contain a query or fragment")
-    return value if parsed.path.rstrip("/").endswith("/v1") else f"{value}/v1"
-
-
-def read_api_key(env_name: str) -> str:
-    key = os.environ.get(env_name, "").strip()
-    if key:
-        return key
-    key = getpass.getpass(f"{env_name} (hidden input): ").strip()
-    if not key:
-        raise ValueError(f"{env_name} is required")
-    return key
-
-
-def public_image_url(value: str) -> str:
-    parsed = urlparse(value)
-    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.port not in (None, 443) or parsed.fragment:
-        raise ValueError("returned image URL must be a public HTTPS URL on port 443")
-    try:
-        addresses = socket.getaddrinfo(parsed.hostname, 443, type=socket.SOCK_STREAM)
-    except OSError as exc:
-        raise ValueError("returned image URL host cannot be resolved") from exc
-    if not addresses:
-        raise ValueError("returned image URL host cannot be resolved")
-    for family, _, _, _, sockaddr in addresses:
-        address = ipaddress.ip_address(sockaddr[0])
-        if not address.is_global or address.is_multicast or address.is_private or address.is_loopback or address.is_link_local or (address.version == 6 and address.ipv4_mapped):
-            raise ValueError("returned image URL resolves to a non-public address")
+def _protocol(argv: list[str]) -> str:
+    value = os.environ.get("BOT_IMAGE_PROTOCOL") or ("comfyui" if os.environ.get("BOT_COMFYUI_BASE_URL") else "openai")
+    for index, item in enumerate(argv):
+        if item == "--protocol" and index + 1 < len(argv): return argv[index + 1]
+        if item.startswith("--protocol="): return item.split("=", 1)[1]
     return value
 
 
-def detect_content_type(data: bytes) -> str:
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if data.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "image/webp"
-    if data[:6] in (b"GIF87a", b"GIF89a"):
-        return "image/gif"
-    try:
-        text = data[:64 * 1024].decode("utf-8-sig")
-    except UnicodeDecodeError:
-        text = ""
-    if re.match(r"\s*(?:<\?xml\b[^>]*>\s*)?(?:<!DOCTYPE\s+svg\b[^>]*>\s*)?<svg(?:\s|>)", text, re.IGNORECASE):
-        return "image/svg+xml"
-    raise ValueError("response is not PNG, JPEG, WebP, GIF, or SVG")
+def _without_protocol(argv: list[str]) -> list[str]:
+    result = []; index = 0
+    while index < len(argv):
+        item = argv[index]
+        if item == "--protocol": index += 2; continue
+        if item.startswith("--protocol="): index += 1; continue
+        result.append(item); index += 1
+    return result
 
 
-def input_content_type(path: Path) -> str:
-    if path.stat().st_size == 0 or path.stat().st_size > MAX_UPLOAD_BYTES:
-        raise ValueError(f"input image must be between 1 byte and {MAX_UPLOAD_BYTES} bytes: {path}")
-    content_type = mimetypes.guess_type(path.name)[0] or ""
-    if content_type not in SUPPORTED_INPUT_TYPES:
-        content_type = detect_content_type(path.read_bytes())
-    if content_type not in SUPPORTED_INPUT_TYPES:
-        raise ValueError(f"unsupported input image type: {path}")
-    detect_content_type(path.read_bytes())
-    return content_type
-
-
-def safe_slug(value: str) -> str:
-    value = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._")
-    return value or "image"
-
-
-def decode_item(item: object, session: requests.Session) -> tuple[bytes, str]:
-    if not isinstance(item, dict):
-        raise ValueError("image item is not an object")
-    encoded = item.get("b64_json")
-    if isinstance(encoded, str) and encoded:
-        try:
-            data = base64.b64decode(encoded, validate=True)
-        except (ValueError, TypeError) as exc:
-            raise ValueError("invalid b64_json image") from exc
-    else:
-        image_url = item.get("url")
-        if not isinstance(image_url, str) or not image_url:
-            raise ValueError("image item has neither b64_json nor url")
-        public_image_url(image_url)
-        response = session.get(image_url, timeout=60, allow_redirects=False, stream=True)
-        if response.status_code in (301, 302, 303, 307, 308):
-            raise ValueError("returned image URL redirect is not allowed")
-        if response.status_code != 200:
-            raise ValueError(f"image download returned HTTP {response.status_code}")
-        chunks: list[bytes] = []
-        total = 0
-        for chunk in response.iter_content(64 * 1024):
-            total += len(chunk)
-            if total > MAX_IMAGE_BYTES:
-                raise ValueError("downloaded image exceeds the 24 MiB limit")
-            chunks.append(chunk)
-        data = b"".join(chunks)
-    if not data or len(data) > MAX_IMAGE_BYTES:
-        raise ValueError("image size is invalid")
-    return data, detect_content_type(data)
-
-
-def response_items(response: requests.Response, session: requests.Session) -> list[tuple[bytes, str]]:
-    content_type = (response.headers.get("content-type") or "").split(";", 1)[0].lower()
-    if content_type in SUPPORTED_OUTPUT_TYPES or response.content[:12].startswith((b"\x89PNG", b"\xff\xd8\xff", b"RIFF", b"GIF87a", b"GIF89a")):
-        data = response.content
-        if len(data) > MAX_IMAGE_BYTES:
-            raise ValueError("response image exceeds the 24 MiB limit")
-        return [(data, detect_content_type(data))]
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise ValueError("successful response is not JSON or an image") from exc
-    items = payload.get("data") if isinstance(payload, dict) else None
-    if not isinstance(items, list) or not items:
-        raise ValueError("response contains no image data")
-    return [decode_item(item, session) for item in items]
-
-
-def request_with_retry(session: requests.Session, method: str, url: str, *, headers: dict[str, str], timeout: float, **kwargs: object) -> requests.Response:
-    # A failed paid request may already have been accepted upstream. Do not replay it.
-    return session.request(method, url, headers=headers, timeout=timeout, allow_redirects=False, **kwargs)
-
-
-def _as_jpeg(data: bytes, quality: int) -> bytes:
-    """Normalize a provider response to a real JPEG, even if it returned PNG."""
-    from PIL import Image, ImageOps
-    with Image.open(io.BytesIO(data)) as source:
-        source.load()
-        image = ImageOps.exif_transpose(source)
-        if "A" in image.getbands() or "transparency" in image.info:
-            rgba = image.convert("RGBA")
-            background = Image.new("RGB", rgba.size, (255, 255, 255))
-            background.paste(rgba, mask=rgba.getchannel("A"))
-            image = background
+def _adapter(protocol: str):
+    if protocol == "openai":
+        if __package__:
+            from .openai import image_api as module
         else:
-            image = image.convert("RGB")
-        output = io.BytesIO()
-        image.save(output, format="JPEG", quality=quality, optimize=True)
-        return output.getvalue()
-
-
-def save_images(
-    images: list[tuple[bytes, str]],
-    output_dir: Path,
-    stem: str,
-    *,
-    output_format: str = "jpeg",
-    output_compression: int | None = None,
-) -> list[Path]:
-    if sum(len(data) for data, _ in images) > MAX_IMAGE_BYTES:
-        raise ValueError("combined output images exceed the 24 MiB limit")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    paths: list[Path] = []
-    for index, (data, content_type) in enumerate(images, 1):
-        expected_type = OUTPUT_MIME_TYPES.get(output_format)
-        if output_format in ("gif", "svg") and expected_type and content_type != expected_type:
-            raise ValueError(f"provider returned {content_type} for requested {output_format}")
-        if output_format == "jpeg":
-            data = _as_jpeg(data, output_compression if output_compression is not None else 96)
-            content_type = "image/jpeg"
-        suffix = EXTENSIONS[content_type]
-        path = output_dir / f"{safe_slug(stem)}-{stamp}-{index}{suffix}"
-        path.write_bytes(data)
-        paths.append(path)
-    return paths
-
-
-def common_parser(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--prompt", required=True, help="English image prompt")
-    parser.add_argument("--model", default=os.environ.get("BOT_IMAGE_MODEL") or os.environ.get("SAKURA_IMAGE_MODEL") or DEFAULT_MODEL)
-    parser.add_argument("--base-url", default=os.environ.get("BOT_IMAGE_BASE_URL") or os.environ.get("SAKURA_IMAGE_BASE_URL") or os.environ.get("OPENAI_BASE_URL") or DEFAULT_BASE_URL)
-    parser.add_argument("--api-key-env", default=os.environ.get("BOT_IMAGE_KEY_ENV") or ("IMAGE_ACCESS_KEY" if "IMAGE_ACCESS_KEY" in os.environ or not os.environ.get("SAKURA_IMAGE_API_KEY") else "SAKURA_IMAGE_API_KEY"), help="environment variable containing the image provider API key")
-    parser.add_argument("--output-dir", type=Path, default=Path("assets"))
-    parser.add_argument("--output-format", choices=("png", "jpeg", "webp", "gif", "svg"), default="jpeg")
-    parser.add_argument("--output-compression", type=int)
-    parser.add_argument("--background", choices=("auto", "opaque", "transparent"))
-    parser.add_argument("--complexity", choices=("low", "medium", "high"))
-    parser.add_argument("--frame-count", type=int)
-    parser.add_argument("--frame-duration-ms", type=int)
-    parser.add_argument("--n", type=int, default=1)
-    parser.add_argument("--timeout", type=float, default=300.0)
-    parser.add_argument("--record", type=Path, help="optional JSON request/result record")
-    parser.add_argument("--usage-record", type=Path, help="optional durable media dispatch journal (bundled worker)")
-    parser.add_argument("--dry-run", action="store_true")
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Direct OpenAI-compatible image generation and editing")
-    subparsers = parser.add_subparsers(dest="operation", required=True)
-    generate = subparsers.add_parser("generate")
-    common_parser(generate)
-    edit = subparsers.add_parser("edit")
-    common_parser(edit)
-    edit.add_argument("--image", action="append", required=True, type=Path, help="repeat for multiple image fields")
-    edit.add_argument("--mask", type=Path)
-    return parser.parse_args()
-
-
-def _emit(value: dict, record: Path | None = None) -> None:
-    if record:
-        record.parent.mkdir(parents=True, exist_ok=True)
-        record.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
-    print(json.dumps(value, ensure_ascii=False))
-
-
-def _failure(code: str, record: Path | None = None, exit_code: int = 1) -> int:
-    _emit({"verdict": "FAIL", "error": {"code": code}}, record)
-    return exit_code
-
-
-def main() -> int:
-    args = parse_args()
-    try:
-        if not 1 <= args.n <= 10:
-            raise ValueError()
-        if args.output_compression is not None and not 0 <= args.output_compression <= 100:
-            raise ValueError()
-        if args.output_format not in ("jpeg", "webp") and args.output_compression is not None:
-            raise ValueError()
-        if args.output_format != "gif" and (args.frame_count is not None or args.frame_duration_ms is not None):
-            raise ValueError()
-        if args.frame_count is not None and not 2 <= args.frame_count <= 64:
-            raise ValueError()
-        if args.frame_duration_ms is not None and not 20 <= args.frame_duration_ms <= 2000:
-            raise ValueError()
-        if args.operation == "edit" and args.output_format in ("gif", "svg"):
-            raise ValueError()
-        if args.output_format == "svg" and args.n != 1:
-            raise ValueError()
-        base_url = normalize_base_url(args.base_url)
-        if args.operation == "edit":
-            for path in args.image:
-                input_content_type(path)
-            if args.mask and input_content_type(args.mask) != "image/png":
-                raise ValueError()
-            total_input_bytes = sum(path.stat().st_size for path in args.image)
-            if args.mask:
-                total_input_bytes += args.mask.stat().st_size
-            if total_input_bytes > MAX_MULTIPART_BYTES:
-                raise ValueError()
-        if args.background == "transparent" and args.output_format not in ("png", "webp"):
-            raise ValueError()
-    except (OSError, ValueError):
-        return _failure("IMAGE_CONFIGURATION_INVALID", args.record, 2)
-
-    dry_record = {"verdict": "PASS", "dry_run": True, "requested_count": args.n}
-    if args.operation == "edit":
-        dry_record["multipart_image_fields"] = len(args.image)
-    if args.dry_run:
-        _emit(dry_record, args.record)
-        return 0
-
-    global requests
-    try:
-        import requests
-    except ModuleNotFoundError:
-        return _failure("MEDIA_DEPENDENCY_MISSING", args.record)
-    try:
-        api_key = read_api_key(args.api_key_env)
-    except (OSError, ValueError):
-        return _failure("IMAGE_CONFIGURATION_INVALID", args.record, 2)
-
-    body = {"model": args.model, "prompt": args.prompt, "n": args.n}
-    for key in ("output_format", "background", "complexity", "frame_count", "frame_duration_ms"):
-        value = getattr(args, key)
-        if value is not None:
-            body[key] = value
-    if args.output_format in ("jpeg", "webp"):
-        body["output_compression"] = args.output_compression if args.output_compression is not None else 96
-    endpoint = f"{base_url}/images/generations" if args.operation == "generate" else f"{base_url}/images/edits"
-    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
-    opened, usage_call, usage_job = [], None, None
-    try:
-        session = requests.Session()
-    except Exception:
-        return _failure("IMAGE_PROVIDER_FAILED", args.record)
-    if args.usage_record:
-        from dsh_bot_runtime.model_usage import journal
-        usage_job = {"usagePath": str(args.usage_record), "output": str(args.output_dir), "endpoint": {"model": args.model}}
-    record: dict[str, object] = {"verdict": "FAIL", "error": {"code": "IMAGE_PROVIDER_FAILED"}}
-    try:
-        if args.operation == "generate":
-            if usage_job:
-                usage_call = journal(usage_job)
-            response = request_with_retry(session, "POST", endpoint, headers={**headers, "Content-Type": "application/json"}, timeout=args.timeout or None, json=body)
+            from dsh_bot_runtime.skills.image_generation.openai import image_api as module
+        return module
+    if protocol == "comfyui":
+        if __package__:
+            from .comfyui import image_api as module
         else:
-            data = {key: str(value) for key, value in body.items()}
-            opened = [(path.open("rb"), path) for path in args.image]
-            multipart = [("image", (path.name, handle, input_content_type(path))) for handle, path in opened]
-            if args.mask:
-                mask_handle = args.mask.open("rb")
-                opened.append((mask_handle, args.mask))
-                multipart.append(("mask", (args.mask.name, mask_handle, "image/png")))
-            if usage_job:
-                usage_call = journal(usage_job)
-            response = request_with_retry(session, "POST", endpoint, headers=headers, timeout=args.timeout or None, data=data, files=multipart)
-        try:
-            accounting = response.json()
-            if usage_job:
-                journal(usage_job, usage_call, accounting)
-        except ValueError:
-            pass
-        if response.status_code != 200:
-            return _failure("IMAGE_PROVIDER_FAILED", args.record)
-        images = response_items(response, session)
-        paths = save_images(images, args.output_dir, args.model, output_format=args.output_format,
-                            output_compression=args.output_compression)
-        record = {"verdict": "PASS", "outputs": [path.name for path in paths],
-                  "returned_count": len(paths)}
-        _emit({"verdict": "PASS", "returned_count": len(paths)})
-        return 0
-    except (OSError, ValueError, requests.RequestException):
-        return _failure("IMAGE_PROVIDER_FAILED", args.record)
-    finally:
-        for handle, _ in opened:
-            handle.close()
-        if args.record and record.get("verdict") == "PASS":
-            args.record.parent.mkdir(parents=True, exist_ok=True)
-            args.record.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+            from dsh_bot_runtime.skills.image_generation.comfyui import image_api as module
+        return module
+    raise ValueError(f"unsupported image protocol: {protocol}")
+
+
+def parse_args(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    return _adapter(_protocol(args)).parse_args(_without_protocol(args))
+
+
+def main(argv=None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    try:
+        module = _adapter(_protocol(args))
+    except ValueError:
+        return 2
+    return module.main(_without_protocol(args))
 
 
 if __name__ == "__main__":

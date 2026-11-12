@@ -1,6 +1,6 @@
 import type {MediaFile, MediaResult} from './media.js';
 import {rvcWorkerConfigSchema} from './rvc-worker-config.js';
-import {gptSovitsSchema,edgeTtsSchema} from './types.js';
+import {gptSovitsSchema,edgeTtsSchema,imageEndpointSchema} from './types.js';
 
 export const MEDIA_WORKER_PROTOCOL = 'dsh.media-worker';
 export const MEDIA_WORKER_PROTOCOL_VERSION = 1;
@@ -64,7 +64,9 @@ export function validateMediaWorkerJob(job: MediaWorkerJob): void {
   if (!boundedString(job.output) || !boundedString(job.usagePath)) throw new Error('MEDIA_WORKER_PATH_INVALID');
   if (job.endpoint !== undefined) {
     if(!isRecord(job.endpoint))throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');
-    if(job.endpoint.protocol==='rvc_http_v1'){
+    if(job.endpoint.protocol==='comfyui'){
+      if(!['image_generate','image_edit'].includes(job.operation)||!imageEndpointSchema.safeParse(job.endpoint).success||job.endpoint.protocol!=='comfyui'||!boundedString(job.endpoint.baseUrl,2048)||job.endpoint.keyEnv!==undefined)throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');
+    }else if(job.endpoint.protocol==='rvc_http_v1'){
       if(job.operation!=='singing_convert'||job.endpoint.jobId!==job.id||!rvcWorkerConfigSchema.safeParse(job.endpoint).success||job.endpoint.enabled!==true||!boundedString(job.endpoint.baseUrl,2048))throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');
     }else if(job.endpoint.protocol==='gpt_sovits'){
       if(job.operation!=='voice_speak'||!gptSovitsSchema.safeParse(job.endpoint).success||!boundedString(job.endpoint.voice,100))throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');

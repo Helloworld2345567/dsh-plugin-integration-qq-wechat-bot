@@ -7,7 +7,7 @@
 ## 配置优先级和通用规则
 
 - 产品 profile 的目录由安装器和启动器统一注入；已有 Harness profile 不会自动接管这些目录。
-- 机器人的 `settings.media.image` 只保存允许的 HTTPS 地址、模型名和**密钥环境变量名**，不保存密钥值。机器人设置优先于环境默认值，通过 `bot.save` 独立保存。
+- 图片服务的地址、模型和**密钥环境变量名**在服务面板集中配置，不保存密钥值；人格/机器人媒体设置只选择启用的图片协议。旧人格字段仍可读取，但仅在没有服务面板配置时作为兼容回退。
 - QQ/微信凭据、聊天模型凭据和媒体分析凭据属于 Harness credentials 服务或受控 worker 注入，不应写进人格、仓库、命令行参数或发布包。
 - 修改环境变量不会改变人格 revision；由于环境变量由进程继承，通常需要重启对应 Harness/产品进程后才完全生效。修改人格会生成新的 revision；修改机器人设置独立保存，均从下一轮生效。
 - 这些目录变量都有代码默认值；只有在需要覆盖默认目录时，才必须在安装/启动前设置。不要在 Issue、日志或示例中填写本机绝对路径。
@@ -25,8 +25,8 @@
 | `BOT_PERSONAS_ROOT` | 非敏感值，但路径可能暴露隐私 | 已有 Harness/直接插件启动的人格文件根；未设置时从插件数据目录推导。独立产品始终使用 `BOT_HOME/personas`，不接受单独覆盖。 | 是 | 否 | 否 | 不提供真实路径 |
 | `DSH_AGENTS_HOME` | 非敏感值，但路径可能暴露隐私 | Harness agents 目录；独立产品始终注入 `BOT_HOME/agents`，不是运营者独立配置入口。 | 是 | 否 | 主要是 | 不提供真实路径 |
 | `BOT_PYTHON` | 非敏感配置 | 媒体 worker 使用的 Python 解释器；未设置时已有 Harness 使用 `python`，独立产品使用 `BOT_HOME/media-venv` 中的解释器。需要 Python 3.12/3.13 和基础 requirements。 | 是 | 否 | 否 | 允许变量名；不写本机解释器路径 |
-| `BOT_IMAGE_BASE_URL` | 端点值，可能包含运营信息 | 图片服务的环境默认 HTTPS 地址；无环境值时为 `https://api.openai.com/v1`。机器人 `settings.media.image.baseUrl` 优先。 | 是 | 否 | 否 | 示例只允许安全占位符；真实服务地址不得提交 |
-| `BOT_IMAGE_MODEL` | 非敏感配置 | 图片服务的环境默认模型；无环境值时为 `gpt-image-2`。机器人 `settings.media.image.model` 优先。 | 是 | 否 | 否 | 允许模型名占位符，不写私有模型路径 |
+| `BOT_IMAGE_BASE_URL` | 端点值，可能包含运营信息 | 服务面板保存的 OpenAI 兼容图片地址；无环境值时为 `https://api.openai.com/v1`。旧人格地址只作兼容回退。 | 是 | 否 | 否 | 示例只允许安全占位符；真实服务地址不得提交 |
+| `BOT_IMAGE_MODEL` | 非敏感配置 | 服务面板保存的 OpenAI 图片模型；无环境值时为 `gpt-image-2`。旧人格模型只作兼容回退。 | 是 | 否 | 否 | 允许模型名占位符，不写私有模型路径 |
 | `BOT_IMAGE_KEY_ENV` | 非敏感变量名；被指向的值敏感 | 指定图片密钥实际所在的环境变量名；无设置时优先 `IMAGE_ACCESS_KEY`，兼容 `SAKURA_IMAGE_API_KEY`，再回退变量名 `IMAGE_ACCESS_KEY`。 | 是 | 否 | 否 | 只允许变量名，不允许密钥值 |
 | `IMAGE_ACCESS_KEY` | **敏感** | 图片服务默认实际密钥；只在后台进程内读取。 | 是 | 否 | 否 | 禁止进入发布包、Issue、日志和 `.env.example` |
 | `SAKURA_IMAGE_API_KEY` | **敏感** | 图片密钥兼容别名；仅在未提供 `IMAGE_ACCESS_KEY` 时作为 fallback。 | 是 | 否 | 否 | 禁止出现真实值 |
@@ -41,7 +41,7 @@
 | `BOT_LAUNCH_TOKEN` | **敏感运行时 nonce** | `scripts/start.mjs` 每次启动随机生成，用于 launcher、bot bundle 与 lifecycle 的本机 IPC 停止/就绪/重启握手；不应手工固定。 | 由启动器管理 | 否 | 是 | 禁止记录、复制或提交 |
 | `BOT_OPEN_DIRECTORY` | 路径敏感、短生命周期 | Windows“打开配置目录”动作在已校验路径后临时注入给本机 PowerShell helper；不是用户配置入口，不应手工设置。 | 无，由单次动作管理 | 否 | 否 | 禁止记录真实值或写入 `.env.example` |
 
-`BOT_IMAGE_BASE_URL` 必须是无凭据、无查询和无片段的 HTTPS 地址；图片密钥环境变量名必须是大写变量名。图片配置的详细行为见 [image-generation 技能](../skills/image-generation/SKILL.md)。
+`BOT_IMAGE_BASE_URL` 用于 OpenAI 兼容服务时必须是无凭据、无查询和无片段的 HTTPS 地址；ComfyUI 使用服务面板保存的本机 `comfyUiBaseUrl` 和 API 工作流路径。图片密钥环境变量名必须是大写变量名。图片配置的详细行为见 [image-generation 技能](../skills/image-generation/SKILL.md)。
 
 ## 安装器、启动器和 Harness 管理变量
 

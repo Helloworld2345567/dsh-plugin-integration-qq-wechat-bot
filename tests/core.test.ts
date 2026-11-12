@@ -179,11 +179,12 @@ test('media role removal applies immediately while provider changes wait until t
   assert.equal(effective.media.image?.model,'old');assert.equal(effective.media.asr?.enabled,false);
   assert.equal(snapshot.config.media.asr?.enabled,true);assert.equal(mediaConfigNow(snapshot,{...config,media:{}}).media.image?.model,'old');
 });
-test('image skill inherits operator variables without media setup, overrides stay optional and secrets stay outside settings',()=>{
+test('image skill uses operator service settings while retaining legacy fallback and keeping secrets outside settings',()=>{
   const config=configSchema.parse({id:'image',name:'Image',personaPrompt:'A',media:{}});assert.equal('vision' in config.media,false);
   const env={IMAGE_ACCESS_KEY:'test-secret',BOT_IMAGE_BASE_URL:'https://example.com/v1',BOT_IMAGE_MODEL:'custom'};
   const endpoint=resolveImageSkill(config,env);assert.equal(endpoint.keyEnv,'IMAGE_ACCESS_KEY');assert.equal(endpoint.model,'custom');assert.equal(endpoint.baseUrl,env.BOT_IMAGE_BASE_URL);assert.ok(!JSON.stringify(endpoint).includes('test-secret'));
-  const override=configSchema.parse({...config,media:{image:{model:'persona-model'}}});assert.equal(resolveImageSkill(override,env).model,'persona-model');assert.equal(resolveImageSkill(override,env).baseUrl,env.BOT_IMAGE_BASE_URL);
+  const override=configSchema.parse({...config,media:{image:{model:'persona-model'}}});assert.equal(resolveImageSkill(override,env).model,'custom');assert.equal(resolveImageSkill(override,env).baseUrl,env.BOT_IMAGE_BASE_URL);
+  assert.equal(resolveImageSkill(override,{}).model,'persona-model');
   assert.equal(resolveImageSkill(config,{SAKURA_IMAGE_API_KEY:'legacy'}).keyEnv,'SAKURA_IMAGE_API_KEY');
   assert.throws(()=>resolveImageSkill({...config,media:{image:{enabled:false}}},env),/IMAGE_SKILL_DISABLED/);
   const owner=botSchema.parse({id:'one',name:'One',channel:'qq',enabled:true});const snapshot=freezeTurn(config,owner,scope(),[]);

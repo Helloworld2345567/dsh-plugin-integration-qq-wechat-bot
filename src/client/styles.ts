@@ -133,6 +133,14 @@ export const panelStyles = `
 .bot-admin .trusted-user > span { overflow-wrap: anywhere; }
 .bot-admin .service-card { display: grid; gap: 14px; }
 .bot-admin .service-card .fields { margin: 0; }
+.bot-admin .service-config-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.bot-admin .service-priority-wrap { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.bot-admin .service-priority-list { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0; padding: 0; }
+.bot-admin .service-priority-item { display: inline-flex; align-items: center; gap: 8px; min-height: 42px; padding: 5px 7px 5px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--nested); white-space: nowrap; }
+.bot-admin .service-priority-item .actions { margin: 0; gap: 4px; }
+.bot-admin .service-priority-item .actions button { min-height: 30px; padding: 3px 8px; border-radius: 999px; }
+.bot-admin .service-priority-add { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.bot-admin .service-priority-add button { min-height: 36px; padding: 5px 10px; border-radius: 999px; }
 .bot-admin .overview-service-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
 .bot-admin .overview-service-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 9px; }
 .bot-admin .overview-service-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -213,6 +221,7 @@ export const panelStyles = `
 .bot-admin :is(button, input, select, textarea, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @container (max-width: 760px) {
   .bot-admin .media-fields { grid-template-columns: minmax(0, 1fr); }
+  .bot-admin .service-config-fields { grid-template-columns: minmax(0, 1fr); }
   .bot-admin .media-fields-four > .full { max-width: none; }
   .bot-admin .app-shell { grid-template-columns: 1fr; }
   .bot-admin .panel-sidebar { position: sticky; top: 0; z-index: 10; flex-direction: row; align-items: center; gap: 12px; overflow-x: auto; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line); }

@@ -14,6 +14,8 @@ import {gptSovitsSchema} from './types.js';
 import {normalizeGptSovitsBaseUrl,normalizeVoiceServiceBaseUrl} from './voice-config.js';
 import {sanitizePublicServiceText,sanitizeMessageDescriptor} from './service-errors.js';
 import {ExternalServiceLauncher,type LaunchableService,type ServiceStartResult, type ServiceLauncher} from './service-launcher.js';
+import {defaultMusicHome,musicHomeSchema,musicSourcesSchema,DEFAULT_MUSIC_SOURCES} from './music-config.js';
+import {imageServiceSettingsSchema} from './image-service-config.js';
 
 const SERVICES=['rvc','gpt-sovits','breeze-tts'] as const;
 type VoiceService=typeof SERVICES[number];
@@ -25,6 +27,14 @@ export const voiceLibrarySettingsSchema=z.object({
   gptSovitsProjectRoot:z.string().trim().max(4096).refine(value=>!value||path.isAbsolute(value)&&!/[\x00-\x1f]/.test(value),{message:'GPT-SoVITS 项目目录须为绝对路径',params:{message:diagnostic('absolutePathRequired')}}).transform(value=>value?path.resolve(value):'').default(''),
   breezeTtsProjectRoot:z.string().trim().max(4096).refine(value=>!value||path.isAbsolute(value)&&!/[\x00-\x1f]/.test(value),{message:'Breeze TTS 项目目录须为绝对路径',params:{message:diagnostic('absolutePathRequired')}}).transform(value=>value?path.resolve(value):'').default(''),
   breezeTtsVoicesRoot:z.string().trim().max(4096).refine(value=>!value||path.isAbsolute(value)&&!/[\x00-\x1f]/.test(value),{message:'Breeze TTS 音色目录须为绝对路径',params:{message:diagnostic('absolutePathRequired')}}).transform(value=>value?path.resolve(value):'').default(''),
+  musicHome:musicHomeSchema.default(defaultMusicHome()),
+  musicSources:musicSourcesSchema.default([...DEFAULT_MUSIC_SOURCES]),
+  imageProtocol:imageServiceSettingsSchema.shape.imageProtocol,
+  openAiBaseUrl:imageServiceSettingsSchema.shape.openAiBaseUrl,
+  openAiModel:imageServiceSettingsSchema.shape.openAiModel,
+  openAiKeyEnv:imageServiceSettingsSchema.shape.openAiKeyEnv,
+  comfyUiBaseUrl:imageServiceSettingsSchema.shape.comfyUiBaseUrl,
+  comfyUiWorkflowPath:imageServiceSettingsSchema.shape.comfyUiWorkflowPath,
 }).strict();
 export const voiceLibrarySettingsInputSchema=voiceLibrarySettingsSchema.extend({expectedRevision:z.string().regex(/^sha256:[a-f0-9]{64}$/).optional()});
 export type VoiceLibrarySettings=z.infer<typeof voiceLibrarySettingsSchema>;

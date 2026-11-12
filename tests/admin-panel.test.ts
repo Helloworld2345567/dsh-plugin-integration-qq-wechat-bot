@@ -228,21 +228,16 @@ test('bot tabs expose independent media drafts, authorization and workspace with
     assert.equal(states[29].id,'bot');assert.equal(states[29].settings.media.image.enabled,true);
     assert.equal(persona.media.image?.enabled,false);assert.equal(bot.settings.media.image.enabled,false);
     const imageSection=()=>flattenPanel(harness.render().find(n=>n.props?.key==='image'));
-    const changeImage=(label:string,value:string)=>imageSection().find(n=>n.type==='label'&&n.children[0]===label).children[1].props.onChange({target:{value}});
-    changeImage('模型','existing-image-model');changeImage('服务地址','  https://images.example.invalid/v1  ');changeImage('密钥环境变量名','  CUSTOM_IMAGE_KEY  ');
-    const expectedImage={enabled:true,baseUrl:'https://images.example.invalid/v1',keyEnv:'CUSTOM_IMAGE_KEY',model:'existing-image-model'};
+    const protocol=imageSection().find(n=>n.type==='label'&&n.children[0]==='生图协议');
+    assert.ok(protocol);protocol.children[1].props.onChange({target:{value:'comfyui'}});await settlePanel();
+    const expectedImage={enabled:true,protocol:'comfyui'};
     assert.deepEqual(states[29].settings.media.image,expectedImage);
-    assert.ok(!imageSection().some(n=>n.type==='input'&&n.props.type==='password'));
-    assert.ok(imageSection().some(n=>n.type==='small'&&String(n.children[0]).includes('只填写变量名')));
+    assert.ok(!imageSection().some(n=>n.type==='label'&&['模型','服务地址','密钥环境变量名'].includes(n.children[0])));
     assert.ok(imageSection().some(n=>n.type==='p'&&n.children[0]==='未保存'));
     tree=harness.render();tree.find(n=>n.type==='button'&&n.props.className==='primary'&&n.children.includes('保存')).props.onClick();await settlePanel();await settlePanel();
     assert.equal(calls.filter(body=>body.action==='bot.save').length,1);assert.ok(!calls.some(body=>body.action==='config.save'));
     assert.deepEqual(bot.settings.media.image,expectedImage);assert.equal(states[29],null);
     assert.equal(states[13].bot.keyConfigured,false);assert.ok(imageSection().some(n=>n.type==='p'&&n.children[0]==='待配置'));
-    changeImage('服务地址','   ');changeImage('密钥环境变量名','  ');
-    const clearedImageDraft:any=states[29];
-    assert.deepEqual(JSON.parse(JSON.stringify(clearedImageDraft.settings)).media.image,{enabled:true,model:'existing-image-model'});
-    tree=harness.render();tree.find(n=>n.type==='button'&&n.children.includes('取消')).props.onClick();await settlePanel();
     assert.equal(states[29],null);assert.deepEqual(bot.settings.media.image,expectedImage);
   }finally{harness.restore();}
 });

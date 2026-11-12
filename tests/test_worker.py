@@ -269,6 +269,23 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(result['assets'][0]['mime'], 'image/svg+xml')
         self.assertEqual(result['assets'][0]['name'], 'generated.svg')
 
+    def test_comfyui_image_worker_routes_without_provider_key(self):
+        job = self.job('image_generate', prompt='local workflow')
+        job['endpoint'] = {
+            'protocol': 'comfyui', 'baseUrl': 'http://127.0.0.1:8188', 'model': 'comfyui',
+            'workflowPath': r'E:\COMFYUI\workflows\infrastructure-smoke-api.json',
+        }
+        def fake(command, **kwargs):
+            self.assertIn('--protocol', command); self.assertEqual(command[command.index('--protocol') + 1], 'comfyui')
+            self.assertNotIn('--api-key-env', command)
+            self.assertEqual(command[command.index('--workflow') + 1], job['endpoint']['workflowPath'])
+            output = self.root / 'generated.png'; output.write_bytes(b'\x89PNG\r\n\x1a\n')
+            (self.root / 'image-result.json').write_text(json.dumps({'outputs': [output.name]}), encoding='utf-8')
+            return Mock(returncode=0)
+        with patch.object(worker.subprocess, 'run', side_effect=fake):
+            result = worker.execute(job)
+        self.assertEqual(result['assets'][0]['mime'], 'image/png')
+
     def test_image_requires_exact_output_record_without_directory_scan_fallback(self):
         from PIL import Image
         job = self.job('image_generate', prompt='recorded')

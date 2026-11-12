@@ -17,10 +17,16 @@ import {installHostLeaveGuard} from './host-leave-guard.js';
 declare const window:Window & {__ModuleLoader__:any;__BOT_INTEGRATION__?:{endpoint:string;token:string}};
 window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(require:(id:string)=>any){
   const React=require('react');const h=React.createElement;let t:Translate=chinese;let locale:any;let settingsForm:any;
-  const serviceDraft=(settings:any)=>({modelsRoot:settings.modelsRoot,gptSovitsUrl:settings.gptSovitsUrl,breezeTtsUrl:settings.breezeTtsUrl??'http://127.0.0.1:8080',gptSovitsProjectRoot:settings.gptSovitsProjectRoot??'',breezeTtsProjectRoot:settings.breezeTtsProjectRoot??'',breezeTtsVoicesRoot:settings.breezeTtsVoicesRoot??''});
+  const defaultWindowsPath=(...parts:string[])=>[String.fromCharCode(69)+':',...parts].join(String.fromCharCode(92));
+  const serviceDraft=(settings:any)=>({
+    modelsRoot:settings.modelsRoot,gptSovitsUrl:settings.gptSovitsUrl,breezeTtsUrl:settings.breezeTtsUrl??'http://127.0.0.1:8080',
+    gptSovitsProjectRoot:settings.gptSovitsProjectRoot??'',breezeTtsProjectRoot:settings.breezeTtsProjectRoot??'',breezeTtsVoicesRoot:settings.breezeTtsVoicesRoot??'',
+    imageProtocol:settings.imageProtocol??'openai',openAiBaseUrl:settings.openAiBaseUrl??'',openAiModel:settings.openAiModel??'',openAiKeyEnv:settings.openAiKeyEnv??'',comfyUiBaseUrl:settings.comfyUiBaseUrl??'http://127.0.0.1:8188',comfyUiWorkflowPath:settings.comfyUiWorkflowPath??defaultWindowsPath('COMFYUI','workflows','Krea2Standard-api.json'),
+    musicHome:settings.musicHome??defaultWindowsPath('Music'),musicSources:Array.isArray(settings.musicSources)?[...settings.musicSources]:['MiguMusicClient','KuwoMusicClient'],
+  });
   async function api(action:string,input:any={},signal?:AbortSignal){
     const boot=window.__BOT_INTEGRATION__;if(!boot)throw uiError('serviceNotReady',t);
-    const strictCommand=action==='service.refresh'||action==='service.start'||action==='service.settings.save'||action==='service.settings.pick-directory'||action==='bot.service.start'||action==='bot.service.stop'||action==='session.delete';
+    const strictCommand=action==='service.refresh'||action==='service.start'||action==='service.settings.save'||action==='service.settings.pick-directory'||action==='service.settings.pick-file'||action==='bot.service.start'||action==='bot.service.stop'||action==='session.delete';
     const response=await fetch(boot.endpoint,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${boot.token}`},body:JSON.stringify(strictCommand?{version:1,kind:'command',name:action,input}:{action,input}),signal});
     const body=await response.json();if(!response.ok)throw new PanelError(body.error||t('operationFailed'),body.message,body.issues);return body.result;
   }
@@ -83,7 +89,7 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
     const confirm=(title:DisplayText):Promise<boolean>=>new Promise(resolve=>setQuestion({title,value:'',resolve,confirm:true}));
     const answer=(value:any)=>{question?.resolve(value);setQuestion(null);};
     const savedServiceDraft=voiceLibrary?serviceDraft(voiceLibrary):null;
-    const serviceSettingsDirty=!!voiceLibraryDraft&&!!savedServiceDraft&&(Object.keys(savedServiceDraft) as (keyof typeof savedServiceDraft)[]).some(key=>voiceLibraryDraft[key]!==savedServiceDraft[key]);
+    const serviceSettingsDirty=!!voiceLibraryDraft&&!!savedServiceDraft&&(Object.keys(savedServiceDraft) as (keyof typeof savedServiceDraft)[]).some(key=>Array.isArray(voiceLibraryDraft[key])||Array.isArray(savedServiceDraft[key])?JSON.stringify(voiceLibraryDraft[key])!==JSON.stringify(savedServiceDraft[key]):voiceLibraryDraft[key]!==savedServiceDraft[key]);
     const hasUnsaved=dirty||!!botDraft||Object.keys(workspaceEdits).length>0||serviceSettingsDirty;
     leaveGuardRef.current={hasUnsaved,dialogOpen:!!question,confirmLeave:()=>confirm(message('unsavedChanges'))};
     const discardDrafts=()=>{++loadSequence.current;setConfigLoading(false);setEdit(null);setDirty(false);setBotDraft(null);setWorkspaceEdits({});if(savedServiceDraft)setVoiceLibraryDraft(savedServiceDraft);};
@@ -125,6 +131,7 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
     const identity=(bot:any)=>h('div',{className:'identity'},h('span',{className:'avatar','aria-hidden':true},bot.channel==='qq'?'Q':'W'),h('div',null,h('strong',null,bot.name),h('p',{className:'muted'},channelName(bot.channel))));
     const login=async(bot:any)=>{const next=await mutate('login.begin',{id:bot.id},message('scanToAuthorize'));setQr({...next,botId:bot.id});};
     const pickDirectory=async(current:string|undefined,locale=activeLocale)=>{const result=await api('service.settings.pick-directory',{current:current||undefined,locale});return typeof result?.path==='string'?result.path:undefined;};
+    const pickFile=async(current:string|undefined,locale=activeLocale)=>{const result=await api('service.settings.pick-file',{current:current||undefined,locale});return typeof result?.path==='string'?result.path:undefined;};
     const tabs=[['overview',t('overview')],['bots',t('bots')],['services',t('services')],['catalog',t('personas')],['automation',t('automation')]];
     const overviewServices=h('section',{className:'card overview-services'},
       h('div',{className:'row spread'},h('h3',null,t('services')),ui.button(t('manage'),()=>navigate('services'),{className:'quiet'})),
@@ -215,9 +222,9 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
       const settingsDirty=serviceSettingsDirty;
       const choose=async(key:'modelsRoot'|'gptSovitsProjectRoot'|'breezeTtsProjectRoot'|'breezeTtsVoicesRoot')=>{if(!voiceLibraryDraft)return;setBusy(true);setError('');try{const result=await pickDirectory(voiceLibraryDraft[key]||undefined,activeLocale);if(result){const next={...voiceLibraryDraft,[key]:result};if(key==='breezeTtsProjectRoot'&&!voiceLibraryDraft.breezeTtsVoicesRoot)next.breezeTtsVoicesRoot=`${result.replace(/[\\/]$/,'')}\\voices`;setVoiceLibraryDraft(next);}}catch(error){setError(errorText(error));}finally{setBusy(false);}};
       const saveSettings=async()=>{if(!voiceLibraryDraft||!voiceLibrary)return;await mutate('service.settings.save',{...voiceLibraryDraft,expectedRevision:voiceLibrary.revision},message('saved'));await refreshServiceStatus();};
-      const refreshServices=async()=>{for(const serviceId of ['rvc','gpt-sovits','breeze-tts'])await mutate('service.refresh',{serviceId},message('refreshed'));await refreshServiceStatus();};
+      const refreshServices=async()=>{for(const serviceId of ['rvc','gpt-sovits','breeze-tts','music'])await mutate('service.refresh',{serviceId},message('refreshed'));await refreshServiceStatus();};
       const start=async(serviceId:'gpt-sovits'|'breeze-tts')=>{if(settingsDirty){setError(message('saveServiceFirst'));return;}setBusy(true);setError('');setNotice('');setServiceHealth((old:any)=>({...old,[serviceId]:{state:'unknown'}}));try{const result:any=await api('service.start',{serviceId},AbortSignal.timeout(60_000));const data=result?.data;if(data?.state==='already-running')setNotice(message('serviceAlreadyRunning'));else setNotice(message('serviceStarted'));await refreshServiceStatus();}catch(error){setError(errorText(error));}finally{setBusy(false);}};
-      body=ServicesPanel({React,ui,t,locale:activeLocale,messageLocale:settingsSnapshot?.value?.messageLocale??'zh',languageWritable:settingsSnapshot?.status==='ready'&&settingsSnapshot?.writable===true,languageSaving,onMessageLocaleChange:saveMessageLocale,summary,settings, draft:voiceLibraryDraft,dirty:settingsDirty,busy,health:serviceHealth,onDraftChange:(patch:any)=>setVoiceLibraryDraft({...voiceLibraryDraft,...patch}),onSave:saveSettings,onRefresh:refreshServices,onStart:start,onPickDirectory:choose,onToggleRobotService:()=>mutate(summary?.health?.serviceRunning===true?'bot.service.stop':'bot.service.start',{},summary?.health?.serviceRunning===true?message('botServiceStopped'):message('botServiceStarted'))});
+      body=ServicesPanel({React,ui,t,locale:activeLocale,messageLocale:settingsSnapshot?.value?.messageLocale??'zh',languageWritable:settingsSnapshot?.status==='ready'&&settingsSnapshot?.writable===true,languageSaving,onMessageLocaleChange:saveMessageLocale,summary,settings, draft:voiceLibraryDraft,dirty:settingsDirty,busy,health:serviceHealth,onDraftChange:(patch:any)=>setVoiceLibraryDraft({...voiceLibraryDraft,...patch}),onSave:saveSettings,onRefresh:refreshServices,onStart:start,onPickDirectory:choose,onPickFile:async()=>{if(!voiceLibraryDraft)return;setBusy(true);setError('');try{const result=await pickFile(voiceLibraryDraft.comfyUiWorkflowPath,activeLocale);if(result)setVoiceLibraryDraft({...voiceLibraryDraft,comfyUiWorkflowPath:result});}catch(error){setError(errorText(error));}finally{setBusy(false);}},onToggleRobotService:()=>mutate(summary?.health?.serviceRunning===true?'bot.service.stop':'bot.service.start',{},summary?.health?.serviceRunning===true?message('botServiceStopped'):message('botServiceStarted'))});
     }
     if(tab==='automation')body=null;
     const errors=[summaryError,error].filter(Boolean).map(text);

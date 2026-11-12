@@ -5,6 +5,7 @@ import contextlib
 import io
 import json
 import math
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -68,11 +69,21 @@ def image(job):
     frame_duration_ms = params.get("frame_duration_ms")
     if frame_duration_ms is not None and (isinstance(frame_duration_ms, bool) or not isinstance(frame_duration_ms, int) or not 20 <= frame_duration_ms <= 2000):
         raise JobError("IMAGE_FRAME_DURATION_INVALID")
+    protocol = endpoint.get("protocol", "openai")
     command = [sys.executable, "-B", str(RELEASE_ROOT / "python" / "image_api.py"), operation,
-               "--prompt", str(params.get("prompt", "")), "--model", endpoint["model"],
-               "--base-url", endpoint["baseUrl"], "--api-key-env", endpoint["keyEnv"],
+               "--prompt", str(params.get("prompt", "")), "--protocol", str(protocol), "--model", endpoint["model"],
+               "--base-url", endpoint["baseUrl"],
                "--output-dir", job["output"], "--output-format", output_format, "--n", "1",
                "--timeout", str(job.get("timeoutMs", 0) / 1000), "--record", str(record)]
+    if protocol != "comfyui":
+        command.extend(["--api-key-env", endpoint["keyEnv"]])
+    elif endpoint.get("workflowPath"):
+        command.extend(["--workflow", str(endpoint["workflowPath"])])
+    elif endpoint.get("workflowEnv"):
+        workflow = os.environ.get(str(endpoint["workflowEnv"]), "").strip()
+        if not workflow:
+            raise JobError("MEDIA_WORKER_ENDPOINT_INVALID")
+        command.extend(["--workflow", workflow])
     if complexity is not None:
         command.extend(["--complexity", complexity])
     if frame_count is not None:
@@ -422,6 +433,16 @@ def _validate_protocol(job):
                 validate_parameters(endpoint)
             except SingingError:
                 raise JobError("MEDIA_WORKER_ENDPOINT_INVALID") from None
+        elif endpoint.get("protocol") == "comfyui":
+            if (job["operation"] not in {"image_generate", "image_edit"}
+                    or not isinstance(endpoint.get("model"), str) or not endpoint["model"] or len(endpoint["model"]) > 256
+                    or not isinstance(endpoint.get("baseUrl"), str) or not endpoint["baseUrl"] or len(endpoint["baseUrl"]) > 2048
+                    or endpoint.get("keyEnv") is not None):
+                raise JobError("MEDIA_WORKER_ENDPOINT_INVALID")
+            for field, limit in (("workflowPath", 4096), ("workflowEnv", 128)):
+                value = endpoint.get(field)
+                if value is not None and (not isinstance(value, str) or not value.strip() or len(value) > limit):
+                    raise JobError("MEDIA_WORKER_ENDPOINT_INVALID")
         elif endpoint.get("protocol") == "edge_tts":
             voice = endpoint.get("voice")
             if job["operation"] != "voice_speak" or not isinstance(voice, str) or not voice.strip() or len(voice.encode("utf-8")) > 128:

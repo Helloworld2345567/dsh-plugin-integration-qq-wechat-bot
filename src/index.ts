@@ -31,6 +31,8 @@ import {mediaOperationRegistry} from './core/media-operation-registry.js';
 import {BUILTIN_SERVICE_POLICIES} from './core/builtin-service-adapters.js';
 import {ServiceManagement} from './core/service-management.js';
 import {createBuiltinServiceAdapters,createVoiceModelLibrary} from './harness/service-adapter-runtime.js';
+import {MusicServiceLibrary} from './core/music-service-library.js';
+import {applyImageServiceSettings} from './core/image-service-config.js';
 import {NodeControlledProcessPort} from './harness/controlled-process.js';
 
 export const name='bot-integration';
@@ -72,8 +74,11 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
   const features=new BotFeatures(runtime,createLifecyclePort());extensions.stats=features.stats;extensions.model=(binding,snapshot,args,signal)=>features.model(binding,snapshot,args,signal);extensions.voice=(binding,snapshot,args,signal)=>features.voice(binding,snapshot,args,signal);extensions.evolve=(binding,snapshot,args,signal)=>features.execute(binding,snapshot,args,signal);
   extensions.management=new BotManagement(runtime,features);
   const voiceLibrary=createVoiceModelLibrary(persistence.voiceLibrarySettings,persistence.home,profiles);
+  const musicLibrary=new MusicServiceLibrary(persistence.voiceLibrarySettings,profiles);
   await voiceLibrary.initialize();
-  const services=new ServiceManagement({personas:persistence.personas,capabilities:persistence.capability,health:persistence.capability},profiles,serviceRuntime,{models:()=>harness.models()},new Map(),voiceLibrary);
+  applyImageServiceSettings(voiceLibrary.view());
+  await musicLibrary.initialize();
+  const services=new ServiceManagement({personas:persistence.personas,capabilities:persistence.capability,health:persistence.capability},profiles,serviceRuntime,{models:()=>harness.models()},new Map(),voiceLibrary,musicLibrary);
   const token=randomBytes(32).toString('base64url');const admin=new Admin(ctx,runtime,token,undefined,features,services);
   ctx.on('webserver/index-inject',rows=>{rows.push({kind:'global',name:'__BOT_INTEGRATION__',value:{endpoint:'/api/bot-integration',token}});});
   ctx.effect(()=>ctx.webServer.register({kind:'exact',path:'/api/bot-integration',handler:(req,res)=>admin.http(req,res)}));

@@ -32,7 +32,10 @@
 | `social_posts` | `__future__`, `aiohttp`, `asyncio`, `html.parser`, `json`, `re`, `urllib.parse` |
 | `worker` | `__future__`, `asyncio`, `contextlib`, `docx`, `dsh_bot_runtime.errors`, `dsh_bot_runtime.singing_common`, `dsh_bot_runtime.social_posts`, `importlib`, `io`, `json`, `math`, `openpyxl`, `os`, `pathlib`, `pypdf`, `pypdfium2`, `re`, `subprocess`, `sys`, `time`, `zipfile` |
 | `skills` 及五个 skill `__init__` | 无 |
-| `skills.image_generation.image_api` | `PIL`, `__future__`, `argparse`, `base64`, `dsh_bot_runtime.model_usage`, `getpass`, `hashlib`, `io`, `ipaddress`, `json`, `mimetypes`, `os`, `pathlib`, `re`, `requests`, `socket`, `sys`, `time`, `urllib.parse` |
+| `skills.image_generation.image_api` | `__future__`, `dsh_bot_runtime.skills.image_generation.common`, `dsh_bot_runtime.skills.image_generation.comfyui.image_api`, `dsh_bot_runtime.skills.image_generation.openai.image_api`, `os`, `sys` |
+| `skills.image_generation.common` | `PIL`, `__future__`, `io`, `ipaddress`, `mimetypes`, `pathlib`, `re`, `socket`, `time`, `urllib.parse` |
+| `skills.image_generation.openai.image_api` | `PIL`, `__future__`, `argparse`, `base64`, `dsh_bot_runtime.model_usage`, `dsh_bot_runtime.skills.image_generation.common`, `getpass`, `json`, `os`, `pathlib`, `requests`, `urllib.parse` |
+| `skills.image_generation.comfyui.image_api` | `PIL`, `__future__`, `argparse`, `dsh_bot_runtime.model_usage`, `dsh_bot_runtime.skills.image_generation.common`, `json`, `os`, `pathlib`, `requests`, `time`, `urllib.parse`, `uuid` |
 | `skills.media_analysis.douyin_links` | `aiohttp`, `dsh_bot_runtime.video_understanding.models`, `dsh_bot_runtime.video_understanding.network`, `html`, `json`, `os`, `pathlib`, `re`, `urllib.parse` |
 | `skills.media_analysis.image_download` | `PIL`, `aiohttp`, `dsh_bot_runtime.skills.media_analysis.douyin_links`, `dsh_bot_runtime.skills.media_analysis.platform_links`, `dsh_bot_runtime.video_understanding.models`, `dsh_bot_runtime.video_understanding.network`, `html.parser`, `json`, `pathlib`, `re`, `urllib.parse` |
 | `skills.media_analysis.image_transform` | `PIL`, `dsh_bot_runtime.skills.media_analysis.transform_common`, `math`, `pathlib`, `time` |
@@ -76,6 +79,7 @@
 | `test_singing_worker.py` | `dsh_bot_runtime`, `dsh_bot_runtime.singing_common`, `io`, `json`, `pathlib`, `requests`, `struct`, `tempfile`, `unittest`, `unittest.mock`, `wave` |
 | `test_video_limits.py` | `asyncio`, `dsh_bot_runtime.skills.media_analysis`, `dsh_bot_runtime.video_understanding`, `dsh_bot_runtime.video_understanding.media`, `dsh_bot_runtime.video_understanding.models`, `dsh_bot_runtime.video_understanding.sources`, `os`, `pathlib`, `tempfile`, `types`, `unittest`, `unittest.mock` |
 | `test_voice_api.py` | `dsh_bot_runtime.skills.voice_generation`, `pathlib`, `tempfile`, `unittest`, `unittest.mock` |
+| `test_comfyui.py` | `dsh_bot_runtime.skills.image_generation`, `dsh_bot_runtime.skills.image_generation.comfyui`, `dsh_bot_runtime.skills.image_generation.openai`, `json`, `pathlib`, `tempfile`, `unittest`, `unittest.mock` |
 | `test_worker.py` | `PIL`, `asyncio`, `base64`, `docx`, `dsh_bot_runtime`, `dsh_bot_runtime.model_usage`, `dsh_bot_runtime.skills.image_generation`, `dsh_bot_runtime.skills.media_analysis`, `dsh_bot_runtime.skills.media_analysis.image_download`, `dsh_bot_runtime.skills.media_analysis.platform_links`, `dsh_bot_runtime.video_understanding`, `dsh_bot_runtime.video_understanding.backend`, `dsh_bot_runtime.video_understanding.models`, `dsh_bot_runtime.video_understanding.sources`, `io`, `json`, `openpyxl`, `os`, `pathlib`, `pypdf`, `requests`, `shutil`, `subprocess`, `sys`, `tempfile`, `time`, `unittest`, `unittest.mock`, `wave` |
 
 测试不再通过 `sys.path` 注入项目生产模块；唯一仍会临时注入路径的是 RVC 外部项目 fixture，用于模拟运营者安装的第三方 `rvc` 包，并在测试结束时回滚。
@@ -89,7 +93,9 @@
 | RVC runner | `python/rvc_runner.py` 或 `-m dsh_bot_runtime.rvc_runner` | `main()` 读取固定 job JSON，写 status JSON，退出 0/1 |
 | RVC output | `python/rvc_output.py` 或 `-m dsh_bot_runtime.rvc_output` | `main()` 执行固定输出编码，退出 0/1/2 |
 | 视频 metadata worker | `python/extract_worker.py` 或 `-m dsh_bot_runtime.video_understanding.extract_worker` | `main()` 处理一个固定 URL 参数并只输出 JSON |
-| 图片客户端 | `-m dsh_bot_runtime.skills.image_generation.image_api` | `main()` 提供 generate/edit CLI；模型不能调用 CLI 或指定路径 |
+| 图片服务分发器 | `-m dsh_bot_runtime.skills.image_generation.image_api`；兼容 `python/image_api.py` | `main()` 根据配置选择一个服务适配器；模型不能调用 CLI 或指定路径 |
+| OpenAI 图片适配器 | `-m dsh_bot_runtime.skills.image_generation.openai.image_api` | OpenAI 兼容服务的 generate/edit 实现 |
+| ComfyUI 图片适配器 | `-m dsh_bot_runtime.skills.image_generation.comfyui.image_api` | ComfyUI API 工作流提交与输出下载实现 |
 | media/voice skill CLI | `-m ...media_api`、`-m ...voice_api` | 兼容 stdin/stdout 调试入口；生产 manifest 调用其 `execute(job)` |
 | skill-only entry | music/singing `entry.execute(job)` | 仅由 worker 调用，不是独立长期 CLI |
 | 共享库 | audio、usage、social、singing、video core、transform helpers | 只导出函数／类型；import 不执行 main |
@@ -106,7 +112,7 @@
 ## 可选依赖执行分支
 
 - PDF/DOCX/XLSX：分别在 `document_read` 首次处理对应格式时导入 `pypdf`、`pypdfium2`、`python-docx`、`openpyxl`。
-- 图片生成：`requests` 在图片 CLI 实际执行时导入，Pillow 在图像解码／JPEG 归一化时导入；普通 worker import 不触发。
+- 图片生成：分发器只加载选中的服务适配器；`requests` 在图片 CLI 实际执行时导入，Pillow 在图像解码／JPEG 归一化时导入；普通 worker import 不触发。
 - 语音：GPT-SoVITS 请求分支导入 `requests`；Edge 分支首次合成导入 `edge_tts`，缺失仍返回 `EDGE_TTS_NOT_INSTALLED`。
 - 音视频分析与下载：相应 operation 才导入 requests、Pillow、aiohttp/yarl 或 video service；本地 document 与无关 skill 不依赖这些 entry 成功。
 - 视频平台 metadata：隔离 extractor 执行 `extract()` 时才导入 `yt_dlp`，缺失返回 `YTDLP_UNAVAILABLE`。
