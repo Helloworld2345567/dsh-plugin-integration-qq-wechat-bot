@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -58,6 +59,46 @@ def stop_process_tree(process):
         process.wait(timeout=20)
     except subprocess.TimeoutExpired:
         raise SingingError("SINGING_SERVICE_STATE_UNKNOWN") from None
+
+
+def _rmtree_onerror(function, path, _exc_info):
+    """Retry read-only Windows cache entries without escaping the job root."""
+    try:
+        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+    except OSError:
+        pass
+    try:
+        function(path)
+    except OSError:
+        # Cleanup is best effort.  A provider cache must not stop the FIFO
+        # worker from accepting the next job or hide the result status.
+        pass
+
+
+def _remove_path(path):
+    """Remove one job child, including nested provider caches and symlinks."""
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return
+    except OSError:
+        mode = 0
+    try:
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            path.unlink(missing_ok=True)
+        else:
+            shutil.rmtree(path, onerror=_rmtree_onerror)
+    except OSError:
+        # A read-only directory can reject the first rmtree call before its
+        # callback runs.  Make a second bounded attempt, still best effort.
+        try:
+            os.chmod(path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path, onerror=_rmtree_onerror)
+            else:
+                path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 @dataclass
@@ -197,9 +238,17 @@ class JobManager:
         if status == "failed":
             print(json.dumps({"jobId": job.id, "status": status, "error": {"code": error}}), file=sys.stderr, flush=True)
         # Successful bytes remain available for idempotent polling/result fetch.
-        for file in job.directory.iterdir():
-            if file.name != "result.wav" or status != "succeeded":
-                file.unlink(missing_ok=True)
+        try:
+            children = tuple(job.directory.iterdir())
+        except OSError:
+            children = ()
+        for file in children:
+            try:
+                preserve_result = status == "succeeded" and file.name == "result.wav" and file.is_file() and not file.is_symlink()
+            except OSError:
+                preserve_result = False
+            if not preserve_result:
+                _remove_path(file)
         job.done.set()
         self.condition.notify_all()
 

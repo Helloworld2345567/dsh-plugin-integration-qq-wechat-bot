@@ -77,7 +77,7 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
   const musicLibrary=new MusicServiceLibrary(persistence.voiceLibrarySettings,profiles);
   await voiceLibrary.initialize();
   await musicLibrary.initialize();
-  const services=new ServiceManagement({personas:persistence.personas,capabilities:persistence.capability,health:persistence.capability},profiles,serviceRuntime,{models:()=>harness.models()},new Map(),voiceLibrary,musicLibrary);
+  const services=new ServiceManagement({personas:persistence.personas,capabilities:persistence.capability,health:persistence.capability},profiles,serviceRuntime,{models:()=>harness.modelDiagnostics?.()??harness.models()},new Map(),voiceLibrary,musicLibrary);
   const token=randomBytes(32).toString('base64url');const admin=new Admin(ctx,runtime,token,undefined,features,services);
   ctx.on('webserver/index-inject',rows=>{rows.push({kind:'global',name:'__BOT_INTEGRATION__',value:{endpoint:'/api/bot-integration',token}});});
   ctx.effect(()=>ctx.webServer.register({kind:'exact',path:'/api/bot-integration',handler:(req,res)=>admin.http(req,res)}));

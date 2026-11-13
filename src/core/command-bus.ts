@@ -5,6 +5,7 @@ import {commandHelp} from './commands.js';
 import {skillNameSchema,type BotConfig,type BotInstance,type CallerScope,type SessionBinding,type SessionRecord,type TurnSnapshot} from './types.js';
 import {trusted} from './policy.js';
 import type {DeferredSessionAction} from './session-actions.js';
+import type {ModelCatalogItem} from './runtime-ports.js';
 
 export type CommandSource='slash'|'natural'|'tool'|'admin';
 export type ManagementCommand=
@@ -54,10 +55,9 @@ export interface CommandHost {
   voiceCatalog(role:'tts'|'sts',binding?:SessionBinding):VoiceCatalog;
   setVoice(scope:CallerScope,role:'tts'|'sts',ref:string|null,authorize?:()=>void):Promise<SessionBinding>;
   applyPersonaFiles(id:string):Promise<BotConfig>;
-  models():Promise<Array<{provider:string;model:string;inputModalities?:string[];reasoning?:{supported:boolean;efforts:string[]}}>>;
+  models():Promise<ModelCatalogItem[]>;
   commandServices:CommandServices;
 }
-
 export interface VoiceCatalogEntry {
   id:string;
   displayName:string;
@@ -74,7 +74,6 @@ export interface VoiceCatalog {
   override:boolean;
   items:readonly VoiceCatalogEntry[];
 }
-
 const SESSION_ACTIONS=new Set(['help','stop','new','reset','status','sessions','resume','compact']);
 export function managementCommand(parsed:ParsedCommand):ManagementCommand|undefined {
   const args=parsed.args;
@@ -105,7 +104,6 @@ export function managementCommand(parsed:ParsedCommand):ManagementCommand|undefi
   if(parsed.name==='schedule'){const action=(args.split(/\s+/,1)[0]||'list').toLowerCase();if(!['list','create','pause','resume','run','delete'].includes(action))return undefined;return{kind:'schedule',action:action as any,args:args.slice(action.length).trim()};}
   return undefined;
 }
-
 export class CommandBus {
   constructor(readonly host:CommandHost){}
   private trusted(binding:SessionBinding,hostTools=false):void {

@@ -37,7 +37,7 @@ import type {BotManagement} from '../core/management.js';
 import type {BotModelArguments,BotVoiceArguments} from '../core/features.js';
 import {recentFailureContext} from '../core/failure-context.js';
 import type { HarnessPort, HarnessResult } from '../core/runtime.js';
-import type {HarnessRunOptions} from '../core/runtime-ports.js';
+import type {HarnessRunOptions,ModelCapabilityDiagnostics} from '../core/runtime-ports.js';
 import {abortable,progressFallback,type ProgressFacts,type ProgressStage} from '../core/progress.js';
 import type { BotConfig, InboundMessage, SessionBinding, TurnSnapshot, Output } from '../core/types.js';
 import {PromptAssembler} from './prompt-assembler.js';
@@ -165,7 +165,23 @@ export class NativeHarness implements HarnessPort {
     ctx.tools.guard(exec=>{const initiator=ctx.agents.currentInitiator();const inherited=initiator?this.scoped.get(initiator):undefined;const live=exec.agent?this.scoped.get(exec.agent):inherited;if(inherited&&(!exec.agent||!live||live.binding.key!==inherited.binding.key))return 'Channel tool calls must preserve the native Agent identity';if(!live)return undefined;if(!exec.agent)return 'Channel tool calls require a native Agent identity';if(this.childResult(exec.name,live,exec.agent))return;const bot=repos.bots.bot(live.binding.scope.botId);try{return allowedNow(exec.name,live.snapshot,this.current(live),bot,live.binding.scope)?undefined:'Channel permission was revoked or was not granted for this turn';}catch{return 'Channel configuration is unavailable';}});
   }
   async registerMode():Promise<()=>Promise<void>>{return registerMode(this.ctx);}
-  async models():Promise<Array<{provider:string;model:string;inputModalities?:string[];reasoning?:{supported:boolean;efforts:string[]}}>> {return (await Promise.all(this.ctx.llm.listProviders().map(async provider=>Promise.all((await this.ctx.llm.listModels(provider.id)).map(async model=>{let efforts:string[]=[];try{const info=await this.ctx.llm.resolveModelInfo(provider.id,model.id);efforts=info.reasoning?.efforts?.map(effort=>String(effort.id))??[];}catch{/* Catalog listing remains available when optional model metadata cannot resolve. */}return{provider:provider.id,model:model.id,...model.inputModalities?{inputModalities:[...model.inputModalities]}:{},reasoning:{supported:efforts.length>0,efforts}};}))))).flat();}
+  private async catalogModels():Promise<ModelCapabilityDiagnostics[]> {
+    const groups=await Promise.all(this.ctx.llm.listProviders().map(async provider=>{
+      const models=await this.ctx.llm.listModels(provider.id);
+      return Promise.all(models.map(async model=>{
+        let efforts:string[]=[],contextWindow:number|undefined,systemPromptUpdate:ModelCapabilityDiagnostics['systemPromptUpdate'],toolUpdate:ModelCapabilityDiagnostics['toolUpdate'];
+        try{const info=await this.ctx.llm.resolveModelInfo(provider.id,model.id);efforts=info.reasoning?.efforts?.map(effort=>String(effort.id))??[];contextWindow=info.context?.contextWindow;systemPromptUpdate=info.systemPromptUpdate;toolUpdate=info.toolUpdate;}catch{/* Catalog listing remains available when optional model metadata cannot resolve. */}
+        return{provider:provider.id,model:model.id,...model.inputModalities?{inputModalities:[...model.inputModalities]}:{},reasoning:{supported:efforts.length>0,efforts},...contextWindow===undefined?{}:{contextWindow},...systemPromptUpdate?{systemPromptUpdate}:{},...toolUpdate?{toolUpdate}:{}};
+      }));
+    }));
+    return groups.flat();
+  }
+  async models():Promise<Array<{provider:string;model:string;inputModalities?:string[];reasoning?:{supported:boolean;efforts:string[]}}>> {
+    return (await this.catalogModels()).map(({provider,model,inputModalities,reasoning})=>({provider,model,...inputModalities?{inputModalities:[...inputModalities]}:{},...reasoning?{reasoning:{supported:reasoning.supported,efforts:[...reasoning.efforts]}}:{}}));
+  }
+  async modelDiagnostics():Promise<ModelCapabilityDiagnostics[]> {
+    return this.catalogModels();
+  }
   async inspectSession(sessionId:string):Promise<void> {await this.ctx.sessionQuery.readSession(SessionId(sessionId));}
   async exportHistory():Promise<void>{
     for(const record of this.repos.sessions.sessionsAll())if(record.persisted){

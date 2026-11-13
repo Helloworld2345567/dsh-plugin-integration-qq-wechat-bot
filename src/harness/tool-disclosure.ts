@@ -23,11 +23,11 @@ const sectionTools:Readonly<Record<string,readonly string[]>>={
 };
 
 export function toolCatalogDescription(available:readonly ToolSchema[]):string {
-  const entries=available.filter(tool=>!alwaysVisible.has(tool.name)).map(tool=>{
+  const entries=available.filter(tool=>!alwaysVisible.has(tool.name)).slice().sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0).map(tool=>{
     const summary=summaries[tool.name]??tool.description.replace(/\s+/g,' ').trim().split(/(?<=[.!?。！？])\s|(?<=[。！？])/u)[0]!.slice(0,100);
     return `${tool.name}: ${summary}`;
   });
-  return `Load tools needed for the current task by exact name, then call them. Loaded tools remain available for this turn.\n${entries.join('\n')||'No additional tools are available.'}`;
+  return `Load tools for this turn by exact name, then call them; loading does not execute.\n${entries.join('\n')||'No additional tools are available.'}`;
 }
 
 export function loadTools(names:string[],available:readonly ToolSchema[],loaded:Set<string>):string[] {

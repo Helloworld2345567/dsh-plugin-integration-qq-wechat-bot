@@ -29,6 +29,7 @@ import {clearMusicState} from './music-state.js';
 import {edgeTtsVoiceIds,type EdgeTtsVoiceId} from './voice-config.js';
 import {sanitizePublicServiceText} from './service-errors.js';
 import {localizedError} from './errors.js';
+import type {ModelCatalogItem} from './runtime-ports.js';
 
 function modelFailureCode(error:unknown):string {
   const message=error instanceof Error?error.message:typeof error==='string'?error:'MODEL_REQUEST_FAILED';
@@ -68,7 +69,9 @@ export class BotRuntime {
   sessions(scope:CallerScope){return this.repos.sessions.sessions(scope);}
   session(scope:CallerScope,id:string){return this.repos.sessions.session(scope,id);}
   busy(value:SessionBinding|string):boolean{const key=typeof value==='string'?value:value.key;return this.processing.has(key)||this.maintenance.has(key);}
-  models(){return this.harness.models?this.harness.models():Promise.resolve([]);}
+  models():Promise<ModelCatalogItem[]> {
+    return this.harness.models?.()??Promise.resolve([]);
+  }
   sessionStatus(scope:CallerScope):'waiting_upgrade'|'compacting'|'running'|'idle'{const key=scopeKey(scope);return this.quiescing?'waiting_upgrade':this.maintenance.has(key)?'compacting':this.processing.has(key)||this.repos.telemetry.actions.sessionActions<SessionActionRecord>().some(r=>r.scopeKey===key&&r.state==='running')?'running':'idle';}
   health():{ready:true;serviceRunning:boolean;quiescing:boolean;activeTasks:number;pendingDeliveries:number;pendingSessionActions:number;connections:Record<string,string>;latency:{inboxToModel:{count:number;p50:number|null;p95:number|null;max:number|null};inboxToSent:{count:number;p50:number|null;p95:number|null;max:number|null}}}{return{ready:true,serviceRunning:this.serviceRunning(),quiescing:this.quiescing,activeTasks:this.processing.size+this.maintenance.size+this.controls.size,pendingDeliveries:this.repos.deliveries.deliveries(['pending','sending']).length,pendingSessionActions:this.repos.telemetry.actions.sessionActions<SessionActionRecord>().filter(r=>r.state==='queued').length,connections:Object.fromEntries(this.states),latency:{inboxToModel:this.repos.telemetry.metrics.metricPercentiles('modelStartedAt'),inboxToSent:this.repos.telemetry.metrics.metricPercentiles('sentAt')}};}
   constructor(readonly repos:RuntimeRepositories,readonly assets:Assets,readonly media:MediaService,readonly harness:HarnessPort,readonly channels:ChannelRegistry,readonly credentials:Credentials,readonly debounceMs=2000,readonly turnTimeoutMs=0,readonly profiles?:ProfileStore,readonly systemLocale:()=>SystemLocale=()=> 'zh'){

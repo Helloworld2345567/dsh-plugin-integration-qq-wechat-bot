@@ -47,6 +47,18 @@ test('model provider failures preserve an actionable error code in the user-faci
   assert.equal(store.failures.failures()[0].code,'INVALID_REQUEST: upstream model rejected the request');
 });
 
+test('model-stage failures are not injected again into later turns',async t=>{
+  const root=await mkdtemp(path.resolve('.codex/process-failure-'));const store=new SqlitePersistence(root);
+  t.after(async()=>{store.close();await rm(root,{recursive:true,force:true});});
+  store.bots.saveBot(botSchema.parse({id:'one',name:'One',channel:'qq',accountId:'one',enabled:true}));
+  const scope:CallerScope={botId:'one',platform:'qq',accountId:'one',kind:'private',channelId:'alice',senderId:'alice'};
+  const binding=store.sessions.binding(scope),source:InboundMessage={id:'model-source',scope,text:'上一轮模型请求',attachments:[],reply:{},timestamp:Date.now()};
+  store.inbox.accept(source);
+  store.failures.saveFailure('model-stage-failure',{sessionId:binding.sessionId,scope:binding.key,state:'failed',stage:'model',sourceIds:[source.id],at:Date.now(),code:'INVALID_REQUEST'});
+  const followup={...source,id:'followup',text:'继续处理',timestamp:Date.now()+1};
+  assert.equal(recentFailureContext({failures:store.failures,deliveries:store.deliveries,inbox:store.inbox},binding,[followup]),undefined);
+});
+
 test('another bot credential failure cannot relabel a completed request or its accepted delivery',async t=>{
   const root=await mkdtemp(path.resolve('.codex/process-failure-'));const store=new SqlitePersistence(root);const assets=new Assets(store.repositories());
   for(const id of ['good','bad'])store.bots.saveBot(botSchema.parse({id,name:id,channel:'qq',accountId:id,enabled:true}));

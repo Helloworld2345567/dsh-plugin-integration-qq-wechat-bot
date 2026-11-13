@@ -16,14 +16,14 @@ export interface FailureContextPorts {
 export function recentFailureContext(ports:FailureContextPorts,binding:SessionBinding,messages:InboundMessage[],now=Date.now()):string|undefined {
   // A followup may arrive while the preceding request is still failing; use processing time.
   const currentSources=new Set(messages.map(message=>message.id));
-  const failures=(ports.failures.failures() as unknown as ProcessingFailure[]).filter(f=>f.sessionId===binding.sessionId&&f.scope===binding.key&&f.state==='failed'&&f.at<=now&&f.at>now-600000&&Array.isArray(f.sourceIds)&&f.sourceIds.some(id=>!currentSources.has(id)));
+  const failures=(ports.failures.failures() as unknown as ProcessingFailure[]).filter(f=>f.sessionId===binding.sessionId&&f.scope===binding.key&&f.state==='failed'&&f.stage!=='model'&&f.at<=now&&f.at>now-600000&&Array.isArray(f.sourceIds)&&f.sourceIds.some(id=>!currentSources.has(id)));
   const deliveries=ports.deliveries.deliveries().filter(d=>d.purpose!=='progress'&&d.scopeKey===binding.key&&d.sessionId===binding.sessionId&&!d.turnId.startsWith('failure:')&&!d.turnId.startsWith('command:'));
   const rows:FailureContextRow[]=failures.sort((a,b)=>b.at-a.at).slice(0,3).flatMap(f=>{
     const outputs=deliveries.filter(d=>f.sourceIds.includes(d.sourceId));
     if(f.stage==='delivery'&&outputs.length&&outputs.every(d=>d.state==='sent'))return[];
     return f.sourceIds.filter(id=>!currentSources.has(id)).flatMap(id=>{
       const source=ports.inbox.source(binding.key,id);if(!source)return[];
-      return[{sourceId:id,request:source.text.slice(0,500),at:new Date(f.at).toISOString(),status:f.stage==='attachments'?'Attachment preparation failed; the request did not reach the model and no new image was generated':f.stage==='model'?'The model turn did not complete; its result is unconfirmed':'Result persistence or delivery did not complete; delivery status is unconfirmed'}];
+      return[{sourceId:id,request:source.text.slice(0,500),at:new Date(f.at).toISOString(),status:f.stage==='attachments'?'Attachment preparation failed; the request did not reach the model and no new image was generated':'Result persistence or delivery did not complete; delivery status is unconfirmed'}];
     });
   });
   const represented=new Set(rows.map(row=>row.sourceId));

@@ -12,14 +12,14 @@ import {StatsService,statsQuerySchema,type StatsQueryInput,type StatsResult} fro
 import {packageRoot} from './paths.js';
 import {scopeKey} from './identity.js';
 import {managementCommand} from './command-bus.js';
-import type {LifecyclePort,SessionHistoryPort} from './runtime-ports.js';
+import type {LifecyclePort,SessionHistoryPort,ModelCatalogItem} from './runtime-ports.js';
 
 export const botModelArgumentsSchema=z.object({action:z.enum(['list','set','reset']),provider:z.string().min(1).max(150).optional(),model:z.string().min(1).max(200).optional()}).strict().superRefine((value,ctx)=>{
   if(value.action==='set'&&(!value.provider||!value.model))ctx.addIssue({code:'custom',message:'set 需要 list 返回的准确 provider 和 model',params:{message:systemDescriptor('modelSetRequired')}});
   if(value.action!=='set'&&(value.provider!==undefined||value.model!==undefined))ctx.addIssue({code:'custom',message:'list/reset 不接受 provider 或 model',params:{message:systemDescriptor('modelListResetInvalid')}});
 });
 export type BotModelArguments=z.infer<typeof botModelArgumentsSchema>;
-export interface BotModelResult {action:BotModelArguments['action'];sessionId:string;personaId:string;currentTurnModel:BotConfig['model'];nextTurnModel:BotConfig['model'];override:boolean;effective:'current'|'next_turn';models?:Array<{provider:string;model:string;inputModalities?:string[];reasoning?:{supported:boolean;efforts:string[]}}>}
+export interface BotModelResult {action:BotModelArguments['action'];sessionId:string;personaId:string;currentTurnModel:BotConfig['model'];nextTurnModel:BotConfig['model'];override:boolean;effective:'current'|'next_turn';models?:ModelCatalogItem[]}
 export const botVoiceArgumentsSchema=z.object({role:z.enum(['tts','sts']),action:z.enum(['list','set','reset']),id:z.string().trim().min(1).max(200).optional()}).strict().superRefine((value,ctx)=>{
   if(value.action==='set'&&!value.id)ctx.addIssue({code:'custom',message:'set 需要 list 返回的准确音色 ID',params:{message:systemDescriptor('voiceSetRequired')}});
   if(value.action!=='set'&&value.id!==undefined)ctx.addIssue({code:'custom',message:'list/reset 不接受音色 ID',params:{message:systemDescriptor('voiceListResetInvalid')}});
@@ -44,7 +44,6 @@ export function renderStats(value:StatsResult,locale:SystemLocale='zh'):string {
   if(value.coverage.unknownSentTime)lines.push(t('statsMissingTime',{count:value.coverage.unknownSentTime}));
   return lines.join('\n');
 }
-
 /** One service boundary used by the model tools, slash commands and local admin UI. */
 export class BotFeatures {
   readonly skills:DynamicSkills;readonly stats:StatsService;readonly evolution:EvolutionService;

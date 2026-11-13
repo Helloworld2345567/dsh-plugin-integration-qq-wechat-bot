@@ -22,6 +22,15 @@ export interface LifecyclePort {
   /** Persistence is owned by the independent lifecycle bundle when present. */
   journal?(home:string): EvolutionJournalPort;
 }
+export interface ModelCatalogItem {
+  provider:string; model:string; inputModalities?:readonly string[]; reasoning?:{supported:boolean;efforts:readonly string[]};
+}
+/** Operator-only route facts; these must not be sent through the chat model tool. */
+export interface ModelCapabilityDiagnostics extends ModelCatalogItem {
+  contextWindow?:number;
+  systemPromptUpdate?:'in-history';
+  toolUpdate?:'in-history'|'addition-only';
+}
 export interface HarnessPort {
   run(binding:SessionBinding,messages:InboundMessage[],signal:AbortSignal,options?:HarnessRunOptions):Promise<HarnessResult>;
   formatProgress?(binding:SessionBinding,snapshot:TurnSnapshot,facts:ProgressFacts,signal:AbortSignal):Promise<string>;
@@ -31,7 +40,8 @@ export interface HarnessPort {
   validateModel(config:BotConfig):Promise<void>;
   recheckPermissions?():void;
   compact?(binding:SessionBinding,signal:AbortSignal):Promise<string>;
-  models?():Promise<Array<{provider:string;model:string;inputModalities?:string[];reasoning?:{supported:boolean;efforts:string[]}}>>;
+  models?():Promise<ModelCatalogItem[]>;
+  modelDiagnostics?():Promise<ModelCapabilityDiagnostics[]>;
   inspectSession?(sessionId:string):Promise<void>;
   drain?():Promise<void>;
 }

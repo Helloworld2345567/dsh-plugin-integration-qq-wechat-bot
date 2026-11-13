@@ -126,10 +126,10 @@ export async function apply(ctx:Context){
     assert.deepEqual(requestTools(requests[1]),['bot_remember','bot_tools'],'discovery must expose only the requested schema');
     assert.doesNotMatch(requestText(requests[0]),/Use present|call present|interacting with the user through the DeepSeek Harness Web GUI|Current DeepSeek Harness Web GUI URL|DeepSeek Harness implementation checkout|sourceId=/);
     assert.ok(requests[0].messages.some(message=>message.role==='user'&&message.content.some(block=>block.type==='text'&&block.text==='我喜欢绿茶')),'the native user message must retain the original text without a source prefix');
-    assert.doesNotMatch(requestText(requests[0]),/Supply quote as a complete/,'remember guidance must stay deferred');
+    assert.doesNotMatch(requestText(requests[0]),/complete, exact line from the current user message/,'remember guidance must stay deferred');
     const rememberLoad=toolJson(requests[1].messages.findLast(message=>message.role==='tool'));
-    assert.deepEqual(rememberLoad.loaded,['bot_remember']);assert.match(rememberLoad.instructions.join('\n'),/Supply quote as a complete/,'loading remember must return its execution guidance');
-    assert.doesNotMatch((requests[1].system??'')+JSON.stringify(requests[1].messages.filter(message=>message.role==='system')),/Supply quote as a complete/,'loading must not append capability guidance to the system prompt');
+    assert.deepEqual(rememberLoad.loaded,['bot_remember']);assert.match(rememberLoad.instructions.join('\n'),/complete, exact line from the current user message/,'loading remember must return its execution guidance');
+    assert.doesNotMatch((requests[1].system??'')+JSON.stringify(requests[1].messages.filter(message=>message.role==='system')),/complete, exact line from the current user message/,'loading must not append capability guidance to the system prompt');
     assert.ok(!JSON.stringify(requests[1].tools!.find(tool=>tool.name==='bot_remember')!.parameters).includes('sourceId'),'source attribution must remain host-owned');
     assert.equal(memory.memories(scopeKey(scope))[0]?.value,'绿茶');
     assert.equal(memory.memories(scopeKey(scope))[0]?.source,'first');assert.ok(requests[2].messages.some(m=>m.role==='tool'&&JSON.stringify(m.content).includes('Saved the preference')));
@@ -430,7 +430,7 @@ export async function apply(ctx:Context){
     const evo=await ctx.tools.execute({name:'bot_evolve',arguments:{action:'status'},callId:ToolCallId('trusted-evolve'),agent:active,signal:AbortSignal.timeout(5000)});assert.equal(evo.isError,false,JSON.stringify(evo));
     updateSettings({allowHostTools:false});
     await bridge.run(sessions.binding(scope),[msg('model-without-host','查看会话模型管理能力')],AbortSignal.timeout(30000));const noHostTools=ctx.tools.schemas(active).map(t=>t.name);assert.ok(noHostTools.includes('bot_model'),'trusted model management remains available without host tool permission');assert.ok(!noHostTools.includes('pwsh'));assert.ok(!noHostTools.includes('bot_evolve'));
-    const listedModels=await ctx.tools.execute({name:'bot_model',arguments:{action:'list'},callId:ToolCallId('trusted-model-list'),agent:active,signal:AbortSignal.timeout(5000)});assert.equal(listedModels.isError,false,JSON.stringify(listedModels));assert.ok(JSON.stringify(listedModels).includes('bot-fixture'));
+    const listedModels=await ctx.tools.execute({name:'bot_model',arguments:{action:'list'},callId:ToolCallId('trusted-model-list'),agent:active,signal:AbortSignal.timeout(5000)});assert.equal(listedModels.isError,false,JSON.stringify(listedModels));assert.ok(JSON.stringify(listedModels).includes('bot-fixture'));assert.doesNotMatch(JSON.stringify(listedModels),/contextWindow|systemPromptUpdate|toolUpdate/,'route cache diagnostics stay out of the chat model tool result');
     const modelFrozenChild=await ctx.agents.create({sessionId:('model-'+newBinding.sessionId) as any,parentAgent:active,agentOptions:{provider:'bot-fixture',model:'second'}});
     for(const name of ['bot_session','bot_persona','bot_skills','bot_schedule','bot_proactive'])assert.ok(noHostTools.includes(name),`${name} must not require host permission`);
     mediaCall={name:'bot_schedule',args:{action:'create',prompt:'每天说晚安',dailyAt:'00:00',timezone:'Asia/Shanghai'}};

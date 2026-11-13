@@ -50,5 +50,6 @@ test('unknown tools have short first-sentence catalog entries without argument s
   assert.match(description,/extension: First sentence\./);
   assert.match(description,/chinese_extension: 读取公开内容。/);
   assert.doesNotMatch(description,/More details|然后|privateArgument/);
+  assert.ok(description.indexOf('chinese_extension:')<description.indexOf('extension:'));
   assert.equal(description.split('\n').find(line=>line.startsWith('long_extension: ')),`long_extension: ${'x'.repeat(100)}`);
 });

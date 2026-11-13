@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import shutil
 from pathlib import Path
 import struct
 import sys
@@ -13,7 +14,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 from dsh_bot_runtime.singing_common import SingingError, validate_parameters, validate_wav
-from dsh_bot_runtime.rvc_service import JobManager, create_server, runner_environment
+from dsh_bot_runtime.rvc_service import Job, JobManager, create_server, runner_environment
 
 
 def wav_bytes():
@@ -36,6 +37,10 @@ if job['parameters']['singingModelId'] == 'wait':
     subprocess.Popen([sys.executable, '-c', "import pathlib,sys,time; time.sleep(1.5); pathlib.Path(sys.argv[1]).write_text('alive')", str(marker)])
     pathlib.Path(sys.argv[1]).with_name('started').write_text('started')
     time.sleep(30)
+if job['parameters']['singingModelId'] == 'nested':
+    cache = pathlib.Path(job['output']).parent / 'NVIDIA' / 'CUDA' / 'ComputeCache'
+    cache.mkdir(parents=True)
+    (cache / 'cache.bin').write_bytes(b'cache')
 pathlib.Path(job['output']).write_bytes(pathlib.Path(job['input']).read_bytes())
 pathlib.Path(job['status']).write_text(json.dumps({'status':'succeeded'}))
 '''
@@ -96,6 +101,37 @@ class SingingServiceTests(unittest.TestCase):
         time.sleep(1.6)
         self.assertFalse(self.marker.exists(), "Cancelled task left a child process alive")
         self.assertFalse((self.manager.jobs["running"].directory / "result.wav").exists())
+
+    def test_success_cleanup_removes_nested_provider_cache_and_keeps_result(self):
+        self.manager.submit({**parameters("nested"), "singingModelId": "nested"}, wav_bytes())
+        self.wait_for(lambda: self.manager.get("nested")["status"] == "succeeded")
+        folder = self.manager.jobs["nested"].directory
+        self.assertFalse((folder / "NVIDIA").exists())
+        with self.manager.result("nested") as audio:
+            self.assertEqual(audio.read(), wav_bytes())
+        self.manager.submit(parameters("after-nested"), wav_bytes())
+        self.wait_for(lambda: self.manager.get("after-nested")["status"] == "succeeded")
+
+    def test_cleanup_permission_error_does_not_escape_finish(self):
+        directory = self.directory / "permission-cleanup"
+        directory.mkdir()
+        (directory / "NVIDIA" / "CUDA").mkdir(parents=True)
+        (directory / "NVIDIA" / "CUDA" / "cache.bin").write_bytes(b"cache")
+        (directory / "result.wav").write_bytes(wav_bytes())
+        job = Job("permission", {}, directory, status="running")
+        original = shutil.rmtree
+        calls = []
+
+        def flaky(path, **kwargs):
+            if not calls:
+                calls.append(path)
+                raise PermissionError("provider cache is still held")
+            return original(path, **kwargs)
+
+        with self.manager.condition, patch("dsh_bot_runtime.rvc_service.shutil.rmtree", side_effect=flaky):
+            self.manager._finish(job, "succeeded")
+        self.assertTrue((directory / "result.wav").is_file())
+        self.assertFalse((directory / "NVIDIA").exists())
 
     def test_http_multipart_status_result_and_safe_errors(self):
         import requests
