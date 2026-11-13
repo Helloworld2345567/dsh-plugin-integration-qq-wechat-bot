@@ -64,8 +64,10 @@ export function validateMediaWorkerJob(job: MediaWorkerJob): void {
   if (!boundedString(job.output) || !boundedString(job.usagePath)) throw new Error('MEDIA_WORKER_PATH_INVALID');
   if (job.endpoint !== undefined) {
     if(!isRecord(job.endpoint))throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');
-    if(job.endpoint.protocol==='comfyui'){
-      if(!['image_generate','image_edit'].includes(job.operation)||!imageEndpointSchema.safeParse(job.endpoint).success||job.endpoint.protocol!=='comfyui'||!boundedString(job.endpoint.baseUrl,2048)||job.endpoint.keyEnv!==undefined)throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');
+    if(['image_generate','image_edit'].includes(job.operation)){
+      if(!imageEndpointSchema.safeParse(job.endpoint).success)throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');
+    }else if(job.endpoint.protocol==='comfyui'){
+      throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');
     }else if(job.endpoint.protocol==='rvc_http_v1'){
       if(job.operation!=='singing_convert'||job.endpoint.jobId!==job.id||!rvcWorkerConfigSchema.safeParse(job.endpoint).success||job.endpoint.enabled!==true||!boundedString(job.endpoint.baseUrl,2048))throw new Error('MEDIA_WORKER_ENDPOINT_INVALID');
     }else if(job.endpoint.protocol==='gpt_sovits'){

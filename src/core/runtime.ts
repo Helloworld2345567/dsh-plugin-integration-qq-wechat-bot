@@ -406,7 +406,7 @@ export class BotRuntime {
       try{
       let stage:ProcessingFailure['stage']='attachments';const outputs:Output[]=[];let stagedTurnId:string|undefined;
       try{
-        const snapshot=freezeTurn(this.effectiveConfig(binding),bot,binding.scope,messages.map(m=>m.id),this.profiles,locale);
+        const snapshot=freezeTurn(this.effectiveConfig(binding),bot,binding.scope,messages.map(m=>m.id),this.profiles,locale,this.media.imageSettings());
         this.repos.telemetry.snapshots.saveTurnSnapshot(binding.sessionId,snapshot);
         const config=snapshot.config as BotConfig;
         const active=()=>{
@@ -547,7 +547,7 @@ export class BotRuntime {
     const runSignal=AbortSignal.any([signal,controller.signal,deadline]);
     let config=this.effectiveConfig(binding);
     if(kind==='proactive'&&!this.automation.listProactive().find(item=>item.scopeKey===key)?.allowWeb)config={...config,tools:config.tools.filter(name=>!['web_search','web_fetch','bot_read_social'].includes(name))};
-    const snapshot=freezeTurn(config,this.repos.bots.bot(binding.scope.botId),binding.scope,[sourceId],this.profiles,this.systemLocale());
+    const snapshot=freezeTurn(config,this.repos.bots.bot(binding.scope.botId),binding.scope,[sourceId],this.profiles,this.systemLocale(),this.media.imageSettings());
     this.repos.telemetry.snapshots.saveTurnSnapshot(binding.sessionId,snapshot);
     const synthetic:InboundMessage={id:sourceId,scope:binding.scope,text:prompt,attachments:[],reply:latest.reply,replyEnvelope:latest.replyEnvelope,timestamp:Date.now()};
     let answer:{turnId:string;outputs:Output[];snapshot:TurnSnapshot}|undefined;

@@ -32,7 +32,7 @@ import {BUILTIN_SERVICE_POLICIES} from './core/builtin-service-adapters.js';
 import {ServiceManagement} from './core/service-management.js';
 import {createBuiltinServiceAdapters,createVoiceModelLibrary} from './harness/service-adapter-runtime.js';
 import {MusicServiceLibrary} from './core/music-service-library.js';
-import {applyImageServiceSettings} from './core/image-service-config.js';
+import {imageServiceSettingsFromRecord} from './core/image-service-config.js';
 import {NodeControlledProcessPort} from './harness/controlled-process.js';
 
 export const name='bot-integration';
@@ -66,7 +66,7 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
     serviceRuntime=new ServiceRuntime(serviceHost,profiles,validators,HOST_SERVICE_POLICIES,persistence.serviceState,path.join(persistence.home,'.tmp','service-health'));
     serviceRuntime.assertApprovedMediaOperations(mediaOperationRegistry);
   }catch(error){await serviceHost?.dispose().catch(()=>{});persistence.close();throw error;}
-  const assets=new Assets(repos);const media=new MediaService(repos,assets,config.python,new HarnessMediaProvider(ctx),new ProcessWorker(config.python),mediaOperationRegistry,undefined,serviceRuntime);
+  const assets=new Assets(repos);const media=new MediaService(repos,assets,config.python,new HarnessMediaProvider(ctx),new ProcessWorker(config.python),mediaOperationRegistry,undefined,serviceRuntime,()=>imageServiceSettingsFromRecord(persistence.voiceLibrarySettings.read()));
   const credentials=createBotCredentials(ctx.credentials);
   const extensions:HarnessExtensions={};const harness=new NativeHarness(ctx,repos,assets,media,extensions,systemLocale,sessionOwners);let disposeMode;try{disposeMode=await harness.registerMode();}catch(error){await serviceHost.dispose().catch(()=>{});persistence.close();throw error;}
   const channels=createChannelRegistry([qqChannel(new QQAdapter(undefined,{emit:event=>extensions.stats?.observeGroup({botId:event.botId,groupId:event.groupId,name:event.name,event:event.type==='group.joined'?'joined':event.type==='group.left'?'left':'observed',at:event.at,eventId:event.eventId})},undefined,undefined,createQQAudioPreparer(assets,{processes:new NodeControlledProcessPort()}))),weixinChannel(new WeixinAdapter(persistence.cursors))]);
@@ -76,7 +76,6 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
   const voiceLibrary=createVoiceModelLibrary(persistence.voiceLibrarySettings,persistence.home,profiles);
   const musicLibrary=new MusicServiceLibrary(persistence.voiceLibrarySettings,profiles);
   await voiceLibrary.initialize();
-  applyImageServiceSettings(voiceLibrary.view());
   await musicLibrary.initialize();
   const services=new ServiceManagement({personas:persistence.personas,capabilities:persistence.capability,health:persistence.capability},profiles,serviceRuntime,{models:()=>harness.models()},new Map(),voiceLibrary,musicLibrary);
   const token=randomBytes(32).toString('base64url');const admin=new Admin(ctx,runtime,token,undefined,features,services);

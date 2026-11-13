@@ -41,11 +41,13 @@ Lifecycle 单元/原生/安装测试覆盖：完全兼容、protocol major 不�
 - `BOT_TEST_PYTHON`：管理员明确提供的测试解释器；必须是 Python 3.12/3.13，不代表生产解释器。
 - `BOT_TEST_TMP`：测试临时根；只允许 workspace/CI 临时目录，测试应为每次运行创建唯一子目录并清理。
 - `BOT_TEST_WEB_TOOLS_SOURCE`：可选的本地 `dsh-web-tools` fixture 来源；runner 只接受当前 checkout 内、package name 已验证的目录，不接受远程包或仓库外路径。
-- `BOT_TEST_IMAGE_KEY`、`BOT_TEST_ANALYSIS_KEY`：明显假的 fixture 值，只用于验证凭据传递路径，不调用真实服务。
+- `BOT_TEST_ANALYSIS_KEY`：明显假的 fixture 值，只用于验证凭据传递路径，不调用真实服务。
 - `NATIVE_TEST_RESULT`：native fixture 写入的结果文件；由 runner 创建。
 - `LIFECYCLE_NATIVE_FOLDER`：lifecycle fixture 的临时根；由 runner 创建。
 - `BOT_HOME`、`BOT_WORKSPACE_ROOT`、`BOT_PERSONAS_ROOT`、`BOT_DATA_HOME`、`BOT_PYTHON`：runner 创建/校验的隔离目录或测试解释器。
 - `PYTHONPATH`：只能由测试 runner 覆盖为受信 `python/` 包根，用于验证 `dsh_bot_runtime`；不是用户可继承的测试输入。
+
+native runner 在隔离环境中显式将 `OPENAI_API_KEY` 设为固定的假 fixture 值，不继承宿主的真实密钥，也不放宽通用环境允许列表。
 
 普通 TypeScript/Python 测试不应读取共享 Harness profile、`DSH_PROFILE`、`DSH_HOME`、`DSH_SESSION_ID` 或任何真实凭据。fixture credentials 只使用 `fixture-*` 明文占位值，不能进入 npm pack 或完整日志。
 

@@ -10,7 +10,6 @@ import type {ServiceRuntime} from './service-runtime.js';
 import type {CapabilityAcceptanceRepository, ServiceHealthRepository} from './ports/service.js';
 import type {PersonaConfigRepository} from './ports/persona.js';
 import type {VoiceModelLibrary,VoiceLibraryView} from './voice-model-library.js';
-import {applyImageServiceSettings} from './image-service-config.js';
 import type {MusicServiceLibrary} from './music-service-library.js';
 import type {LaunchableService,ServiceStartResult} from './service-launcher.js';
 import {configSchema,type BotConfig} from './types.js';
@@ -60,7 +59,7 @@ export class ServiceManagement {
   constructor(readonly deps:ServiceManagementRepositories,readonly profiles:ProfileStore,readonly runtime:ServiceRuntime,readonly modelsPort:ServiceModelCatalogPort,readonly refreshers:ReadonlyMap<string,FixedServiceRefresher>=new Map(),readonly voiceLibrary?:VoiceModelLibrary,readonly musicLibrary?:MusicServiceLibrary){}
   private versioned<T>(data:T):VersionedServiceResult<T>{return{version:SERVICE_MANAGEMENT_VERSION,contractVersion:SERVICE_MANAGEMENT_VERSION,revision:revisionFor(data),data};}
   settings():VersionedServiceResult<VoiceLibraryView>{if(!this.voiceLibrary)throw Error('VOICE_MODEL_LIBRARY_UNAVAILABLE');const data=this.voiceLibrary.view();return{version:1,contractVersion:1,revision:data.revision,data};}
-  async saveSettings(input:unknown,signal:AbortSignal):Promise<VersionedServiceResult<VoiceLibraryView>>{if(!this.voiceLibrary)throw Error('VOICE_MODEL_LIBRARY_UNAVAILABLE');const data=await this.voiceLibrary.save(input,signal);applyImageServiceSettings(data);if(this.musicLibrary)await this.musicLibrary.refresh(signal);return{version:1,contractVersion:1,revision:data.revision,data};}
+  async saveSettings(input:unknown,signal:AbortSignal):Promise<VersionedServiceResult<VoiceLibraryView>>{if(!this.voiceLibrary)throw Error('VOICE_MODEL_LIBRARY_UNAVAILABLE');const data=await this.voiceLibrary.save(input,signal);if(this.musicLibrary)await this.musicLibrary.refresh(signal);return{version:1,contractVersion:1,revision:data.revision,data};}
   async start(input:unknown,signal:AbortSignal):Promise<VersionedServiceResult<ServiceStartResult>>{const value=serviceStartInputSchema.parse(input);if(!this.voiceLibrary)throw Error('VOICE_MODEL_LIBRARY_UNAVAILABLE');const data=await this.voiceLibrary.start(value.serviceId as LaunchableService,signal);return this.versioned(data);}
   validateSelections(input:unknown,previous?:BotConfig):void {
     const next=configSchema.parse(input);

@@ -27,12 +27,12 @@ const defaultComfyWorkflowPath = (): string => {
 
 /** Operator-owned image service settings.  Credentials remain environment-backed. */
 export const imageServiceSettingsSchema = z.object({
-  imageProtocol: z.enum(['openai', 'comfyui']).default(process.env.BOT_IMAGE_PROTOCOL === 'comfyui' || process.env.BOT_COMFYUI_BASE_URL ? 'comfyui' : 'openai'),
-  openAiBaseUrl: openAiUrl.default(process.env.BOT_IMAGE_BASE_URL || process.env.SAKURA_IMAGE_BASE_URL || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'),
-  openAiModel: z.string().trim().min(1).max(256).default(process.env.BOT_IMAGE_MODEL || process.env.SAKURA_IMAGE_MODEL || 'gpt-image-2'),
-  openAiKeyEnv: keyEnv.default(process.env.BOT_IMAGE_KEY_ENV || (process.env.IMAGE_ACCESS_KEY ? 'IMAGE_ACCESS_KEY' : process.env.SAKURA_IMAGE_API_KEY ? 'SAKURA_IMAGE_API_KEY' : 'IMAGE_ACCESS_KEY')),
-  comfyUiBaseUrl: localUrl.default(process.env.BOT_COMFYUI_BASE_URL || 'http://127.0.0.1:8188'),
-  comfyUiWorkflowPath: absolutePath('ComfyUI workflow').default(process.env.BOT_COMFYUI_WORKFLOW || process.env.BOT_COMFYUI_WORKFLOW_PATH || defaultComfyWorkflowPath()),
+  imageProtocol: z.enum(['openai', 'comfyui']).default('openai'),
+  openAiBaseUrl: openAiUrl.default('https://api.openai.com/v1'),
+  openAiModel: z.string().trim().min(1).max(256).default('gpt-image-2'),
+  openAiKeyEnv: keyEnv.default('OPENAI_API_KEY'),
+  comfyUiBaseUrl: localUrl.default('http://127.0.0.1:8188'),
+  comfyUiWorkflowPath: absolutePath('ComfyUI workflow').default(defaultComfyWorkflowPath()),
 }).strict();
 
 export const imageServiceSettingsInputSchema = imageServiceSettingsSchema.extend({
@@ -50,20 +50,4 @@ export function imageServiceSettingsFromRecord(raw: unknown): ImageServiceSettin
     comfyUiBaseUrl: record.comfyUiBaseUrl,
     comfyUiWorkflowPath: record.comfyUiWorkflowPath,
   });
-}
-
-/** Apply operator settings to the process environment used by media workers. */
-export function applyImageServiceSettings(settings: ImageServiceSettings, env: NodeJS.ProcessEnv = process.env): void {
-  env.BOT_IMAGE_BASE_URL = settings.openAiBaseUrl;
-  env.BOT_IMAGE_MODEL = settings.openAiModel;
-  env.BOT_IMAGE_KEY_ENV = settings.openAiKeyEnv;
-  if (settings.imageProtocol === 'comfyui') {
-    env.BOT_IMAGE_PROTOCOL = 'comfyui';
-    env.BOT_COMFYUI_BASE_URL = settings.comfyUiBaseUrl;
-    env.BOT_COMFYUI_WORKFLOW = settings.comfyUiWorkflowPath;
-    return;
-  }
-  env.BOT_IMAGE_PROTOCOL = 'openai';
-  delete env.BOT_COMFYUI_BASE_URL;
-  delete env.BOT_COMFYUI_WORKFLOW;
 }

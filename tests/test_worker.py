@@ -27,9 +27,12 @@ class WorkerTests(unittest.TestCase):
         self.root = Path(self.directory.name)
 
     def job(self, operation, source=None, **params):
+        endpoint = dict(baseUrl='https://example.invalid/v1', model='fixture')
+        if operation not in {'image_generate', 'image_edit'}:
+            endpoint['keyEnv'] = 'TEST_PROVIDER_KEY'
         return dict(id='test', scope='scope', operation=operation, deadline=time.time()*1000+30000,
                     inputs=[dict(path=str(source), name=source.name, kind='file', mime='application/octet-stream')] if source else [],
-                    parameters=params, output=str(self.root), endpoint=dict(baseUrl='https://example.invalid/v1', model='fixture', keyEnv='TEST_PROVIDER_KEY'))
+                    parameters=params, output=str(self.root), endpoint=endpoint)
 
     def test_worker_import_does_not_scan_optional_skill_manifests(self):
         self.assertIsNone(IMPORTED_SKILL_OPERATIONS)
@@ -247,10 +250,11 @@ class WorkerTests(unittest.TestCase):
         from PIL import Image
         file = self.root / 'ref.png'; Image.new('RGB', (20, 20), 'green').save(file)
         job = self.job('image_edit', file, prompt='edit this'); job['inputs'][0]['kind'] = 'image'
+        job['endpoint']['keyEnv'] = 'CUSTOM_IMAGE_KEY'
         def fake(command, **kwargs):
             self.assertEqual(command[1:3], ['-B', str(ROOT / 'python/image_api.py')])
             self.assertIn('--image', command); self.assertIn(str(file), command)
-            self.assertEqual(command[command.index('--api-key-env')+1], 'TEST_PROVIDER_KEY')
+            self.assertEqual(command[command.index('--api-key-env') + 1], 'CUSTOM_IMAGE_KEY')
             output = self.root / 'generated.jpg'; Image.new('RGB',(10,10),'blue').save(output)
             (self.root / 'image-result.json').write_text(json.dumps({'outputs':[output.name]}),encoding='utf-8')
             return Mock(returncode=0)
@@ -259,6 +263,7 @@ class WorkerTests(unittest.TestCase):
     def test_image_worker_forwards_native_format_options_and_returns_matching_mime(self):
         job = self.job('image_generate', prompt='vector icon', output_format='svg', complexity='medium')
         def fake(command, **kwargs):
+            self.assertEqual(command[command.index('--api-key-env') + 1], 'OPENAI_API_KEY')
             self.assertIn('--output-format', command); self.assertEqual(command[command.index('--output-format') + 1], 'svg')
             self.assertIn('--complexity', command); self.assertEqual(command[command.index('--complexity') + 1], 'medium')
             output = self.root / 'generated.svg'; output.write_text('<svg width="8" height="8" xmlns="http://www.w3.org/2000/svg"><circle cx="4" cy="4" r="3"/></svg>', encoding='utf-8')
@@ -302,17 +307,18 @@ class WorkerTests(unittest.TestCase):
             with self.assertRaisesRegex(worker.JobError, 'IMAGE_OUTPUT_RECORD_MISSING'): worker.execute(job)
 
     def test_image_cli_failure_stdout_and_record_are_redacted(self):
+        import requests
         record = self.root / 'private-record.json'
-        env = dict(os.environ); env['PYTHONPATH'] = str(ROOT / 'python'); env['SECRET_IMAGE_KEY'] = 'private-secret'
-        result = subprocess.run([sys.executable, '-B', '-P', '-m', 'dsh_bot_runtime.skills.image_generation.image_api',
-            'generate', '--prompt', 'private prompt', '--base-url', 'https://127.0.0.1:1/v1',
-            '--api-key-env', 'SECRET_IMAGE_KEY', '--output-dir', str(self.root), '--record', str(record)],
-            env=env, cwd=self.root, text=True, capture_output=True, timeout=30)
-        self.assertEqual(result.returncode, 1)
-        combined = result.stdout + result.stderr + record.read_text(encoding='utf8')
+        with patch.dict(os.environ, {'OPENAI_API_KEY': 'private-secret'}, clear=True), \
+                patch('requests.Session', side_effect=requests.Timeout('private-secret')), \
+                patch('sys.stdout', new_callable=io.StringIO) as stdout:
+            result = image_api.main(['generate', '--prompt', 'private prompt', '--base-url', 'https://private.invalid/v1',
+                                     '--output-dir', str(self.root), '--record', str(record)])
+        self.assertEqual(result, 1)
+        combined = stdout.getvalue() + record.read_text(encoding='utf8')
         self.assertNotIn('private prompt', combined); self.assertNotIn('private.invalid', combined)
         self.assertNotIn('private-secret', combined); self.assertNotIn(str(self.root), combined)
-        self.assertEqual(json.loads(result.stdout)['error']['code'], 'IMAGE_PROVIDER_FAILED')
+        self.assertEqual(json.loads(stdout.getvalue())['error']['code'], 'IMAGE_PROVIDER_FAILED')
 
     def test_image_client_normalizes_jpeg_and_does_not_replay_paid_requests(self):
         from PIL import Image
@@ -341,9 +347,26 @@ class WorkerTests(unittest.TestCase):
             args = image_api.parse_args()
             self.assertEqual((args.output_format, args.frame_count, args.frame_duration_ms, args.complexity), ('gif', 4, 120, 'medium'))
 
-    def test_shared_image_cli_inherits_extension_variables(self):
-        with patch.dict(os.environ,dict(BOT_IMAGE_BASE_URL='https://example.com/v1',BOT_IMAGE_MODEL='custom-model',BOT_IMAGE_KEY_ENV='CUSTOM_IMAGE_KEY'),clear=True),patch.object(sys,'argv',['image_api.py','generate','--prompt','test','--dry-run']):
-            args=image_api.parse_args();self.assertEqual(args.base_url,'https://example.com/v1');self.assertEqual(args.model,'custom-model');self.assertEqual(args.api_key_env,'CUSTOM_IMAGE_KEY')
+    def test_image_cli_uses_explicit_configuration_and_selected_api_key(self):
+        retired = dict(BOT_IMAGE_BASE_URL='https://ignored.example/v1', BOT_IMAGE_MODEL='ignored-model',
+                       BOT_IMAGE_KEY_ENV='CUSTOM_IMAGE_KEY', SAKURA_IMAGE_BASE_URL='https://ignored.example/v1',
+                       SAKURA_IMAGE_MODEL='ignored-model', OPENAI_BASE_URL='https://ignored.example/v1',
+                       IMAGE_ACCESS_KEY='ignored-key', SAKURA_IMAGE_API_KEY='ignored-key', CUSTOM_IMAGE_KEY='ignored-key')
+        with patch.dict(os.environ, retired, clear=True):
+            args = image_api.parse_args(['generate', '--prompt', 'test', '--dry-run'])
+            self.assertEqual((args.base_url, args.model), (image_api.DEFAULT_BASE_URL, image_api.DEFAULT_MODEL))
+            self.assertEqual(args.api_key_env, 'OPENAI_API_KEY')
+            args = image_api.parse_args(['generate', '--prompt', 'test', '--base-url', 'https://explicit.example/v1', '--model', 'explicit-model'])
+            self.assertEqual((args.base_url, args.model), ('https://explicit.example/v1', 'explicit-model'))
+            with self.assertRaisesRegex(ValueError, 'OPENAI_API_KEY is required'):
+                image_api.read_api_key()
+            with patch.dict(os.environ, {'OPENAI_API_KEY': ' fixture-key '}):
+                self.assertEqual(image_api.read_api_key(), 'fixture-key')
+                with self.assertRaisesRegex(ValueError, 'MISSING_IMAGE_KEY is required'):
+                    image_api.read_api_key('MISSING_IMAGE_KEY')
+            args = image_api.parse_args(['generate', '--prompt', 'test', '--api-key-env', 'CUSTOM_IMAGE_KEY'])
+            self.assertEqual(args.api_key_env, 'CUSTOM_IMAGE_KEY')
+            self.assertEqual(image_api.read_api_key(args.api_key_env), 'ignored-key')
 
     @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'ffmpeg not installed')
     def test_audio_analysis_sends_actual_wav_and_detects_missing_media(self):

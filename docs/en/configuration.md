@@ -7,7 +7,7 @@ This page documents only configuration read by current code/tests. Setting an un
 ## Precedence and general rules
 
 - The installer/launcher inject product-profile directories together; existing Harness profiles do not automatically adopt them.
-- The Services panel owns the image endpoint, model and **key environment-variable name**, never the key value; persona/bot media settings only select the image protocol. Legacy persona fields remain readable as a fallback for older installations without service settings.
+- The Services panel owns the image endpoint, model, default protocol, key variable name and ComfyUI workflow; persona/bot media settings only select the image protocol. `openAiKeyEnv` selects the credential variable, defaulting to `OPENAI_API_KEY` when unset. The host passes the name and corresponding credential to the worker, and the image script reads that variable directly. Endpoint, model, protocol and workflow are passed as explicit arguments without environment fallbacks.
 - QQ/WeChat, chat-model and media-analysis credentials belong to Harness credentials or controlled worker injection, not personas, repositories, CLI arguments or archives.
 - Environment changes do not increment persona revisions and usually require restarting the inheriting Harness/product process. Persona edits create revisions; bot settings save independently. Both apply next turn.
 - Directory variables have defaults; set them before installation/start only when overriding. Use no real absolute paths in Issues, logs or examples.
@@ -27,13 +27,7 @@ None of the variables below changes persona revisions.
 | `BOT_PERSONAS_ROOT` | Path may be private | Existing/direct-plugin persona root, otherwise derived from plugin data. Standalone fixes `BOT_HOME/personas` | Yes | No | No real paths |
 | `DSH_AGENTS_HOME` | Path may be private | Harness agents; standalone injects `BOT_HOME/agents`, not an independent operator setting | Yes | Primarily | No real paths |
 | `BOT_PYTHON` | Nonsensitive config | Media interpreter; existing Harness defaults to `python`, standalone to `BOT_HOME/media-venv`. Requires Python 3.12/3.13 and base requirements | Yes | No | Name only, no local interpreter path |
-| `BOT_IMAGE_BASE_URL` | Endpoint may expose operations | OpenAI-compatible image URL saved by the Services panel; otherwise `https://api.openai.com/v1`. Legacy persona URLs are fallback only | Yes | No | Safe placeholders only |
-| `BOT_IMAGE_MODEL` | Nonsensitive config | OpenAI image model saved by the Services panel; otherwise `gpt-image-2`. Legacy persona models are fallback only | Yes | No | Model placeholders, no private model paths |
-| `BOT_IMAGE_KEY_ENV` | Variable name is public; referenced value secret | Actual key variable name; absent explicit setting prefer `IMAGE_ACCESS_KEY`, accept `SAKURA_IMAGE_API_KEY`, then default name `IMAGE_ACCESS_KEY` | Yes | No | Variable names only, never values |
-| `IMAGE_ACCESS_KEY` | **Secret** | Default actual image key, read only by backend process | Yes | No | Exclude from packages, Issues, logs and `.env.example` |
-| `SAKURA_IMAGE_API_KEY` | **Secret** | Compatibility alias used only without `IMAGE_ACCESS_KEY` | Yes | No | No real values |
-| `SAKURA_IMAGE_BASE_URL` / `OPENAI_BASE_URL` | Endpoint | Legacy image URL aliases, lower priority than `BOT_IMAGE_BASE_URL` | Yes | No | Placeholders only |
-| `SAKURA_IMAGE_MODEL` | Nonsensitive config | Legacy model alias, lower priority than `BOT_IMAGE_MODEL` | Yes | No | Placeholders only |
+| `OPENAI_API_KEY` or the variable selected in Services | **Secret** | Credential source for OpenAI-compatible image services; the image script reads the variable selected by `openAiKeyEnv`, defaulting to `OPENAI_API_KEY` when no name is configured. ComfyUI does not use this key | After changing the value | No | Variable name only; exclude real values from packages, Issues, logs and `.env.example` |
 | `BOT_ANALYSIS_API_KEY` | **Short-lived secret** | Fixed ASR/media worker injection name. Key comes from Harness model-provider credentials and is injected for each subprocess, not operator-supplied | No manual setting/restart | No | No real/fabricated values; not public configuration |
 | `BOT_VOICE_MODELS_ROOT` | Path may be private | Initial voice-library root; saved panel settings win. Models/weights/reference audio remain external | Yes, or reopen/refresh service | No | No real/weight paths or files |
 | `BREEZE_TTS_URL` | Nonsensitive config | Default Breeze-TTS-2.cpp HTTP address; saved panel address wins | Yes, or reopen/refresh | No | Placeholders; no credentials/runtime logs |
@@ -43,7 +37,7 @@ None of the variables below changes persona revisions.
 | `BOT_LAUNCH_TOKEN` | **Runtime secret nonce** | Random per `scripts/start.mjs` launch for local launcher/bot/lifecycle IPC stop/ready/restart handshake; never fix manually | Launcher-managed | Yes | Never record, copy or commit |
 | `BOT_OPEN_DIRECTORY` | Short-lived private path | Windows Open directory injects a validated path into a PowerShell helper; not user configuration | Per action | No | No real values or `.env.example` entry |
 
-`BOT_IMAGE_BASE_URL` must be HTTPS without credentials, query or fragment for OpenAI-compatible services. ComfyUI uses the local `comfyUiBaseUrl` and API workflow path saved in the Services panel. Image key variable names must be uppercase. See the [image-generation skill](../../skills/image-generation/SKILL.md).
+The OpenAI-compatible address saved in the Services panel must be HTTPS without credentials, query or fragment. The key field stores only an uppercase environment-variable name, never its value. ComfyUI uses the saved local `comfyUiBaseUrl` and API workflow path. Direct script calls use `--protocol`, `--base-url`, `--model` and `--workflow` for the relevant settings; `--api-key-env` selects the credential variable and defaults to `OPENAI_API_KEY`. A missing selected credential fails without trying another variable. See the [image-generation skill](../../skills/image-generation/SKILL.md).
 
 ## Installer, launcher and Harness variables
 
@@ -88,7 +82,7 @@ Panel-created personas receive initial text once in the current UI language. Fre
 
 ## Development/test-only variables
 
-These are read by test runners, not user configuration; do not copy them into production `.env` or Issues: `CI_PYTHON`, `BOT_TEST_PYTHON`, `BOT_TEST_TMP`, `BOT_TEST_WEB_TOOLS_SOURCE`, `BOT_TEST_IMAGE_KEY`, `NATIVE_TEST_RESULT`, `LIFECYCLE_NATIVE_FOLDER`. Runners also clear or temporarily set isolation variables such as `HOME`, `TEMP`, `npm_config_store_dir`.
+These are read by test runners, not user configuration; do not copy them into production `.env` or Issues: `CI_PYTHON`, `BOT_TEST_PYTHON`, `BOT_TEST_TMP`, `BOT_TEST_WEB_TOOLS_SOURCE`, `NATIVE_TEST_RESULT`, `LIFECYCLE_NATIVE_FOLDER`. Runners also clear or temporarily set isolation variables such as `HOME`, `TEMP`, `npm_config_store_dir`.
 
 ## Contents excluded from environment/release files
 

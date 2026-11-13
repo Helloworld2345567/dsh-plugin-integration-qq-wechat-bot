@@ -97,7 +97,7 @@ export function ServicesPanel(props:ServicesPanelProps){
           : h(React,'div',{className:'service-config-fields full'},
               props.ui.field(props.t('serviceAddress'),draft.openAiBaseUrl??'',value=>props.onDraftChange({openAiBaseUrl:value.trim()||undefined}),'url',{placeholder:props.t('inheritAddress')}),
               props.ui.field(props.t('model'),draft.openAiModel??'',value=>props.onDraftChange({openAiModel:value.trim()||undefined}),'text',{placeholder:props.t('inheritModel')}),
-              props.ui.field(props.t('keyEnv'),draft.openAiKeyEnv??'',value=>props.onDraftChange({openAiKeyEnv:value.trim()||undefined}),'text',{placeholder:props.t('inheritKeyEnv'),autoComplete:'off',spellCheck:false}),
+              props.ui.field(props.t('keyEnv'),draft.openAiKeyEnv??'OPENAI_API_KEY',value=>props.onDraftChange({openAiKeyEnv:value.trim()||undefined}),'text',{placeholder:'OPENAI_API_KEY',autoComplete:'off',spellCheck:false}),
             ),
       ),
       draft.imageProtocol==='comfyui'?h(React,'p',{className:'muted'},props.t('comfyUiHint')):null,

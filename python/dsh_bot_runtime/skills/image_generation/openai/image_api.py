@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import getpass
 import json
 import os
 from pathlib import Path
@@ -30,11 +29,8 @@ def normalize_base_url(value: str) -> str:
     return value if parsed.path.rstrip("/").endswith("/v1") else f"{value}/v1"
 
 
-def read_api_key(env_name: str) -> str:
+def read_api_key(env_name: str = "OPENAI_API_KEY") -> str:
     key = os.environ.get(env_name, "").strip()
-    if key:
-        return key
-    key = getpass.getpass(f"{env_name} (hidden input): ").strip()
     if not key:
         raise ValueError(f"{env_name} is required")
     return key
@@ -91,9 +87,9 @@ def response_items(response, session) -> list[tuple[bytes, str]]:
 
 def common_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--prompt", required=True, help="English image prompt")
-    parser.add_argument("--model", default=os.environ.get("BOT_IMAGE_MODEL") or os.environ.get("SAKURA_IMAGE_MODEL") or DEFAULT_MODEL)
-    parser.add_argument("--base-url", default=os.environ.get("BOT_IMAGE_BASE_URL") or os.environ.get("SAKURA_IMAGE_BASE_URL") or os.environ.get("OPENAI_BASE_URL") or DEFAULT_BASE_URL)
-    parser.add_argument("--api-key-env", default=os.environ.get("BOT_IMAGE_KEY_ENV") or ("IMAGE_ACCESS_KEY" if "IMAGE_ACCESS_KEY" in os.environ or not os.environ.get("SAKURA_IMAGE_API_KEY") else "SAKURA_IMAGE_API_KEY"))
+    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    parser.add_argument("--api-key-env", default="OPENAI_API_KEY")
     parser.add_argument("--output-dir", type=Path, default=Path("assets"))
     parser.add_argument("--output-format", choices=("png", "jpeg", "webp", "gif", "svg"), default="jpeg")
     parser.add_argument("--output-compression", type=int)

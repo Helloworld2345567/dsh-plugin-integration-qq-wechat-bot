@@ -12,6 +12,7 @@ import { configSchema, botSchema, type CallerScope, type InboundMessage, type Ch
 import {createChannelRegistry} from '../src/core/channel-registry.js';
 import { freezeTurn, allowedNow, permitted, mediaConfigNow } from '../src/core/policy.js';
 import {resolveImageSkill} from '../src/core/image-skill.js';
+import {imageServiceSettingsSchema} from '../src/core/image-service-config.js';
 import { publicAddress } from '../src/core/network.js';
 
 async function fixture(t:any){const dir=await mkdtemp(path.resolve('.codex/test-'));const store=new SqlitePersistence(dir);t.after(async()=>{store.close();await rm(dir,{recursive:true,force:true});});return store;}
@@ -172,21 +173,20 @@ test('explicit web access works for ordinary channel users without granting host
   assert.equal(allowedNow('pwsh',snap,config,owner,scope()),false);assert.equal(allowedNow('read',snap,config,owner,scope()),false);assert.equal(allowedNow('web_admin',snap,config,owner,scope()),false);
   assert.equal(allowedNow('web_fetch',snap,config,owner,scope('one','alice','group')),true);
 });
-test('media role removal applies immediately while provider changes wait until the next turn',()=>{
-  const config=configSchema.parse({id:'media',name:'Media',personaPrompt:'A',media:{image:{baseUrl:'https://example.com/v1',model:'old',keyEnv:'IMAGE_KEY'},asr:{enabled:true}}});
+test('media role removal applies immediately while protocol changes wait until the next turn',()=>{
+  const config=configSchema.parse({id:'media',name:'Media',personaPrompt:'A',media:{image:{protocol:'openai'},asr:{enabled:true}}});
   const owner=botSchema.parse({id:'one',name:'One',channel:'qq'});const snapshot=freezeTurn(config,owner,scope(),[]);
-  const current=configSchema.parse({...config,media:{image:{...config.media.image!,model:'new'},asr:{enabled:false}}});const effective=mediaConfigNow(snapshot,current);
-  assert.equal(effective.media.image?.model,'old');assert.equal(effective.media.asr?.enabled,false);
-  assert.equal(snapshot.config.media.asr?.enabled,true);assert.equal(mediaConfigNow(snapshot,{...config,media:{}}).media.image?.model,'old');
+  const current=configSchema.parse({...config,media:{image:{protocol:'comfyui'},asr:{enabled:false}}});const effective=mediaConfigNow(snapshot,current);
+  assert.equal(effective.media.image?.protocol,'openai');assert.equal(effective.media.asr?.enabled,false);
+  assert.equal(snapshot.config.media.asr?.enabled,true);assert.equal(mediaConfigNow(snapshot,{...config,media:{}}).media.image?.protocol,'openai');
 });
-test('image skill uses operator service settings while retaining legacy fallback and keeping secrets outside settings',()=>{
+test('image skill uses explicit operator service settings without legacy persona connection overrides',()=>{
   const config=configSchema.parse({id:'image',name:'Image',personaPrompt:'A',media:{}});assert.equal('vision' in config.media,false);
-  const env={IMAGE_ACCESS_KEY:'test-secret',BOT_IMAGE_BASE_URL:'https://example.com/v1',BOT_IMAGE_MODEL:'custom'};
-  const endpoint=resolveImageSkill(config,env);assert.equal(endpoint.keyEnv,'IMAGE_ACCESS_KEY');assert.equal(endpoint.model,'custom');assert.equal(endpoint.baseUrl,env.BOT_IMAGE_BASE_URL);assert.ok(!JSON.stringify(endpoint).includes('test-secret'));
-  const override=configSchema.parse({...config,media:{image:{model:'persona-model'}}});assert.equal(resolveImageSkill(override,env).model,'custom');assert.equal(resolveImageSkill(override,env).baseUrl,env.BOT_IMAGE_BASE_URL);
-  assert.equal(resolveImageSkill(override,{}).model,'persona-model');
-  assert.equal(resolveImageSkill(config,{SAKURA_IMAGE_API_KEY:'legacy'}).keyEnv,'SAKURA_IMAGE_API_KEY');
-  assert.throws(()=>resolveImageSkill({...config,media:{image:{enabled:false}}},env),/IMAGE_SKILL_DISABLED/);
+  const settings=imageServiceSettingsSchema.parse({openAiBaseUrl:'https://example.com/v1',openAiModel:'custom'});
+  const endpoint=resolveImageSkill(config,settings);assert.equal(endpoint.keyEnv,'OPENAI_API_KEY');assert.equal(endpoint.model,'custom');assert.equal(endpoint.baseUrl,settings.openAiBaseUrl);
+  const override=configSchema.parse({...config,media:{image:{model:'persona-model'}}});assert.equal(resolveImageSkill(override,settings).model,'custom');assert.equal(resolveImageSkill(override,settings).baseUrl,settings.openAiBaseUrl);
+  assert.equal(resolveImageSkill(override).model,'gpt-image-2');
+  assert.throws(()=>resolveImageSkill({...config,media:{image:{enabled:false}}},settings),/IMAGE_SKILL_DISABLED/);
   const owner=botSchema.parse({id:'one',name:'One',channel:'qq',enabled:true});const snapshot=freezeTurn(config,owner,scope(),[]);
   assert.equal(allowedNow('image_generation',snapshot,config,owner,scope()),true);assert.equal(allowedNow('image_generation',snapshot,{...config,skills:[]},owner,scope()),false);
   assert.equal(allowedNow('image_generation',snapshot,{...config,media:{image:{enabled:false}}},owner,scope()),false);
@@ -250,9 +250,8 @@ test('one blocked bot cannot block another bot delivery',async t=>{
   for(const id of ['one','two'])f.store.deliveries.enqueue(f.store.sessions.binding(scope(id)),'a','t',[{type:'text',text:id}],{});
   const flush=f.runtime.flushDeliveries();await started.promise;await new Promise(r=>setImmediate(r));assert.deepEqual(sent,['two']);wait.resolve();await flush;assert.deepEqual(sent,['two','one']);
 });
-test('persona files retain dormant model references but reject invalid media URLs',async t=>{
+test('persona files retain dormant model references and validate skill names',async t=>{
   const f=await runtimeFixture(t,async()=>{throw Error('unused');});const c=f.store.personas.config('default');await f.runtime.saveConfig({...c,model:{provider:'p',model:'invalid'}},1);assert.equal(f.store.personas.config('default').revision,2);assert.equal(f.store.bots.bot('one').settings?.model,null);
-  for(const baseUrl of ['file:///tmp/a','http://127.0.0.1','https://user:secret@example.com','https://example.com?token=secret'])assert.equal(configSchema.safeParse({...c,media:{image:{baseUrl,model:'x',keyEnv:'KEY'}}}).success,false);
   assert.equal(configSchema.safeParse({...c,skills:['private-global-skill']}).success,true);assert.equal(configSchema.safeParse({...c,skills:['../escape']}).success,false);
 });
 test('attachment DNS policy blocks local, reserved and mapped addresses',()=>{

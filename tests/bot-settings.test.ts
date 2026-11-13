@@ -72,10 +72,10 @@ test('bot save validates model selections and bot-scoped status reads each bot s
   const f=await fixture(t);for(const id of ['one','two'])f.runtime.saveBot({id,name:id,channel:'qq',enabled:true});
   const admin=new Admin({} as any,f.runtime,'fixture',async()=>{}),one=f.store.bots.bot('one');
   await assert.rejects(admin.invoke('bot.save',{...one,settings:{...one.settings!,model:{provider:'P',model:'invalid'}}}),/UNKNOWN_MODEL/);assert.deepEqual(f.store.bots.bot('one'),one);
-  await admin.invoke('bot.save',{...one,settings:{...one.settings!,media:{image:{enabled:true,model:'one-image'}}}});
-  const status:any=await admin.invoke('skill.image.status',{scope:'bots'});assert.equal(status.one.model,'one-image');assert.notEqual(status.two.model,'one-image');assert.equal(status.default,undefined);
+  await admin.invoke('bot.save',{...one,settings:{...one.settings!,media:{image:{enabled:true,protocol:'comfyui'}}}});
+  const status:any=await admin.invoke('skill.image.status',{scope:'bots'});assert.equal(status.one.protocol,'comfyui');assert.equal(status.two.protocol,'openai');assert.equal(status.default,undefined);
   const legacy:any=await admin.invoke('skill.image.status',{});assert.ok(legacy.default);assert.equal(legacy.one,undefined);
-  const bots:any=await admin.query({version:1,kind:'query',name:'bots.list',input:{}});assert.equal(bots.data.find((bot:any)=>bot.id==='one').settings.media.image.model,'one-image');
+  const bots:any=await admin.query({version:1,kind:'query',name:'bots.list',input:{}});assert.equal(bots.data.find((bot:any)=>bot.id==='one').settings.media.image.protocol,'comfyui');
 });
 
 test('dormant persona models cannot block persona edits, file application or prompt tools',async t=>{

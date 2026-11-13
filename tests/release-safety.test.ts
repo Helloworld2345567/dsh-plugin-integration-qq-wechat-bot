@@ -15,7 +15,7 @@ test('release scanner rejects absolute paths, loopback, credentials and download
 });
 
 test('release scanner permits placeholders, environment names and exact runtime loopback files',()=>{
-  assert.deepEqual(scanReleaseText('docs/example.md','使用 <BOT_TTS_HOME>、<LOCAL_MODEL_ROOT> 和 process.env.BOT_IMAGE_KEY_ENV'),[]);
+  assert.deepEqual(scanReleaseText('docs/example.md','使用 <BOT_TTS_HOME>、<LOCAL_MODEL_ROOT> 和 process.env.OPENAI_API_KEY'),[]);
   assert.deepEqual(scanReleaseText('python/rvc_service.py',"host='127.0.0.1'\nurl='http://127.0.0.1:9881'"),[]);
   assert.deepEqual(scanReleaseText('dist/client.js',"const defaultUrl='http://127.0.0.1:8080'"),[]);
   assert.deepEqual(scanReleaseText('docs/example.md','公开文档 https://example.com/docs 和通用扩展 .pth/.index'),[]);

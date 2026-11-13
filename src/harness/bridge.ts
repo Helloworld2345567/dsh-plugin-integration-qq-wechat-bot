@@ -25,7 +25,6 @@ import path from 'node:path';
 import { freezeTurn, allowedNow, permitted, mediaConfigNow, permissionsRevoked, BUSINESS_TOOLS } from '../core/policy.js';
 import type {RuntimeRepositories} from '../core/ports/application.js';
 import { Assets, MediaService, type MediaOperation } from '../core/media.js';
-import {resolveImageSkill} from '../core/image-skill.js';
 import {analysisEnabled} from '../core/analysis.js';
 import {prepareWorkingDirectory} from '../core/workspaces.js';
 import { registerMode } from '../mode.js';
@@ -213,7 +212,7 @@ export class NativeHarness implements HarnessPort {
     const known=this.live.get(binding.sessionId);if(known)return known;
     const bot=this.repos.bots.bot(binding.scope.botId);const initialSnapshot=this.runOptions.get(binding.sessionId)?.snapshot;const config=initialSnapshot?.config??this.repos.personas.effectiveConfig(binding);if(!config.model)throw new SystemMessageError('modelRequired');
     const live={} as LiveSession;
-    live.binding=binding;live.sources=[];live.loadedTools=new Set<string>();live.toolSections=[];live.assets=[];live.images={inFlight:false,completed:false};live.voice={attempted:false};live.singing={attempted:false};live.snapshot=initialSnapshot??freezeTurn(config as BotConfig,bot,binding.scope,[],undefined,this.systemLocale());live.skills=this.skillFiles.snapshot(config);live.selection={current:this.selection(config),assembled:undefined};
+    live.binding=binding;live.sources=[];live.loadedTools=new Set<string>();live.toolSections=[];live.assets=[];live.images={inFlight:false,completed:false};live.voice={attempted:false};live.singing={attempted:false};live.snapshot=initialSnapshot??freezeTurn(config as BotConfig,bot,binding.scope,[],undefined,this.systemLocale(),this.media.imageSettings());live.skills=this.skillFiles.snapshot(config);live.selection={current:this.selection(config),assembled:undefined};
     this.statsAdapter.observe(binding.sessionId,binding.scope.botId,binding.sessionId,'agent');
     const cwd=await prepareWorkingDirectory(bot,binding.key,this.repos.storage.home);live.cwd=cwd;
     const setup=async(scopeCtx:Context,agent:Agent)=>{await scopeCtx.inject(['skills','tools','systemPrompt','permissionPresets','llm'],async agentCtx=>{
@@ -244,7 +243,7 @@ export class NativeHarness implements HarnessPort {
         if(event.type==='turn/end'){progressTools.clear();run?.onEnd?.();}
         if(event.type==='turn/start'){
           try{
-          live.policyError=undefined;const currentBot=this.repos.bots.bot(binding.scope.botId);live.snapshot=run?.snapshot??freezeTurn(this.current(live),currentBot,binding.scope,live.sources,undefined,this.systemLocale());live.skills=this.skillFiles.snapshot(live.snapshot.config as BotConfig);live.selection.current=this.selection(live.snapshot.config as BotConfig);live.assets=[];live.explicitAssets=new Set();live.images={inFlight:false,completed:false};live.voice={attempted:false};live.singing={attempted:false};
+          live.policyError=undefined;const currentBot=this.repos.bots.bot(binding.scope.botId);live.snapshot=run?.snapshot??freezeTurn(this.current(live),currentBot,binding.scope,live.sources,undefined,this.systemLocale(),this.media.imageSettings());live.skills=this.skillFiles.snapshot(live.snapshot.config as BotConfig);live.selection.current=this.selection(live.snapshot.config as BotConfig);live.assets=[];live.explicitAssets=new Set();live.images={inFlight:false,completed:false};live.voice={attempted:false};live.singing={attempted:false};
           this.repos.telemetry.snapshots.saveTurnSnapshot(binding.sessionId,live.snapshot);updateVisibility();live.refreshTools?.();live.invalidator?.();
           }catch(error){live.policyError=error instanceof Error?error:new Error('POLICY_FAILED');this.repos.telemetry.failures.saveFailure(`policy:${binding.sessionId}`,{code:live.policyError.message});}
         }
@@ -341,7 +340,7 @@ export class NativeHarness implements HarnessPort {
     const imageState=live.images;
     if(image){
       if(!allowedNow('image_generation',live.snapshot,current,bot,live.binding.scope))throw new Error('IMAGE_SKILL_DISABLED');
-      const endpoint=resolveImageSkill(config);if(endpoint.protocol!=='comfyui'&&(!endpoint.keyEnv||!process.env[endpoint.keyEnv]))throw new Error(`MISSING_PROVIDER_KEY: ${endpoint.keyEnv??'IMAGE_ACCESS_KEY'}`);
+      const endpoint=this.media.imageEndpoint(config,live.snapshot);if(endpoint.protocol!=='comfyui'&&(!endpoint.keyEnv||!process.env[endpoint.keyEnv]))throw new Error(`MISSING_PROVIDER_KEY: ${endpoint.keyEnv??'OPENAI_API_KEY'}`);
       if(imageState.completed)throw new Error('An image has already been generated successfully in this turn');
       if(imageState.inFlight)throw new Error('Image generation is in progress for this turn. Wait for its result.');
       imageState.inFlight=true;

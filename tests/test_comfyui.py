@@ -1,8 +1,9 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from dsh_bot_runtime.skills.image_generation import image_api
 from dsh_bot_runtime.skills.image_generation.comfyui import image_api as comfyui_image_api
@@ -50,6 +51,20 @@ class ComfyUiTests(unittest.TestCase):
         workflow = {"prompt": {"1": {"class_type": "CLIPTextEncode", "inputs": {"text": "old"}}}}
         result = image_api._inject_comfy_prompt(workflow, "new prompt")
         self.assertEqual(result["prompt"]["1"]["inputs"]["text"], "new prompt")
+
+    def test_protocol_and_comfyui_configuration_ignore_environment(self):
+        retired = {"BOT_IMAGE_PROTOCOL": "comfyui", "BOT_IMAGE_MODEL": "ignored-model",
+                   "BOT_COMFYUI_BASE_URL": "https://ignored.example", "BOT_COMFYUI_WORKFLOW": "ignored.json",
+                   "BOT_COMFYUI_WORKFLOW_PATH": "ignored-path.json", "COMFYUI_ROOT": "ignored-root"}
+        with patch.dict(os.environ, retired, clear=True):
+            self.assertEqual(image_api._protocol(["generate"]), "openai")
+            args = image_api.parse_args(["--protocol", "comfyui", "generate", "--prompt", "test"])
+            self.assertEqual(args.base_url, comfyui_image_api.DEFAULT_BASE_URL)
+            self.assertEqual(args.model, comfyui_image_api.DEFAULT_MODEL)
+            self.assertIsNone(args.workflow)
+            args = image_api.parse_args(["--protocol", "comfyui", "generate", "--prompt", "test",
+                                         "--base-url", "https://explicit.example", "--model", "explicit-model", "--workflow", "explicit.json"])
+            self.assertEqual((args.base_url, args.model, args.workflow), ("https://explicit.example", "explicit-model", "explicit.json"))
 
     def test_history_images_are_downloaded_and_recorded(self):
         with tempfile.TemporaryDirectory() as root:

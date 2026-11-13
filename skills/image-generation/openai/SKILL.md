@@ -8,7 +8,8 @@ description: Service contract for the OpenAI-compatible image generation adapter
 This service is selected when the effective image protocol is `openai`.
 
 - The endpoint must be HTTPS, without embedded credentials, query parameters or fragments.
-- The model and credential environment-variable name come from operator configuration, with persona overrides applied by the host.
+- The endpoint and model come from the Services panel and are passed as explicit script arguments. Image settings do not read environment variables.
+- The Services panel selects the credential variable through `openAiKeyEnv`, defaulting to `OPENAI_API_KEY`. The host passes the name through `--api-key-env` and injects the corresponding credential; the adapter reads that variable directly.
 - The adapter supports the provider's generation and reference-edit endpoints through the fixed image worker contract.
 - Provider responses are decoded, size-limited and normalized before the host registers an image asset.
 - Provider credentials remain outside personas, prompts, logs and generated skill files.

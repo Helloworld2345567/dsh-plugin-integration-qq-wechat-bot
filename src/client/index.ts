@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
   const serviceDraft=(settings:any)=>({
     modelsRoot:settings.modelsRoot,gptSovitsUrl:settings.gptSovitsUrl,breezeTtsUrl:settings.breezeTtsUrl??'http://127.0.0.1:8080',
     gptSovitsProjectRoot:settings.gptSovitsProjectRoot??'',breezeTtsProjectRoot:settings.breezeTtsProjectRoot??'',breezeTtsVoicesRoot:settings.breezeTtsVoicesRoot??'',
-    imageProtocol:settings.imageProtocol??'openai',openAiBaseUrl:settings.openAiBaseUrl??'',openAiModel:settings.openAiModel??'',openAiKeyEnv:settings.openAiKeyEnv??'',comfyUiBaseUrl:settings.comfyUiBaseUrl??'http://127.0.0.1:8188',comfyUiWorkflowPath:settings.comfyUiWorkflowPath??defaultWindowsPath('COMFYUI','workflows','Krea2Standard-api.json'),
+    imageProtocol:settings.imageProtocol??'openai',openAiBaseUrl:settings.openAiBaseUrl??'',openAiModel:settings.openAiModel??'',openAiKeyEnv:settings.openAiKeyEnv??'OPENAI_API_KEY',comfyUiBaseUrl:settings.comfyUiBaseUrl??'http://127.0.0.1:8188',comfyUiWorkflowPath:settings.comfyUiWorkflowPath??defaultWindowsPath('COMFYUI','workflows','Krea2Standard-api.json'),
     musicHome:settings.musicHome??defaultWindowsPath('Music'),musicSources:Array.isArray(settings.musicSources)?[...settings.musicSources]:['MiguMusicClient','KuwoMusicClient'],
   });
   async function api(action:string,input:any={},signal?:AbortSignal){

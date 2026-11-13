@@ -41,11 +41,13 @@ These test-only variables must not be copied into production `.env` or Issues:
 - `BOT_TEST_PYTHON`: explicitly provided test interpreter, Python 3.12/3.13; not a declaration of the production interpreter.
 - `BOT_TEST_TMP`: workspace/CI temporary root; each run creates and cleans a unique subdirectory.
 - `BOT_TEST_WEB_TOOLS_SOURCE`: optional local `dsh-web-tools` fixture source; accepted only inside the checkout with a verified package name, never a remote package or outside path.
-- `BOT_TEST_IMAGE_KEY`, `BOT_TEST_ANALYSIS_KEY`: obvious fake fixture values for credential plumbing; no real service calls.
+- `BOT_TEST_ANALYSIS_KEY`: an obvious fake fixture value for credential plumbing; no real service calls.
 - `NATIVE_TEST_RESULT`: runner-created result file written by the native fixture.
 - `LIFECYCLE_NATIVE_FOLDER`: runner-created lifecycle fixture root.
 - `BOT_HOME`, `BOT_WORKSPACE_ROOT`, `BOT_PERSONAS_ROOT`, `BOT_DATA_HOME`, `BOT_PYTHON`: isolated directories or interpreter created/validated by the runner.
 - `PYTHONPATH`: runner-overridden trusted `python/` package root for `dsh_bot_runtime`, not inherited user input.
+
+The native runner explicitly assigns a fixed fake fixture value to `OPENAI_API_KEY` after creating its isolated environment. It never inherits the host key or broadens the shared environment allowlist.
 
 Ordinary TypeScript/Python tests must not read shared Harness profiles, `DSH_PROFILE`, `DSH_HOME`, `DSH_SESSION_ID` or real credentials. Fixture credentials use `fixture-*` placeholders only and must not enter npm archives or complete logs.
 

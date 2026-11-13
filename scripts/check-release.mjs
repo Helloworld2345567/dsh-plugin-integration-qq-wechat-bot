@@ -37,7 +37,7 @@ if(files.includes('.env.example')){
     if(!line.trim()||line.trimStart().startsWith('#'))continue;
     const match=/^([A-Z][A-Z0-9_]*)=(.*)$/.exec(line);if(!match)throw new Error('.env.example contains an invalid assignment');
     const [,name,value]=match;
-    const safe=value===''||/^<[^>]+>$/.test(value)||name==='BOT_IMAGE_KEY_ENV'&&/^[A-Z_][A-Z0-9_]*$/.test(value)||name==='BOT_INSTALL_LAYERS'&&/^(?:core|basic-media|voice-generation|music|singing-rvc)(?:,(?:core|basic-media|voice-generation|music|singing-rvc))*$/.test(value);
+    const safe=value===''||/^<[^>]+>$/.test(value)||name==='BOT_INSTALL_LAYERS'&&/^(?:core|basic-media|voice-generation|music|singing-rvc)(?:,(?:core|basic-media|voice-generation|music|singing-rvc))*$/.test(value);
     if(!safe)throw new Error(`.env.example contains a non-placeholder value for ${name}`);
   }
   if(/(?:gh[opusr]_|AKIA|Bearer\s+|BEGIN .*PRIVATE KEY|[?&](?:token|ticket|sig|signature)=)/i.test(example))throw new Error('.env.example contains credential material');

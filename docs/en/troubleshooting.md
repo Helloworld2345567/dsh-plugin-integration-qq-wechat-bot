@@ -99,11 +99,11 @@ Use the structured checks below from the repository root or an operator-designat
 
 **Symptom:** Unconfigured status, missing provider key, invalid endpoint or failed generation.
 
-**Safe checks:** Address must be HTTPS without credentials/query/fragment. `BOT_IMAGE_KEY_ENV` is a variable name; the actual key is securely injected. Do not test keys in the panel, prompts or Issues.
+**Safe checks:** OpenAI-compatible addresses must be HTTPS without credentials/query/fragment; confirm the backend process securely received the key variable selected in Services, defaulting to `OPENAI_API_KEY`. For ComfyUI, check its address and workflow file. Do not test keys in the panel, prompts or Issues.
 
-**Possible causes:** Misspelled key variable, backend not restarted, V4 override ahead of expected environment defaults, unsupported model or unavailable provider.
+**Possible causes:** A misspelled key variable, the backend missing the selected variable or not restarted, incorrect protocol/endpoint/model/workflow saved in the Services panel, unsupported model or unavailable provider.
 
-**Recovery:** Check Image configuration address/model/key variable name; save for next-turn use and restart for environment changes. Verify provider model support, then test one image. Defaults `https://api.openai.com/v1` / `gpt-image-2` do not imply third-party-provider support.
+**Recovery:** Select the protocol and check endpoint, model, key variable name and ComfyUI workflow under **Services → Image generation service**; saved changes apply next turn. Inject the key securely into the selected variable and restart after changing its value. Legacy environment settings for endpoint, model, protocol and workflow no longer apply. Verify provider model support, then test one image. Defaults `https://api.openai.com/v1` / `gpt-image-2` do not imply third-party-provider support.
 
 **Sanitized evidence:** Field presence, model name, HTTPS status, error category and HTTP status class; no query parameters.
 

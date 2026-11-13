@@ -7,7 +7,7 @@
 ## 配置优先级和通用规则
 
 - 产品 profile 的目录由安装器和启动器统一注入；已有 Harness profile 不会自动接管这些目录。
-- 图片服务的地址、模型和**密钥环境变量名**在服务面板集中配置，不保存密钥值；人格/机器人媒体设置只选择启用的图片协议。旧人格字段仍可读取，但仅在没有服务面板配置时作为兼容回退。
+- 图片服务的地址、模型、默认协议、密钥变量名和 ComfyUI 工作流在服务面板集中配置；人格/机器人媒体设置只选择启用的图片协议。`openAiKeyEnv` 允许指定密钥变量名，未配置时默认 `OPENAI_API_KEY`；宿主将变量名和对应凭据传给 worker，图片脚本直接读取所选变量。地址、模型、协议和工作流以显式参数传给图片脚本，不读取环境变量回退。
 - QQ/微信凭据、聊天模型凭据和媒体分析凭据属于 Harness credentials 服务或受控 worker 注入，不应写进人格、仓库、命令行参数或发布包。
 - 修改环境变量不会改变人格 revision；由于环境变量由进程继承，通常需要重启对应 Harness/产品进程后才完全生效。修改人格会生成新的 revision；修改机器人设置独立保存，均从下一轮生效。
 - 这些目录变量都有代码默认值；只有在需要覆盖默认目录时，才必须在安装/启动前设置。不要在 Issue、日志或示例中填写本机绝对路径。
@@ -25,13 +25,7 @@
 | `BOT_PERSONAS_ROOT` | 非敏感值，但路径可能暴露隐私 | 已有 Harness/直接插件启动的人格文件根；未设置时从插件数据目录推导。独立产品始终使用 `BOT_HOME/personas`，不接受单独覆盖。 | 是 | 否 | 否 | 不提供真实路径 |
 | `DSH_AGENTS_HOME` | 非敏感值，但路径可能暴露隐私 | Harness agents 目录；独立产品始终注入 `BOT_HOME/agents`，不是运营者独立配置入口。 | 是 | 否 | 主要是 | 不提供真实路径 |
 | `BOT_PYTHON` | 非敏感配置 | 媒体 worker 使用的 Python 解释器；未设置时已有 Harness 使用 `python`，独立产品使用 `BOT_HOME/media-venv` 中的解释器。需要 Python 3.12/3.13 和基础 requirements。 | 是 | 否 | 否 | 允许变量名；不写本机解释器路径 |
-| `BOT_IMAGE_BASE_URL` | 端点值，可能包含运营信息 | 服务面板保存的 OpenAI 兼容图片地址；无环境值时为 `https://api.openai.com/v1`。旧人格地址只作兼容回退。 | 是 | 否 | 否 | 示例只允许安全占位符；真实服务地址不得提交 |
-| `BOT_IMAGE_MODEL` | 非敏感配置 | 服务面板保存的 OpenAI 图片模型；无环境值时为 `gpt-image-2`。旧人格模型只作兼容回退。 | 是 | 否 | 否 | 允许模型名占位符，不写私有模型路径 |
-| `BOT_IMAGE_KEY_ENV` | 非敏感变量名；被指向的值敏感 | 指定图片密钥实际所在的环境变量名；无设置时优先 `IMAGE_ACCESS_KEY`，兼容 `SAKURA_IMAGE_API_KEY`，再回退变量名 `IMAGE_ACCESS_KEY`。 | 是 | 否 | 否 | 只允许变量名，不允许密钥值 |
-| `IMAGE_ACCESS_KEY` | **敏感** | 图片服务默认实际密钥；只在后台进程内读取。 | 是 | 否 | 否 | 禁止进入发布包、Issue、日志和 `.env.example` |
-| `SAKURA_IMAGE_API_KEY` | **敏感** | 图片密钥兼容别名；仅在未提供 `IMAGE_ACCESS_KEY` 时作为 fallback。 | 是 | 否 | 否 | 禁止出现真实值 |
-| `SAKURA_IMAGE_BASE_URL` / `OPENAI_BASE_URL` | 端点值 | 图片服务旧环境别名，优先级低于 `BOT_IMAGE_BASE_URL`。 | 是 | 否 | 否 | 只写占位符 |
-| `SAKURA_IMAGE_MODEL` | 非敏感配置 | 图片模型旧环境别名，优先级低于 `BOT_IMAGE_MODEL`。 | 是 | 否 | 否 | 只写占位符 |
+| `OPENAI_API_KEY` 或服务面板指定的变量 | **敏感** | OpenAI 兼容图片服务的凭据来源；图片脚本读取服务面板 `openAiKeyEnv` 指定的变量，未配置变量名时默认 `OPENAI_API_KEY`。ComfyUI 不使用此密钥。 | 修改变量值后重启 | 否 | 否 | 只可记录变量名，真实值禁止进入发布包、Issue、日志和 `.env.example` |
 | `BOT_ANALYSIS_API_KEY` | **敏感，短生命周期** | 媒体分析/ASR worker 的固定注入变量名。实际密钥来自 Harness 模型 provider credentials；宿主只在每次子进程任务环境中注入，不要求运营者直接设置。 | 无需手工重启设置 | 否 | 否 | 禁止填写或伪造真实值；不要把它当作公开配置入口 |
 | `BOT_VOICE_MODELS_ROOT` | 非敏感配置，但会暴露本机路径 | 首次打开音色模型库时的模型根目录默认值；面板保存的库设置优先。模型、权重和参考音频仍是外部资源，不随主包安装。 | 是（或重新打开/刷新服务） | 否 | 否 | 不写真实路径、权重路径或模型文件 |
 | `BREEZE_TTS_URL` | 非敏感配置 | Breeze-TTS-2.cpp HTTP 服务地址默认值；面板保存的 Breeze 地址优先。 | 是（或重新打开/刷新服务） | 否 | 否 | 只写占位符，不写凭据或真实运行日志 |
@@ -41,7 +35,7 @@
 | `BOT_LAUNCH_TOKEN` | **敏感运行时 nonce** | `scripts/start.mjs` 每次启动随机生成，用于 launcher、bot bundle 与 lifecycle 的本机 IPC 停止/就绪/重启握手；不应手工固定。 | 由启动器管理 | 否 | 是 | 禁止记录、复制或提交 |
 | `BOT_OPEN_DIRECTORY` | 路径敏感、短生命周期 | Windows“打开配置目录”动作在已校验路径后临时注入给本机 PowerShell helper；不是用户配置入口，不应手工设置。 | 无，由单次动作管理 | 否 | 否 | 禁止记录真实值或写入 `.env.example` |
 
-`BOT_IMAGE_BASE_URL` 用于 OpenAI 兼容服务时必须是无凭据、无查询和无片段的 HTTPS 地址；ComfyUI 使用服务面板保存的本机 `comfyUiBaseUrl` 和 API 工作流路径。图片密钥环境变量名必须是大写变量名。图片配置的详细行为见 [image-generation 技能](../skills/image-generation/SKILL.md)。
+服务面板中的 OpenAI 兼容地址必须是无凭据、无查询和无片段的 HTTPS 地址；密钥字段只填写大写环境变量名，不保存密钥值。ComfyUI 使用服务面板保存的本机 `comfyUiBaseUrl` 和 API 工作流路径。独立调用图片脚本时使用 `--protocol`、`--base-url`、`--model` 和 `--workflow` 指定相应配置，使用 `--api-key-env` 选择密钥变量（默认 `OPENAI_API_KEY`）。若所选变量没有密钥则报错，不回退到其他变量。图片配置的详细行为见 [image-generation 技能](../skills/image-generation/SKILL.md)。
 
 ## 安装器、启动器和 Harness 管理变量
 
@@ -84,7 +78,7 @@
 
 ## 仅开发/测试使用的变量
 
-以下变量由仓库测试脚本读取，不是用户配置，不要复制到生产 `.env` 或 Issue：`CI_PYTHON`、`BOT_TEST_PYTHON`、`BOT_TEST_TMP`、`BOT_TEST_WEB_TOOLS_SOURCE`、`BOT_TEST_IMAGE_KEY`、`NATIVE_TEST_RESULT`、`LIFECYCLE_NATIVE_FOLDER`。测试脚本还会清理或临时设置 `HOME`、`TEMP`、`npm_config_store_dir` 等隔离目录变量。
+以下变量由仓库测试脚本读取，不是用户配置，不要复制到生产 `.env` 或 Issue：`CI_PYTHON`、`BOT_TEST_PYTHON`、`BOT_TEST_TMP`、`BOT_TEST_WEB_TOOLS_SOURCE`、`NATIVE_TEST_RESULT`、`LIFECYCLE_NATIVE_FOLDER`。测试脚本还会清理或临时设置 `HOME`、`TEMP`、`npm_config_store_dir` 等隔离目录变量。
 
 ## 不应写入环境或发布包的内容
 

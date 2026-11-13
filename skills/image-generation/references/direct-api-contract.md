@@ -4,11 +4,11 @@ This document describes the bundled `dsh_bot_runtime.skills.image_generation.ima
 
 ## Connection and credentials
 
-- Default base URL: `https://api.openai.com/v1`; override through `--base-url` or `OPENAI_BASE_URL`.
-- Default model: `gpt-image-2`; override through `--model` for the chosen provider.
-- The default credential variable is `IMAGE_ACCESS_KEY`; existing `SAKURA_IMAGE_API_KEY` remains a fallback. Explicitly select another variable with `--api-key-env VARIABLE_NAME`.
+- Set the service through `--protocol`, the endpoint through `--base-url`, and the OpenAI-compatible model through `--model`. ComfyUI uses `--workflow` for an API-format workflow file. These settings do not read environment variables; the bot passes values saved in the Services panel.
+- Script defaults are protocol `openai`, OpenAI-compatible endpoint `https://api.openai.com/v1` and model `gpt-image-2`; use explicit arguments for the selected service.
+- The OpenAI-compatible adapter reads the credential variable named by `--api-key-env`, defaulting to `OPENAI_API_KEY`. The bot passes the Services panel's `openAiKeyEnv` setting and injects the corresponding credential into the worker. There are no legacy credential aliases.
 - Credentials are read from the environment and sent as a Bearer header. Only HTTPS API URLs without embedded credentials, query or fragment are accepted. Redirects are disabled.
-- Standalone CLI use can prompt for a missing key; the plugin preflights the variable before starting the client. Configure unattended jobs with a process environment variable.
+- A missing selected credential produces a configuration error. The plugin checks the selected variable before starting the client. Direct CLI calls use `--api-key-env` or its `OPENAI_API_KEY` default without an interactive prompt; an empty selected variable does not fall back to another key.
 
 ## Generation
 

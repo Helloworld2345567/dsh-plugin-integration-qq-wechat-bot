@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, realpath, rm, stat, writeFile,rename,cp } from 'node:fs/promises';
 import path from 'node:path';
 import {resolveImageSkill} from './image-skill.js';
+import {imageServiceSettingsSchema,type ImageServiceSettings} from './image-service-config.js';
 import {analysisEnabled,type AnalysisProvider,type AnalysisRole} from './analysis.js';
 import {scopeKey} from './identity.js';
 import type {RuntimeRepositories} from './ports/application.js';
@@ -78,7 +79,8 @@ export class MediaService {
   readonly active=new Map<string,{scope:string;controller:AbortController;localTransform?:boolean}>();
   readonly operations:MediaOperationRegistry;
   readonly worker:WorkerPort;
-  constructor(readonly deps:Pick<RuntimeRepositories,'sessions'|'bots'|'media'|'stats'|'storage'>,readonly assets:Assets,readonly python=process.env.BOT_PYTHON||'python',readonly analysisProvider?:AnalysisProvider,worker?:WorkerPort,operations:MediaOperationRegistry=mediaOperationRegistry,readonly slots:TransformSlots=transformSlots,readonly serviceRuntime?:ServiceRuntime){this.worker=worker??{run:async()=>{throw new Error('MEDIA_WORKER_NOT_CONFIGURED');}};this.operations=operations;}
+  constructor(readonly deps:Pick<RuntimeRepositories,'sessions'|'bots'|'media'|'stats'|'storage'>,readonly assets:Assets,readonly python=process.env.BOT_PYTHON||'python',readonly analysisProvider?:AnalysisProvider,worker?:WorkerPort,operations:MediaOperationRegistry=mediaOperationRegistry,readonly slots:TransformSlots=transformSlots,readonly serviceRuntime?:ServiceRuntime,readonly imageSettings:()=>ImageServiceSettings=()=>imageServiceSettingsSchema.parse({})){this.worker=worker??{run:async()=>{throw new Error('MEDIA_WORKER_NOT_CONFIGURED');}};this.operations=operations;}
+  imageEndpoint(config:BotConfig,snapshot?:TurnSnapshot){return resolveImageSkill(config,snapshot?.imageServiceSettings??this.imageSettings());}
   async analysisStatus(config:BotConfig,role:AnalysisRole){try{if(!this.analysisProvider)throw new Error('MEDIA_PROVIDER_SETTINGS_UNAVAILABLE');const value=await this.analysisProvider.resolve(config,role);const model=value.endpoint.protocol==='edge_tts'?value.endpoint.voice:value.endpoint.model;return{enabled:true,configured:true,provider:value.provider,model,keyConfigured:!!value.apiKey,protocol:value.endpoint.protocol};}catch(error){return{enabled:analysisEnabled(config,role),configured:false,error:error instanceof Error?error.message:'MEDIA_CONFIGURATION_INVALID',keyConfigured:false};}}
   cancelScope(scope:string):void{for(const item of this.active.values()) if(item.scope===scope)item.controller.abort(new Error('任务已取消'));}
   private dailyQuotaExempt(scope:string,snapshot?:TurnSnapshot):boolean {
@@ -127,7 +129,8 @@ export class MediaService {
     const role=descriptor.role;
     if(role&&!useService&&!this.analysisProvider)throw new Error('MEDIA_PROVIDER_SETTINGS_UNAVAILABLE');
     const connection=role&&!useService?await this.analysisProvider!.resolve(config,role):undefined;
-    const endpoint=connection?.endpoint??((operation==='image_generate'||operation==='image_edit')?resolveImageSkill(config):undefined);
+    const imageOperation=operation==='image_generate'||operation==='image_edit';
+    const endpoint=connection?.endpoint??(imageOperation?this.imageEndpoint(config,snapshot):undefined);
     const edgeEndpoint=connection?.endpoint.protocol==='edge_tts'?connection.endpoint:undefined;
     provider=connection?.provider??(endpoint&&typeof endpoint.baseUrl==='string'?new URL(endpoint.baseUrl).hostname:undefined);requestedModel=(edgeEndpoint?.voice??(endpoint&&'model' in endpoint&&typeof endpoint.model==='string'?endpoint.model:undefined));
     persist({provider,requestedModel});

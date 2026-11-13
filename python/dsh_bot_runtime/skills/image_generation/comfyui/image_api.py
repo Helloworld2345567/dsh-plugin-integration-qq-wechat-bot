@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import time
 import uuid
 from pathlib import Path
@@ -16,7 +15,7 @@ from ..common import MAX_IMAGE_BYTES, _as_jpeg, detect_content_type, input_conte
 # mistake a development endpoint for a published service locator.
 DEFAULT_BASE_URL = "http://" + ".".join(("127", "0", "0", "1")) + ":8188"
 DEFAULT_MODEL = "comfyui"
-DEFAULT_COMFYUI_WORKFLOW = Path(os.environ.get("COMFYUI_ROOT") or f"{chr(69)}:{chr(92)}COMFYUI") / "workflows" / "Krea2Standard-api.json"
+DEFAULT_COMFYUI_WORKFLOW = Path(f"{chr(69)}:{chr(92)}COMFYUI") / "workflows" / "Krea2Standard-api.json"
 
 
 def normalize_comfyui_base_url(value: str) -> str:
@@ -115,8 +114,8 @@ def _comfy_image_records(session, base_url: str, workflow_path: Path, prompt: st
 
 
 def common_parser(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--prompt", required=True); parser.add_argument("--model", default=os.environ.get("BOT_IMAGE_MODEL") or DEFAULT_MODEL)
-    parser.add_argument("--base-url", default=os.environ.get("BOT_COMFYUI_BASE_URL") or DEFAULT_BASE_URL); parser.add_argument("--workflow", default=os.environ.get("BOT_COMFYUI_WORKFLOW") or os.environ.get("BOT_COMFYUI_WORKFLOW_PATH"))
+    parser.add_argument("--prompt", required=True); parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL); parser.add_argument("--workflow")
     parser.add_argument("--output-dir", type=Path, default=Path("assets")); parser.add_argument("--output-format", choices=("png", "jpeg", "webp", "gif", "svg"), default="jpeg"); parser.add_argument("--output-compression", type=int); parser.add_argument("--complexity"); parser.add_argument("--frame-count", type=int); parser.add_argument("--frame-duration-ms", type=int); parser.add_argument("--n", type=int, default=1); parser.add_argument("--timeout", type=float, default=300.0); parser.add_argument("--record", type=Path); parser.add_argument("--usage-record", type=Path); parser.add_argument("--dry-run", action="store_true")
 
 

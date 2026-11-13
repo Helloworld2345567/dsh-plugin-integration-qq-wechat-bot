@@ -2,7 +2,6 @@
 """Compatibility dispatcher for configured image service adapters."""
 from __future__ import annotations
 
-import os
 import sys
 
 from .common import *  # noqa: F401,F403 - compatibility exports
@@ -25,11 +24,10 @@ TRANSIENT_STATUSES = {502, 503}
 
 
 def _protocol(argv: list[str]) -> str:
-    value = os.environ.get("BOT_IMAGE_PROTOCOL") or ("comfyui" if os.environ.get("BOT_COMFYUI_BASE_URL") else "openai")
     for index, item in enumerate(argv):
         if item == "--protocol" and index + 1 < len(argv): return argv[index + 1]
         if item.startswith("--protocol="): return item.split("=", 1)[1]
-    return value
+    return "openai"
 
 
 def _without_protocol(argv: list[str]) -> list[str]:

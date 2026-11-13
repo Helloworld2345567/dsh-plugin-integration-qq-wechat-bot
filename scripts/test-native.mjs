@@ -39,11 +39,11 @@ env = safeSubprocessEnv({
   BOT_HOME: home, DSH_HOME: home, BOT_PERSONAS_ROOT: path.join(home, 'personas'),
   BOT_WORKSPACE_ROOT: workspaceRoot, DSH_AGENTS_HOME: path.join(home, 'agents'),
   BOT_DATA_HOME: path.join(home, 'storages', 'bot-integration'),
-  BOT_IMAGE_KEY_ENV: 'BOT_TEST_IMAGE_KEY', BOT_TEST_IMAGE_KEY: 'fixture-not-a-real-key',
   NATIVE_TEST_RESULT: path.join(folder, 'result.json'), npm_config_store_dir: path.join(processHome, 'localappdata', 'pnpm', 'store'),
   XDG_CONFIG_HOME: processHome, PIP_CONFIG_FILE: path.join(processHome, 'empty.pip.ini'), BOT_TEST_TMP: path.join(folder, 'fixtures'),
   ...(webToolsSource ? {BOT_TEST_WEB_TOOLS_SOURCE: webToolsSource} : {}),
 });
+env.OPENAI_API_KEY = 'fixture-not-a-real-key';
 const testPython = await validateTestPython(testPythonCandidate, env);
 env.BOT_PYTHON = testPython;
 env.BOT_TEST_PYTHON = testPython;

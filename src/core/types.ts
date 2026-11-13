@@ -1,5 +1,6 @@
 import {systemDescriptor} from '../i18n/system.js';
 import type {SystemLocale} from '../i18n/common.js';
+import type {ImageServiceSettings} from './image-service-config.js';
 import { z } from 'zod';
 import path from 'node:path';
 import {edgeTtsVoiceIds,normalizeGptSovitsBaseUrl,normalizeVoiceServiceBaseUrl} from './voice-config.js';
@@ -14,19 +15,14 @@ export const endpointSchema = z.object({
 });
 const imageProtocol=z.enum(['openai','comfyui']);
 const imageUrl=z.string().trim().min(1).max(2048).refine(value=>{try{const u=new URL(value);return ['http:','https:'].includes(u.protocol)&&!u.username&&!u.password&&!u.search&&!u.hash;}catch{return false;}},{message:'图片服务地址无效',params:{message:systemDescriptor('mediaApiUrlInvalid')}});
-export const imageEndpointSchema=z.object({protocol:imageProtocol.optional(),baseUrl:imageUrl,model:z.string().min(1).max(256),keyEnv:z.string().regex(/^[A-Z_][A-Z0-9_]*$/).optional(),workflowEnv:z.string().regex(/^[A-Z_][A-Z0-9_]*$/).optional(),workflowPath:z.string().trim().min(1).max(4096).refine(value=>path.isAbsolute(value)||path.win32.isAbsolute(value),'workflow path must be absolute').optional()}).strict().superRefine((value,ctx)=>{
+export const imageEndpointSchema=z.object({protocol:imageProtocol.optional(),baseUrl:imageUrl,model:z.string().min(1).max(256),keyEnv:z.string().regex(/^[A-Z_][A-Z0-9_]*$/).optional(),workflowPath:z.string().trim().min(1).max(4096).refine(value=>path.isAbsolute(value)||path.win32.isAbsolute(value),'workflow path must be absolute').optional()}).strict().superRefine((value,ctx)=>{
   const protocol=value.protocol??'openai',url=new URL(value.baseUrl);
   if(protocol==='openai'&&(url.protocol!=='https:'||url.port&&url.port!=='443'))ctx.addIssue({code:'custom',path:['baseUrl'],message:'OpenAI 图片服务须使用 HTTPS',params:{message:systemDescriptor('mediaApiUrlInvalid')}});
   if(protocol==='comfyui'&&url.protocol==='http:'&&!['localhost','127.0.0.1','::1'].includes(url.hostname.toLowerCase()))ctx.addIssue({code:'custom',path:['baseUrl'],message:'ComfyUI HTTP 服务须使用本机地址',params:{message:systemDescriptor('mediaApiUrlInvalid')}});
-  if(protocol!=='comfyui'&&(value.workflowEnv!==undefined||value.workflowPath!==undefined))ctx.addIssue({code:'custom',path:['workflowEnv'],message:'工作流设置仅适用于 ComfyUI',params:{message:systemDescriptor('mediaApiUrlInvalid')}});
+  if(protocol==='comfyui'&&value.keyEnv!==undefined)ctx.addIssue({code:'custom',path:['keyEnv'],message:'ComfyUI 不使用 OpenAI API Key'});
+  if(protocol!=='comfyui'&&value.workflowPath!==undefined)ctx.addIssue({code:'custom',path:['workflowPath'],message:'工作流设置仅适用于 ComfyUI',params:{message:systemDescriptor('mediaApiUrlInvalid')}});
 });
-export const imageSkillOverrideSchema=z.object({protocol:imageProtocol.optional(),baseUrl:imageUrl.optional(),model:z.string().min(1).max(256).optional(),keyEnv:z.string().regex(/^[A-Z_][A-Z0-9_]*$/).optional(),workflowEnv:z.string().regex(/^[A-Z_][A-Z0-9_]*$/).optional()}).extend({enabled:z.boolean().default(true)}).superRefine((value,ctx)=>{
-  if(!value.baseUrl)return;
-  const url=new URL(value.baseUrl),protocol=value.protocol??'openai';
-  if(protocol==='openai'&&(url.protocol!=='https:'||url.port&&url.port!=='443'))ctx.addIssue({code:'custom',path:['baseUrl'],message:'OpenAI 图片服务须使用 HTTPS',params:{message:systemDescriptor('mediaApiUrlInvalid')}});
-  if(protocol==='comfyui'&&url.protocol==='http:'&&!['localhost','127.0.0.1','::1'].includes(url.hostname.toLowerCase()))ctx.addIssue({code:'custom',path:['baseUrl'],message:'ComfyUI HTTP 服务须使用本机地址',params:{message:systemDescriptor('mediaApiUrlInvalid')}});
-  if(protocol!=='comfyui'&&value.workflowEnv!==undefined)ctx.addIssue({code:'custom',path:['workflowEnv'],message:'工作流设置仅适用于 ComfyUI',params:{message:systemDescriptor('mediaApiUrlInvalid')}});
-});
+export const imageSkillOverrideSchema=z.object({protocol:imageProtocol.optional(),enabled:z.boolean().default(true)}).strict();
 /** Private inference parameters used by service adapters. */
 const voicePathSchema=z.string().trim().min(1).max(4096).refine(value=>!/[\x00-\x1f]/.test(value),{message:'服务端路径不能包含控制字符',params:{message:systemDescriptor('servicePathInvalid')}});
 export const gptSovitsModelVersions=['v1','v2','v2Pro','v2ProPlus','v3','v4','v5dev','v5turbo'] as const;
@@ -73,7 +69,13 @@ const commonConfigFields={
   archived:z.boolean().default(false),
 };
 
-const v4ImageSchema=imageSkillOverrideSchema.strict();
+// Older personas and bot settings stored connection details here. Service
+// settings now own them; discard only these retired fields when reading.
+const v4ImageSchema=z.preprocess(value=>{
+  if(!value||typeof value!=='object'||Array.isArray(value))return value;
+  const {baseUrl:_baseUrl,model:_model,keyEnv:_keyEnv,workflowEnv:_workflowEnv,...current}=value as Record<string,unknown>;
+  return current;
+},imageSkillOverrideSchema);
 const v4AnalysisSchema=z.object({enabled:z.boolean().default(true),protocol:z.enum(['chat_completions','transcriptions']).default('chat_completions'),provider:z.never().optional(),model:z.never().optional(),baseUrl:z.never().optional(),keyEnv:z.never().optional()}).strict();
 const v4VoiceSchema=z.object({
   enabled:z.boolean().default(false),engine:z.enum(['edge_tts','gpt-sovits','breeze-tts']).optional(),profileRef:serviceProfileRefSchema.optional(),replyMode:z.enum(['on_demand','auto']).default('on_demand'),format:z.enum(['mp3','wav']).default('mp3'),
@@ -96,8 +98,7 @@ function forbiddenV4Path(value:unknown,segments:string[]=[]):string|undefined {
   if(!value||typeof value!=='object')return;
   if(Array.isArray(value)){for(let index=0;index<value.length;index++){const found=forbiddenV4Path(value[index],[...segments,String(index)]);if(found)return found;}return;}
   for(const [key,child] of Object.entries(value as Record<string,unknown>)){
-    const imageConnection=segments.length===2&&segments[0]==='media'&&segments[1]==='image'&&(key==='baseUrl'||key==='keyEnv');
-    if(forbiddenV4Key.test(key)&&!imageConnection)return[...segments,key].join('.');
+    if(forbiddenV4Key.test(key))return[...segments,key].join('.');
     const found=forbiddenV4Path(child,[...segments,key]);if(found)return found;
   }
 }
@@ -162,7 +163,7 @@ export interface SessionRecord { id:string;scopeKey:string;scope:CallerScope;gen
 export type ServiceProfileRole='voice'|'singing'|'music';
 export type TurnServiceState=ProfileState|'disabled';
 export interface TurnServiceSelection {role:ServiceProfileRole;enabled:boolean;profileRef?:ServiceProfileRef;state:TurnServiceState;snapshot?:TurnServiceSnapshot}
-export interface TurnSnapshot {systemLocale?:SystemLocale;config:Readonly<BotConfig>;personaId:string;personaRevision:number;services:Readonly<Partial<Record<ServiceProfileRole,Readonly<TurnServiceSelection>>>>;botId:string;trusted:boolean;sourceIds:string[];startedAt:number}
+export interface TurnSnapshot {systemLocale?:SystemLocale;config:Readonly<BotConfig>;imageServiceSettings?:Readonly<ImageServiceSettings>;personaId:string;personaRevision:number;services:Readonly<Partial<Record<ServiceProfileRole,Readonly<TurnServiceSelection>>>>;botId:string;trusted:boolean;sourceIds:string[];startedAt:number}
 export interface Asset { id:string;scopeKey:string;name:string;mime:string;path:string;size:number;kind:MediaInput['kind'];createdAt:number;jobId?:string;sessionId?:string;workspace?:string;origin?:'received'|'generated'|'sent' }
 export type DeliveryAttemptPhase='prepare'|'upload'|'commit';
 export interface DeliveryAttempt {number:number;phase:DeliveryAttemptPhase;assetId?:string;fileKey?:string;uploadQuery?:string;aesKey?:string;encryptedSize?:number;fileInfo?:string;fileInfoExpiresAt?:number;startedAt?:number;lastError?:string;causeCode?:string;causeMessage?:string;httpStatus?:number;platformCode?:string;platformMessage?:string;platformTraceId?:string;autoRetryCount?:number}
