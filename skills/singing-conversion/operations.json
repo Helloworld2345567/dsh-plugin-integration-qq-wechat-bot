@@ -6,7 +6,7 @@
     "permissionTool":"bot_sing",
     "tool": {
       "name":"bot_sing",
-      "description":"Sing a requested song in the current persona AI voice. Use sing with a song title; the host selects the highest catalog match, downloads the original, separates vocals and converts them. Only the converted result is delivered by default. For attachments or explicit HTTPS sources, use prepare/list/convert. Mixed audio requires configured separation.",
+      "description":"Sing or convert audio with the persona voice; successful conversions register audio. sing uses the catalog; prepare/list/convert use attachments or an explicit source. Mixed audio requires separation.",
       "parameters": {
         "action":{"type":"string","enum":["sing","prepare","list","convert"],"required":true},
         "song":{"type":"string"},
@@ -15,8 +15,8 @@
         "title":{"type":"string"},
         "url":{"type":"string"},
         "candidates":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"title":{"type":"string","required":true},"url":{"type":"string","required":true},"source":{"type":"string"},"license":{"type":"string"}}}},
-        "candidateSet":{"type":"string","description":"For convert, copy candidateSet from prepare/list. For sing, copy it from bot_music search."},
-        "candidate":{"type":"number","description":"Copy the chosen candidates[].candidate value from the matching result; a positive integer starting at 1."},
+        "candidateSet":{"type":"string","description":"candidateSet from prepare/list or bot_music search."},
+        "candidate":{"type":"number","description":"1-based candidates[].candidate from that result."},
         "sourceType":{"type":"string","enum":["vocals","mixed","unknown"]},
         "format":{"type":"string","enum":["mp3","wav"]}
       }

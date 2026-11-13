@@ -4,7 +4,7 @@ Douyin processing does not call third-party parsing services. The local HTTPS cl
 
 Download addresses exist only in the current job's memory, not as permanent resources. Downloads retain HTTPS, public-address and per-redirect checks; files become attachments only after decoding succeeds. Cookies are not read by default. `DOUYIN_COOKIE_FILE` can identify a local Netscape cookie file; the parser sends cookies only to matching Douyin page domains, never image CDNs or other hosts.
 
-Bilibili galleries retain the existing parser. Douyin image-post links require `kind=image`; passing one to video download returns `LINK_IS_IMAGE_GALLERY_USE_IMAGE`.
+Bilibili galleries retain the existing parser. Image posts are downloaded through `media_download`; a gallery URL must not be sent to video analysis.
 
 Implementation references:
 

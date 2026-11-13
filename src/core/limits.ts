@@ -185,5 +185,12 @@ export function validateMediaParameters(operation: string, inputs: string[], par
     if(operation==='convert_gif'&&parameters.durationSeconds===0)throw new Error('INVALID_MEDIA_RANGE');
   }
   if (declaration) validateSkillSource(declaration, inputs, parameters);
+  // Legacy download handlers are internal; keep their source checks while public callers use media_download.
+  if (operation === 'image_download' && (typeof url !== 'string' || inputs.length)) throw new Error('IMAGE_URL_REQUIRED');
+  if (operation === 'video_download') {
+    if (typeof url !== 'string' || inputs.length) throw new Error('ONE_VIDEO_SOURCE_REQUIRED');
+    const host = new URL(url).hostname;
+    if (!['www.bilibili.com','bilibili.com','b23.tv','www.douyin.com','douyin.com','v.douyin.com','www.iesdouyin.com'].includes(host)) throw new Error('UNSUPPORTED_VIDEO_PLATFORM');
+  }
   if (operation === 'social_read' && url === undefined) throw new Error('SOCIAL_URL_REQUIRED');
 }

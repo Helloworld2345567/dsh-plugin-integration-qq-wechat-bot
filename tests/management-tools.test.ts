@@ -111,11 +111,11 @@ test('persona catalog reports a different frozen persona only while it differs f
 
 test('mutations queue host-bound actions without changing the current session or shared persona',async t=>{
   const f=await fixture(t);const binding=f.binding(),snapshot=f.snapshot();const config=f.store.personas.config('sakura');
-  const operations=[()=>f.management.session(binding,snapshot,{action:'new'},signal()),()=>f.management.session(binding,snapshot,{action:'stop'},signal()),()=>f.management.session(binding,snapshot,{action:'compact'},signal()),()=>f.management.session(binding,snapshot,{action:'resume',sessionId:binding.sessionId},signal()),()=>f.management.persona(binding,snapshot,{action:'set',personaId:'default'},signal()),()=>f.management.skills(binding,snapshot,{action:'enable',name:'image-generation'},signal()),()=>f.management.skills(binding,snapshot,{action:'disable',name:'media-analysis'},signal())];
+  const operations=[()=>f.management.session(binding,snapshot,{action:'new'},signal()),()=>f.management.session(binding,snapshot,{action:'compact'},signal()),()=>f.management.session(binding,snapshot,{action:'resume',sessionId:binding.sessionId},signal()),()=>f.management.persona(binding,snapshot,{action:'set',personaId:'default'},signal()),()=>f.management.skills(binding,snapshot,{action:'enable',name:'image-generation'},signal()),()=>f.management.skills(binding,snapshot,{action:'disable',name:'media-analysis'},signal())];
   for(const execute of operations)assert.equal((await execute() as any).status,'queued');
-  assert.deepEqual(f.queued.map(item=>item.action),[{action:'new'},{action:'stop'},{action:'compact'},{action:'resume',sessionId:binding.sessionId},{action:'persona',personaId:'default'},{action:'skill',name:'image-generation',enabled:true},{action:'skill',name:'media-analysis',enabled:false}]);
+  assert.deepEqual(f.queued.map(item=>item.action),[{action:'new'},{action:'compact'},{action:'resume',sessionId:binding.sessionId},{action:'persona',personaId:'default'},{action:'skill',name:'image-generation',enabled:true},{action:'skill',name:'media-analysis',enabled:false}]);
   assert.equal(f.binding().sessionId,binding.sessionId);assert.deepEqual(f.store.personas.config('sakura'),config);assert.deepEqual(snapshot.config,config);
-  await assert.rejects(f.management.skills(binding,snapshot,{action:'enable',name:'never-published'},signal()),/SKILL_NOT_PUBLISHED/);assert.equal(f.queued.length,7);
+  await assert.rejects(f.management.skills(binding,snapshot,{action:'enable',name:'never-published'},signal()),/SKILL_NOT_PUBLISHED/);assert.equal(f.queued.length,6);
 });
 
 test('revocation and newly granted trust deny privileged management while basic reads remain scoped',async t=>{

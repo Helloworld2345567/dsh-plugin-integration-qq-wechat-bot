@@ -165,6 +165,52 @@ async def analyze_video(job):
         await service.close()
 
 
+def convert_mp4(job):
+    if len(job.get('inputs', [])) != 1:
+        raise AnalysisError('ONE_VIDEO_REQUIRED')
+    params = job.get('parameters') or {}
+    try:
+        start = float(params.get('startSeconds', 0))
+        duration = float(params.get('durationSeconds', 6))
+    except (TypeError, ValueError):
+        raise AnalysisError('INVALID_MEDIA_RANGE') from None
+    if not math.isfinite(start) or not math.isfinite(duration) or start < 0 or not 0 < duration <= 30:
+        raise AnalysisError('INVALID_MEDIA_RANGE')
+    output = Path(job['output']) / 'result.mp4'
+    command = ['ffmpeg', '-v', 'error', '-nostdin', '-ss', str(start), '-i', job['inputs'][0]['path'],
+               '-t', str(duration), '-c:v', 'libx264', '-c:a', 'aac', '-movflags', '+faststart', str(output)]
+    try:
+        result = subprocess.run(command, capture_output=True, timeout=remaining(job, 60))
+    except (OSError, subprocess.SubprocessError):
+        raise AnalysisError('FFMPEG_FAILED') from None
+    if result.returncode or not output.exists():
+        raise AnalysisError('FFMPEG_FAILED')
+    return {'assets': [{'path': str(output), 'name': output.name, 'mime': 'video/mp4', 'kind': 'video'}],
+            'coverage': 'VIDEO_MP4_CONVERSION', 'incomplete': False}
+
+
+def media_download(job):
+    url = str((job.get('parameters') or {}).get('url') or '')
+    if not url:
+        raise AnalysisError('MEDIA_URL_REQUIRED')
+    from urllib.parse import urlsplit
+    from dsh_bot_runtime.skills.media_analysis.douyin_links import DOUYIN_HOSTS
+    from dsh_bot_runtime.skills.media_analysis.platform_links import PLATFORM_HOSTS
+    parsed = urlsplit(url)
+    host = (parsed.hostname or '').lower()
+    path = parsed.path.lower()
+    image_ext = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif')
+    # Platform notes/articles are image galleries; video posts use the video resolver.
+    is_gallery = '/note/' in path or '/opus/' in path or '/read/cv' in path or host == 't.bilibili.com'
+    if host in DOUYIN_HOSTS and '/note/' in path:
+        is_gallery = True
+    if path.endswith(image_ext) or is_gallery or host not in PLATFORM_HOSTS:
+        from dsh_bot_runtime.skills.media_analysis.image_download import execute as download_images
+        return asyncio.run(download_images(job))
+    from dsh_bot_runtime.skills.media_analysis.platform_links import download_video
+    return asyncio.run(download_video(job))
+
+
 def execute(job):
     remaining(job)
     if job.get('operation') in ('image_convert', 'image_compress', 'image_resize'):
@@ -175,9 +221,13 @@ def execute(job):
         return transform_video(job)
     if not isinstance(job.get('inputs'), list) or len(job['inputs']) > 1:
         raise AnalysisError('ONE_MEDIA_INPUT_REQUIRED')
+    if job.get('operation') == 'media_download':
+        return media_download(job)
     if job.get('operation') == 'image_download':
         from dsh_bot_runtime.skills.media_analysis.image_download import execute as download_images
         return asyncio.run(download_images(job))
+    if job.get('operation') == 'convert_mp4':
+        return convert_mp4(job)
     if job.get('operation') == 'video_download':
         from dsh_bot_runtime.skills.media_analysis.platform_links import download_video
         return asyncio.run(download_video(job))

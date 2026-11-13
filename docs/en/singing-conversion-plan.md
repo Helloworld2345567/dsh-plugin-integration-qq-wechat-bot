@@ -55,7 +55,7 @@ Explicit public HTTPS audio, Bilibili and Douyin links keep the prepare/convert 
 
 Candidates are stored in repository records bound to scope, session, generation and a separate set ID. Old candidate numbers cannot select later replacement sources. Attachments must belong to the session and be `audio` or a `file` actually decoded by the worker. An explicit conversion request in user text or registered waiting-for-upload state may bypass initial ASR. Quotes/web content cannot trigger that bypass; ordinary voice still transcribes automatically.
 
-`vocals` runs RVC; `unknown` asks about accompaniment; `mixed` without configured separation is rejected with a request for vocals. Fully configured RVC/PyMSS first separates vocals, then uses `instrumentalMix`/`volume` to decide accompaniment remixing. STS enabled state, `bot_sing` and `singing-conversion` are all required. `bot_media` rejects `singing_convert`.
+`vocals` runs RVC; `unknown` asks about accompaniment; `mixed` without configured separation is rejected with a request for vocals. Fully configured RVC/PyMSS first separates vocals, then uses `instrumentalMix`/`volume` to decide accompaniment remixing. STS enabled state, `bot_sing` and `singing-conversion` are all required. Media tools cannot bypass the dedicated singing-conversion entry.
 
 A conversion attempt is created before initial download/inference. Re-preparing candidates cannot reset it. Success reuses the result; failure/cancellation/unknown does not retry or switch candidates automatically. A new explicit user request is required for a new attempt.
 

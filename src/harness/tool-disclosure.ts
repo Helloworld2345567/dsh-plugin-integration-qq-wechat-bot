@@ -7,13 +7,13 @@ const summaries:Readonly<Record<string,string>>={
   read:'Read local files',write:'Write local files',edit:'Edit local files',read_image:'View a local image',
   glob:'Find files by path',grep:'Search file contents',pwsh:'Run PowerShell commands',bash:'Run shell commands',
   web_search:'Search the web',web_fetch:'Read a web page',skill:'Read skill instructions',
-  bot_session:'Manage this chat and its history',bot_persona:'List or switch personas',bot_skills:'List or change enabled skills',
-  bot_model:'List or switch chat models',bot_voice_control:'List or switch TTS/STS voices',bot_stats:'Query bot usage statistics',
+  bot_session:'Manage this chat and its history',bot_persona:'List or switch personas',bot_skills:'List or change skills on the shared persona',
+  bot_model:'List or switch this session model',bot_voice_control:'List or switch this session voice',bot_stats:'Query bot usage statistics',
   bot_evolve:'Update persona, skills or plugin code',bot_schedule:'Manage scheduled tasks',bot_proactive:'Manage proactive messages',
-  bot_media:'Read attachments or process media',bot_send_file:'Register a file for delivery',
+  bot_send_file:'Register a file for delivery',
   bot_remember:'Save a stated user preference',bot_forget_memory:'Forget a saved preference',bot_read_social:'Read a public social post',
-  image_generation:'Generate or edit an image',image_download:'Download an original image',
-  media_analysis:'Transcribe audio or understand video',media_transform:'Convert or edit media',
+  image_generation:'Generate or edit an image',media_download:'Download shared media as an attachment',
+  media_analysis:'Analyze existing media attachments',media_transform:'Convert or edit media attachments',
   bot_voice:'Generate requested speech',bot_sing:'Convert singing or speech voices',bot_music:'Search or download music',
 };
 const sectionTools:Readonly<Record<string,readonly string[]>>={

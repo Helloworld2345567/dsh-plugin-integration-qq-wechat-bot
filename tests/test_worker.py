@@ -96,8 +96,8 @@ class WorkerTests(unittest.TestCase):
                 self.assertEqual(worker.load_skill_operations(skills, tolerate_invalid=True), {})
 
     def test_shipped_skill_operations_dispatch_declared_entry(self):
-        self.assertEqual(set(worker.skill_operations()), {'transcribe', 'video_analyze', 'image_download', 'video_download', 'voice_speak', 'image_convert', 'image_compress', 'image_resize', 'convert_gif', 'singing_convert', 'music_search', 'music_acquire', 'music_delivery'})
-        job = self.job('image_download')
+        self.assertEqual(set(worker.skill_operations()), {'media_download', 'media_analysis', 'transcribe', 'video_analyze', 'voice_speak', 'image_convert', 'image_compress', 'image_resize', 'convert_gif', 'convert_mp4', 'singing_convert', 'music_search', 'music_acquire', 'music_delivery'})
+        job = self.job('media_download')
         job['handler'] = 'skill'
         # Real entry import and error translation, without a provider/network call.
         job['inputs'] = [{ 'path': 'unused', 'name': 'unused', 'kind': 'image', 'mime': 'image/png'}] * 2
@@ -192,7 +192,7 @@ class WorkerTests(unittest.TestCase):
                     downloaded.append(url)
                     target.write_bytes(original)
                     return len(original)
-                job = self.job('image_download', url='https://www.douyin.com/note/fixture')
+                job = self.job('media_download', url='https://www.douyin.com/note/fixture')
                 job.update(handler='skill', output=str(directory))
                 with patch.object(image_download, 'resolve_images', side_effect=resolve_images), patch.object(image_download, 'download', side_effect=download):
                     result = worker.execute(job)

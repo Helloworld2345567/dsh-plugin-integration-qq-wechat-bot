@@ -66,9 +66,11 @@ export const DEFAULT_MEDIA_OPERATIONS: readonly MediaOperationDescriptor[] = Obj
   ...skillToolManifests.flatMap(manifest => manifest.operations.map(operation => ({...operation, serviceOperation:SERVICE_OPERATION_BY_LEGACY[operation.id], source: operation, skill: manifest.skill, tool: manifest.tool.name, permissionTool: manifest.permissionTool ?? manifest.tool.name, handler: 'skill', timeoutMs: 0}))),
   {id: 'image_generate', handler: 'image', timeoutMs: 0, quotaUnits: 10000, inputKinds: []},
   {id: 'image_edit', handler: 'image', timeoutMs: 0, quotaUnits: 10000, inputKinds: ['image']},
+  // Legacy worker handlers remain internal; media_download is the public facade.
+  {id: 'image_download', handler: 'image_download', timeoutMs: 0, quotaUnits: 1, inputKinds: [], permissionTool: 'media_download'},
+  {id: 'video_download', handler: 'video_download', timeoutMs: 0, quotaUnits: 1, inputKinds: [], permissionTool: 'media_download'},
   {id: 'image_understand', handler: 'native', timeoutMs: 0, quotaUnits: 1, inputKinds: ['image']},
   {id: 'document_read', handler: 'document', timeoutMs: 0, quotaUnits: 50, inputKinds: ['file']},
-  {id: 'convert_mp4', handler: 'convert_mp4', timeoutMs: 0, quotaUnits: 50, inputKinds: ['video']},
   {id: 'social_read', handler: 'social_read', timeoutMs: 0, quotaUnits: 20, inputKinds: []},
 ]);
 

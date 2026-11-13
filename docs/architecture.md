@@ -81,7 +81,7 @@ bot 可以共享人格，但身份、会话、附件、记忆和投递始终按�
 
 `media-analysis/operations.json` 是该技能的工具参数、参数到操作的映射、模型角色、配额、来源约束和自动附件交付的唯一声明。构建时从 `skills/*/operations.json` 生成带摘要的不可变 Host registry，框架启动只导入该内存 registry，不扫描 skill 文件；Python worker 在首次 skill 操作时验证已安装声明中的固定 `dsh_bot_runtime.skills...` entry，再用唯一包名导入 `execute(job)`。任务只传操作 ID，不接受调用方提供模块、脚本或包路径；人格、聊天输入和工作区文件均不参与 Python 代码发现。
 
-新增媒体操作时，修改对应技能的声明、Python 实现与说明即可。每个技能的 `tools` 数组声明一个或多个工具，各自包含 `tool`、`routes`、`defaults`，以及可选的 `enabledRoles` 和 `permissionTool`。`routes` 按顺序匹配参数，`defaults` 补充省略的选择参数；操作上的 `role` 选择 `asr`、`video` 或 `tts` 模型连接，未声明则不注入模型凭据；`deliver` 将结果附件登记到本轮回复。一个操作归属一个工具，可由该工具的多个路由指向；兼容工具 `bot_media` 复用操作的来源约束、权限和附件交付行为。
+新增媒体操作时，修改对应技能的声明、Python 实现与说明即可。每个技能的 `tools` 数组声明一个或多个工具，各自包含 `tool`、`routes`、`defaults`，以及可选的 `enabledRoles` 和 `permissionTool`。`routes` 按顺序匹配参数，`defaults` 补充省略的选择参数；操作上的 `role` 选择 `asr`、`video` 或 `tts` 模型连接，未声明则不注入模型凭据；`deliver` 将结果附件登记到本轮回复。一个操作归属一个工具，可由该工具的多个路由指向；媒体下载、分析与转换分别通过各自工具公开，权限仍由宿主在执行时检查。
 
 `media_transform(operation, inputs, ...)` 归属 media-analysis，但不依赖分析模型角色，也不消耗每日媒体调用配额。`localTransform` 操作使用进程内共享的执行槽位，容量为 `min(4, availableParallelism())`。图片占一个槽位，GIF 取得最多两个当前空闲槽位；无空闲槽位的任务 FIFO 排队，排队取消立即移除。宿主分配的 `processingSlots` 位于 worker 协议顶层，模型参数不能覆盖。任务等待和运行期间均可取消，执行前重新检查当前权限；重启将排队和运行中的媒体作业标记为中断，不重放。非本地转换操作保留原有全局两任务、同作用域一个任务的限制。
 
@@ -112,7 +112,7 @@ Breeze 音色必须先在服务端保存并能通过 `/v1/voices` 列出；服�
 
 ### RVC 音色转换
 
-`media.singing` 是独立、默认关闭的 STS 配置，与 `media.voice` 不共享目标权重或参考音频。`bot_sing` 同时要求人格开启 STS、允许该工具并启用 `singing-conversion`。专用工具维护 `prepare/list/convert` 候选和单轮 attempt；兼容工具 `bot_media` 禁止调用 `singing_convert`。服务地址、角色路径和 job ID 由宿主提供，工具参数不能覆盖。
+`media.singing` 是独立、默认关闭的 STS 配置，与 `media.voice` 不共享目标权重或参考音频。`bot_sing` 同时要求人格开启 STS、允许该工具并启用 `singing-conversion`。专用工具维护 `prepare/list/convert` 候选和单轮 attempt；媒体操作不会绕过专用的歌声转换入口。服务地址、角色路径和 job ID 由宿主提供，工具参数不能覆盖。
 
 候选保存于持久化 records，绑定 scope、session、generation 和候选集 ID。宿主解析当前会话的 audio/file 附件，或保留真实搜索结果的公开 URL、标题及可得许可信息。worker 复用公开链接下载与音轨提取；已知混音且无分离配置在下载前拒绝，类型未知要求用户确认。RVC Profile 的私有 `separation` 保存分离模型 ID、权重路径、伴奏混音开关和音量；默认关闭，配置完整后才允许 `mixed`，并先提取人声再转换和按偏好混音。明确的用户转换请求及待上传状态可绕过前置 ASR，普通语音仍自动转写。
 

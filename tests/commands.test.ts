@@ -40,7 +40,7 @@ test('an asynchronous command retains its starting language and the next command
   let locale:SystemLocale='en';const entered=gate(),release=gate();
   const f=await fixture(t,{validateModel:async()=>{entered.resolve();await release.promise;}},()=>locale);
   const command=f.runtime.receive(input('/model P M'));await entered.promise;locale='zh';release.resolve();await command;
-  assert.match(f.sent.at(-1)!,/Switched model to P \/ M/);
+  assert.match(f.sent.at(-1)!,/Switched (?:model to|this session to) P \/ M/);
   await f.runtime.receive(input('/status'));assert.match(f.sent.at(-1)!,/会话：/);
 });
 

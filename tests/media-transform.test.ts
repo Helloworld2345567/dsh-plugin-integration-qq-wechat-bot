@@ -37,7 +37,7 @@ test('transform routes, delivery and permission are independent of analysis prov
   const scope={botId:'test',platform:'qq',accountId:'test',kind:'private' as const,channelId:'test',senderId:'test'};
   const snapshot=freezeTurn(config,bot,scope,[]);
   assert.equal(allowedNow('media_transform',snapshot,config,bot,scope),true);
-  assert.equal(allowedNow('media_analysis',snapshot,config,bot,scope),false);
+  assert.equal(allowedNow('media_analysis',snapshot,config,bot,scope),true);
   assert.equal(allowedNow('media_transform',snapshot,{...config,skills:[]},bot,scope),false);
 });
 

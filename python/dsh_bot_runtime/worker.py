@@ -370,6 +370,16 @@ def _social(job):
     return {"text": json.dumps(asyncio.run(read_post(str(job["parameters"].get("url", "")))), ensure_ascii=False), "coverage": "PAGE_TEXT_ONLY"}
 
 
+def image_download(job):
+    from dsh_bot_runtime.skills.media_analysis.image_download import execute
+    return asyncio.run(execute(job))
+
+
+def video_download(job):
+    from dsh_bot_runtime.skills.media_analysis.platform_links import download_video
+    return asyncio.run(download_video(job))
+
+
 def _validate_protocol(job):
     if not isinstance(job, dict):
         raise JobError("MEDIA_WORKER_PROTOCOL_UNSUPPORTED")
@@ -465,6 +475,8 @@ OPERATIONS.register("document", document)
 OPERATIONS.register("image_generate", image)
 OPERATIONS.register("image_edit", image)
 OPERATIONS.register("document_read", document)
+OPERATIONS.register("image_download", image_download)
+OPERATIONS.register("video_download", video_download)
 OPERATIONS.register("convert_mp4", convert)
 OPERATIONS.register("social_read", _social)
 

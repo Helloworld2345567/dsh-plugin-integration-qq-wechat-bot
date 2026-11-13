@@ -5,8 +5,8 @@ import {botVoiceArgumentsSchema,type BotVoiceArguments,type BotVoiceResult} from
 export function defineBotSessionTool(execute:(args:BotSessionArguments,exec:ToolRunContext)=>Promise<unknown>){
   return defineTool({
     name:'bot_session',
-    description:"Manage only the caller-owned channel session. help/status/list query help, current state and owned history. new/stop/compact/resume register actions to execute after the current turn; queued does not mean completed. resume requires a sessionId from the current user list result. Do not modify another user session or a parent task.",
-    parameters:{action:{type:'string',required:true,enum:['help','status','list','new','stop','compact','resume']},page:{type:'number'},sessionId:{type:'string'}},
+    description:"Query or change the caller-owned session. action is help, status, list, new, compact or resume; resume requires a sessionId.",
+    parameters:{action:{type:'string',required:true,enum:['help','status','list','new','compact','resume']},page:{type:'number'},sessionId:{type:'string'}},
     output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
     isConcurrencySafe:args=>['help','status','list'].includes(args.action),
     execute:async(args,exec)=>JSON.stringify(await execute(botSessionArgumentsSchema.parse(args),exec)),
@@ -16,7 +16,7 @@ export function defineBotSessionTool(execute:(args:BotSessionArguments,exec:Tool
 export function defineBotPersonaTool(execute:(args:BotPersonaArguments,exec:ToolRunContext)=>Promise<unknown>){
   return defineTool({
     name:'bot_persona',
-    description:"List or switch the current trusted private-chat persona without local-tool permissions. First list exact persona IDs, then set. The switch queues until the current turn ends, preserves history and clears temporary model overrides. queued does not mean switched. This turn and already-started subtasks keep their frozen configuration. Do not modify shared persona content.",
+    description:"List or switch the current trusted private-chat persona. set requires a personaId.",
     parameters:{action:{type:'string',required:true,enum:['list','set']},personaId:{type:'string'}},
     output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
     isConcurrencySafe:args=>args.action==='list',
@@ -27,7 +27,7 @@ export function defineBotPersonaTool(execute:(args:BotPersonaArguments,exec:Tool
 export function defineBotSkillsTool(execute:(args:BotSkillsArguments,exec:ToolRunContext)=>Promise<unknown>){
   return defineTool({
     name:'bot_skills',
-    description:"Inspect skills for the current persona. Ordinary users may only list enabled skills. Trusted private-chat users may also see published disabled skills and enable/disable them. Changes queue until the current turn ends and affect sessions sharing the persona; queued does not mean completed. Use bot_evolve to add or edit a skill.",
+    description:"List or enable/disable published skills in trusted private chat. enable/disable requires a skill name and changes the shared persona.",
     parameters:{action:{type:'string',required:true,enum:['list','enable','disable']},name:{type:'string'}},
     output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
     isConcurrencySafe:args=>args.action==='list',
@@ -39,7 +39,7 @@ export function defineBotSkillsTool(execute:(args:BotSkillsArguments,exec:ToolRu
 export function defineBotVoiceControlTool(execute:(args:BotVoiceArguments,exec:ToolRunContext)=>Promise<unknown>){
   return defineTool({
     name:'bot_voice_control',
-    description:"Manage TTS/STS voices for the current trusted private-chat session. First list exact voice IDs, then set. TTS uses edge/<voice> or service/profile; STS uses rvc/<profile>. reset restores the persona default. Changes affect only this session from the next turn; this turn and already-started subtasks keep their frozen voices. Do not modify the shared persona.",
+    description:"List or change TTS/STS voices for the current trusted private session. set requires a voice id; reset restores the persona default.",
     parameters:{role:{type:'string',required:true,enum:['tts','sts']},action:{type:'string',required:true,enum:['list','set','reset']},id:{type:'string'}},
     output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
     isConcurrencySafe:args=>args.action==='list',

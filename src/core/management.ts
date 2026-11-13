@@ -12,7 +12,7 @@ import {botScheduleArgumentsSchema,botProactiveArgumentsSchema} from './automati
 import type {ScheduledJob} from './automation.js';
 
 export const botSessionArgumentsSchema=z.object({
-  action:z.enum(['help','status','list','new','stop','compact','resume']),
+  action:z.enum(['help','status','list','new','compact','resume']),
   page:z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   sessionId:z.string().min(1).max(200).regex(/^[a-zA-Z0-9_-]+$/).optional(),
 }).strict().superRefine((value,ctx)=>{
@@ -56,7 +56,7 @@ export class BotManagement {
     return{action,configured:true,...settings,nextAt:config.nextAt?new Date(config.nextAt).toISOString():null};
   }
   private async busSession(binding:SessionBinding,snapshot:TurnSnapshot,input:BotSessionArguments,signal:AbortSignal){
-    if(!['status','new','stop','compact','resume'].includes(input.action))return;
+    if(!['status','new','compact','resume'].includes(input.action))return;
     const args=input.action==='resume'?input.sessionId??'':'';const command=managementCommand({name:input.action,args});if(!command)throw Error('UNKNOWN_MANAGEMENT_COMMAND');const result=await this.runtime.commandBus.execute({source:'tool',binding,snapshot,signal},command);
     if(result.kind==='queued')return result.value;
     if(result.kind!=='reply')return result;

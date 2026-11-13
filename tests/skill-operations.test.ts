@@ -6,20 +6,22 @@ import {loadSkillOperations, resolveSkillOperation, skillToolManifests, validate
 import {mediaOperationRegistry} from '../src/core/media-operation-registry.js';
 import {defineTool} from '@deepseek-ai/dsh-tools';
 
-test('shipped skill declarations route tools and preserve provider and delivery contracts', () => {
-  const manifest = skillToolManifests.find(item => item.skill === 'media-analysis')!;
-  for (const [args, id] of [
-    [{kind:'audio'}, 'transcribe'], [{kind:'video'}, 'video_analyze'],
-    [{kind:'image'}, 'image_download'], [{kind:'video',action:'download'}, 'video_download'],
-  ] as const) {
-    assert.equal(resolveSkillOperation(manifest,args),id);
-    assert.equal(mediaOperationRegistry.get(id).handler,'skill');
-    assert.equal(mediaOperationRegistry.get(id).tool,manifest.tool.name);
-  }
+test('shipped media declarations keep separate download, analysis and transform boundaries', () => {
+  const download = skillToolManifests.find(item => item.tool.name === 'media_download')!;
+  const analysis = skillToolManifests.find(item => item.tool.name === 'media_analysis')!;
+  const transform = skillToolManifests.find(item => item.tool.name === 'media_transform')!;
+  assert.equal(resolveSkillOperation(download,{url:'https://example.com/a.png'}),'media_download');
+  assert.equal(resolveSkillOperation(analysis,{inputs:['asset-1']}),'media_analysis');
+  assert.equal(resolveSkillOperation(transform,{operation:'convert_mp4',inputs:['asset-1']}),'convert_mp4');
+  assert.deepEqual(Object.keys(download.tool.parameters).sort(),['deliver','url']);
+  assert.deepEqual(Object.keys(analysis.tool.parameters).sort(),['inputs','question']);
+  assert.equal(mediaOperationRegistry.get('media_download').handler,'skill');
+  assert.equal(mediaOperationRegistry.get('media_download').permissionTool,'media_download');
   assert.equal(mediaOperationRegistry.get('transcribe').role,'asr');
   assert.equal(mediaOperationRegistry.get('video_analyze').role,'video');
-  assert.equal(mediaOperationRegistry.get('image_download').deliver,true);
-  assert.throws(()=>resolveSkillOperation(manifest,{kind:'audio',action:'download'}),/ARGUMENTS_INVALID/);
+  assert.equal(mediaOperationRegistry.get('convert_mp4').inputKinds?.[0],'video');
+  assert.equal(skillToolManifests.some(item => item.tool.name === 'image_download' || item.tool.name === 'video_download'),false);
+  assert.equal(resolveSkillOperation(analysis,{inputs:['asset-1']}),'media_analysis');
 });
 
 test('voice generation keeps speak and rejects the removed chant route', () => {

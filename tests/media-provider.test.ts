@@ -37,7 +37,7 @@ test('analysis model stays frozen during turn; permission additions wait and rol
   const c=config();const owner=botSchema.parse({id:'one',name:'One',channel:'qq',enabled:true});const scope={botId:'one',accountId:'one',platform:'qq' as const,kind:'private' as const,channelId:'alice',senderId:'alice'};
   const snapshot=freezeTurn(c,owner,scope,[]);const next=configSchema.parse({...c,model:{provider:'chat',model:'av-model'}});assert.equal(mediaConfigNow(snapshot,next).media.asr,undefined);
   assert.equal(allowedNow('media_analysis',snapshot,next,owner,scope),true);assert.equal(allowedNow('media_analysis',snapshot,{...next,skills:['image-generation']},owner,scope),false);
-  const disabled=configSchema.parse({...next,media:{asr:{enabled:false},video:{enabled:false}}});assert.equal(allowedNow('media_analysis',snapshot,disabled,owner,scope),false);assert.equal(mediaConfigNow(snapshot,disabled).media.asr?.enabled,false);
+  const disabled=configSchema.parse({...next,media:{asr:{enabled:false},video:{enabled:false}}});assert.equal(allowedNow('media_analysis',snapshot,disabled,owner,scope),true);assert.equal(mediaConfigNow(snapshot,disabled).media.asr?.enabled,false);
 });
 test('media status reports readiness without leaking resolved secrets or provider endpoint',async()=>{
   const f=fixture();const media=new MediaService({} as never,{} as Assets,undefined,f.resolver);

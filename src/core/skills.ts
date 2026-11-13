@@ -11,7 +11,7 @@ import type {BotConfig} from './types.js';
 
 export const packagedSkills:Readonly<Record<string,string>>={
   'image-generation':'Generate images or edit reference images using the skill environment; return successful results automatically',
-  'media-analysis':'Transcribe audio and analyze video through managed scripts using native model providers',
+  'media-analysis':'Download shared media, analyze existing attachments and convert image or video attachments',
   'voice-generation':'Generate and deliver AI speech when requested by the user',
   'singing-conversion':'Convert songs or vocals using vocal separation and independent RVC voice models',
   'music-download':'Search for songs, select real candidates, download music, and pass songs to voice conversion',

@@ -10,13 +10,13 @@
     "permissionTool":"bot_music",
     "tool":{
       "name":"bot_music",
-      "description":"Search for or download real songs from the music catalog. download selects the highest match by title or downloads a candidate from an earlier search; success automatically registers complete audio suitable for sending. Only host-enabled verified sources are used. The model cannot supply download URLs or paths.",
+      "description":"Search or download songs from the configured catalog; successful downloads register complete audio. Use candidateSet and candidate from a prior search to choose a result.",
       "parameters":{
         "action":{"type":"string","enum":["search","download"],"required":true},
         "song":{"type":"string"},
         "artist":{"type":"string"},
-        "candidateSet":{"type":"string","description":"Copy candidateSet from the latest search result when selecting a specific track."},
-        "candidate":{"type":"number","description":"Copy the chosen candidates[].candidate value from that search result; a positive integer starting at 1."}
+        "candidateSet":{"type":"string","description":"candidateSet from a prior search."},
+        "candidate":{"type":"number","description":"1-based candidates[].candidate from that search."}
       }
     },
     "defaults":{"action":"search"},

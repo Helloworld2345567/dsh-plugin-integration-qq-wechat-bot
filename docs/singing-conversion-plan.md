@@ -55,7 +55,7 @@ JSON 参数包含 `jobId`、`modelVersion`、`singingModelId`、`singingWeightsP
 
 候选保存到 Store records，绑定 scope、session、generation 和独立候选集 ID；旧候选编号不能命中后来替换的来源。附件必须属于当前会话，支持 `audio` 和经 worker 实际解码确认的 `file`。用户正文的明确转换请求、或已登记等待上传状态，可以绕过前置 ASR；引用和网页内容不触发，普通语音继续自动转写。
 
-声源为 `vocals` 时执行 RVC；`unknown` 时询问是否含伴奏；`mixed` 在所选 Profile 未配置分离时拒绝并提示提供纯人声，分离配置完整后由 RVC/PyMSS runner 先提取人声，再按 `instrumentalMix` 和 `volume` 决定混回伴奏。工具同时要求 STS 开启、`bot_sing` 权限和 `singing-conversion` 技能。`bot_media` 拒绝 `singing_convert`。
+声源为 `vocals` 时执行 RVC；`unknown` 时询问是否含伴奏；`mixed` 在所选 Profile 未配置分离时拒绝并提示提供纯人声，分离配置完整后由 RVC/PyMSS runner 先提取人声，再按 `instrumentalMix` 和 `volume` 决定混回伴奏。工具同时要求 STS 开启、`bot_sing` 权限和 `singing-conversion` 技能；媒体工具不会绕过专用歌声转换入口。
 
 首次下载/推理前建立当前请求的转换 attempt；重新准备候选不能重置尝试。成功复用已有结果，失败、取消或未知不自动重试，不自动更换候选。用户下一次明确请求才能新建尝试。
 

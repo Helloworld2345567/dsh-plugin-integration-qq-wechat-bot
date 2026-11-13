@@ -10,7 +10,7 @@ test('system message translations have matching placeholders and all English ent
     assert.ok(systemMessages.en[key].trim(),key);assert.doesNotMatch(systemMessages.en[key],/\p{Script=Han}/u,key);
     assert.deepEqual(placeholders(systemMessages.en[key]),placeholders(systemMessages.zh[key]),key);
   }
-  assert.equal(systemMessage('en','modelSwitched',{provider:'provider-id',model:'model-id'}),'Switched model to provider-id / model-id. Applies from the next turn.');
+  assert.equal(systemMessage('en','modelSwitched',{provider:'provider-id',model:'model-id'}),'Switched this session to provider-id / model-id; applies from the next turn.');
 });
 
 test('system errors retain the compatible text and render their descriptor in the requested language',()=>{

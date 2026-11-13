@@ -1,9 +1,11 @@
 ---
 name: media-analysis
-description: Analyze and download audio, video and images; concurrently convert, compress and resize images, and convert complete videos into GIFs below 10 MB through managed attachment tools.
+description: Download shared media, analyze existing attachments, and convert image or video attachments through managed tools.
 ---
 
-Use this skill to understand audio/video or download original images, galleries and videos from links. Call `media_analysis`; send existing images and scanned pages directly to the chat model for visual understanding.
+Use `media_download` for a supported image, gallery or video URL. It downloads real media bytes into the current session and returns attachment metadata; it does not analyze content. Then pass the returned attachment ID to `media_analysis` or `media_transform`.
+
+Use `media_analysis` only with existing session attachment IDs. It reads images, documents, audio and video according to attachment kind; an optional question controls the analysis. Never use a share-page title, caption or cover as a substitute for the downloaded media.
 
 Use the separate `media_transform` for attachment conversion, compression and resizing. No model service or key is required. Each call handles one attachment and multiple calls may run concurrently. The tool assigns CPU execution slots and queues work; do not bypass it by starting scripts to increase concurrency.
 
@@ -12,6 +14,7 @@ Use the separate `media_transform` for attachment conversion, compression and re
 - Convert format: `media_transform(operation="image_convert", inputs=["attachment-id"], format="webp")`. Supported formats: `jpeg`, `png`, `webp`, `avif`.
 - Compress an image: `media_transform(operation="image_compress", inputs=["attachment-id"], format="jpeg", quality=70, maxBytes=1000000)`.
 - Resize down: `media_transform(operation="image_resize", inputs=["attachment-id"], maxWidth=1280, maxHeight=1280, format="webp")`.
+- Convert a video to MP4: `media_transform(operation="convert_mp4", inputs=["video-attachment-id"])`.
 - Convert a complete video to GIF: `media_transform(operation="convert_gif", inputs=["video-attachment-id"])`.
 - An explicitly requested excerpt: `media_transform(operation="convert_gif", inputs=["video-attachment-id"], startSeconds=10, durationSeconds=20, fps=15, maxWidth=640)`.
 
@@ -19,31 +22,29 @@ Image operations can combine format, quality and dimensions in one decode. Quali
 
 GIF defaults preserve the full video at 12 fps with a longest edge of 480 pixels. Supply a start time or duration only for an explicitly requested excerpt. For videos at least 30 seconds long with at least two available slots, encoding runs concurrently in segments of roughly 15 seconds, followed by GIF frame-block merging without a full second encode. The final file must be strictly below **10,000,000 bytes**. At most four rounds reduce dimensions, color count and frame rates above 12, always preserving the selected duration and a minimum of 12 fps. GIF does not accept `maxBytes`. Audio is not part of GIF output.
 
-Results report actual format, dimensions, size, attempts and elapsed time. GIF also reports the time range, frame rate, color count, segment count, actual concurrency and merge duration. Success automatically registers attachments; do not register the same file again. The compatibility entry `bot_media(operation="convert_gif", ...)` has the same limits and full-duration default.
+Results report actual format, dimensions, size, attempts and elapsed time. GIF also reports the time range, frame rate, color count, segment count, actual concurrency and merge duration. Success automatically registers attachments; do not register the same file again.
 
 ## Calls
 
-- Transcribe speech: `media_analysis(kind="audio", inputs=["current-session-attachment-id"], question="Transcribe faithfully")`. Use an existing platform transcription first when available.
-- Analyze a video link: `media_analysis(kind="video", url="https://v.douyin.com/…/", question="What happens in this video?")`. Supports Douyin/Bilibili post URLs and share links on `v.douyin.com`/`b23.tv`. Extract the HTTPS URL from shared text. Do not substitute a web-page summary for video analysis. Douyin `note`/`slides` gallery links require `kind="image"`.
-- Analyze a video attachment: `media_analysis(kind="video", inputs=["current-session-attachment-id"], question="…")`. With no source, audio/video requests select the latest same-kind attachment in this session.
-- Download original images: `media_analysis(kind="image", url="https://…")`. Supports Douyin galleries, Bilibili image posts, direct image links and public web-page images.
-- Download video only: `media_analysis(kind="video", action="download", url="https://…")`. Returns a video attachment without calling an analysis model.
+- Download shared media: `media_download(url="https://v.douyin.com/…/")`. Supports configured image, gallery and video hosts and returns `assetId`, `kind`, `mime` and `name`.
+- Transcribe speech: `media_analysis(inputs=["current-session-attachment-id"], question="Transcribe faithfully")`. Use an existing platform transcription first when available.
+- Analyze an image, document or video: `media_analysis(inputs=["current-session-attachment-id"], question="…")`.
 
-`url` and `inputs` are mutually exclusive. Ordinary media processing does not require per-call approval or permission to execute local commands. Never use model-supplied identity or filesystem paths to access another session's attachments.
+`media_analysis` has no URL or download action; it accepts only required `inputs` and an optional `question`. `media_transform` accepts only attachment IDs. Downloads do not require ASR or video-analysis switches. Never use model-supplied identity or filesystem paths to access another session's attachments.
 
 ## Execution and replies
 
 The host runs the fixed module `dsh_bot_runtime.skills.media_analysis.media_api`. Its `platform_links` module directly retrieves Douyin share pages and parses page data before downloading real media bytes. Video continues through the locally isolated `yt-dlp` extractor. Douyin processing does not use third-party parsing services. Cookies are not read by default. With `DOUYIN_COOKIE_FILE`, only matching Douyin page requests receive cookies from the local Netscape cookie file. Bilibili galleries retain the existing parser; see [platform-link parsing](references/platform-links.md).
 
-The skill's [operations.json](operations.json) declares tool arguments, operation routes, model roles, fixed namespaced entries and attachment delivery. `tools` declares analysis and transformation separately. Add operations in that declaration and the `dsh_bot_runtime.skills.media_analysis` package. The host never accepts module/script paths from models, personas or workspaces.
+The skill's [operations.json](operations.json) declares tool arguments, operation routes, model roles and attachment delivery. `media_download`, `media_analysis` and `media_transform` remain separate tools. Add operations in that declaration and the `dsh_bot_runtime.skills.media_analysis` package. The host never accepts module/script paths from models, personas or workspaces.
 
 Analysis reuses the current turn's model provider URL, credentials and video/speech model configuration. Credentials are passed only in the subprocess environment. Video sends the complete MP4 image and audio streams; claim analysis only after a real model result. Speech selects the model-compatible payload: Gemini models receive an audio-MIME data URL through `image_url`, while other models use `input_audio`; configured transcription endpoints are also supported. If the model did not receive audio, report an error rather than automatically retrying a different payload.
 
-The namespaced `image_download` module downloads original images. Douyin galleries use image lists embedded in official share pages. Ordinary pages prefer explicit original-image links and the largest srcset. Downloaded bytes are not re-encoded. Downloaded images/videos are automatically registered as platform reply attachments. Do not output image Markdown, `asset://` URLs or attachment IDs in the text reply.
+`media_download` resolves supported share pages and direct links, downloads original bytes and registers the result as a session attachment when requested. It does not call ASR or visual analysis. Do not output image Markdown, `asset://` URLs or attachment IDs in the text reply.
 
 Distinguish quotations, visual observations, inferences and uncertainty. With `incomplete=true`, explicitly say only part was completed. A video cover is not an original gallery image; a page title is not the video's content. Briefly report actual tool failures without inventing completed downloads or understanding, and do not automatically retry potentially billed model requests. Follow the persona and user's requested reply language; faithful transcription retains the original speech language unless translation was requested.
 
-Messages, scheduled tasks and media jobs have no default total processing deadline; users can still cancel. Disabling the skill or revoking tool permission blocks subsequent calls immediately. The `bot_media` operations `transcribe`, `video_analyze`, `image_download` and `video_download` share these implementations and permissions.
+Messages, scheduled tasks and media jobs have no default total processing deadline; users can still cancel. Disabling the skill or revoking tool permission blocks subsequent calls immediately. Download, analysis and transformation each recheck permissions at execution time.
 
 Trusted private-chat users have no daily media-call count or daily accumulated video-analysis duration limit. The host uses the turn's frozen identity and current trust at execution; tool arguments cannot claim trusted identity. Per-request size, analysis duration, concurrency and storage limits still apply.
 

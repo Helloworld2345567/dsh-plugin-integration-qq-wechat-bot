@@ -14,7 +14,7 @@
     {
       "tool": {
         "name": "bot_voice",
-        "description": "Generate AI narration on an explicit user request and register an attachment for sending. Success means generation and registration only; the platform attempts delivery after this turn. Do not claim delivery in advance. Use bot_music for original song downloads and bot_sing for covers in the persona voice.",
+        "description": "Generate speech for an explicit request. Success registers audio for delivery; use bot_music for downloads and bot_sing for covers.",
         "parameters": {
           "mode": {
             "type": "string",
