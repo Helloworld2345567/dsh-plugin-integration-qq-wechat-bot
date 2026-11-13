@@ -32,7 +32,7 @@ export const catalogProfileInputSchema=serviceProfileRefSchema;
 export const catalogModelsInputSchema=z.object({}).strict().default({});
 export const serviceHealthInputSchema=serviceProfileRefSchema;
 export const serviceRefreshInputSchema=z.object({serviceId:serviceIdSchema}).strict();
-export const serviceStartInputSchema=z.object({serviceId:z.enum(['gpt-sovits','breeze-tts'])}).strict();
+export const serviceStartInputSchema=z.object({serviceId:z.enum(['gpt-sovits','breeze-tts','comfyui'])}).strict();
 export const acceptanceQueryInputSchema=z.object({personaId:z.string().min(1).max(80),personaRevision:z.number().int().positive(),serviceId:serviceIdSchema,profileId:z.string().min(1).max(80),profileRevision:z.number().int().positive(),profileContentHash:sha256Schema,operation:namespacedOperationSchema}).strict();
 export const acceptanceRecordInputSchema=acceptanceQueryInputSchema.extend({state:z.enum(['PASS','FAIL','BLOCKED']),evidenceType:z.string().regex(/^[a-z][a-z0-9_.-]*$/).max(160).default('operator-review'),evidence:z.string().trim().min(1).max(2000),ttlMs:z.number().int().min(60_000).max(30*86_400_000).default(30*86_400_000)}).strict();
 

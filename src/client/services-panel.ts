@@ -20,7 +20,7 @@ export interface ServicesPanelProps {
   onDraftChange:(patch:any)=>void;
   onSave:()=>unknown;
   onRefresh:()=>unknown;
-  onStart:(serviceId:'gpt-sovits'|'breeze-tts')=>unknown;
+  onStart:(serviceId:'gpt-sovits'|'breeze-tts'|'comfyui')=>unknown;
   onPickDirectory:(key:'modelsRoot'|'gptSovitsProjectRoot'|'breezeTtsProjectRoot'|'breezeTtsVoicesRoot')=>unknown;
   onPickFile?:(key:'comfyUiWorkflowPath')=>unknown;
   onToggleRobotService:()=>unknown;
@@ -100,7 +100,7 @@ export function ServicesPanel(props:ServicesPanelProps){
               props.ui.field(props.t('keyEnv'),draft.openAiKeyEnv??'OPENAI_API_KEY',value=>props.onDraftChange({openAiKeyEnv:value.trim()||undefined}),'text',{placeholder:'OPENAI_API_KEY',autoComplete:'off',spellCheck:false}),
             ),
       ),
-      draft.imageProtocol==='comfyui'?h(React,'p',{className:'muted'},props.t('comfyUiHint')):null,
+      draft.imageProtocol==='comfyui'?h(React,'div',{className:'actions'},props.ui.button(props.t('startComfyUi'),()=>props.onStart('comfyui'),{className:'primary',disabled:props.busy||props.dirty})):null,
     ):null,
     draft?h(React,'section',{className:'card service-card',key:'music-service'},
       h(React,'div',{className:'section-heading'},h(React,'h3',null,props.t('musicService'))),

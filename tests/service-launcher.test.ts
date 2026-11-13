@@ -13,6 +13,17 @@ test('external launcher starts Breeze with the fixed project script and waits fo
   assert.equal(result.state,'ready');assert.equal(result.pid,42);assert.equal(calls[1][0],'spawn');assert.equal(calls[1][3],root);assert.equal(calls[1][2].at(-1),path.join(root,'Start-Breeze.ps1'));
 });
 
+test('external launcher starts ComfyUI with the local project script and waits for system stats',async t=>{
+  await mkdir(path.resolve('.codex'),{recursive:true});
+  const root=await mkdtemp(path.resolve('.codex/service-launcher-comfyui-'));t.after(()=>rm(root,{recursive:true,force:true}));
+  await mkdir(path.join(root,'scripts'),{recursive:true});await mkdir(path.join(root,'ComfyUI'),{recursive:true});
+  await Promise.all([writeFile(path.join(root,'scripts','start_comfyui.ps1'),''),writeFile(path.join(root,'ComfyUI','main.py'),'')]);
+  const calls:any[]=[];let healthy=false;
+  const launcher=new ExternalServiceLauncher(async(serviceId,baseUrl)=>{calls.push(['health',serviceId,baseUrl]);return healthy;},async(file,args,cwd)=>{calls.push(['spawn',file,args,cwd]);healthy=true;return 43;},1,30);
+  const result=await launcher.start({serviceId:'comfyui',baseUrl:'http://127.0.0.1:8188',projectRoot:root},new AbortController().signal);
+  assert.equal(result.state,'ready');assert.equal(result.pid,43);assert.equal(calls[1][0],'spawn');assert.equal(calls[1][3],root);assert.deepEqual(calls[1][2].slice(-6),['-ProjectRoot',root,'-ListenHost','127.0.0.1','-Port','8188']);
+});
+
 test('external launcher does not spawn an already healthy service',async t=>{
   await mkdir(path.resolve('.codex'),{recursive:true});
   const root=await mkdtemp(path.resolve('.codex/service-launcher-running-'));t.after(()=>rm(root,{recursive:true,force:true}));let spawned=false;

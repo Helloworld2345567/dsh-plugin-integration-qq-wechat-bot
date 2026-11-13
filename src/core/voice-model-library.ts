@@ -91,9 +91,9 @@ export class VoiceModelLibrary {
   }
   async start(serviceId:LaunchableService,signal:AbortSignal):Promise<ServiceStartResult>{
     const settings=this.settings();
-    const projectRoot=serviceId==='breeze-tts'?settings.breezeTtsProjectRoot:settings.gptSovitsProjectRoot||path.dirname(settings.modelsRoot);
+    const projectRoot=serviceId==='comfyui'?path.dirname(path.dirname(settings.comfyUiWorkflowPath)):serviceId==='breeze-tts'?settings.breezeTtsProjectRoot:settings.gptSovitsProjectRoot||path.dirname(settings.modelsRoot);
     if(!projectRoot)throw Error(serviceId==='breeze-tts'?'BREEZE_TTS_PROJECT_ROOT_REQUIRED':'GPT_SOVITS_PROJECT_ROOT_REQUIRED');
-    return this.launcher.start({serviceId,baseUrl:serviceId==='breeze-tts'?settings.breezeTtsUrl:settings.gptSovitsUrl,projectRoot},signal);
+    return this.launcher.start({serviceId,baseUrl:serviceId==='breeze-tts'?settings.breezeTtsUrl:serviceId==='comfyui'?settings.comfyUiBaseUrl:settings.gptSovitsUrl,projectRoot},signal);
   }
   private unavailable(serviceIds:readonly VoiceService[],state:'missing'|'blocked',reason:DiagnosticDetail|DiagnosticDetail[]):void{
     for(const serviceId of serviceIds){this.discovery.failSource(serviceId,SOURCE_ID,state);this.reports[serviceId]={state,profileCount:0,checkedAt:Date.now(),...reportDiagnostics(Array.isArray(reason)?reason:[reason]),models:[]};}

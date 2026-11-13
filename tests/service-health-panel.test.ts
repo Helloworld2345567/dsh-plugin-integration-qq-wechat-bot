@@ -30,7 +30,7 @@ test('overview and services load real health, and service actions refresh profil
   for(const page of ['overview','services']){
     const previousWindow=(globalThis as any).window,previousFetch=globalThis.fetch;
     const summary={bots:[],configs:[],counts:{pendingDeliveries:0},health:{activeTasks:0,serviceRunning:false}};
-    let settings:any={revision:'sha256:'+'1'.repeat(64),modelsRoot:'E:\\models',gptSovitsUrl:'http://127.0.0.1:9880',breezeTtsUrl:'http://127.0.0.1:8080',gptSovitsProjectRoot:'E:\\gpt',breezeTtsProjectRoot:'E:\\breeze',breezeTtsVoicesRoot:'E:\\breeze\\voices',reports:{rvc:{state:'ready',checkedAt:123,profileCount:1,diagnostics:[]}}};
+    let settings:any={revision:'sha256:'+'1'.repeat(64),modelsRoot:'E:\\models',gptSovitsUrl:'http://127.0.0.1:9880',breezeTtsUrl:'http://127.0.0.1:8080',gptSovitsProjectRoot:'E:\\gpt',breezeTtsProjectRoot:'E:\\breeze',breezeTtsVoicesRoot:'E:\\breeze\\voices',imageProtocol:'comfyui',comfyUiBaseUrl:'http://127.0.0.1:8188',comfyUiWorkflowPath:'E:\\COMFYUI\\workflows\\fixture.json',reports:{rvc:{state:'ready',checkedAt:123,profileCount:1,diagnostics:[]}}};
     const calls:any[]=[],effects:Array<()=>unknown>=[],cleanups:Array<()=>void>=[],states:any[]=[page,summary],refs:any[]=[];
     let app:any,cursor=0,refCursor=0,mounted=false,healthState='ready';
     const React={Fragment:'fragment',createElement:(type:any,props:any,...children:any[])=>({type,props,children}),useState:(initial:any)=>{const i=cursor++;if(!(i in states))states[i]=initial;return[states[i],(next:any)=>{states[i]=typeof next==='function'?next(states[i]):next;}];},useRef:(initial:any)=>{const i=refCursor++;return refs[i]??=({current:initial});},useEffect:(effect:()=>unknown)=>{if(!mounted)effects.push(effect);}};
@@ -53,6 +53,7 @@ test('overview and services load real health, and service actions refresh profil
       await settle();await settle();tree=render();
       assert.equal(calls.filter(call=>call.name==='service.health').length,2);assert.ok(tree.some(n=>n.children.includes('连接正常')));assert.ok(tree.some(n=>n.children.includes('已配置')));
       if(page==='services'){
+        assert.ok(tree.some(n=>n.type==='button'&&n.children.includes('启动 ComfyUI')));assert.ok(!tree.some(n=>n.type==='p'&&n.children.includes('选择 ComfyUI 后将提交 API 格式工作流')));
         assert.ok(tree.some(n=>n.props?.role==='status'&&n.children.includes('已停止')));
         for(const action of ['refresh','save','start']){
           const previousHealthCalls=calls.filter(call=>call.name==='service.health').length,previousProfileCalls=calls.filter(call=>call.name==='catalog.profiles').length;

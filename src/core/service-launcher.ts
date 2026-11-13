@@ -4,7 +4,7 @@ import {access,readdir} from 'node:fs/promises';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 
-export type LaunchableService='gpt-sovits'|'breeze-tts';
+export type LaunchableService='gpt-sovits'|'breeze-tts'|'comfyui';
 export interface ServiceLaunchSettings {
   serviceId:LaunchableService;
   baseUrl:string;
@@ -70,8 +70,9 @@ async function findGptSovitsRoot(configuredRoot:string):Promise<{root:string;pyt
 }
 
 async function defaultHealth(serviceId:LaunchableService,baseUrl:string,signal:AbortSignal):Promise<boolean>{
-  const response=await fetch(`${trimUrl(baseUrl)}${serviceId==='breeze-tts'?'/health':'/openapi.json'}`,{signal:AbortSignal.any([signal,AbortSignal.timeout(2500)]),redirect:'error'});
+  const response=await fetch(`${trimUrl(baseUrl)}${serviceId==='breeze-tts'?'/health':serviceId==='comfyui'?'/system_stats':'/openapi.json'}`,{signal:AbortSignal.any([signal,AbortSignal.timeout(2500)]),redirect:'error'});
   if(!response.ok)return false;
+  if(serviceId==='comfyui')return true;
   if(serviceId!=='breeze-tts')return true;
   const value=await response.json().catch(()=>undefined) as {status?:unknown;sample_rate?:unknown}|undefined;
   return value?.status==='ok'&&value.sample_rate===24000;
@@ -113,11 +114,14 @@ export class ExternalServiceLauncher implements ServiceLauncher {
     signal.throwIfAborted();
     const root=path.resolve(settings.projectRoot);
     if(!path.isAbsolute(settings.projectRoot)||/[\x00-\x1f]/.test(settings.projectRoot))throw Error('SERVICE_LAUNCH_ROOT_INVALID');
-    const endpoint=new URL(settings.baseUrl),expectedPort=settings.serviceId==='breeze-tts'?'8080':'9880',actualPort=endpoint.port||(endpoint.protocol==='https:'?'443':'80');
+    const endpoint=new URL(settings.baseUrl),expectedPort=settings.serviceId==='breeze-tts'?'8080':settings.serviceId==='comfyui'?'8188':'9880',actualPort=endpoint.port||(endpoint.protocol==='https:'?'443':'80');
     if(!['127.0.0.1','localhost','::1'].includes(endpoint.hostname)||actualPort!==expectedPort)throw Error('SERVICE_LAUNCH_ENDPOINT_MISMATCH');
     if(await this.checkHealth(settings.serviceId,settings.baseUrl,signal))return{serviceId:settings.serviceId,state:'already-running',...diagnosticFields("serviceAlreadyRunning")};
     let command:string,args:string[],cwd:string;
-    if(settings.serviceId==='breeze-tts'){
+    if(settings.serviceId==='comfyui'){
+      const script=path.join(root,'scripts','start_comfyui.ps1');await access(script);await access(path.join(root,'ComfyUI','main.py'));
+      command=powershell;args=['-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',script,'-ProjectRoot',root,'-ListenHost','127.0.0.1','-Port','8188'];cwd=root;
+    }else if(settings.serviceId==='breeze-tts'){
       const script=path.join(root,'Start-Breeze.ps1');await access(script);command=powershell;args=['-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',script];cwd=root;
     }else{
       const layout=await findGptSovitsRoot(root),python=layout.python,serviceRoot=layout.serviceRoot;
