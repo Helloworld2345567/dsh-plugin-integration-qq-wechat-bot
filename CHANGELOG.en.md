@@ -6,6 +6,7 @@ This document records verifiable changes for users and maintainers. A third-part
 
 ## [Unreleased]
 
+- Share each native session instance between the Web UI and QQ/WeChat, fixing duplicate restoration and writer-held errors after restart. Initialize persona, model, permissions and tools once per instance while preserving conversation history.
 - Add the English management UI, plugin metadata and formal documentation, retaining Chinese entry points and reciprocal language navigation.
 - Add project-wide `messageLocale`, independent of UI language. System messages use the language captured when an operation starts; running tasks and older data remain compatible.
 - New persona templates follow UI language. Built-in personas on fresh installations follow the user's conversation language; existing personas are not rewritten.

@@ -173,7 +173,7 @@ export class Admin {
       }
       case 'memory.list':return repos.memory.memories(z.string().parse(input.scope));
       case 'session.history':{
-        const id=z.string().parse(input.id);if(!repos.sessions.findSession(id)&&!repos.sessions.bindings().some(b=>b.sessionId===id))throw localizedError('sessionNotOwned');
+        const id=z.string().parse(input.id);if(!repos.sessions.findSession(id)&&!repos.sessions.bindings().some(b=>b.sessionId===id))throw localizedError('sessionMissing');
         const log=await this.ctx.sessionQuery.readSession(SessionId(id));return log.events.filter(e=>['user/message','assistant/message','tool/result','turn/start','turn/end','request/header'].includes(e.type)).slice(-200).map(e=>e.type==='assistant/message'?{...e,data:{...e.data,message:{...e.data.message,content:e.data.message.content.filter(b=>b.type!=='reasoning')}}}:e);
       }
       case 'memory.forget':repos.memory.forget(z.string().parse(input.scope),z.string().parse(input.key));return{ok:true};

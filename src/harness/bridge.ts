@@ -3,7 +3,7 @@ import {SystemMessageError} from '../i18n/system.js';
 import {skillToolManifests, resolveSkillOperation} from '../core/skill-operations.js';
 import {mediaOperationRegistry,type MediaOperationRegistry} from '../core/media-operation-registry.js';
 import type { Context } from '@deepseek-ai/cordis';
-import { installModelSelection, type Agent, type AgentHandle, type ModelSelectionRef } from '@deepseek-ai/dsh-agent';
+import { type Agent, type ModelSelectionRef } from '@deepseek-ai/dsh-agent';
 import { MessageId, ToolCallId, ReasoningEffortId, type ContentBlock } from '@deepseek-ai/dsh-llm';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { scopeParentOf } from '@deepseek-ai/dsh-scope';
@@ -47,13 +47,14 @@ import {buildChatPrompt,CHAT_PROMPT_SECTIONS,CHAT_PROMPT_CONTEXTS,CHAT_SUPPRESSE
 import {TOOL_LOADER,loadTools,projectTools,toolInstructions} from './tool-disclosure.js';
 import {CapabilityRegistry} from '../core/capability-registry.js';
 import {deleteNativeSessions} from './session-deletion.js';
-import {SessionOwners} from './session-owners.js';
+import {SessionHandles} from './session-handles.js';
+import {installBotModelSelection} from './model-selection.js';
 
 import {executeSingingTool} from './singing-tool.js';
 import {executeMusicTool} from './music-tool.js';
 import type {SingingTurn} from '../core/singing-state.js';
 
-export interface LiveSession { handle:AgentHandle; binding:SessionBinding; snapshot:TurnSnapshot; skills:Readonly<Record<string,FrozenSkill>>; sources:string[]; assets:Output[]; explicitAssets?:Set<string>; images:{inFlight:boolean;completed:boolean}; voice:{attempted:boolean}; singing:SingingTurn; cwd:string; shellDirectory?:string; selection:ModelSelectionRef; restrictions?:()=>void; invalidator?:()=>void; refreshTools?:()=>void; loadedTools:Set<string>; toolSections:AssembledSection[]; policyError?:Error }
+export interface LiveSession { agent:Agent; binding:SessionBinding; snapshot:TurnSnapshot; skills:Readonly<Record<string,FrozenSkill>>; sources:string[]; assets:Output[]; explicitAssets?:Set<string>; images:{inFlight:boolean;completed:boolean}; voice:{attempted:boolean}; singing:SingingTurn; cwd:string; shellDirectory?:string; selection:ModelSelectionRef; restrictions?:()=>void; invalidator?:()=>void; refreshTools?:()=>void; loadedTools:Set<string>; toolSections:AssembledSection[]; policyError?:Error }
 export interface HarnessExtensions {skills?:DynamicSkills;stats?:StatsService;management?:BotManagement;model?:(binding:SessionBinding,snapshot:TurnSnapshot,args:BotModelArguments,signal:AbortSignal)=>Promise<unknown>;voice?:(binding:SessionBinding,snapshot:TurnSnapshot,args:BotVoiceArguments,signal:AbortSignal)=>Promise<unknown>;evolve?:(binding:SessionBinding,snapshot:TurnSnapshot,args:Record<string,unknown>,signal:AbortSignal)=>Promise<unknown>}
 interface RunningTurn extends HarnessRunOptions {
   pendingText:Array<{seq:number;turnId:string;text:string}>;
@@ -70,15 +71,17 @@ export class NativeHarness implements HarnessPort {
   readonly capabilities=new CapabilityRegistry();
   readonly operationRegistry:MediaOperationRegistry;
   private readonly scoped=new WeakMap<Agent,LiveSession>();
+  private readonly initializing=new WeakMap<Agent,Promise<LiveSession>>();
+  private readonly contributions=new Map<Agent,()=>Promise<void>>();
   private readonly closedTerminals=new WeakMap<Agent,Set<string>>();
   readonly skillFiles:DynamicSkills;
   private readonly runOptions=new Map<string,RunningTurn>();
-  private current(live:LiveSession):BotConfig {return this.repos.personas.effectiveConfig(this.repos.sessions.findBinding(live.binding.key)??live.binding);}
+  private current(live:LiveSession):BotConfig {const current=this.repos.sessions.findBinding(live.binding.key);return this.repos.personas.effectiveConfig(current?.sessionId===live.binding.sessionId?current:live.binding);}
   private turn(fallback:LiveSession,agent?:object):LiveSession{return agent?this.scoped.get(agent as Agent)??fallback:fallback;}
-  private requireMainAgent(live:LiveSession,agent?:Agent):void {if(!agent||this.live.get(live.binding.sessionId)?.handle.agent!==agent)throw new Error('MAIN_AGENT_REQUIRED: Session management mutations must run in the current main task');}
+  private requireMainAgent(live:LiveSession,agent?:Agent):void {if(!agent||this.live.get(live.binding.sessionId)?.agent!==agent)throw new Error('MAIN_AGENT_REQUIRED: Session management mutations must run in the current main task');}
   private childResult(name:string,live:LiveSession,agent?:Agent):boolean {
     if(name!=='structured_output'||!agent)return false;
-    const root=this.live.get(live.binding.sessionId)?.handle.agent,definition=this.ctx.tools.get(name,agent);
+    const root=this.live.get(live.binding.sessionId)?.agent,definition=this.ctx.tools.get(name,agent);
     return !!root&&agent!==root&&!!definition&&definition!==this.ctx.tools.get(name,root);
   }
   private async syncPermissions(ctx:Context,agent:Agent,live:LiveSession):Promise<void>{
@@ -112,7 +115,7 @@ export class NativeHarness implements HarnessPort {
     this.closedTerminals.delete(agent);
     live.shellDirectory=live.cwd;
   }
-  constructor(readonly ctx:Context,readonly repos:RuntimeRepositories,readonly assets:Assets,readonly media:MediaService,readonly extensions:HarnessExtensions={},readonly systemLocale:()=>SystemLocale=()=> 'zh',readonly sessionOwners=new SessionOwners(ctx)){
+  constructor(readonly ctx:Context,readonly repos:RuntimeRepositories,readonly assets:Assets,readonly media:MediaService,readonly extensions:HarnessExtensions={},readonly systemLocale:()=>SystemLocale=()=> 'zh',readonly sessionHandles=new SessionHandles(ctx)){
     this.operationRegistry=media.operations??mediaOperationRegistry;
     this.statsAdapter=new StatsEventAdapter(()=>this.extensions.stats);
     this.skillFiles=extensions.skills??new DynamicSkills(repos.personas,repos.storage.home);
@@ -142,17 +145,24 @@ export class NativeHarness implements HarnessPort {
       try{for await(const chunk of next()){if(chunk.type==='usage')usage=chunk.usage;yield chunk;}}
       finally{stats.recordAuxiliary(sessionId,{id,at,provider:options.provider,model:options.model,usage,kind:'compaction'});}
     });
-    // Runtime ownership and prompt scope ancestry are separate native Harness relations.
+    ctx.on('agent/disposed',({agent})=>{
+      if(this.live.get(agent.id)?.agent===agent)this.live.delete(agent.id);
+      this.scoped.delete(agent);this.initializing.delete(agent);
+      const release=this.contributions.get(agent);this.contributions.delete(agent);void release?.();
+    });
+    // Every creation source receives the same bot configuration before queued input runs.
     ctx.on('agent/created',async({agent})=>{
+      const binding=this.sessionBinding(agent.id);
+      if(binding){await this.initializeAgent(agent,binding);return undefined;}
       if(this.scoped.has(agent))return undefined;
       const parent=ctx.agents.list().find(owner=>this.scoped.has(owner)&&ctx.agents.isOwnedBy(agent.id,owner));if(!parent)return undefined;
-      const original=this.scoped.get(parent)!;const child={...original,snapshot:original.snapshot,sources:[...original.sources],loadedTools:new Set<string>(),toolSections:[],shellDirectory:undefined,selection:{current:this.selection(original.snapshot.config as BotConfig),assembled:undefined}};
+      const original=this.scoped.get(parent)!;const child={...original,agent,snapshot:original.snapshot,sources:[...original.sources],loadedTools:new Set<string>(),toolSections:[],shellDirectory:undefined,selection:{current:this.selection(original.snapshot.config as BotConfig),assembled:undefined}};
       this.scoped.set(agent,child);
       repos.statsSessions.saveOwnedStart(agent.id,Number(agent.session.firstLiveSeq));
       this.statsAdapter.observe(agent.id,child.binding.scope.botId,child.binding.sessionId,'subagent');
       await agent.ctx.inject(['tools','skills','systemPrompt','permissionPresets','llm'],async childCtx=>{
         if(!scopeParentOf(agent))await ctx.agentPresets.mount(childCtx,'bot-unified-chat');
-        installModelSelection(childCtx,child.selection);
+        installBotModelSelection(childCtx,child.selection);
         const inherited=childCtx.tools.schemas(agent).map(t=>t.name).filter(n=>!BUSINESS_TOOLS.has(n)&&n!=='run_code');
         const bot=repos.bots.bot(child.binding.scope.botId);childCtx.tools.restrict({allow:inherited.filter(n=>permitted(n,child.snapshot.config as BotConfig,bot,child.binding.scope))});
         await this.ctx.workingDirectory.set(agent,child.cwd);
@@ -197,9 +207,9 @@ export class NativeHarness implements HarnessPort {
   }
   async compact(binding:SessionBinding,signal:AbortSignal):Promise<string> {
     const live=await this.session(binding);signal.throwIfAborted();
-    const execution=await this.ctx.commands.execute(live.handle.agent,'/compact',[],signal);
+    const execution=await this.ctx.commands.execute(live.agent,'/compact',[],signal);
     if(!execution)throw new Error('COMPACT_COMMAND_UNAVAILABLE');
-    await this.ctx.sessions.flush(live.handle.agent.session);
+    await this.ctx.sessions.flush(live.agent.session);
     if(execution.result.kind==='error')throw new Error(execution.result.text??'COMPACT_FAILED');
     return execution.result.text??'';
   }
@@ -224,18 +234,37 @@ export class NativeHarness implements HarnessPort {
     for(const role of ['asr','video'] as const){const override=config.media[role];if(!override?.provider&&!override?.model)continue;const provider=override.provider??config.model.provider;if(!(await this.ctx.llm.listModels(provider)).some(m=>m.id===(override.model??config.model!.model)))throw new Error('UNKNOWN_MEDIA_MODEL');}
   }
   private selection(config:BotConfig):ModelSelectionRef['current'] {return config.model?{provider:config.model.provider,model:config.model.model,reasoningEffort:config.model.reasoningEffort?ReasoningEffortId(config.model.reasoningEffort):undefined}:undefined;}
+  private sessionBinding(id:string):SessionBinding|undefined {
+    const record=this.repos.sessions.findSession(id);if(!record)return;
+    const current=this.repos.sessions.findBinding(record.scopeKey);if(current?.sessionId===id)return current;
+    return {key:record.scopeKey,scope:record.scope,sessionId:record.id,generation:record.generation,persisted:record.persisted,personaId:record.personaId,modelOverride:record.modelOverride,ttsOverride:record.ttsOverride,stsOverride:record.stsOverride,recentSince:record.recentSince};
+  }
   private async session(binding:SessionBinding):Promise<LiveSession>{
-    const known=this.live.get(binding.sessionId);if(known)return known;
+    const id=binding.sessionId as Agent['id'];
+    const existing=this.ctx.agents.get(id);if(existing){await this.sessionHandles.wait(id);const live=await this.initializeAgent(existing,binding);binding.persisted=true;return live;}
+    const config=this.runOptions.get(id)?.snapshot?.config??this.repos.personas.effectiveConfig(binding);
+    if(!config.model)throw new SystemMessageError('modelRequired');
+    const cwd=await prepareWorkingDirectory(this.repos.bots.bot(binding.scope.botId),binding.key,this.repos.storage.home);
+    const persisted=binding.persisted||this.repos.sessions.findSession(id)?.persisted;
+    const handle=persisted?await this.ctx.agents.resume({resumeSessionId:id}):await this.ctx.agents.create({sessionId:id,meta:{cwd,agentPreset:'bot-unified-chat'},agentOptions:{provider:config.model.provider,model:config.model.model}});
+    const live=await this.initializeAgent(handle.agent,binding);binding.persisted=true;return live;
+  }
+  private async initializeAgent(agent:Agent,binding:SessionBinding):Promise<LiveSession>{
+    const known=this.initializing.get(agent);if(known)return known;
+    const pending=this.configureAgent(agent,binding);this.initializing.set(agent,pending);
+    try{return await pending;}catch(error){this.initializing.delete(agent);throw error;}
+  }
+  private async configureAgent(agent:Agent,binding:SessionBinding):Promise<LiveSession>{
     const bot=this.repos.bots.bot(binding.scope.botId);const initialSnapshot=this.runOptions.get(binding.sessionId)?.snapshot;const config=initialSnapshot?.config??this.repos.personas.effectiveConfig(binding);if(!config.model)throw new SystemMessageError('modelRequired');
     const live={} as LiveSession;
-    live.binding=binding;live.sources=[];live.loadedTools=new Set<string>();live.toolSections=[];live.assets=[];live.images={inFlight:false,completed:false};live.voice={attempted:false};live.singing={attempted:false};live.snapshot=initialSnapshot??freezeTurn(config as BotConfig,bot,binding.scope,[],undefined,this.systemLocale(),this.media.imageSettings());live.skills=this.skillFiles.snapshot(config);live.selection={current:this.selection(config),assembled:undefined};
+    live.agent=agent;live.binding=binding;live.sources=[];live.loadedTools=new Set<string>();live.toolSections=[];live.assets=[];live.images={inFlight:false,completed:false};live.voice={attempted:false};live.singing={attempted:false};live.snapshot=initialSnapshot??freezeTurn(config as BotConfig,bot,binding.scope,[],undefined,this.systemLocale(),this.media.imageSettings());live.skills=this.skillFiles.snapshot(config);live.selection={current:this.selection(config),assembled:undefined};
     this.statsAdapter.observe(binding.sessionId,binding.scope.botId,binding.sessionId,'agent');
     const cwd=await prepareWorkingDirectory(bot,binding.key,this.repos.storage.home);live.cwd=cwd;
-    const setup=async(scopeCtx:Context,agent:Agent)=>{await scopeCtx.inject(['skills','tools','systemPrompt','permissionPresets','llm'],async agentCtx=>{
+    const contribution=agent.ctx.inject(['skills','tools','systemPrompt','permissionPresets','llm'],async agentCtx=>{
       await this.ctx.agentPresets.mount(agentCtx,'bot-unified-chat');
       this.scoped.set(agent,live);
       const selection=new Proxy(live.selection,{get:(_target,key)=>Reflect.get(this.turn(live,this.ctx.agents.currentInitiator()).selection,key),set:(_target,key,value)=>Reflect.set(this.turn(live,this.ctx.agents.currentInitiator()).selection,key,value)});
-      installModelSelection(agentCtx,selection);
+      installBotModelSelection(agentCtx,selection);
       const inheritedNames=agentCtx.tools.schemas(agent).map(t=>t.name).filter(name=>!BUSINESS_TOOLS.has(name)&&name!=='run_code');
       const updateVisibility=()=>{
         live.restrictions?.();const currentBot=this.repos.bots.bot(binding.scope.botId);const allowed=inheritedNames.filter(name=>permitted(name,live.snapshot.config as BotConfig,currentBot,binding.scope));live.restrictions=agentCtx.tools.restrict({allow:allowed});
@@ -282,10 +311,11 @@ export class NativeHarness implements HarnessPort {
       this.registerSkills(agentCtx,live);
       this.registerChatContext(agentCtx,live,agent);
       updateVisibility();
-    });};
-    const id=binding.sessionId as Agent['id'];
-    live.handle=binding.persisted?await this.ctx.agents.resume({resumeSessionId:id,setup}):await this.ctx.agents.create({sessionId:id,meta:{cwd,agentPreset:'bot-unified-chat'},agentOptions:{provider:config.model.provider,model:config.model.model},setup});
-    binding.persisted=true;this.repos.sessions.markSessionPersisted(binding);this.live.set(binding.sessionId,live);return live;
+
+    });
+    const release=this.ctx.effect(()=>()=>contribution.dispose());this.contributions.set(agent,release);
+    try{await contribution;binding.persisted=true;this.repos.sessions.markSessionPersisted(binding);this.live.set(binding.sessionId,live);return live;}
+    catch(error){await release();this.contributions.delete(agent);this.scoped.delete(agent);throw error;}
   }
   private registerSkills(ctx:Context,live:LiveSession):void {
     ctx.skills.registerProvider(control=>{live.invalidator=control.invalidate;const available=()=>Object.values(live.skills).filter(skill=>this.current(live).skills.includes(skill.name));
@@ -533,7 +563,7 @@ export class NativeHarness implements HarnessPort {
     if(live.cwd!==cwd)await this.assets.migrate(binding.key);
     const sourceIds=messages.map(message=>message.id);const metricIds=sourceIds.map(sourceId=>`inbox:${binding.key}:${sourceId}`);
     const markFirst=()=>{const at=Date.now();for(const id of metricIds){const metric=this.repos.telemetry.metrics.findTurnMetric(id);if(metric&&!metric.modelFirstFeedbackAt)this.repos.telemetry.metrics.updateTurnMetric(id,{modelFirstFeedbackAt:at});}};
-    await this.ctx.workingDirectory.set(live.handle.agent,cwd,signal);live.cwd=cwd;
+    await this.ctx.workingDirectory.set(live.agent,cwd,signal);live.cwd=cwd;
     live.sources=messages.map(m=>m.id);const content:ContentBlock[]=[];
     const previousFailure=recentFailureContext({failures:this.repos.telemetry.failures,deliveries:this.repos.deliveries,inbox:this.repos.inbox},binding,messages);if(previousFailure)content.push({type:'text',text:previousFailure});
     for(const message of messages){
@@ -547,12 +577,12 @@ export class NativeHarness implements HarnessPort {
     }
     const attached=new Set(messages.flatMap(message=>[...message.attachments,...(message.quoted?.attachments??[])].map(input=>input.handle)));
     const recent=this.assets.recent(binding.key).filter(a=>!attached.has(a.id)&&(a.kind==='image'||a.kind==='video'));if(recent.length)content.push({type:'text',text:`Recent attachments in this session (newest first; select according to the user request and use tools to read actual content): ${JSON.stringify(recent.map(a=>({id:a.id,kind:a.kind,name:a.name})))}`});
-    const start=live.handle.agent.session.seq;const abort=()=>live.handle.agent.cancel({kind:'user'});signal.addEventListener('abort',abort,{once:true});
+    const start=live.agent.session.seq;const abort=()=>live.agent.cancel({kind:'user'});signal.addEventListener('abort',abort,{once:true});
     try{
-      signal.throwIfAborted();live.handle.agent.followup({id:MessageId(randomUUID()),role:'user',source:{kind:'user'},content});await live.handle.agent.whenIdle();signal.throwIfAborted();
+      signal.throwIfAborted();live.agent.followup({id:MessageId(randomUUID()),role:'user',source:{kind:'user'},content});await live.agent.whenIdle();signal.throwIfAborted();
       const run=this.runOptions.get(binding.sessionId)!;await run.textDelivery;if(run.deliveryError)throw run.deliveryError;
-      await this.ctx.sessions.flush(live.handle.agent.session);
-      const events=live.handle.agent.session.snapshotEvents().slice(start);const end=events.filter(e=>e.type==='turn/end').at(-1);
+      await this.ctx.sessions.flush(live.agent.session);
+      const events=live.agent.session.snapshotEvents().slice(start);const end=events.filter(e=>e.type==='turn/end').at(-1);
       const firstFeedback=events.find(event=>event.type==='assistant/message'||event.type==='assistant/attempt');if(firstFeedback)markFirst();
       if(!end||end.type!=='turn/end')throw new Error('HARNESS_TURN_NOT_COMPLETED');
       if(end.data.reason.kind!=='completed'){
@@ -567,9 +597,9 @@ export class NativeHarness implements HarnessPort {
         return value?[{type:'text' as const,text:value}]:[];
       });
       return{turnId:String(end.data.turn),outputs:[...text,...live.assets],snapshot:live.snapshot,voiceAttempted:live.voice.attempted,singingAttempted:live.singing.attempted};
-    }finally{signal.removeEventListener('abort',abort);await this.ctx.sessions.flush(live.handle.agent.session);await this.repos.chatHistory.write(binding.key,binding.sessionId,live.handle.agent.session.snapshotEvents());}
+    }finally{signal.removeEventListener('abort',abort);await this.ctx.sessions.flush(live.agent.session);await this.repos.chatHistory.write(binding.key,binding.sessionId,live.agent.session.snapshotEvents());}
   }
-  cancel(sessionId:string):void{const root=this.live.get(sessionId)?.handle.agent;if(!root)return;const pending=[root];const seen=new Set<Agent>();while(pending.length){const parent=pending.shift()!;if(seen.has(parent))continue;seen.add(parent);for(const child of this.ctx.agents.list())if(this.ctx.agents.isOwnedBy(child.id,parent))pending.push(child);parent.cancel({kind:'user'});}}
-  async dispose(sessionId?:string):Promise<void>{for(const [id,live] of this.live){if(!sessionId||id===sessionId){await live.handle.dispose();this.live.delete(id);}}}
-  async deleteSessions(sessionIds:readonly string[]):Promise<readonly string[]>{return deleteNativeSessions(this.ctx,sessionIds,(ids,remove)=>this.sessionOwners.deleting(ids,async()=>{for(const id of ids)this.live.delete(id);return remove();}));}
+  cancel(sessionId:string):void{const root=this.live.get(sessionId)?.agent;if(!root)return;const pending=[root];const seen=new Set<Agent>();while(pending.length){const parent=pending.shift()!;if(seen.has(parent))continue;seen.add(parent);for(const child of this.ctx.agents.list())if(this.ctx.agents.isOwnedBy(child.id,parent))pending.push(child);parent.cancel({kind:'user'});}}
+  async dispose(sessionId?:string):Promise<void>{for(const id of [...this.live.keys()])if(!sessionId||id===sessionId){await this.sessionHandles.dispose(id);this.live.delete(id);}}
+  async deleteSessions(sessionIds:readonly string[]):Promise<readonly string[]>{return deleteNativeSessions(this.ctx,sessionIds,(ids,remove)=>this.sessionHandles.deleting(ids,async()=>{for(const id of ids)this.live.delete(id);return remove();}));}
 }

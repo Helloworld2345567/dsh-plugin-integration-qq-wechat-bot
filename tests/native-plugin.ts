@@ -76,12 +76,14 @@ export async function apply(ctx:Context){
   ctx.llm.registerAdapter(['bot-fixture-history'],new InHistoryFixture());
   interface StagedStep {text?:string;tool?:{name:string;args:Record<string,unknown>}}
   const stagedCases=new Map<string,{steps:StagedStep[];failAttempt?:boolean;calls:number}>();
+  const stagedRequests:GenerateOptions[]=[];
   class StagedFixture extends LlmAdapter{
     providerInfo(provider:string){return{id:provider,name:'Local staged-output fixture'};}
-    async listModels(provider:string){return[{provider,id:'first',name:'first'}];}
+    async listModels(provider:string){return ['first','second'].map(id=>({provider,id,name:id}));}
     async resolveModel(provider:string,id:string){return{provider,id,name:id,context:{contextWindow:24000}};}
     async *stream(options:GenerateOptions):AsyncIterable<StreamChunk>{
       if(options.purpose){yield*text('staged fixture');return;}
+      stagedRequests.push(options);
       const script=stagedCases.get(String(options.sessionId));assert.ok(script,'a staged native request must have an explicit fixture script');script.calls++;
       const step:StagedStep|undefined=script.failAttempt?{text:'FAILED_ATTEMPT_BODY'}:script.steps.shift();assert.ok(step,'the staged model must not continue beyond its expected final reply');
       yield{type:'block-start',index:0,blockType:'reasoning'};yield{type:'block-end',index:0,block:{type:'reasoning',text:'STAGED_PRIVATE_REASONING'}};
@@ -134,10 +136,10 @@ export async function apply(ctx:Context){
     assert.equal(memory.memories(scopeKey(scope))[0]?.value,'绿茶');
     assert.equal(memory.memories(scopeKey(scope))[0]?.source,'first');assert.ok(requests[2].messages.some(m=>m.role==='tool'&&JSON.stringify(m.content).includes('Saved the preference')));
     const second=await bridge.run(binding,[msg('second','接着聊')],AbortSignal.timeout(30000));
-    assert.equal(second.snapshot.config.id,'sakura');assert.equal(requests.at(-1)!.model,'second');assert.equal(bridge.live.get(binding.sessionId)!.handle.agent.id,binding.sessionId);
+    assert.equal(second.snapshot.config.id,'sakura');assert.equal(requests.at(-1)!.model,'second');assert.equal(bridge.live.get(binding.sessionId)!.agent.id,binding.sessionId);
     assert.deepEqual(requestTools(requests.at(-1)!),['bot_tools'],'the next turn must reset loaded schemas while retaining history');
     const serialized=JSON.stringify(requests.at(-1)!.messages);assert.ok(serialized.includes('我喜欢绿茶'));assert.ok(serialized.includes('PERSONA_B_FILE'));assert.ok(!JSON.stringify(requests[2].messages).includes('PERSONA_B_FILE'));
-    const agent=bridge.live.get(binding.sessionId)!.handle.agent;
+    const agent=bridge.live.get(binding.sessionId)!.agent;
     // This route retains deferred declarations; developer additions/removals decide which tools are active.
     const historyScope={...scope,channelId:'in-history-tools',senderId:'in-history-tools'},historyBinding=sessions.binding(historyScope);
     const historySnapshot=freezeTurn({...personas.config('default'),model:{provider:'bot-fixture-history',model:'first'}},bots.bot('fixture'),historyScope,['history-discovery']);
@@ -175,7 +177,7 @@ export async function apply(ctx:Context){
       await Promise.race([stageEntered,stagedWork.then(()=>{throw Error('the native pre-tool text callback was not reached');})]);
       assert.deepEqual(stagedText.map(event=>event.text),['FIRST_PROGRESS']);assert.equal(staged.script.calls,1,'model execution must pause while text delivery is pending');
       assert.equal(bridge.live.get(staged.binding.sessionId)!.loadedTools.size,0,'even the loader must wait for preceding text delivery');
-      const stagedParent=bridge.live.get(staged.binding.sessionId)!.handle.agent;
+      const stagedParent=bridge.live.get(staged.binding.sessionId)!.agent;
       const childId='staged-child-'+staged.binding.sessionId;stagedCases.set(childId,{steps:[{text:'CHILD_PRIVATE_BODY'}],calls:0});
       const stagedChild=await ctx.agents.create({sessionId:childId as any,parentAgent:stagedParent,agentOptions:{provider:'bot-fixture-staged',model:'first'}});
       try{stagedChild.agent.followup({id:MessageId('staged-child-input'),role:'user',source:{kind:'user'},content:[{type:'text',text:'只向父任务返回子任务结果。'}]});await stagedChild.agent.whenIdle();assert.deepEqual(stagedText.map(event=>event.text),['FIRST_PROGRESS'],'child text must not enter the parent channel callback');}finally{await stagedChild.dispose();}
@@ -277,16 +279,16 @@ export async function apply(ctx:Context){
     assert.equal(childCancelled,true,'revocation cancels children even after the parent inbox turn has finished');
     const revoked=await ctx.tools.execute({name:'pwsh',arguments:{command:'Write-Output must-not-run'},callId:ToolCallId('revoked-child'),agent:child.agent,signal:AbortSignal.timeout(5000)});assert.equal(revoked.isError,true);await child.dispose();
     await bridge.dispose(binding.sessionId);
-    await bridge.run(binding,[msg('third','重启恢复历史')],AbortSignal.timeout(30000));assert.ok(JSON.stringify(requests.at(-1)!.messages).includes('我喜欢绿茶'));assert.equal(ctx.workingDirectory.get(bridge.live.get(binding.sessionId)!.handle.agent.session),await realpath(customCwd));
+    await bridge.run(binding,[msg('third','重启恢复历史')],AbortSignal.timeout(30000));assert.ok(JSON.stringify(requests.at(-1)!.messages).includes('我喜欢绿茶'));assert.equal(ctx.workingDirectory.get(bridge.live.get(binding.sessionId)!.agent.session),await realpath(customCwd));
     await ctx.credentials.set(credentialRef('BOT_TEST_ANALYSIS_KEY'),'fixture-analysis-key');
     const inherited=await runtime.media.analysisProvider!.resolve(personas.config('default'),'asr');assert.equal(inherited.endpoint.baseUrl,'https://fixture.invalid/v1');assert.equal(inherited.endpoint.model,'first');assert.equal(inherited.apiKey,'fixture-analysis-key');
-    const skill=await ctx.tools.execute({name:'skill',arguments:{name:'media-analysis'},callId:ToolCallId('analysis-skill'),agent:bridge.live.get(binding.sessionId)!.handle.agent,signal:AbortSignal.timeout(5000)});assert.equal(skill.isError,false);assert.ok(JSON.stringify(skill.content).includes('media_analysis'));
+    const skill=await ctx.tools.execute({name:'skill',arguments:{name:'media-analysis'},callId:ToolCallId('analysis-skill'),agent:bridge.live.get(binding.sessionId)!.agent,signal:AbortSignal.timeout(5000)});assert.equal(skill.isError,false);assert.ok(JSON.stringify(skill.content).includes('media_analysis'));
     for(let i=0;i<12;i++)await bridge.run(binding,[msg(`long-${i}`,`合成历史第${i}轮：`+'The fixture contains repeated context material for deterministic compression. '.repeat(140))],AbortSignal.timeout(30000));
-    assert.ok(compactions>0,'long context should trigger native automatic compaction');assert.ok(bridge.live.get(binding.sessionId)!.handle.agent.session.snapshotEvents().some(e=>String(e.type)==='compaction/end'));
+    assert.ok(compactions>0,'long context should trigger native automatic compaction');assert.ok(bridge.live.get(binding.sessionId)!.agent.session.snapshotEvents().some(e=>String(e.type)==='compaction/end'));
     const pixels=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP8z4AdMOEQH6QSAM1BAQ/oQeJvAAAAAElFTkSuQmCC','base64');
     // Real image admission verifies actual decodable pixels, not an attachment path placeholder.
     const asset=await runtime.assets.save(binding.key,{kind:'image',name:'reference.png',mime:'image/png'},pixels);
-    const transformAgent=bridge.live.get(binding.sessionId)!.handle.agent;
+    const transformAgent=bridge.live.get(binding.sessionId)!.agent;
     const transformed=await Promise.all(['png','webp'].map(format=>ctx.tools.execute({name:'media_transform',arguments:{operation:'image_convert',inputs:[asset.id],format},callId:ToolCallId('local-transform-'+format),agent:transformAgent,signal:AbortSignal.timeout(15000)})));
     for(let i=0;i<transformed.length;i++){
       const result=toolJson(transformed[i]);assert.equal(result.registeredForDelivery,true);assert.equal(result.assetIds.length,1);
@@ -339,7 +341,7 @@ export async function apply(ctx:Context){
       const copyPath=path.join(bridge.live.get(binding.sessionId)!.cwd,'renamed-generated-image.png');await writeFile(copyPath,pixels);
       mediaCall={name:'image_generation',args:{prompt:'Generate a single image'}};
       beforeFinal=async()=>{
-        const parent=bridge.live.get(binding.sessionId)!.handle.agent;
+        const parent=bridge.live.get(binding.sessionId)!.agent;
         const registered=toolJson(await ctx.tools.execute({name:'bot_send_file',arguments:{path:copyPath,mime:'image/png'},callId:ToolCallId('generated-image-copy'),agent:parent,signal:AbortSignal.timeout(5000)}));
         assert.equal(registered.assetId,asset.id,'path registration must reuse the automatically registered image, even under a different filename');
         const repeated=toolJson(await ctx.tools.execute({name:'bot_send_file',arguments:{path:copyPath},callId:ToolCallId('generated-image-copy-default-mime'),agent:parent,signal:AbortSignal.timeout(5000)}));
@@ -348,7 +350,7 @@ export async function apply(ctx:Context){
       const single=await bridge.run(binding,[msg('single-image-delivery','生成一张图片并发给我')],AbortSignal.timeout(30000));
       assert.deepEqual(single.outputs,[{type:'text',text:'FINAL_ONLY'},{type:'asset',assetId:asset.id}],'automatic registration followed by path delivery must produce exactly one image');
       const different=Buffer.from(pixels);different[different.length-1]^=1;await writeFile(copyPath,different);
-      const distinct=toolJson(await ctx.tools.execute({name:'bot_send_file',arguments:{path:copyPath,append:true},callId:ToolCallId('distinct-file-same-size'),agent:bridge.live.get(binding.sessionId)!.handle.agent,signal:AbortSignal.timeout(5000)}));
+      const distinct=toolJson(await ctx.tools.execute({name:'bot_send_file',arguments:{path:copyPath,append:true},callId:ToolCallId('distinct-file-same-size'),agent:bridge.live.get(binding.sessionId)!.agent,signal:AbortSignal.timeout(5000)}));
       assert.notEqual(distinct.assetId,asset.id,'different bytes with the same size must remain a separate attachment');
       assert.equal(bridge.live.get(binding.sessionId)!.assets.length,2);
     }finally{runtime.media.run=mediaRun;beforeFinal=undefined;runtime.saveBot({...bots.bot('fixture'),trustedUsers:[]});}
@@ -357,7 +359,7 @@ export async function apply(ctx:Context){
       mediaCall={name:'image_generation',args:{operation:'edit',prompt:'Use the real reference on the moon',inputs:[asset.id]}};
       const generated=await bridge.run(binding,[msg('image-skill','按参考图生成图片')],AbortSignal.timeout(30000));
       assert.equal(imageCalls,1);assert.deepEqual(generated.outputs,[{type:'text',text:'FINAL_ONLY'}]);
-      const parent=bridge.live.get(binding.sessionId)!.handle.agent;
+      const parent=bridge.live.get(binding.sessionId)!.agent;
       const retry=await ctx.tools.execute({name:'image_generation',arguments:{operation:'edit',prompt:'Retry after failure',inputs:[asset.id]},callId:ToolCallId('retry-image'),agent:parent,signal:AbortSignal.timeout(5000)});assert.equal(retry.isError,true);assert.equal(imageCalls,2,'a failed attempt must not consume the turn image allowance');
       const recoveredPromise=ctx.tools.execute({name:'image_generation',arguments:{operation:'edit',prompt:'Retry after failure',inputs:[asset.id]},callId:ToolCallId('recover-image'),agent:parent,signal:AbortSignal.timeout(5000)});
       await imageReady;const parallel=await ctx.tools.execute({name:'image_generation',arguments:{operation:'edit',prompt:'Must not run concurrently',inputs:[asset.id]},callId:ToolCallId('parallel-image'),agent:parent,signal:AbortSignal.timeout(5000)});finishImage();assert.equal(parallel.isError,true);assert.equal(imageCalls,3);
@@ -374,14 +376,14 @@ export async function apply(ctx:Context){
       const settings=bots.bot('fixture').settings!;
       const {personaPrompt,...draft}=personas.config('default');await writeFile(path.join(personas.personaDirectory('default'),'config.json'),JSON.stringify({...draft,skills:['image-generation']}));await runtime.applyPersonaFiles('default');
       assert.deepEqual(bots.bot('fixture').settings,settings,'applying persona files must preserve the independent bot settings');updateSettings({skills:['image-generation']});
-      for(const call of [{name:'media_analysis',arguments:{inputs:[audio.id]}},{name:'media_transform',arguments:{operation:'image_convert',inputs:[asset.id]}},{name:'skill',arguments:{name:'media-analysis'}}]){const denied=await ctx.tools.execute({...call,callId:ToolCallId('revoked-'+call.name),agent:bridge.live.get(binding.sessionId)!.handle.agent,signal:AbortSignal.timeout(5000)});assert.equal(denied.isError,true);}assert.equal(analysisCalls,1);
+      for(const call of [{name:'media_analysis',arguments:{inputs:[audio.id]}},{name:'media_transform',arguments:{operation:'image_convert',inputs:[asset.id]}},{name:'skill',arguments:{name:'media-analysis'}}]){const denied=await ctx.tools.execute({...call,callId:ToolCallId('revoked-'+call.name),agent:bridge.live.get(binding.sessionId)!.agent,signal:AbortSignal.timeout(5000)});assert.equal(denied.isError,true);}assert.equal(analysisCalls,1);
     }finally{runtime.media.run=mediaRun;}
     const webChecks:string[]=[];
     if(process.env.BOT_TEST_WEB_TOOLS_SOURCE){
       const settings=bots.bot('fixture').settings!;updateSettings({tools:[...settings.tools,'web_search','web_fetch']});
       mediaCall={name:'web_fetch',args:{url:'https://example.com/'}};
       await bridge.run(binding,[msg('web-page','读取公开测试页面')],AbortSignal.timeout(45000));
-      const parent=bridge.live.get(binding.sessionId)!.handle.agent;const schemas=ctx.tools.schemas(parent).map(t=>t.name);assert.ok(schemas.includes('web_fetch'));assert.ok(schemas.includes('web_search'));assert.ok(!schemas.includes('pwsh'));assert.equal(ctx.permissionPresets.current(parent.session),'read-only');
+      const parent=bridge.live.get(binding.sessionId)!.agent;const schemas=ctx.tools.schemas(parent).map(t=>t.name);assert.ok(schemas.includes('web_fetch'));assert.ok(schemas.includes('web_search'));assert.ok(!schemas.includes('pwsh'));assert.equal(ctx.permissionPresets.current(parent.session),'read-only');
       const page=requests.at(-1)!.messages.filter(m=>m.role==='tool'&&m.toolCallId?.startsWith('media-')).at(-1)!;assert.ok(page.role==='tool');assert.equal(page.isError,false,JSON.stringify(page));assert.ok(JSON.stringify(page.content).includes('Example Domain'));
       const search=await ctx.tools.execute({name:'web_search',arguments:{queries:['DeepSeek Harness official']},callId:ToolCallId('missing-search-key'),agent:parent,signal:AbortSignal.timeout(10000)});assert.equal(search.isError,true,'without search credentials this must not claim search success');
       updateSettings({tools:bots.bot('fixture').settings!.tools.filter(t=>!['web_search','web_fetch'].includes(t))});
@@ -399,7 +401,7 @@ export async function apply(ctx:Context){
     featureChecks.push('per-session persona changes preserve the independent bot model','new native session retains persona/model overrides and resets turn history','model reset uses the bot default instead of the persona model');
     updateSettings({model:{provider:'bot-fixture',model:'second'}});
 
-    const active=bridge.live.get(newBinding.sessionId)!.handle.agent;const compactBefore=compactions;
+    const active=bridge.live.get(newBinding.sessionId)!.agent;const compactBefore=compactions;
     const compactResult=await runtime.compactSession(scope);assert.equal(typeof compactResult,'string');assert.equal(compactions,compactBefore+1,'manual compact must call native compaction exactly once');assert.ok(active.session.snapshotEvents().some(e=>e.type==='compaction/end'));
     featureChecks.push('manual compact dispatches native Harness command and persists summary');
     const dynamicName='native-proof';const skillFiles=(version:string)=>[{path:'SKILL.md',content:`---\nname: ${dynamicName}\ndescription: Native fixture skill\n---\nRead scripts/proof.py from the returned resourceBase.\n${version}\n`},{path:'scripts/proof.py',content:"import os\nfrom pathlib import Path\nimport helper\nprint(helper.PROOF)\nprint('BYTECODE_ENV=' + os.environ.get('PYTHONDONTWRITEBYTECODE', 'unset'))\nPath(helper.PROOF + '.txt').write_text(helper.PROOF, encoding='utf-8')\n"},{path:'scripts/helper.py',content:`PROOF = '${version}'\n`}];
@@ -464,7 +466,7 @@ export async function apply(ctx:Context){
     const failedPhoto={...msg('fixture-failed-photo','请根据我上传的参考照片生成一张新图片'),timestamp:Date.now()-1000};inbox.accept(failedPhoto);inbox.mark(newBinding.key,[failedPhoto.id],'failed');failures.saveFailure(`native-photo-failure:${newBinding.sessionId}`,{sessionId:newBinding.sessionId,scope:newBinding.key,state:'failed',stage:'attachments',sourceIds:[failedPhoto.id],at:Date.now()-1000,code:'ATTACHMENT_DOWNLOAD_FAILED'});
     await bridge.run(sessions.binding(scope),[msg('failed-photo-followup','为什么刚才的图片还没有生成')],AbortSignal.timeout(30000));const failureContext=JSON.stringify(requests.at(-1)!.messages);assert.ok(failureContext.includes('Host-recorded prior failure or delivery status'),'subsequent native request must receive durable host failure context');assert.ok(failureContext.includes('no new image was generated'),'failure context must not imply that an image was generated');assert.ok(failureContext.includes(failedPhoto.text),'failure context includes the actual failed user request');
     featureChecks.push('current user photo attachment admits native image pixels alongside its exact host asset reference','production PiAiAdapter passes exact encoded image bytes to a local provider callback without remote calls','existing session releases persistent terminals on permission downgrade and PowerShell works after permission reenable','later followup receives host-recorded attachment failure and explicitly knows no new image was generated');
-    const groupScope={...scope,kind:'group' as const,channelId:'fixture-room'};const groupBinding=sessions.binding(groupScope);await bridge.run(groupBinding,[{...msg('group-features','群聊隔离'),scope:groupScope}],AbortSignal.timeout(30000));const groupAgent=bridge.live.get(groupBinding.sessionId)!.handle.agent;
+    const groupScope={...scope,kind:'group' as const,channelId:'fixture-room'};const groupBinding=sessions.binding(groupScope);await bridge.run(groupBinding,[{...msg('group-features','群聊隔离'),scope:groupScope}],AbortSignal.timeout(30000));const groupAgent=bridge.live.get(groupBinding.sessionId)!.agent;
     for(const name of ['bot_stats','bot_evolve','bot_model','bot_persona']){assert.ok(!ctx.tools.schemas(groupAgent).some(t=>t.name===name),`${name} must be hidden for groups`);const result=await ctx.tools.execute({name,arguments:name==='bot_stats'?{range:'all'}:{action:name==='bot_evolve'?'status':'list'},callId:ToolCallId('group-'+name),agent:groupAgent,signal:AbortSignal.timeout(5000)});assert.equal(result.isError,true);}
     runtime.saveBot({...bots.bot('fixture'),trustedUsers:[]});
     for(const name of ['bot_stats','bot_evolve','bot_model','bot_persona']){const result=await ctx.tools.execute({name,arguments:name==='bot_stats'?{range:'all'}:{action:name==='bot_evolve'?'status':'list'},callId:ToolCallId('revoked-feature-'+name),agent:active,signal:AbortSignal.timeout(5000)});assert.equal(result.isError,true,`${name} must deny after trust revocation`);}
@@ -479,7 +481,7 @@ export async function apply(ctx:Context){
     qq.send=async(bot,_credential,delivery)=>{assert.equal(bot.id,'fixture');assert.equal(delivery.scopeKey,controlKey);sentControlDeliveries.push(delivery.id);return`fixture-accepted-${delivery.id}`;};
     try{
       const oldMarker='NATIVE_MANAGEMENT_OLD_CONTEXT';await runtime.receive(controlMsg('management-warmup',`保存本轮测试标记 ${oldMarker}，后面会通过工具操作会话。`));await runtime.process(controlKey);
-      const oldControl=sessions.binding(controlScope);const controlAgent=bridge.live.get(oldControl.sessionId)!.handle.agent;assert.equal(ctx.permissionPresets.current(controlAgent.session),'read-only');assert.ok(ctx.tools.schemas(controlAgent).some(tool=>tool.name==='bot_session'));
+      const oldControl=sessions.binding(controlScope);const controlAgent=bridge.live.get(oldControl.sessionId)!.agent;assert.equal(ctx.permissionPresets.current(controlAgent.session),'read-only');assert.ok(ctx.tools.schemas(controlAgent).some(tool=>tool.name==='bot_session'));
       const queuedControl=async(action:'compact'|'new',id:string)=>{
         const before=requests.length;const current=sessions.binding(controlScope);let continuationChecked=false;
         beforeFinal=options=>{assert.equal(options.sessionId,current.sessionId);const tool=options.messages.filter(message=>message.role==='tool').at(-1)!;assert.equal(tool.role,'tool');const queued=toolJson(tool);assert.equal(queued.status,'queued');assert.equal(queued.action,action);assert.equal(typeof queued.actionId,'string');assert.equal(actions.findSessionAction<SessionActionRecord>(queued.actionId)?.state,'queued','management action must not run inside its own native turn');assert.equal(sessions.binding(controlScope).sessionId,current.sessionId);continuationChecked=true;};
@@ -500,7 +502,7 @@ export async function apply(ctx:Context){
     }finally{beforeFinal=undefined;mediaCall=undefined;runtime.credentials.read=previousRead;qq.send=previousSend;}
     const singleDelete=stagedFixture('single-session-delete');singleDelete.script.steps.push({text:'SINGLE_SESSION_DELETE_BODY'});
     await bridge.run(singleDelete.binding,[singleDelete.input],AbortSignal.timeout(30000),{snapshot:singleDelete.snapshot});
-    const singleRoot=bridge.live.get(singleDelete.binding.sessionId)!.handle.agent;
+    const singleRoot=bridge.live.get(singleDelete.binding.sessionId)!.agent;
     const singleAsset=await runtime.assets.save(singleDelete.binding.key,{kind:'file',name:'retained-attachment.txt',mime:'text/plain'},Buffer.from('RETAINED_ATTACHMENT'));
     const singleExport=historyLocations.find(singleDelete.binding.sessionId)!.file;
     const ownedChild=await singleRoot.ctx.agents.create({sessionId:('delete-child-'+singleRoot.id) as any,parentAgent:singleRoot,meta:{cwd:customCwd,parentSession:singleRoot.id,origin:'subagent'},agentOptions:{provider:'bot-fixture',model:'first'}});
@@ -529,6 +531,7 @@ export async function apply(ctx:Context){
       }
     }
     ctx.llm.registerAdapter(['bot-fixture-deleting'],new DeletingFixture());
+    sessions.updateSession({...sessions.findBinding(foreignDelete.binding.key)!,modelOverride:{provider:'bot-fixture-deleting',model:'first'}});
     await ctx.sessionController.selectModel({sessionId:foreignDelete.binding.sessionId as any,provider:'bot-fixture-deleting',model:'first'});
     const foreignResolved=await ctx.sessionController.resolveAgent(foreignDelete.binding.sessionId as any);assert.ok('agent' in foreignResolved,'the web controller must resolve the historical session');
     const foreignAgent=foreignResolved.agent;
@@ -550,8 +553,107 @@ export async function apply(ctx:Context){
       assert.ok(!(await ctx.sessionPersistence.list()).some(item=>[foreignAgent.id,managed!.childId].includes(item.header.id)),'released writers must not recreate deleted logs');
       await assert.rejects(readFile(foreignExport),{code:'ENOENT'});
       const reopened=await ctx.sessionController.resolveAgent(foreignAgent.id);assert.ok('error' in reopened,'an open web view must not revive a deleted session');
-    }finally{await managed?.dispose();await bridge.sessionOwners.deleting([foreignAgent.id],async()=>{});}
+    }finally{await managed?.dispose();await bridge.sessionHandles.deleting([foreignAgent.id],async()=>{});}
     featureChecks.push('single-session deletion drains its owned native child and removes logs, search rows and readable export while preserving forks and channel assets','deletion cancels a running external native owner, closes its writer and removes its log without revival');
+
+    const shared=stagedFixture('shared-session-restart');
+    const sharedBinding=sessions.updateSession({...shared.binding,personaId:'default',modelOverride:{provider:'bot-fixture-staged',model:'first'}});
+    const sharedInput={...shared.input,text:'SHARED_INITIAL_USER_MARKER'};
+    shared.script.steps.push({text:'SHARED_INITIAL_ASSISTANT_MARKER'});
+    await bridge.run(sharedBinding,[sharedInput],AbortSignal.timeout(30000),{snapshot:shared.snapshot});
+    const originalShared=bridge.live.get(sharedBinding.sessionId)!.agent;
+    for(let cycle=0;cycle<3;cycle++){
+      await bridge.dispose(sharedBinding.sessionId);assert.equal(ctx.agents.get(originalShared.id),undefined);
+      const beforeActivation=shared.script.calls;
+      const resolved=await ctx.sessionController.resolveAgent(originalShared.id);
+      assert.ok('agent' in resolved,'a Web view must recover the persisted bot session after restart');
+      const sharedAgent=resolved.agent;
+      assert.equal(shared.script.calls,beforeActivation,'opening the Web session must not call the model');
+      assert.equal(sharedAgent.id,originalShared.id);assert.equal(bridge.live.get(sharedBinding.sessionId)!.agent,sharedAgent);
+      assert.equal(ctx.tools.schemas(sharedAgent).filter(tool=>tool.name==='bot_tools').length,1,'one shared instance must install the loader once');
+      assert.ok(ctx.tools.schemas(sharedAgent).some(tool=>tool.name==='bot_session'),'Web-first restoration must install the bot tools');
+      assert.equal(ctx.permissionPresets.current(sharedAgent.session),'read-only','Web-first restoration must apply the channel permissions');
+      shared.script.steps.push({text:`SHARED_RESTART_${cycle}_DONE`});
+      const input={...sharedInput,id:`shared-restart-${cycle}`,text:`继续恢复后的原会话 ${cycle}`};
+      const result=await bridge.run(sharedBinding,[input],AbortSignal.timeout(30000),{snapshot:shared.snapshot});
+      assert.equal(bridge.live.get(sharedBinding.sessionId)!.agent,sharedAgent,'bot continuation must reuse the exact Web-restored agent');
+      assert.deepEqual(result.outputs,[{type:'text',text:`SHARED_RESTART_${cycle}_DONE`}]);
+      const request=stagedRequests.at(-1)!;
+      assert.equal(request.provider,'bot-fixture-staged');assert.equal(request.model,'first');
+      assert.ok(requestText(request).includes(shared.snapshot.config.personaPrompt),'the shared instance must retain the bot persona');
+      assert.ok(requestText(request).includes('SHARED_INITIAL_USER_MARKER'),'restart must keep the original user history');
+      assert.ok(requestText(request).includes('SHARED_INITIAL_ASSISTANT_MARKER'),'restart must keep the original assistant history');
+      assert.deepEqual(requestTools(request),['bot_tools']);
+    }
+
+    await bridge.dispose(sharedBinding.sessionId);
+    shared.script.steps.push({text:'SHARED_CONCURRENT_DONE'});
+    const [concurrentResolved,concurrentResult]=await Promise.all([
+      ctx.sessionController.resolveAgent(originalShared.id),
+      bridge.run(sharedBinding,[{...sharedInput,id:'shared-concurrent',text:'并发恢复原会话'}],AbortSignal.timeout(30000),{snapshot:shared.snapshot}),
+    ]);
+    assert.ok('agent' in concurrentResolved);assert.equal(bridge.live.get(sharedBinding.sessionId)!.agent,concurrentResolved.agent);
+    assert.deepEqual(concurrentResult.outputs,[{type:'text',text:'SHARED_CONCURRENT_DONE'}]);
+
+    const modelNoticeEvents=(start:number)=>concurrentResolved.agent.session.snapshotEvents().slice(start).filter(event=>event.type==='user/message'&&event.data.source?.kind==='model-selection');
+    const webSelectionStart=Number(concurrentResolved.agent.session.seq);
+    await ctx.sessionController.selectModel({sessionId:originalShared.id,provider:'bot-fixture',model:'second'});
+    shared.script.steps.push({text:'SHARED_FROZEN_MODEL_DONE'});
+    await bridge.run(sharedBinding,[{...sharedInput,id:'shared-frozen-model',text:'网页选了其他模型，本轮保持机器人冻结模型'}],AbortSignal.timeout(30000),{snapshot:shared.snapshot});
+    assert.equal(stagedRequests.at(-1)!.provider,'bot-fixture-staged');assert.equal(stagedRequests.at(-1)!.model,'first');
+    const webModelNotices=modelNoticeEvents(webSelectionStart);
+    assert.equal(webModelNotices.length,0,`a conflicting Web selection must not emit a false model-change notice for the frozen bot route: ${JSON.stringify(webModelNotices)}`);
+    const changedBinding=sessions.updateSession({...sessions.findBinding(sharedBinding.key)!,modelOverride:{provider:'bot-fixture-staged',model:'second'}});
+    const changedSnapshot=freezeTurn({...shared.snapshot.config,model:{provider:'bot-fixture-staged',model:'second'}},bots.bot('fixture'),sharedInput.scope,['shared-model-next-turn']);
+    const botSelectionStart=Number(concurrentResolved.agent.session.seq);
+    shared.script.steps.push({text:'SHARED_CHANGED_MODEL_DONE'});
+    await bridge.run(changedBinding,[{...sharedInput,id:'shared-model-next-turn',text:'下一轮使用机器人新模型'}],AbortSignal.timeout(30000),{snapshot:changedSnapshot});
+    assert.equal(bridge.live.get(sharedBinding.sessionId)!.agent,concurrentResolved.agent);
+    assert.equal(stagedRequests.at(-1)!.provider,'bot-fixture-staged');assert.equal(stagedRequests.at(-1)!.model,'second');
+    const botModelNotices=modelNoticeEvents(botSelectionStart);assert.equal(botModelNotices.length,1,`a real bot model change must emit exactly one native notice: ${JSON.stringify(botModelNotices)}`);
+    assert.match(JSON.stringify(botModelNotices),/first/);assert.match(JSON.stringify(botModelNotices),/second/);
+    sessions.updateSession({...sessions.findBinding(sharedBinding.key)!,modelOverride:{provider:'bot-fixture-staged',model:'first'}});
+
+    await bridge.dispose(sharedBinding.sessionId);
+    let failSharedRestore=true;
+    const detachSharedFailure=ctx.on('agent/created',({agent})=>{if(agent.id===originalShared.id&&failSharedRestore){failSharedRestore=false;throw Error('SHARED_RESTORE_INIT_FAILED');}return undefined;});
+    try{
+      const beforeFailure=shared.script.calls;
+      const failedRestore=await ctx.sessionController.resolveAgent(originalShared.id);
+      assert.ok('error' in failedRestore,'native initialization failure must reject the first restoration');
+      assert.equal(shared.script.calls,beforeFailure);assert.equal(ctx.agents.get(originalShared.id),undefined);
+      assert.equal(bridge.live.has(sharedBinding.sessionId),false,'rollback must not leave a stale shared instance');
+      const retriedRestore=await ctx.sessionController.resolveAgent(originalShared.id);
+      assert.ok('agent' in retriedRestore,'a failed restore must release the writer for the next attempt');
+      shared.script.steps.push({text:'SHARED_RETRY_DONE'});
+      const retried=await bridge.run(sharedBinding,[{...sharedInput,id:'shared-retry',text:'初始化失败后继续原会话'}],AbortSignal.timeout(30000),{snapshot:shared.snapshot});
+      assert.equal(bridge.live.get(sharedBinding.sessionId)!.agent,retriedRestore.agent);
+      assert.deepEqual(retried.outputs,[{type:'text',text:'SHARED_RETRY_DONE'}]);
+    }finally{detachSharedFailure();await bridge.dispose(sharedBinding.sessionId);}
+    const historicalBinding=sessions.binding(sharedInput.scope);
+    assert.equal(historicalBinding.sessionId,sharedBinding.sessionId);assert.equal(historicalBinding.personaId,'default');
+    assert.deepEqual(historicalBinding.modelOverride,{provider:'bot-fixture-staged',model:'first'});
+    const newCurrent=sessions.updateSession({...sessions.reset(sharedInput.scope),personaId:'sakura',modelOverride:{provider:'bot-fixture-staged',model:'second'}});
+    stagedCases.set(newCurrent.sessionId,{steps:[{text:'NEW_CURRENT_SESSION_BODY'}],calls:0});
+    const currentResult=await bridge.run(newCurrent,[{...sharedInput,id:'new-current-model',text:'新会话使用新的独立人格与模型'}],AbortSignal.timeout(30000));
+    assert.equal(currentResult.snapshot.config.id,'sakura');assert.equal(stagedRequests.at(-1)!.model,'second');
+    await bridge.dispose(newCurrent.sessionId);
+    const historicalResolved=await ctx.sessionController.resolveAgent(originalShared.id);
+    assert.ok('agent' in historicalResolved,'Web must be able to open a historical session after the channel starts a new one');
+    shared.script.steps.push({text:'HISTORICAL_SESSION_BODY'});
+    const historicalResult=await bridge.run(historicalBinding,[{...sharedInput,id:'historical-original-model',text:'在历史会话中继续，保持原人格与模型'}],AbortSignal.timeout(30000));
+    assert.equal(bridge.live.get(historicalBinding.sessionId)!.agent,historicalResolved.agent);
+    assert.equal(historicalResult.snapshot.config.id,'default');
+    assert.equal(stagedRequests.at(-1)!.provider,'bot-fixture-staged');assert.equal(stagedRequests.at(-1)!.model,'first');
+    assert.ok(requestText(stagedRequests.at(-1)!).includes(personas.config('default').personaPrompt));
+    assert.ok(requestText(stagedRequests.at(-1)!).includes('SHARED_INITIAL_USER_MARKER'));
+    const stillCurrent=sessions.findBinding(sharedBinding.key)!;
+    assert.equal(stillCurrent.sessionId,newCurrent.sessionId);assert.equal(stillCurrent.personaId,'sakura');
+    assert.deepEqual(stillCurrent.modelOverride,{provider:'bot-fixture-staged',model:'second'});
+    assert.equal(sessions.findSession(historicalBinding.sessionId)!.personaId,'default');
+    assert.deepEqual(sessions.findSession(historicalBinding.sessionId)!.modelOverride,{provider:'bot-fixture-staged',model:'first'});
+    await bridge.dispose(historicalBinding.sessionId);
+    featureChecks.push('repeated cold restores keep one shared native instance, original session ID and user/assistant history','Web-first restoration installs the bot persona, channel permissions and tools before bot continuation','Web and bot concurrent restores share one native agent without a second writer','conflicting Web model selection keeps the frozen bot route without a false notice and a real next-turn bot change emits one notice','failed shared restoration rolls back initialization and releases the writer for a successful retry','opening a historical shared session keeps its original persona and model without changing the channel current-session binding');
     const deletedIds=new Set([...sessions.sessionsAll().filter(item=>item.scope.botId===scope.botId).map(item=>item.id),...statsSessions.listOwners().filter(item=>item.botId===scope.botId).map(item=>item.sessionId)]);
     const independent=await ctx.agents.create({sessionId:('unrelated-'+binding.sessionId) as any,agentOptions:{provider:'bot-fixture',model:'first'}});await ctx.sessions.flush(independent.agent.session);await independent.dispose();
     const coldChild=await ctx.agents.create({sessionId:('cold-child-'+binding.sessionId) as any,meta:{cwd:customCwd,parentSession:binding.sessionId as any,origin:'subagent'},agentOptions:{provider:'bot-fixture',model:'first'}});await ctx.sessions.flush(coldChild.agent.session);await coldChild.dispose();
@@ -570,5 +672,5 @@ export async function apply(ctx:Context){
     featureChecks.push('bot deletion removes native old/root/descendant logs and projection caches while preserving unrelated sessions and custom workspace files');
     await writeFile(resultPath,JSON.stringify({status:'PASS',requests:requests.length,compactions,checks:['global message language defaults to Chinese, persists through native settings, updates live without remount and rejects stale edits','progress generation uses frozen persona without tools or history mutation','progress usage includes failed requests','frozen snapshot initializes a new native session','native long tool exposes a safe progress stage','real native turn and business tool','final text excludes reasoning','snapshot holds across tool steps','next-turn persona/model switch preserves session/history','ordinary host tools hidden and denied','trusted PowerShell execution without per-call approval','frozen child persona/model after parent switches','revoked permission denied in child agent','private skill read denied','durable session resume','working directory switches next turn without losing session or history','native PowerShell and file delivery use custom directory','children and resumed sessions preserve configured working directory','native provider settings and credentials inherited without copying secrets','published media-analysis skill readable by ordinary user','native automatic long-context compaction','image bytes loaded into native chat model without vision service','scanned PDF rendered and passed to native chat model','image skill inherits environment with no WebUI media setup','reference edit auto-registers one image for delivery','failed image attempts can retry through dedicated tools','parallel image calls denied while a retry is running','duplicate generation call cannot bypass one successful image limit','image skill disable immediately denies calls','audio analysis selects same-session recent attachment and returns script result','analysis revocation denies dedicated tools and skill reads',...webChecks,...featureChecks]}));
   };
-  setImmediate(()=>void test().catch(async error=>{await writeFile(resultPath,JSON.stringify({status:'FAIL',error:error.stack??String(error),failures:failures.failures(),events:[...bridge.live.values()].flatMap(l=>l.handle.agent.session.snapshotEvents()).filter(e=>e.type==='turn/end').slice(-2)}));}));
+  setImmediate(()=>void test().catch(async error=>{await writeFile(resultPath,JSON.stringify({status:'FAIL',error:error.stack??String(error),failures:failures.failures(),events:[...bridge.live.values()].flatMap(l=>l.agent.session.snapshotEvents()).filter(e=>e.type==='turn/end').slice(-2)}));}));
 }
