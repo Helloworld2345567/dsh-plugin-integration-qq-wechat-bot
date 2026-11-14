@@ -4,7 +4,7 @@ import {z} from 'zod';
 const absolutePath = (label: string) => z.string().trim().min(1).max(4096)
   .refine(value => !/[\x00-\x1f]/.test(value), {message: `${label} contains control characters`})
   .refine(value => path.isAbsolute(value) || path.win32.isAbsolute(value), {message: `${label} must be an absolute path`})
-  .transform(value => path.win32.isAbsolute(value) ? path.win32.normalize(value) : path.resolve(value));
+  .transform(value => path.isAbsolute(value) ? path.normalize(value) : path.win32.normalize(value));
 
 const localUrl = z.string().trim().min(1).max(2048).refine(value => {
   try {

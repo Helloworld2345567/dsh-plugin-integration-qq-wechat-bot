@@ -12,6 +12,7 @@ import {Admin} from '../src/harness/admin.js';
 import {adminCommandRequestSchema,adminQueryRequestSchema} from '../src/harness/admin-contract.js';
 import {configSchema,botSettingsFromConfig} from '../src/core/types.js';
 import {formatDiagnostic} from '../src/i18n/diagnostics.js';
+import {imageServiceSettingsSchema} from '../src/core/image-service-config.js';
 
 const resources=[
   '.codex/venv/'+(process.platform==='win32'?'Scripts/python.exe':'bin/python'),'scripts/model_catalog.py',
@@ -165,6 +166,14 @@ function settingsInput(library:VoiceModelLibrary,patch:Record<string,unknown>={}
   const {revision,reports:_reports,refreshing:_refreshing,...settings}=library.view();
   return{...settings,...patch,expectedRevision:revision};
 }
+
+test('image workflow settings preserve native paths and normalize Windows drive and UNC paths',()=>{
+  const native=`${path.resolve('.codex')}${path.sep}workflow-parent${path.sep}..${path.sep}workflows${path.sep}api${path.sep}workflow.json`;
+  const windows='C:/ComfyUI/workflows/../workflows/api/workflow.json',unc='\\\\comfy-host\\share\\workflows\\..\\workflows\\api\\workflow.json';
+  for(const [input,expected] of [[native,path.normalize(native)],[windows,path.win32.normalize(windows)],[unc,path.win32.normalize(unc)]]){
+    assert.equal(imageServiceSettingsSchema.parse({comfyUiWorkflowPath:input}).comfyUiWorkflowPath,expected);
+  }
+});
 
 test('ComfyUI start passes the complete workflow directory to deployment discovery',async t=>{
   const f=await fixture(t),directory=path.join(f.project,'workflows','api');
