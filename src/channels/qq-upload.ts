@@ -71,7 +71,7 @@ async function putPart(url:string,bytes:Buffer<ArrayBuffer>,signal:AbortSignal,f
 
 export async function uploadQQAsset(options:{baseUrl:string;token:string;asset:Asset;signal:AbortSignal;request?:typeof jsonRequest;fetcher?:typeof fetch}):Promise<{fileInfo:string;expiresAt:number}>{
   const {baseUrl,token,asset,signal}=options;const request=options.request??jsonRequest;const fetcher=options.fetcher??fetch;
-  signal.throwIfAborted();assertQQUploadSize(asset.kind,asset.size);
+  signal.throwIfAborted();
   const file=await open(asset.path,'r');
   try{
     const {size}=await file.stat();assertQQUploadSize(asset.kind,size);

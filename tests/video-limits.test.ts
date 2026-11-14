@@ -65,8 +65,9 @@ test('worker video output reaches registration at 500 MiB and rejects larger out
   try{
     const accepted=await run();assert.equal(accepted.assetIds.length,1);assert.equal(store.assets.asset(binding.key,accepted.assetIds[0]).kind,'video');
     outputSize=500*MiB+1;await assert.rejects(run(),/OUTPUT_TOO_LARGE/);
-    kind='file';outputSize=20*MiB+1;await assert.rejects(run(),/OUTPUT_TOO_LARGE/);
-    assert.equal(store.assets.recentAssets(binding.key,binding.sessionId,undefined,10).length,1);
+    kind='file';outputSize=50*MiB;assert.equal((await run()).assetIds.length,1);
+    outputSize=50*MiB+1;await assert.rejects(run(),/OUTPUT_TOO_LARGE/);
+    assert.equal(store.assets.recentAssets(binding.key,binding.sessionId,undefined,10).length,2);
   }finally{stated.mock.restore();syncBuiltinESMExports();}
 });
 

@@ -36,6 +36,11 @@ class VoiceError(Exception):
         self.code = code
 
 
+def ensure_audio_size(size: int) -> None:
+    if size > MAX_AUDIO_BYTES:
+        raise VoiceError("VOICE_OUTPUT_TOO_LARGE")
+
+
 def remaining(job: dict, maximum: float | None = 120) -> float | None:
     """Return a bounded request timeout, preserving the unlimited-job contract."""
     if job.get("timeoutMs") == 0:
@@ -124,8 +129,7 @@ def _request_gpt_audio(job: dict, endpoint: dict, body: dict) -> bytes:
                     if not isinstance(chunk, (bytes, bytearray)):
                         raise VoiceError("VOICE_PROVIDER_OUTPUT_INVALID")
                     total += len(chunk)
-                    if total > MAX_AUDIO_BYTES:
-                        raise VoiceError("VOICE_OUTPUT_TOO_LARGE")
+                    ensure_audio_size(total)
                     chunks.append(bytes(chunk))
                 return b"".join(chunks)
     except VoiceError:
@@ -137,8 +141,7 @@ def _request_gpt_audio(job: dict, endpoint: dict, body: dict) -> bytes:
 
 
 def _validate_gpt_wav(data: bytes) -> None:
-    if len(data) > MAX_AUDIO_BYTES:
-        raise VoiceError("VOICE_OUTPUT_TOO_LARGE")
+    ensure_audio_size(len(data))
     if not data:
         raise VoiceError("EMPTY_VOICE_OUTPUT")
     if len(data) < 44 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
@@ -234,8 +237,7 @@ def _request_edge_audio(job: dict, endpoint: dict, text: str, speed: float | Non
         raise VoiceError("EDGE_TTS_OUTPUT_MISSING") from None
     if not data:
         raise VoiceError("EMPTY_VOICE_OUTPUT")
-    if len(data) > MAX_AUDIO_BYTES:
-        raise VoiceError("VOICE_OUTPUT_TOO_LARGE")
+    ensure_audio_size(len(data))
     # Edge TTS writes a local file; do not trust a nominal MIME type when the
     # bytes are actually an error document.
     if _audio_kind(data, "", "mp3") != "mp3":

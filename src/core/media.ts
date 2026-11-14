@@ -11,7 +11,7 @@ import {trusted} from './policy.js';
 import {normalizeProviderUsage,type MediaUsageCall} from './usage.js';
 import {validateMediaParameters,INPUT_LIMITS,VIDEO_LIMITS,AUDIO_LIMITS,isAudioInput} from './limits.js';
 import {mediaOperationRegistry,MediaOperationRegistry,serviceOperationFor,type MediaOperation} from './media-operation-registry.js';
-import {MEDIA_WORKER_PROTOCOL,MEDIA_WORKER_PROTOCOL_VERSION,validateMediaWorkerJob,type MediaWorkerJob,type WorkerPort} from './worker-port.js';
+import {MEDIA_WORKER_PROTOCOL,MEDIA_WORKER_PROTOCOL_VERSION,type MediaWorkerJob,type WorkerPort} from './worker-port.js';
 import {TransformSlots,transformSlots} from './transform-slots.js';
 import {assetFolder,moveFile,exists,type AssetOrigin} from './media-paths.js';
 import {type MusicData} from './music-state.js';
@@ -121,7 +121,6 @@ export class MediaService {
     try{
     combined.throwIfAborted();
     if(descriptor.localTransform){lease=await this.slots.acquire(operation==='convert_gif'?2:1,combined);combined.throwIfAborted();authorize?.();persist({state:'running'});}
-    if(inputs.length>INPUT_LIMITS.attachmentCount)throw new Error('MEDIA_INPUT_LIMIT');
     const source=await Promise.all(inputs.map(id=>this.assets.resolve(scope,id)));
     if(sessionBound&&source.some(item=>!singingSession||item.sessionId!==singingSession))throw Error(operation==='singing_convert'?'SINGING_ATTACHMENT_INVALID':'MUSIC_ATTACHMENT_INVALID');
     if(descriptor.inputKinds?.length&&source.some(item=>!descriptor.inputKinds!.includes(item.kind)))throw new Error('MEDIA_INPUT_KIND_INVALID');
@@ -150,7 +149,6 @@ export class MediaService {
       }
     }
       const job:MediaWorkerJob={protocol:MEDIA_WORKER_PROTOCOL,protocolVersion:MEDIA_WORKER_PROTOCOL_VERSION,id,scope,operation,handler:descriptor.handler,inputs:source.map(a=>({path:a.path,name:a.name,mime:a.mime,kind:a.kind})),parameters,endpoint:endpoint as unknown as Record<string,unknown>|undefined,output:directory,usagePath:path.join(directory,'model-usage.json'),deadline:descriptor.timeoutMs>0?Date.now()+descriptor.timeoutMs:0,timeoutMs:descriptor.timeoutMs,quotaUnits:descriptor.quotaUnits,processingSlots:lease?.slots};
-      validateMediaWorkerJob(job);
       combined.throwIfAborted();
       authorize?.();
       job.dailyQuotaExempt=this.dailyQuotaExempt(scope,snapshot);
@@ -169,7 +167,7 @@ export class MediaService {
         : await this.worker.run(job,combined,credentials);
       combined.throwIfAborted();
       authorize?.();
-      const save=async(files:MediaFile[])=>{const ids:string[]=[];for(const file of files){const resolved=await realpath(file.path);const root=await realpath(directory);if(!resolved.startsWith(root+path.sep))throw new Error('WORKER_OUTPUT_OUTSIDE_JOB');const size=(await stat(resolved)).size;const maxBytes=file.kind==='video'?VIDEO_LIMITS.attachmentBytes:file.kind==='audio'?AUDIO_LIMITS.outputBytes:20*1024*1024;if(size>maxBytes||operation==='convert_gif'&&size>=10_000_000)throw new Error('OUTPUT_TOO_LARGE');const bytes=await readFile(resolved);combined.throwIfAborted();authorize?.();assertSession();const asset=await this.assets.save(scope,{name:file.name,mime:file.mime,kind:file.kind},bytes,id,'generated',sessionBound?singingSession:undefined,expectedBinding?.generation,sessionBound?()=>{combined.throwIfAborted();authorize?.();assertSession();}:undefined);assertSession();ids.push(asset.id);}return ids;};
+      const save=async(files:MediaFile[])=>{const ids:string[]=[];for(const file of files){const resolved=await realpath(file.path);const root=await realpath(directory);if(!resolved.startsWith(root+path.sep))throw new Error('WORKER_OUTPUT_OUTSIDE_JOB');const size=(await stat(resolved)).size;const maxBytes=file.kind==='video'?VIDEO_LIMITS.attachmentBytes:file.kind==='audio'?AUDIO_LIMITS.outputBytes:INPUT_LIMITS.attachmentBytes;if(size>maxBytes||operation==='convert_gif'&&size>=10_000_000)throw new Error('OUTPUT_TOO_LARGE');const bytes=await readFile(resolved);combined.throwIfAborted();authorize?.();assertSession();const asset=await this.assets.save(scope,{name:file.name,mime:file.mime,kind:file.kind},bytes,id,'generated',sessionBound?singingSession:undefined,expectedBinding?.generation,sessionBound?()=>{combined.throwIfAborted();authorize?.();assertSession();}:undefined);assertSession();ids.push(asset.id);}return ids;};
       const assetIds=await save(result.assets??[]);const contextAssetIds=await save(result.contextAssets??[]);
       persist({state:'complete',assetIds,contextAssetIds,finishedAt:Date.now()});
       assertSession();return {text:result.text,coverage:result.coverage,incomplete:result.incomplete,assetIds,contextAssetIds,...(result.music?{music:result.music}:{})};

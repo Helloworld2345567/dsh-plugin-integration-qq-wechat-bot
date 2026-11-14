@@ -1,17 +1,15 @@
 import type {Asset} from '../core/types.js';
 
-const MiB=1024*1024;
-/** QQ's /files documentation uses MB and byte examples in MiB. Soft limits
- * change the platform's presentation to a file; they are not rejection limits.
- * The conservative 5M threshold only selects direct versus multipart upload.
+/** QQ's /files documentation uses MB and byte examples in MiB. The conservative
+ * 5M threshold only selects direct versus multipart upload.
  * https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_openid_files.post.html
  */
 export const QQ_MEDIA_LIMITS=Object.freeze({
   directUploadBytes:5_000_000,
-  image:Object.freeze({softBytes:20*MiB,hardBytes:200*MiB}),
-  video:Object.freeze({softBytes:30*MiB,hardBytes:200*MiB}),
-  audio:Object.freeze({softBytes:20*MiB,hardBytes:200*MiB}),
-  file:Object.freeze({softBytes:200*MiB,hardBytes:200*MiB}),
+  image:Object.freeze({hardBytes:200*1024*1024}),
+  video:Object.freeze({hardBytes:200*1024*1024}),
+  audio:Object.freeze({hardBytes:200*1024*1024}),
+  file:Object.freeze({hardBytes:200*1024*1024}),
 });
 
 export function assertQQUploadSize(kind:Asset['kind'],size:number):void{

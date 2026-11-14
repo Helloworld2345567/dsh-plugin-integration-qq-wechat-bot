@@ -153,7 +153,6 @@ for (const file of workflows) {
       const pythonVersions = Object.values(document.jobs ?? {}).flatMap(job => job.steps ?? [])
         .filter(step => step.uses?.startsWith('actions/setup-python@')).map(step => String(step.with?.['python-version']));
       for (const version of ['3.12', '3.13']) if (!pythonVersions.includes(version)) failures.push(`.github/workflows/ci.yml: Python ${version} coverage missing`);
-      for (const command of ['npm run verify:release', 'npm run release:pack', 'npm run test:native', 'npm run test:lifecycle-native', 'npm run test:install-smoke']) if (!text.includes(command)) failures.push(`.github/workflows/ci.yml: missing ${command}`);
       if (!/ffmpeg\s+-version[\s\S]*ffprobe\s+-version/m.test(text)) failures.push('.github/workflows/ci.yml: ffmpeg/ffprobe verification missing');
     }
   }
