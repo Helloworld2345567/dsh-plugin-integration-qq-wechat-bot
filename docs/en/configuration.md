@@ -7,7 +7,7 @@ This page documents only configuration read by current code/tests. Setting an un
 ## Precedence and general rules
 
 - The installer/launcher inject product-profile directories together; existing Harness profiles do not automatically adopt them.
-- The Services panel owns the image endpoint, model, default protocol, key variable name and ComfyUI workflow; persona/bot media settings only select the image protocol. `openAiKeyEnv` selects the credential variable, defaulting to `OPENAI_API_KEY` when unset. The host passes the name and corresponding credential to the worker, and the image script reads that variable directly. Endpoint, model, protocol and workflow are passed as explicit arguments without environment fallbacks.
+- The Services panel owns the image endpoint, model, key variable name and ComfyUI workflow. Choose the image protocol when creating each bot, and change it later in that bot's media settings. `openAiKeyEnv` selects the credential variable, defaulting to `OPENAI_API_KEY` when unset. The host passes the name and corresponding credential to the worker, and the image script reads that variable directly. Endpoint, model, protocol and workflow are passed as explicit arguments without environment fallbacks.
 - QQ/WeChat, chat-model and media-analysis credentials belong to Harness credentials or controlled worker injection, not personas, repositories, CLI arguments or archives.
 - Environment changes do not increment persona revisions and usually require restarting the inheriting Harness/product process. Persona edits create revisions; bot settings save independently. Both apply next turn.
 - Directory variables have defaults; set them before installation/start only when overriding. Use no real absolute paths in Issues, logs or examples.

@@ -56,9 +56,22 @@ def image(job):
         raise JobError("REFERENCE_IMAGE_REQUIRED")
     endpoint = job["endpoint"]
     record = Path(job["output"]) / "image-result.json"
-    output_format = params.get("output_format", "jpeg")
+    from dsh_bot_runtime.skills.image_generation.common import IMAGE_MAX_BATCH, IMAGE_MAX_DIMENSION, IMAGE_MIN_DIMENSION, normalize_output_format
+    output_format = normalize_output_format(params.get("output_format", "jpeg"))
     if not isinstance(output_format, str) or output_format not in {"png", "jpeg", "webp", "gif", "svg"}:
         raise JobError("IMAGE_OUTPUT_FORMAT_INVALID")
+    width, height = params.get("width"), params.get("height")
+    if (width is None) != (height is None):
+        raise JobError("IMAGE_RESOLUTION_INVALID")
+    if width is not None and (not isinstance(width, int) or isinstance(width, bool) or not IMAGE_MIN_DIMENSION <= width <= IMAGE_MAX_DIMENSION or width % 8
+                              or not isinstance(height, int) or isinstance(height, bool) or not IMAGE_MIN_DIMENSION <= height <= IMAGE_MAX_DIMENSION or height % 8):
+        raise JobError("IMAGE_RESOLUTION_INVALID")
+    protocol = endpoint.get("protocol", "openai")
+    if width is not None and protocol != "comfyui":
+        raise JobError("IMAGE_RESOLUTION_UNSUPPORTED")
+    requested_count = params.get("n", 1)
+    if isinstance(requested_count, bool) or not isinstance(requested_count, int) or not 1 <= requested_count <= IMAGE_MAX_BATCH:
+        raise JobError("IMAGE_BATCH_INVALID")
     complexity = params.get("complexity")
     if complexity is not None and (not isinstance(complexity, str) or complexity not in {"low", "medium", "high"}):
         raise JobError("IMAGE_COMPLEXITY_INVALID")
@@ -68,16 +81,17 @@ def image(job):
     frame_duration_ms = params.get("frame_duration_ms")
     if frame_duration_ms is not None and (isinstance(frame_duration_ms, bool) or not isinstance(frame_duration_ms, int) or not 20 <= frame_duration_ms <= 2000):
         raise JobError("IMAGE_FRAME_DURATION_INVALID")
-    protocol = endpoint.get("protocol", "openai")
     command = [sys.executable, "-B", str(RELEASE_ROOT / "python" / "image_api.py"), operation,
                "--prompt", str(params.get("prompt", "")), "--protocol", str(protocol), "--model", endpoint["model"],
                "--base-url", endpoint["baseUrl"],
-               "--output-dir", job["output"], "--output-format", output_format, "--n", "1",
+               "--output-dir", job["output"], "--output-format", output_format, "--n", str(requested_count),
                "--timeout", str(job.get("timeoutMs", 0) / 1000), "--record", str(record)]
     if protocol != "comfyui":
         command.extend(["--api-key-env", endpoint.get("keyEnv", "OPENAI_API_KEY")])
     elif endpoint.get("workflowPath"):
         command.extend(["--workflow", str(endpoint["workflowPath"])])
+    if protocol == "comfyui" and width is not None:
+        command.extend(["--width", str(width), "--height", str(height)])
     if complexity is not None:
         command.extend(["--complexity", complexity])
     if frame_count is not None:
@@ -103,17 +117,20 @@ def image(job):
         raise JobError("IMAGE_OUTPUT_RECORD_INVALID")
     if not all(isinstance(p, str) and p.strip() for p in files):
         raise JobError("IMAGE_OUTPUT_RECORD_INVALID")
-    if len(files) != 1:
+    if not 1 <= len(files) <= requested_count:
         raise JobError("IMAGE_OUTPUT_COUNT_INVALID")
     output_root = Path(job["output"]).resolve()
-    asset = (output_root / files[0]).resolve()
-    if not asset.is_relative_to(output_root) or not asset.is_file():
-        raise JobError("IMAGE_OUTPUT_RECORD_INVALID")
-    suffix = asset.suffix.lower()
-    mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".svg": "image/svg+xml"}.get(suffix)
-    if mime is None:
-        raise JobError("IMAGE_OUTPUT_FORMAT_INVALID")
-    return {"assets": [{"path": str(asset), "name": asset.name, "mime": mime, "kind": "image"}]}
+    assets = []
+    for filename in files:
+        asset = (output_root / filename).resolve()
+        if not asset.is_relative_to(output_root) or not asset.is_file():
+            raise JobError("IMAGE_OUTPUT_RECORD_INVALID")
+        suffix = asset.suffix.lower()
+        mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".svg": "image/svg+xml"}.get(suffix)
+        if mime is None:
+            raise JobError("IMAGE_OUTPUT_FORMAT_INVALID")
+        assets.append({"path": str(asset), "name": asset.name, "mime": mime, "kind": "image"})
+    return {"assets": assets}
 
 
 PUBLISHED_SKILL_ENTRIES = {

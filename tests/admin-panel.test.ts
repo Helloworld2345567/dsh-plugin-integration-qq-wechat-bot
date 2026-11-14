@@ -146,6 +146,37 @@ test('bot page renders creation before data arrives and with no bots, then edits
   }finally{harness.restore();}
 });
 
+test('new bots save their own image protocol while preserving the other initial settings',async()=>{
+  const persona=configSchema.parse({id:'default',name:'默认',personaPrompt:'hello',model:{provider:'P',model:'model'},media:{image:{protocol:'comfyui'},voice:{enabled:false,protocol:'edge_tts'}}});
+  const summary={bots:[],configs:[persona],counts:{pendingDeliveries:0},health:{activeTasks:0}};
+  const calls:any[]=[],states:any[]=['bots',summary,'','','',false,[]];
+  const harness=panelHarness(states,body=>{
+    calls.push(body);
+    if(body.name==='catalog.config')return{data:persona};
+    if(body.action==='bot.save')return{...body.input,settings:botSettingsSchema.parse(body.input.settings)};
+    if(body.name==='bots.list')return{data:[]};
+    return{data:summary};
+  });
+  const field=(label:string)=>harness.render().find(node=>node.type==='label'&&node.children[0]===label).children[1];
+  try{
+    await harness.start('new-bot-image-protocol');
+    for(const protocol of ['openai','comfyui']){
+      harness.render().find(node=>node.props?.['aria-label']==='新建机器人').props.onClick();await settlePanel();
+      if(protocol==='openai')assert.equal(field('生图协议').props.value,'openai');
+      field('ID').props.onChange({target:{value:protocol}});
+      field('名称').props.onChange({target:{value:protocol}});
+      field('生图协议').props.onChange({target:{value:protocol}});
+      await settlePanel();
+      harness.render().find(node=>node.type==='button'&&node.children.includes('创建')).props.onClick();
+      await settlePanel();await settlePanel();
+      const created=calls.filter(body=>body.action==='bot.save').at(-1).input;
+      assert.equal(created.settings.media.image.protocol,protocol);
+      assert.equal('imageProtocol' in created,false);
+      assert.deepEqual({...created.settings,media:{...created.settings.media,image:persona.media.image}},botSettingsFromConfig(persona));
+    }
+  }finally{harness.restore();}
+});
+
 test('persona editing keeps only identity, prompt and files while preserving the full saved configuration',async()=>{
   const initial=configSchema.parse({schemaVersion:4,id:'default',name:'默认',personaPrompt:'hello',model:{provider:'deepseek',model:'deepseek-chat'},media:{image:{enabled:false}}});
   let saved=initial;

@@ -1,5 +1,6 @@
 import type {MessageDescriptor} from '../i18n/common.js';
 import {diagnosticFields} from '../i18n/diagnostics.js';
+import {ServiceContractError} from './service-errors.js';
 import {access,readdir} from 'node:fs/promises';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
@@ -26,6 +27,18 @@ type SpawnProcess=(file:string,args:readonly string[],cwd:string)=>Promise<numbe
 
 const powershell=process.platform==='win32'?'pwsh.exe':'pwsh';
 const trimUrl=(value:string)=>value.replace(/\/$/,'');
+
+async function findComfyUiRoot(configuredRoot:string):Promise<string>{
+  let current=path.resolve(configuredRoot);
+  for(;;){
+    try{
+      await Promise.all([access(path.join(current,'scripts','start_comfyui.ps1')),access(path.join(current,'ComfyUI','main.py'))]);
+      return current;
+    }catch{}
+    const parent=path.dirname(current);if(parent===current)break;current=parent;
+  }
+  throw new ServiceContractError({category:'NOT_CONFIGURED',...diagnosticFields('comfyUiLayoutMissing'),retryable:false,blocksService:false});
+}
 
 async function findModelConfig(projectRoot:string,configuredRoot:string,serviceRoot:string):Promise<string|undefined>{
   const candidates=[
@@ -119,8 +132,13 @@ export class ExternalServiceLauncher implements ServiceLauncher {
     if(await this.checkHealth(settings.serviceId,settings.baseUrl,signal))return{serviceId:settings.serviceId,state:'already-running',...diagnosticFields("serviceAlreadyRunning")};
     let command:string,args:string[],cwd:string;
     if(settings.serviceId==='comfyui'){
-      const script=path.join(root,'scripts','start_comfyui.ps1');await access(script);await access(path.join(root,'ComfyUI','main.py'));
-      command=powershell;args=['-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',script,'-ProjectRoot',root,'-ListenHost','127.0.0.1','-Port','8188'];cwd=root;
+      const projectRoot=await findComfyUiRoot(root),script=path.join(projectRoot,'scripts','start_comfyui.ps1');
+      // Use the local Krea2 deployment's memory settings instead of enabling
+      // dynamic host buffers, pinned memory and retained node caches by default.
+      // PowerShell -File cannot bind an array parameter from separate native
+      // arguments. Pass an array expression and quote both operator-owned paths.
+      const quote=(value:string)=>`'${value.replaceAll("'","''")}'`;
+      command=powershell;args=['-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-Command',`& ${quote(script)} -ProjectRoot ${quote(projectRoot)} -ListenHost '127.0.0.1' -Port 8188 -ComfyArgs @('--disable-dynamic-vram','--disable-pinned-memory','--cache-none')`];cwd=projectRoot;
     }else if(settings.serviceId==='breeze-tts'){
       const script=path.join(root,'Start-Breeze.ps1');await access(script);command=powershell;args=['-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',script];cwd=root;
     }else{

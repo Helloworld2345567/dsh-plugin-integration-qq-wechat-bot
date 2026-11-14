@@ -11,7 +11,7 @@ from pathlib import Path
 from ..common import (
     MAX_IMAGE_BYTES, MAX_MULTIPART_BYTES, OUTPUT_MIME_TYPES, SUPPORTED_INPUT_TYPES,
     SUPPORTED_OUTPUT_TYPES, _as_jpeg, detect_content_type, input_content_type,
-    public_image_url, request_with_retry, save_images,
+    normalize_output_format, public_image_url, request_with_retry, save_images,
 )
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
@@ -91,7 +91,7 @@ def common_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--api-key-env", default="OPENAI_API_KEY")
     parser.add_argument("--output-dir", type=Path, default=Path("assets"))
-    parser.add_argument("--output-format", choices=("png", "jpeg", "webp", "gif", "svg"), default="jpeg")
+    parser.add_argument("--output-format", choices=("png", "jpg", "jpeg", "webp", "gif", "svg"), default="jpeg")
     parser.add_argument("--output-compression", type=int)
     parser.add_argument("--background", choices=("auto", "opaque", "transparent"))
     parser.add_argument("--complexity", choices=("low", "medium", "high"))
@@ -128,6 +128,7 @@ def _failure(code: str, record: Path | None = None, exit_code: int = 1) -> int:
 
 def main(argv=None) -> int:
     args = parse_args(argv)
+    args.output_format = normalize_output_format(args.output_format)
     try:
         if not 1 <= args.n <= 10: raise ValueError()
         if args.output_compression is not None and not 0 <= args.output_compression <= 100: raise ValueError()

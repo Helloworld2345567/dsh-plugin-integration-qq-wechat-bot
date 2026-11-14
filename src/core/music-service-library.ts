@@ -88,6 +88,10 @@ export class MusicServiceLibrary {
     await this.refresh(signal);
   }
 
+  async close(): Promise<void> {
+    await this.pending;
+  }
+
   async refresh(signal: AbortSignal = new AbortController().signal): Promise<void> {
     await this.exclusive(() => this.refreshNow(signal));
   }

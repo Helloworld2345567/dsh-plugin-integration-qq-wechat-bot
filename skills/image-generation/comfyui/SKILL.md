@@ -10,6 +10,8 @@ This service is selected when the effective image protocol is `comfyui`.
 - The endpoint is a local HTTP(S) ComfyUI API and the workflow is an operator-selected API-format JSON document. Formats, editing and optional inputs are limited to nodes in that workflow; do not infer capabilities from another workflow or provider.
 - The Services panel owns the endpoint and workflow; the host passes them as explicit script arguments. ComfyUI settings do not read environment variables.
 - The adapter submits a workflow, waits for the matching history record and materializes image outputs through the ComfyUI view endpoint.
+- Optional per-call `width`/`height` values update supported `SizePicker`, latent-size or named width/height controls; `n` updates supported batch-size controls. These parameters are only set when the user explicitly asks for them, and fail closed when the workflow has no matching controls.
+- `output_format` controls the returned attachment (`png` or `jpg`/`jpeg`); the workflow's internal save extension does not override the final attachment format.
 - Prompt injection targets supported text inputs in the configured workflow; workflows without a text input remain valid for deterministic image jobs.
 - Reference edits upload the selected image to ComfyUI and connect it to the workflow's image input.
 - The host validates output files, bounds their size and keeps all workflow paths and service details operator-owned.

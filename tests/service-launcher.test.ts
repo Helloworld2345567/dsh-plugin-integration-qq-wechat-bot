@@ -21,7 +21,21 @@ test('external launcher starts ComfyUI with the local project script and waits f
   const calls:any[]=[];let healthy=false;
   const launcher=new ExternalServiceLauncher(async(serviceId,baseUrl)=>{calls.push(['health',serviceId,baseUrl]);return healthy;},async(file,args,cwd)=>{calls.push(['spawn',file,args,cwd]);healthy=true;return 43;},1,30);
   const result=await launcher.start({serviceId:'comfyui',baseUrl:'http://127.0.0.1:8188',projectRoot:root},new AbortController().signal);
-  assert.equal(result.state,'ready');assert.equal(result.pid,43);assert.equal(calls[1][0],'spawn');assert.equal(calls[1][3],root);assert.deepEqual(calls[1][2].slice(-6),['-ProjectRoot',root,'-ListenHost','127.0.0.1','-Port','8188']);
+  assert.equal(result.state,'ready');assert.equal(result.pid,43);assert.equal(calls[1][0],'spawn');assert.equal(calls[1][3],root);assert.equal(calls[1][2].at(-2),'-Command');assert.match(calls[1][2].at(-1),/-ComfyArgs @\('--disable-dynamic-vram','--disable-pinned-memory','--cache-none'\)/);
+});
+
+test('ComfyUI launcher finds the project above nested workflow directories',async t=>{
+  const root=await mkdtemp(path.resolve('.codex/service-launcher-comfyui-nested-')),workflows=path.join(root,'workflows','api');t.after(()=>rm(root,{recursive:true,force:true}));
+  await Promise.all([mkdir(path.join(root,'scripts'),{recursive:true}),mkdir(path.join(root,'ComfyUI'),{recursive:true}),mkdir(workflows,{recursive:true})]);
+  await Promise.all([writeFile(path.join(root,'scripts','start_comfyui.ps1'),''),writeFile(path.join(root,'ComfyUI','main.py'),'')]);
+  let healthy=false;let launchedRoot='';const launcher=new ExternalServiceLauncher(async()=>healthy,async(_file,args,cwd)=>{launchedRoot=cwd;assert.ok(args.at(-1)?.includes(`-ProjectRoot '${root.replaceAll("'","''")}'`));healthy=true;return 44;},1,30);
+  assert.equal((await launcher.start({serviceId:'comfyui',baseUrl:'http://127.0.0.1:8188',projectRoot:workflows},new AbortController().signal)).state,'ready');assert.equal(launchedRoot,root);
+});
+
+test('ComfyUI launcher explains a missing deployment without leaking an ENOENT path',async t=>{
+  const root=await mkdtemp(path.resolve('.codex/service-launcher-comfyui-missing-'));t.after(()=>rm(root,{recursive:true,force:true}));
+  const launcher=new ExternalServiceLauncher(async()=>false,async()=>{assert.fail('must not spawn without a deployment');});
+  await assert.rejects(launcher.start({serviceId:'comfyui',baseUrl:'http://127.0.0.1:8188',projectRoot:root},new AbortController().signal),(error:any)=>error.message.includes('ComfyUI')&&!error.message.includes('ENOENT'));
 });
 
 test('external launcher does not spawn an already healthy service',async t=>{

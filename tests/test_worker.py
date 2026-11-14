@@ -291,6 +291,31 @@ class WorkerTests(unittest.TestCase):
             result = worker.execute(job)
         self.assertEqual(result['assets'][0]['mime'], 'image/png')
 
+    def test_comfyui_image_worker_forwards_resolution_format_and_batch_count(self):
+        job = self.job('image_generate', prompt='batch workflow', width=640, height=768, output_format='png', n=3)
+        job['endpoint'] = {
+            'protocol': 'comfyui', 'baseUrl': 'http://127.0.0.1:8188', 'model': 'comfyui',
+            'workflowPath': r'E:\COMFYUI\workflows\infrastructure-smoke-api.json',
+        }
+
+        def fake(command, **kwargs):
+            self.assertEqual(command[command.index('--width') + 1], '640')
+            self.assertEqual(command[command.index('--height') + 1], '768')
+            self.assertEqual(command[command.index('--output-format') + 1], 'png')
+            self.assertEqual(command[command.index('--n') + 1], '3')
+            outputs = []
+            for index in range(3):
+                output = self.root / f'generated-{index}.png'
+                output.write_bytes(b'\x89PNG\r\n\x1a\n')
+                outputs.append(output.name)
+            (self.root / 'image-result.json').write_text(json.dumps({'outputs': outputs}), encoding='utf-8')
+            return Mock(returncode=0)
+
+        with patch.object(worker.subprocess, 'run', side_effect=fake):
+            result = worker.execute(job)
+        self.assertEqual(len(result['assets']), 3)
+        self.assertTrue(all(asset['mime'] == 'image/png' for asset in result['assets']))
+
     def test_image_requires_exact_output_record_without_directory_scan_fallback(self):
         from PIL import Image
         job = self.job('image_generate', prompt='recorded')
@@ -326,6 +351,9 @@ class WorkerTests(unittest.TestCase):
         files = image_api.save_images([(buf.getvalue(),'image/png')],self.root,'fixture')
         self.assertEqual(len(files),1)
         with Image.open(files[0]) as result: self.assertEqual(result.format,'JPEG')
+        jpg = image_api.save_images([(buf.getvalue(),'image/png')], self.root, 'jpg-alias', output_format='jpg')[0]
+        self.assertEqual(jpg.suffix, '.jpg')
+        with Image.open(jpg) as result: self.assertEqual(result.format, 'JPEG')
         session = Mock(); session.request.side_effect=TimeoutError('uncertain upstream outcome')
         with self.assertRaises(TimeoutError): image_api.request_with_retry(session,'POST','https://example.invalid',headers={},timeout=1)
         self.assertEqual(session.request.call_count,1)

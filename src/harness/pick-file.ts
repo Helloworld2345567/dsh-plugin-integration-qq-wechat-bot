@@ -1,57 +1,35 @@
 import {localizedError,LocalizedError} from '../core/errors.js';
-import {execFile,type ExecFileOptions} from 'node:child_process';
-import {realpath,stat} from 'node:fs/promises';
+import {readdir,realpath,stat} from 'node:fs/promises';
 import path from 'node:path';
 
-export type FilePickerCommand=(command:string,args:string[],options:ExecFileOptions)=>Promise<{stdout:string}>;
-const runCommand:FilePickerCommand=(command,args,options)=>new Promise((resolve,reject)=>{
-  execFile(command,args,{...options,encoding:'utf8'},(error,stdout,stderr)=>{
-    if(error){reject(localizedError('filePickerFailed',{detail:stderr.trim()||error.message}));return;}
-    resolve({stdout});
-  });
-});
+export interface WorkflowFileEntry {name:string;path:string;directory:boolean}
+export interface WorkflowFileList {directory:string;parent?:string;entries:WorkflowFileEntry[]}
 
-const windowsPickScript=String.raw`
-$ErrorActionPreference='Stop'
-[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false)
-Add-Type -AssemblyName System.Windows.Forms
-$dialog=New-Object System.Windows.Forms.OpenFileDialog
-$dialog.Filter='ComfyUI workflow (*.json)|*.json|JSON files (*.json)|*.json|All files (*.*)|*.*'
-$dialog.CheckFileExists=$true
-$dialog.Multiselect=$false
-$initial=$env:BOT_PICK_FILE_INITIAL
-if($initial){ try { $dialog.InitialDirectory=[System.IO.Path]::GetDirectoryName($initial) } catch { } }
-$result=$dialog.ShowDialog()
-if($result -eq [System.Windows.Forms.DialogResult]::OK){ @{selected=$dialog.FileName}|ConvertTo-Json -Compress }
-else { @{selected=$null}|ConvertTo-Json -Compress }
-`;
-
-/** Open a native file chooser on the desktop host and return a canonical file path. */
-export async function pickFile(initial:string|undefined,signal:AbortSignal=new AbortController().signal,run:FilePickerCommand=runCommand,platform:NodeJS.Platform=process.platform):Promise<string|undefined>{
-  const combined=AbortSignal.any([signal,AbortSignal.timeout(300000)]);
-  combined.throwIfAborted();
-  let selected:unknown;
-  try {
-    if(platform!=='win32') throw localizedError('filePickerUnsupported');
-    const command=path.win32.join(process.env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
-    const options:ExecFileOptions={shell:false,windowsHide:true,timeout:310000,maxBuffer:64*1024,env:{...process.env,...initial?{BOT_PICK_FILE_INITIAL:initial}:{}}};
-    const {stdout}=await run(command,['-NoProfile','-NonInteractive','-STA','-EncodedCommand',Buffer.from(windowsPickScript,'utf16le').toString('base64')],options);
-    combined.throwIfAborted();
-    let result:any;try{result=JSON.parse(stdout.trim().replace(/^\uFEFF/,''));}catch{throw localizedError('filePickerResponse');}
-    selected=result?.selected;
-  } catch(error) {
-    if(error instanceof LocalizedError) throw error;
-    const detail=signal.aborted?'FILE_PICKER_CANCELLED':combined.aborted?'FILE_PICKER_TIMEOUT':'FILE_PICKER_FAILED';
-    throw localizedError('filePickerFailed',{detail});
-  }
-  if(selected===null||selected===undefined||selected==='') return undefined;
-  if(typeof selected!=='string'||!path.isAbsolute(selected)) throw localizedError('filePickerPath');
-  try {
-    const resolved=await realpath(selected),info=await stat(resolved);
-    if(!info.isFile()) throw localizedError('fileNotFile');
-    return resolved;
-  } catch(error) {
-    if(error instanceof LocalizedError&&error.localizedMessage.key==='diagnostic.fileNotFile') throw error;
-    throw localizedError('fileInaccessible');
+/** Browse local workflows in the authenticated panel, without a desktop subprocess. */
+export async function listWorkflowFiles(current:string|undefined,signal:AbortSignal=new AbortController().signal):Promise<WorkflowFileList>{
+  signal.throwIfAborted();
+  const requested=current?.trim()||process.cwd();
+  if(!path.isAbsolute(requested)||/[\x00-\x1f]/.test(requested))throw localizedError('filePickerPath');
+  try{
+    let directory=requested;
+    try{if(!(await stat(requested)).isDirectory())directory=path.dirname(requested);}
+    catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT'&&path.extname(requested).toLowerCase()==='.json')directory=path.dirname(requested);else throw error;}
+    directory=await realpath(directory);
+    const rows=await readdir(directory,{withFileTypes:true});
+    const entries:WorkflowFileEntry[]=[];
+    for(const row of rows){
+      signal.throwIfAborted();
+      const file=path.join(directory,row.name);
+      const info=row.isSymbolicLink()?await stat(file).catch(()=>undefined):row;
+      if(info?.isDirectory()||info?.isFile()&&path.extname(row.name).toLowerCase()==='.json')entries.push({name:row.name,path:file,directory:info.isDirectory()});
+    }
+    signal.throwIfAborted();
+    entries.sort((a,b)=>Number(b.directory)-Number(a.directory)||a.name.localeCompare(b.name));
+    const parent=path.dirname(directory);
+    return{directory,...parent!==directory?{parent}:{},entries};
+  }catch(error){
+    signal.throwIfAborted();
+    if(error instanceof LocalizedError)throw error;
+    throw localizedError('workflowDirectoryInaccessible');
   }
 }

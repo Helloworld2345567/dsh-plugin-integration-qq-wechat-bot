@@ -41,7 +41,8 @@ test('overview and services load real health, and service actions refresh profil
       if(body.name==='catalog.profiles')return Response.json({result:{items:[profile('gpt-sovits','gpt'),profile('breeze-tts','breeze'),profile('rvc','rvc')],nextCursor:null}});
       if(body.name==='service.settings')return Response.json({result:{data:settings}});
       if(body.name==='service.health')return Response.json({result:{data:{state:healthState,checkedAt:123}}});
-      if(body.name==='service.settings.save'){const {expectedRevision,...next}=body.input;settings={...settings,...next};return Response.json({result:{data:settings}});}
+      if(body.name==='service.settings.save'){const {expectedRevision,...next}=body.input;settings={...settings,...next,refreshing:true};return Response.json({result:{data:settings}});}
+      if(body.name==='service.refresh')settings={...settings,refreshing:false};
       if(body.name==='service.start')return Response.json({result:{data:{state:'already-running'}}});
       return Response.json({result:{data:summary}});
     };
@@ -63,8 +64,101 @@ test('overview and services load real health, and service actions refresh profil
           const button=tree.find(n=>n.type==='button'&&n.children.includes(label));assert.equal(button.props.disabled,false);button.props.onClick();await settle();await settle();
           tree=render();assert.equal(calls.filter(call=>call.name==='service.health').length,previousHealthCalls+2);assert.equal(calls.filter(call=>call.name==='catalog.profiles').length,previousProfileCalls+1);
           assert.ok(tree.some(n=>n.children.includes(action==='start'?'连接正常':'连接失败')));
+          if(action==='refresh')assert.deepEqual(calls.filter(call=>call.name==='service.refresh').map(call=>call.input.serviceId),['rvc','music']);
         }
       }
     }finally{for(const cleanup of cleanups)cleanup();(globalThis as any).window=previousWindow;globalThis.fetch=previousFetch;}
   }
+});
+
+test('image settings stay independent and slow picking or background refresh never locks the service form',async()=>{
+  const flatten=(node:any):any[]=>Array.isArray(node)?node.flatMap(flatten):node&&typeof node==='object'?[node,...(node.children??[]).flatMap(flatten)]:[];
+  const settle=()=>new Promise(resolve=>setImmediate(resolve));
+  const previousWindow=(globalThis as any).window,previousFetch=globalThis.fetch;
+  const summary={bots:[],configs:[],counts:{pendingDeliveries:0},health:{activeTasks:0,serviceRunning:false}};
+  let settings:any={revision:'sha256:'+'1'.repeat(64),modelsRoot:'',gptSovitsUrl:'http://127.0.0.1:9880',openAiBaseUrl:'https://images.example.invalid/v1',openAiModel:'original',comfyUiWorkflowPath:'E:\\COMFYUI\\workflows\\original.json',reports:{}};
+  const states:any[]=['services',summary],refs:any[]=[],effects:Array<()=>unknown>=[],tabEffects:Array<()=>unknown>=[],cleanups:Array<()=>void>=[],calls:any[]=[];
+  let app:any,cursor=0,refCursor=0,mounted=false,pickerResolve:(value:Response)=>void=()=>{},pickerSignal:AbortSignal|undefined,saveResolve:()=>void=()=>{},refreshResolve:()=>void=()=>{},refreshReject:(error:Error)=>void=()=>{},settingsResolve:()=>void=()=>{},deferSave=false,deferRefresh=false,deferSettings=false,settingsRevision=1;
+  const React={Fragment:'fragment',createElement:(type:any,props:any,...children:any[])=>({type,props,children}),useState:(initial:any)=>{const i=cursor++;if(!(i in states))states[i]=initial;return[states[i],(next:any)=>{states[i]=typeof next==='function'?next(states[i]):next;}];},useRef:(initial:any)=>{const i=refCursor++;return refs[i]??=({current:initial});},useEffect:(effect:()=>unknown,deps?:unknown[])=>{if(!mounted){effects.push(effect);if(deps?.length===1&&deps[0]==='services')tabEffects.push(effect);}}};
+  const locale={register:()=>()=>{},bind:()=>chinese};
+  (globalThis as any).window={__BOT_INTEGRATION__:{endpoint:'http://fixture.invalid',token:'fixture'},__ModuleLoader__:{load:({factory}:any)=>factory(()=>React).apply({locale,effect:(fn:any)=>fn(),slots:{inject:(_slot:any,fn:any)=>fn(),register:(_meta:any,component:any)=>{app=component;}}})}};
+  globalThis.fetch=async(_url,init)=>{
+    const body=JSON.parse(String(init?.body));calls.push(body);
+    if(body.name==='catalog.profiles')return Response.json({result:{items:[],nextCursor:null}});
+    if(body.name==='service.settings'){const snapshot=structuredClone(settings);if(deferSettings)await new Promise<void>(resolve=>{settingsResolve=resolve;});return Response.json({result:{data:snapshot}});}
+    if(body.name==='service.settings.pick-file'){
+      pickerSignal=init?.signal as AbortSignal;
+      return new Promise<Response>((resolve,reject)=>{pickerResolve=resolve;pickerSignal?.addEventListener('abort',()=>reject(pickerSignal?.reason),{once:true});});
+    }
+    if(body.name==='service.settings.save'){
+      if(deferSave)await new Promise<void>(resolve=>{saveResolve=resolve;});
+      const {expectedRevision,...next}=body.input;settings={...settings,...next,revision:'sha256:'+String(++settingsRevision).repeat(64),refreshing:deferRefresh};return Response.json({result:{data:settings}});
+    }
+    if(body.name==='service.refresh'&&deferRefresh){const revision=settings.revision;await new Promise<void>((resolve,reject)=>{refreshResolve=resolve;refreshReject=reject;});if(settings.revision===revision)settings={...settings,refreshing:false};}
+    return Response.json({result:{data:summary}});
+  };
+  const render=()=>{cursor=0;refCursor=0;return flatten(app());};
+  const field=(label:string)=>render().find(node=>node.type==='label'&&node.children[0]===label).children[1];
+  const button=(label:string)=>render().find(node=>node.type==='button'&&node.children.includes(label));
+  try{
+    await import(new URL('../src/client/index.ts?responsive-services',import.meta.url).href);
+    render();mounted=true;for(const effect of effects){const cleanup=effect();if(typeof cleanup==='function')cleanups.push(cleanup as ()=>void);}await settle();await settle();
+    assert.ok(!render().some(node=>node.type==='label'&&node.children[0]==='默认生图服务'));
+    assert.ok(!render().some(node=>node.type==='label'&&node.children[0]==='生图协议'));
+    assert.ok(render().some(node=>node.type==='h3'&&node.children.includes('OpenAI 生图')));
+    assert.ok(render().some(node=>node.type==='h3'&&node.children.includes('ComfyUI')));
+    assert.equal(field('模型').props.value,'original');assert.ok(field('ComfyUI 工作流文件'));
+    button('选择文件').props.onClick();await settle();
+    assert.equal(button('正在选择…').props.disabled,true);assert.equal(field('模型').props.disabled,false);
+    field('模型').props.onChange({target:{value:'edited-during-picker'}});
+    const listing={directory:'E:\\COMFYUI\\workflows',parent:'E:\\COMFYUI',entries:[{name:'sub',path:'E:\\COMFYUI\\workflows\\sub',directory:true},{name:'selected.json',path:'E:\\COMFYUI\\workflows\\selected.json',directory:false}]};
+    pickerResolve(Response.json({result:listing}));await settle();
+    assert.ok(render().some(node=>node.props?.role==='dialog'&&node.props?.['aria-label']==='选择工作流文件'));
+    button('📁 sub').props.onClick();await settle();
+    assert.equal(calls.at(-1).input.current,'E:\\COMFYUI\\workflows\\sub');
+    pickerResolve(Response.json({error:'Cannot read directory',message:{namespace:'bot-integration',key:'diagnostic.workflowDirectoryInaccessible'}},{status:400}));await settle();
+    assert.ok(render().some(node=>node.props?.role==='alert'&&typeof node.children[0]==='string'));
+    assert.equal(field('工作流目录').props.disabled,false);
+    field('工作流目录').props.onChange({target:{value:'E:\\COMFYUI\\workflows'}});button('打开目录').props.onClick();await settle();
+    pickerResolve(Response.json({result:listing}));await settle();
+    button('selected.json').props.onClick();await settle();
+    assert.equal(field('模型').props.value,'edited-during-picker');assert.equal(field('ComfyUI 工作流文件').props.value,'E:\\COMFYUI\\workflows\\selected.json');
+    button('选择文件').props.onClick();await settle();button('取消').props.onClick();await settle();
+    assert.equal(pickerSignal?.aborted,true);assert.equal(button('选择文件').props.disabled,false);
+    assert.equal(field('ComfyUI 工作流文件').props.value,'E:\\COMFYUI\\workflows\\selected.json');
+    deferSave=true;deferRefresh=true;button('保存').props.onClick();await settle();
+    assert.equal(button('正在保存…').props.disabled,true);assert.equal(field('模型').props.disabled,false);
+    field('模型').props.onChange({target:{value:'edited-during-save'}});saveResolve();await settle();await settle();
+    assert.equal(field('模型').props.value,'edited-during-save');assert.equal(button('保存').props.disabled,false);
+    assert.ok(button('正在刷新…'));assert.ok(render().some(node=>node.props?.role==='status'&&node.children.includes('已保存')));
+    // A second save replaces the scan while its first HTTP waiter is still pending.
+    deferSave=false;field('GPT-SoVITS 服务地址').props.onChange({target:{value:'http://127.0.0.1:9881'}});
+    button('保存').props.onClick();await settle();await settle();refreshReject(Error('superseded scan'));await settle();await settle();
+    assert.equal(calls.filter(call=>call.name==='service.refresh').length,2);assert.ok(button('正在刷新…'));
+    assert.equal(render().some(node=>node.props?.role==='alert'),false);
+    // A superseded scan can also resolve normally. Its response must still lead to the latest scan.
+    field('GPT-SoVITS 服务地址').props.onChange({target:{value:'http://127.0.0.1:9882'}});
+    button('保存').props.onClick();await settle();await settle();
+    field('模型').props.onChange({target:{value:'edited-during-latest-scan'}});
+    refreshResolve();await settle();await settle();
+    assert.equal(calls.filter(call=>call.name==='service.refresh').length,3);assert.ok(button('正在刷新…'));
+    refreshResolve();await settle();await settle();
+    assert.equal(field('模型').props.value,'edited-during-latest-scan');assert.equal(button('保存').props.disabled,false);
+    assert.equal(field('GPT-SoVITS 服务地址').props.value,'http://127.0.0.1:9882');assert.ok(button('刷新'));
+    deferSave=false;deferRefresh=false;const queriesBefore=calls.filter(call=>call.name==='service.settings').length;
+    button('保存').props.onClick();await settle();await settle();
+    assert.equal(button('保存').props.disabled,true);assert.equal(calls.filter(call=>call.name==='service.settings').length,queriesBefore);
+    assert.equal(settings.openAiModel,'edited-during-latest-scan');assert.equal(settings.comfyUiWorkflowPath,'E:\\COMFYUI\\workflows\\selected.json');
+    // Re-entering the tab reads settings again while retaining the current form until it returns.
+    for(const timing of ['before-save','during-save']){
+      const loadTab=()=>{for(const effect of tabEffects){const cleanup=effect();if(typeof cleanup==='function')cleanups.push(cleanup as ()=>void);}};
+      deferSettings=true;deferSave=true;
+      if(timing==='before-save'){loadTab();await settle();}
+      field('模型').props.onChange({target:{value:timing}});button('保存').props.onClick();await settle();
+      if(timing==='during-save'){loadTab();await settle();}
+      saveResolve();await settle();await settle();settingsResolve();await settle();await settle();
+      assert.equal(field('模型').props.value,timing);assert.equal(button('保存').props.disabled,true);
+      deferSettings=false;
+    }
+  }finally{for(const cleanup of cleanups)cleanup();(globalThis as any).window=previousWindow;globalThis.fetch=previousFetch;}
 });

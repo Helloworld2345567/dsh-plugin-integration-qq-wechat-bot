@@ -40,7 +40,7 @@ export const voiceLibrarySettingsInputSchema=voiceLibrarySettingsSchema.extend({
 export type VoiceLibrarySettings=z.infer<typeof voiceLibrarySettingsSchema>;
 export interface VoiceModelReport {profileId:string;displayName:string;state:'ready'|'blocked';diagnostics:string[];diagnosticDetails?:DiagnosticDetail[]}
 export interface VoiceLibraryReport {state:'ready'|'partial'|'blocked'|'missing';profileCount:number;checkedAt:number;diagnostics:string[];diagnosticDetails?:DiagnosticDetail[];models:VoiceModelReport[]}
-export interface VoiceLibraryView extends VoiceLibrarySettings {revision:string;reports:Record<VoiceService,VoiceLibraryReport>}
+export interface VoiceLibraryView extends VoiceLibrarySettings {revision:string;reports:Record<VoiceService,VoiceLibraryReport>;refreshing:boolean}
 export interface VoiceScannerContext {modelsRoot:string;projectRoot:string;python:string;script:string;cache:string;signal:AbortSignal}
 export interface VoiceModelScanner {scan(context:VoiceScannerContext):Promise<unknown>;device?(context:VoiceScannerContext):Promise<'cpu'|'cuda'>}
 
@@ -64,26 +64,40 @@ export class VoiceModelLibrary {
   private reports:Record<VoiceService,VoiceLibraryReport>={rvc:emptyReport(),'gpt-sovits':emptyReport(),'breeze-tts':emptyReport()};
   private pending:Promise<unknown>=Promise.resolve();
   private scanning:Promise<void>|undefined;
+  private scanController:AbortController|undefined;
   constructor(readonly settingsRepository:VoiceLibrarySettingsRepository,readonly home:string,readonly profiles:ProfileStore,readonly scanner:VoiceModelScanner,readonly defaults:Partial<VoiceLibrarySettings>={},readonly launcher:ServiceLauncher=new ExternalServiceLauncher()){
     this.discovery=new ReadOnlyServiceDiscovery(profiles,new Map());
   }
   private settings():VoiceLibrarySettings{return voiceLibrarySettingsSchema.parse(this.settingsRepository.read()??{modelsRoot:this.defaults.modelsRoot??process.env.BOT_VOICE_MODELS_ROOT??'',gptSovitsUrl:this.defaults.gptSovitsUrl??'http://127.0.0.1:9880',breezeTtsUrl:this.defaults.breezeTtsUrl??process.env.BREEZE_TTS_URL??'http://127.0.0.1:8080',gptSovitsProjectRoot:this.defaults.gptSovitsProjectRoot??process.env.GPT_SOVITS_ROOT??'',breezeTtsProjectRoot:this.defaults.breezeTtsProjectRoot??process.env.BREEZE_TTS_ROOT??'',breezeTtsVoicesRoot:this.defaults.breezeTtsVoicesRoot??process.env.BREEZE_TTS_VOICES_ROOT??''});}
-  view():VoiceLibraryView {const settings=this.settings();return{...settings,revision:revision(settings),reports:structuredClone(this.reports)};}
+  view():VoiceLibraryView {const settings=this.settings();return{...settings,revision:revision(settings),reports:structuredClone(this.reports),refreshing:!!this.scanning};}
   private exclusive<T>(action:()=>Promise<T>):Promise<T>{const current=this.pending.then(action,action);this.pending=current.catch(()=>{});return current;}
   async save(input:unknown,signal:AbortSignal):Promise<VoiceLibraryView>{
     const {expectedRevision,...settings}=voiceLibrarySettingsInputSchema.parse(input);
-    return this.exclusive(async()=>{
-      signal.throwIfAborted();const current=this.settings();
-      if(expectedRevision!==revision(current)&&(expectedRevision!==undefined||this.settingsRepository.read()!==undefined))throw new ConflictError('模型服务配置已变化，请刷新后重试',diagnostic('modelSettingsChanged'));
-      this.settingsRepository.write(settings);
-      await this.refreshNow(signal);return this.view();
-    });
+    // Persistence is synchronous; a slow discovery must not hold the save lock.
+    signal.throwIfAborted();const current=this.settings(),firstSave=this.settingsRepository.read()===undefined;
+    if(expectedRevision!==revision(current)&&(expectedRevision!==undefined||!firstSave))throw new ConflictError('模型服务配置已变化，请刷新后重试',diagnostic('modelSettingsChanged'));
+    this.settingsRepository.write(settings);
+    const discoveryChanged=(['modelsRoot','gptSovitsUrl','breezeTtsUrl','breezeTtsProjectRoot','breezeTtsVoicesRoot'] as const).some(key=>current[key]!==settings[key]);
+    if(discoveryChanged){
+      this.scanController?.abort();this.scanning=undefined;
+      for(const serviceId of SERVICES){
+        // Keep existing profiles usable until discovery reconciles replacements;
+        // a transient missing revision would revoke jobs already using them.
+        this.reports[serviceId]={state:'missing',profileCount:0,checkedAt:0,diagnostics:[],models:[]};
+      }
+      // The HTTP response may close immediately after saving. Discovery owns its
+      // lifetime and must not inherit that request's disconnect signal.
+      void this.refresh(new AbortController().signal).catch(()=>{});
+    }
+    return this.view();
   }
   async initialize(signal:AbortSignal=new AbortController().signal):Promise<void>{await this.refresh(signal);}
+  async close():Promise<void>{this.scanController?.abort();await this.pending;}
   async refresh(signal:AbortSignal):Promise<void>{
     if(this.scanning)return this.scanning;
-    const pending=this.exclusive(()=>this.refreshNow(signal));this.scanning=pending;
-    try{await pending;}finally{if(this.scanning===pending)this.scanning=undefined;}
+    const controller=new AbortController();this.scanController=controller;
+    const pending=this.exclusive(()=>this.refreshNow(AbortSignal.any([signal,controller.signal])));this.scanning=pending;
+    try{await pending;}finally{if(this.scanning===pending){this.scanning=undefined;this.scanController=undefined;}}
   }
   status(serviceId:VoiceService):ServiceDiscoveryStatus {
     const report=this.reports[serviceId],settings=this.settings(),configured=serviceId==='breeze-tts'?!!settings.breezeTtsUrl:!!settings.modelsRoot;
@@ -91,7 +105,7 @@ export class VoiceModelLibrary {
   }
   async start(serviceId:LaunchableService,signal:AbortSignal):Promise<ServiceStartResult>{
     const settings=this.settings();
-    const projectRoot=serviceId==='comfyui'?path.dirname(path.dirname(settings.comfyUiWorkflowPath)):serviceId==='breeze-tts'?settings.breezeTtsProjectRoot:settings.gptSovitsProjectRoot||path.dirname(settings.modelsRoot);
+    const projectRoot=serviceId==='comfyui'?path.dirname(settings.comfyUiWorkflowPath):serviceId==='breeze-tts'?settings.breezeTtsProjectRoot:settings.gptSovitsProjectRoot||path.dirname(settings.modelsRoot);
     if(!projectRoot)throw Error(serviceId==='breeze-tts'?'BREEZE_TTS_PROJECT_ROOT_REQUIRED':'GPT_SOVITS_PROJECT_ROOT_REQUIRED');
     return this.launcher.start({serviceId,baseUrl:serviceId==='breeze-tts'?settings.breezeTtsUrl:serviceId==='comfyui'?settings.comfyUiBaseUrl:settings.gptSovitsUrl,projectRoot},signal);
   }
@@ -158,7 +172,7 @@ export class VoiceModelLibrary {
         const display=typeof item.name==='string'&&item.name.trim()?item.name.trim():id;
         add(id,display||id,canonicalJsonHash({id,displayName:display||id}));
       }
-    }catch{diagnostics.push(diagnosticDetail('breezeLocalFallback'));}
+    }catch{signal.throwIfAborted();diagnostics.push(diagnosticDetail('breezeLocalFallback'));}
     const voicesRoot=settings.breezeTtsVoicesRoot||(settings.breezeTtsProjectRoot?path.join(settings.breezeTtsProjectRoot,'voices'):'');
     if(voicesRoot){
       try{
@@ -171,15 +185,18 @@ export class VoiceModelLibrary {
         }
       }catch{diagnostics.push(diagnosticDetail('breezeDirectoryUnreadable'));}
     }
+    signal.throwIfAborted();
     if(!apiAvailable&&candidates.length)diagnostics.push(diagnosticDetail('breezeLocalVoices'));
     this.discovery.reconcile('breeze-tts',sourceId,candidates);
     this.reports['breeze-tts']={state:candidates.length?(apiAvailable?'ready':'partial'):'blocked',profileCount:candidates.length,checkedAt,...reportDiagnostics(diagnostics),models:candidates.map(item=>({profileId:item.profileId,displayName:item.displayName,state:'ready',diagnostics:[]}))};
   }
   private async refreshNow(signal:AbortSignal):Promise<void>{
-    const settings=this.settings();await this.refreshBreeze(settings,signal);if(!settings.modelsRoot){this.unavailable(['rvc','gpt-sovits'],'missing',diagnosticDetail('modelsRootMissing'));return;}
+    signal.throwIfAborted();
+    const settings=this.settings();await this.refreshBreeze(settings,signal);signal.throwIfAborted();if(!settings.modelsRoot){this.unavailable(['rvc','gpt-sovits'],'missing',diagnosticDetail('modelsRootMissing'));return;}
     const diagnostics:DiagnosticDetail[]=[],identities:ResourceIdentity[]=[],projectRoot=path.dirname(settings.modelsRoot),python=path.join(projectRoot,'.codex','venv',process.platform==='win32'?'Scripts/python.exe':'bin/python'),script=path.join(projectRoot,'scripts','model_catalog.py');
     const rootExists=await this.resource(settings.modelsRoot,'modelsRoot',diagnostics,identities,true);
     await this.resource(python,'python',diagnostics,identities);await this.resource(script,'scanner',diagnostics,identities);
+    signal.throwIfAborted();
     if(diagnostics.length){this.unavailable(['rvc','gpt-sovits'],rootExists?'blocked':'missing',diagnostics);return;}
     try{
       const root=await realpath(settings.modelsRoot),context:VoiceScannerContext={modelsRoot:root,projectRoot,python,script,cache:path.join(this.home,'voice-model-cache','catalog.json'),signal:AbortSignal.any([signal,AbortSignal.timeout(120_000)])};
@@ -195,6 +212,6 @@ export class VoiceModelLibrary {
         const models=selected.map(item=>item.report),blocked=models.filter(item=>item.state==='blocked').length,globalDiagnostics=result.diagnostics.map(text=>({text:safe(text)}));
         this.reports[serviceId]={state:models.length?(blocked===models.length?'blocked':blocked?'partial':'ready'):'missing',profileCount:models.length,checkedAt:Date.now(),...reportDiagnostics(globalDiagnostics.length?globalDiagnostics:models.length?[]:[diagnosticDetail('noModels')]),models};
       }
-    }catch{this.unavailable(['rvc','gpt-sovits'],'blocked',diagnosticDetail(signal.aborted?'modelScanCancelled':'modelScanFailed'));}
+    }catch{if(!signal.aborted)this.unavailable(['rvc','gpt-sovits'],'blocked',diagnosticDetail('modelScanFailed'));}
   }
 }

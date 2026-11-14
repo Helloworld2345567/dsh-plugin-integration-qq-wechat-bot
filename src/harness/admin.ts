@@ -19,7 +19,7 @@ import {adminCommandRequestSchema,adminQueryRequestSchema,type AdminSummaryData,
 import type {ServiceManagement} from '../core/service-management.js';
 import {sanitizeServiceDiagnostic,sanitizeMessageDescriptor,sanitizePublicServiceText} from '../core/service-errors.js';
 import {pickDirectory} from './pick-directory.js';
-import {pickFile} from './pick-file.js';
+import {listWorkflowFiles,type WorkflowFileList} from './pick-file.js';
 
 export function adminErrorPayload(error:unknown){
   const text=sanitizeServiceDiagnostic(error,'ADMIN_REQUEST_FAILED');
@@ -45,7 +45,7 @@ function publicDelivery(delivery:Delivery):Omit<Delivery,'reply'|'replyEnvelope'
 
 export class Admin {
   readonly attempts=new Map<string,{botId:string;ticket:string;expires:number}>();
-  constructor(readonly ctx:Context,readonly runtime:BotRuntime,readonly token:string,readonly revealDirectory:(directory:string)=>Promise<void>=openDirectory,readonly features?:BotFeatures,readonly services?:ServiceManagement,readonly chooseDirectory:(initial?:string,locale?:SystemLocale,signal?:AbortSignal)=>Promise<string|undefined>=(_initial,_locale,signal)=>pickDirectory(ctx.get('directoryPicker'),signal),readonly chooseFile:(initial?:string,locale?:SystemLocale,signal?:AbortSignal)=>Promise<string|undefined>=(_initial,_locale,signal)=>pickFile(_initial,signal)){}
+  constructor(readonly ctx:Context,readonly runtime:BotRuntime,readonly token:string,readonly revealDirectory:(directory:string)=>Promise<void>=openDirectory,readonly features?:BotFeatures,readonly services?:ServiceManagement,readonly chooseDirectory:(initial?:string,locale?:SystemLocale,signal?:AbortSignal)=>Promise<string|undefined>=(_initial,_locale,signal)=>pickDirectory(ctx.get('directoryPicker'),signal),readonly chooseFile:(initial?:string,locale?:SystemLocale,signal?:AbortSignal)=>Promise<WorkflowFileList>=(_initial,_locale,signal)=>listWorkflowFiles(_initial,signal)){}
   private statusConfigs(input:unknown):Array<[string,BotConfig]> {
     const {scope}=z.object({scope:z.literal('bots').optional()}).strict().parse(input??{});
     const repos=this.runtime.repos;
@@ -93,7 +93,7 @@ export class Admin {
     if(value.name==='automation.list')return versioned({scopes:repos.sessions.bindings().filter(binding=>binding.scope.kind==='private').map(binding=>({scopeKey:binding.key,botId:binding.scope.botId,configId:repos.bots.bot(binding.scope.botId).configId,channelId:binding.scope.channelId,senderId:binding.scope.senderId})),proactive:this.runtime.automation.listProactive(),scheduled:this.runtime.automation.listJobs()},value.input.changedSince);
     const page=repos.deliveries.pageDeliveries({filter:{scopeKey:value.input.scopeKey},limit:value.input.limit,cursor:value.input.cursor});return{...page,contractVersion:ADMIN_CONTRACT_VERSION,items:page.items.map((row:Delivery)=>publicDelivery(row)),hasMore:page.nextCursor!==null};
   }
-  async command(request:unknown,signal:AbortSignal=new AbortController().signal):Promise<unknown>{const value=adminCommandRequestSchema.parse(request);if(value.name==='service.settings.save'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.saveSettings(value.input,signal);}if(value.name==='service.settings.pick-directory')return {path:await this.chooseDirectory((value.input as {current?:string}).current,(value.input as {locale?:SystemLocale}).locale,signal)};if(value.name==='service.settings.pick-file')return {path:await this.chooseFile((value.input as {current?:string}).current,(value.input as {locale?:SystemLocale}).locale,signal)};if(value.name==='service.refresh'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.refresh(value.input,signal);}if(value.name==='service.start'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.start(value.input,signal);}if(value.name==='capability.acceptance'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.recordAcceptance(value.input);}return this.invoke(value.name,value.input);}
+  async command(request:unknown,signal:AbortSignal=new AbortController().signal):Promise<unknown>{const value=adminCommandRequestSchema.parse(request);if(value.name==='service.settings.save'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.saveSettings(value.input,signal);}if(value.name==='service.settings.pick-directory')return {path:await this.chooseDirectory((value.input as {current?:string}).current,(value.input as {locale?:SystemLocale}).locale,signal)};if(value.name==='service.settings.pick-file')return this.chooseFile((value.input as {current?:string}).current,(value.input as {locale?:SystemLocale}).locale,signal);if(value.name==='service.refresh'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.refresh(value.input,signal);}if(value.name==='service.start'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.start(value.input,signal);}if(value.name==='capability.acceptance'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.recordAcceptance(value.input);}return this.invoke(value.name,value.input);}
   async invoke(action:string,input:any):Promise<unknown>{
     const repos=this.runtime.repos;
     switch(action){

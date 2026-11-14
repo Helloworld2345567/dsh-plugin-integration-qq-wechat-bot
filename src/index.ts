@@ -86,7 +86,7 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
     detachLifecycle?.();serviceRuntime.stopAccepting();
     let shutdownError:unknown;
     try{await serviceRuntime.cancelAndDrain();}catch(error){shutdownError=error;}
-    try{await runtime.close();await serviceHost.dispose();await disposeMode();}finally{persistence.close();}
+    try{await runtime.close();await serviceHost.dispose();await disposeMode();}finally{await Promise.all([voiceLibrary.close(),musicLibrary.close()]);persistence.close();}
     if(shutdownError)throw shutdownError;
   });
   const shutdown=(message:unknown)=>{handleLifecycleShutdown(message);};

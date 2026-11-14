@@ -218,6 +218,9 @@ export const panelStyles = `
 .bot-admin .dialog-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 20px; background: var(--dsw-alias-bg-overlay); }
 .bot-admin .dialog { width: min(440px, 100%); max-height: 85vh; overflow: auto; }
 .bot-admin .dialog label { margin: 16px 0; }
+.bot-admin .workflow-file-browser { width: min(760px, 100%); }
+.bot-admin .workflow-file-list { max-height: 48vh; overflow: auto; margin-top: 16px; }
+.bot-admin .workflow-file-entry { width: 100%; text-align: left; overflow-wrap: anywhere; margin-bottom: 6px; }
 .bot-admin :is(button, input, select, textarea, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @container (max-width: 760px) {
   .bot-admin .media-fields { grid-template-columns: minmax(0, 1fr); }

@@ -29,8 +29,9 @@ Do not collapse these fields into a dictionary. Input count is independent of `n
 
 ## Parameters and limits
 
-- `n`: 1–10; Sakura automatic illustration requests exactly 1 output.
-- `output_format`: `png`, `jpeg`, `webp`, `svg`, or `gif`. JPEG is the default. SVG and GIF are generation-only formats; SVG requires `n=1`.
+- `n`: 1–10; omit it unless the user explicitly requests a batch count. Sakura automatic illustration requests exactly 1 output.
+- `output_format`: `png`, `jpg`/`jpeg`, `webp`, `svg`, or `gif`. JPEG is the default; `jpg` is normalized to JPEG. SVG and GIF are generation-only formats; SVG requires `n=1`.
+- `width` and `height`: optional paired dimensions for ComfyUI workflows, 64–4096 pixels in multiples of 8. Omit them unless the user explicitly requests a resolution; the selected workflow must expose supported size inputs.
 - `output_compression`: 0–100 for JPEG/WebP; default 96. Do not send it for PNG, SVG, or GIF.
 - `background`: optional `auto`, `opaque`, or `transparent`; transparency is only sent with PNG/WebP.
 - `complexity`: optional `low`, `medium`, or `high` only when the selected provider reports support.

@@ -12,6 +12,9 @@ from urllib.parse import urlparse
 MAX_IMAGE_BYTES = 24 * 1024 * 1024
 MAX_MULTIPART_BYTES = 22 * 1024 * 1024
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+IMAGE_MIN_DIMENSION = 64
+IMAGE_MAX_DIMENSION = 4096
+IMAGE_MAX_BATCH = 10
 SUPPORTED_INPUT_TYPES = {"image/png", "image/jpeg", "image/webp"}
 SUPPORTED_OUTPUT_TYPES = SUPPORTED_INPUT_TYPES | {"image/gif", "image/svg+xml"}
 EXTENSIONS = {
@@ -28,6 +31,11 @@ OUTPUT_MIME_TYPES = {
     "gif": "image/gif",
     "svg": "image/svg+xml",
 }
+
+
+def normalize_output_format(value: str) -> str:
+    """Use one internal spelling for the common JPG alias."""
+    return "jpeg" if value == "jpg" else value
 
 
 def public_image_url(value: str) -> str:
@@ -104,7 +112,22 @@ def _as_jpeg(data: bytes, quality: int) -> bytes:
         return output.getvalue()
 
 
+def _as_png(data: bytes) -> bytes:
+    from PIL import Image, ImageOps
+    with Image.open(io.BytesIO(data)) as source:
+        source.load()
+        image = ImageOps.exif_transpose(source)
+        if "A" in image.getbands() or "transparency" in image.info:
+            image = image.convert("RGBA")
+        else:
+            image = image.convert("RGB")
+        output = io.BytesIO()
+        image.save(output, format="PNG", optimize=True)
+        return output.getvalue()
+
+
 def save_images(images: list[tuple[bytes, str]], output_dir: Path, stem: str, *, output_format: str = "jpeg", output_compression: int | None = None) -> list[Path]:
+    output_format = normalize_output_format(output_format)
     import time
     if sum(len(data) for data, _ in images) > MAX_IMAGE_BYTES:
         raise ValueError("combined output images exceed the 24 MiB limit")
@@ -118,6 +141,9 @@ def save_images(images: list[tuple[bytes, str]], output_dir: Path, stem: str, *,
         if output_format == "jpeg":
             data = _as_jpeg(data, output_compression if output_compression is not None else 96)
             content_type = "image/jpeg"
+        elif output_format == "png" and content_type != "image/png":
+            data = _as_png(data)
+            content_type = "image/png"
         suffix = EXTENSIONS[content_type]
         path = output_dir / f"{safe_slug(stem)}-{stamp}-{index}{suffix}"
         path.write_bytes(data)

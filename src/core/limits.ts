@@ -162,6 +162,15 @@ export function validateMediaParameters(operation: string, inputs: string[], par
     const value = parameters[key];
     if (value !== undefined && !stringWithin(value, limit)) throw new Error(`MEDIA_${key.toUpperCase()}_TOO_LARGE`);
   }
+  if (operation === 'image_generate' || operation === 'image_edit') {
+    const outputFormat = parameters.output_format;
+    if (outputFormat !== undefined && !['png','jpg','jpeg','webp','gif','svg'].includes(String(outputFormat))) throw new Error('IMAGE_OUTPUT_FORMAT_INVALID');
+    const width = parameters.width, height = parameters.height;
+    if ((width === undefined) !== (height === undefined)) throw new Error('IMAGE_RESOLUTION_INVALID');
+    for (const value of [width, height]) if (value !== undefined && (typeof value !== 'number' || !Number.isInteger(value) || value < 64 || value > 4096 || value % 8 !== 0)) throw new Error('IMAGE_RESOLUTION_INVALID');
+    const count = parameters.n;
+    if (count !== undefined && (typeof count !== 'number' || !Number.isInteger(count) || count < 1 || count > 10)) throw new Error('IMAGE_BATCH_INVALID');
+  }
   const url = parameters.url;
   if (url !== undefined) {
     if (typeof url !== 'string') throw new Error('MEDIA_URL_INVALID');
