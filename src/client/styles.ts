@@ -41,7 +41,7 @@ export const panelStyles = `
 .bot-admin p { margin: 8px 0; }
 .bot-admin small, .bot-admin .muted { color: var(--muted); font-size: 12px; }
 .bot-admin .app-shell { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: 560px; }
-.bot-admin .panel-sidebar { display: flex; flex-direction: column; gap: 24px; min-width: 0; padding: 22px 14px; border-right: 1px solid var(--line); background: var(--surface); }
+.bot-admin .panel-sidebar { position: sticky; top: 0; align-self: start; z-index: 10; display: flex; flex-direction: column; gap: 24px; min-width: 0; padding: 22px 14px; border-right: 1px solid var(--line); background: var(--surface); }
 .bot-admin .sidebar-brand { display: flex; align-items: center; gap: 10px; min-height: 32px; padding: 0 10px; font-weight: 650; }
 .bot-admin .sidebar-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: var(--bg); font-size: 14px; font-weight: 750; }
 .bot-admin .sidebar-nav { display: grid; gap: 4px; }
@@ -227,7 +227,7 @@ export const panelStyles = `
   .bot-admin .service-config-fields { grid-template-columns: minmax(0, 1fr); }
   .bot-admin .media-fields-four > .full { max-width: none; }
   .bot-admin .app-shell { grid-template-columns: 1fr; }
-  .bot-admin .panel-sidebar { position: sticky; top: 0; z-index: 10; flex-direction: row; align-items: center; gap: 12px; overflow-x: auto; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .bot-admin .panel-sidebar { flex-direction: row; align-items: center; gap: 12px; overflow-x: auto; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line); }
   .bot-admin .sidebar-brand { flex: 0 0 auto; padding: 0 4px; }
   .bot-admin .sidebar-nav { display: flex; gap: 4px; min-width: max-content; }
   .bot-admin .sidebar-item { min-height: 34px; width: auto; padding: 6px 10px; }
