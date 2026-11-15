@@ -2,7 +2,16 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,rm,writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {ExternalServiceLauncher} from '../src/core/service-launcher.js';
+import {ExternalServiceLauncher,buildWindowsDetachedCommand} from '../src/core/service-launcher.js';
+
+test('Windows detached broker preserves operator paths and arguments',()=>{
+  const command=buildWindowsDetachedCommand("C:\\Program Files\\PowerShell\\pwsh.exe",['-File',"C:\\TTS's\\Start-Breeze.ps1",'--mode=voice'],"C:\\TTS project");
+  assert.match(command,/Start-Process/);
+  assert.ok(command.includes("-FilePath 'C:\\Program Files\\PowerShell\\pwsh.exe'"));
+  assert.ok(command.includes("-ArgumentList '\"-File\" \"C:\\TTS''s\\Start-Breeze.ps1\" \"--mode=voice\"'"));
+  assert.ok(command.includes("-WorkingDirectory 'C:\\TTS project'"));
+  assert.ok(command.includes("[Console]::Out.Write($p.Id)"));
+});
 
 test('external launcher starts Breeze with the fixed project script and waits for health',async t=>{
   await mkdir(path.resolve('.codex'),{recursive:true});

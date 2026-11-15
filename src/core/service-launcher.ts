@@ -91,14 +91,43 @@ async function defaultHealth(serviceId:LaunchableService,baseUrl:string,signal:A
   return value?.status==='ok'&&value.sample_rate===24000;
 }
 
+const quotePowerShell=(value:string)=>`'${value.replaceAll("'","''")}'`;
+const quoteWindowsArgument=(value:string)=>`"${value.replaceAll('"','\\"')}"`;
+
+export function buildWindowsDetachedCommand(file:string,args:readonly string[],cwd:string):string{
+  // Start-Process joins an array into one command line. Quote each target
+  // argument in that command line so paths containing spaces stay intact.
+  const argumentList=args.map(quoteWindowsArgument).join(' ');
+  return `$p=Start-Process -FilePath ${quotePowerShell(file)} -ArgumentList ${quotePowerShell(argumentList)} -WorkingDirectory ${quotePowerShell(cwd)} -WindowStyle Hidden -PassThru; [Console]::Out.Write($p.Id)`;
+}
+
+/**
+ * Start a long-lived external service through a short-lived Windows broker.
+ *
+ * The broker is deliberately separate from the Harness child.  A direct
+ * child would be included by the standalone supervisor's `taskkill /T` tree
+ * cleanup, which is intended for request workers.  Start-Process creates the
+ * actual service process and the broker exits immediately after reporting its
+ * PID, so later cleanup of the bot tree does not follow the service's parent
+ * chain.  The service remains operator-owned; this module never stops it.
+ */
+async function spawnWindowsDetached(file:string,args:readonly string[],cwd:string):Promise<number>{
+  const command=buildWindowsDetachedCommand(file,args,cwd);
+  const broker=spawn(powershell,['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command',command],{cwd,stdio:['ignore','pipe','ignore'],windowsHide:true});
+  let output='';
+  broker.stdout?.setEncoding('utf8').on('data',chunk=>{output+=chunk;});
+  await new Promise<void>((resolve,reject)=>{
+    broker.once('error',reject);
+    broker.once('close',code=>code===0?resolve():reject(Error('SERVICE_LAUNCH_DETACH_FAILED')));
+  });
+  const pid=Number.parseInt(output.trim(),10);
+  if(!Number.isSafeInteger(pid)||pid<=0)throw Error('SERVICE_LAUNCH_DETACH_FAILED');
+  return pid;
+}
+
 async function defaultSpawn(file:string,args:readonly string[],cwd:string):Promise<number>{
-  // On Windows the Breeze PowerShell launcher creates the actual service as a
-  // grandchild. Detaching the PowerShell process here leaves that grandchild
-  // in the launcher job and it is terminated as soon as PowerShell exits,
-  // even though the service reported healthy during startup. Keep the
-  // launcher attached on Windows so its child service remains owned by the
-  // long-lived bot process; Unix keeps the previous detached behavior.
-  const child=spawn(file,[...args],{cwd,detached:process.platform!=='win32',stdio:'ignore',windowsHide:true});
+  if(process.platform==='win32')return spawnWindowsDetached(file,args,cwd);
+  const child=spawn(file,[...args],{cwd,detached:true,stdio:'ignore',windowsHide:true});
   await new Promise<void>((resolve,reject)=>{child.once('spawn',()=>resolve());child.once('error',reject);});
   child.unref();
   return child.pid??0;
