@@ -9,6 +9,10 @@
 | 命令 | 目的 | 临时文件/子进程 | Harness | FFmpeg | Python | 网络 | 真实凭据 | 预期输出与失败证据 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `npm run check:architecture` | 静态模块图、依赖方向、runtime cycle、入口与目录契约 | 只读；不启动业务进程 | 否 | 否 | 否 | 否 | 禁止 | JSON `PASS`；失败只含规则 ID 和仓库相对路径，不输出绝对路径 |
+| `npm run check:skills` | 技能 frontmatter、manifest、entry、route、示例参数、引用和上下文预算契约 | 只读 | 否 | 否 | 否 | 否 | 禁止 | JSON `PASS`；失败指出技能相对路径和规则 |
+| `npm run generate:skills` | 从技能源生成 TS/Python registry；`--check` 验证提交内容没有漂移 | 只写生成文件；不启动业务进程 | 否 | 否 | 否 | 否 | 禁止 | JSON `PASS`；生成内容稳定、无运行数据 |
+| `npm run inspect:skills` | 输出模型可用的紧凑技能、工具、操作和参数清单 | 只读 | 否 | 否 | 否 | 否 | 禁止 | JSON `PASS`；不含路径、凭据或正文资源 |
+| `npm run test:skills` | 技能契约、生成 registry 和关键技能单元的快速反馈 | 仅测试临时目录；失败才保留脱敏证据 | 否 | 否 | Node/测试 Python | 否 | 禁止 | 所有技能契约和定向测试通过 |
 | `npm run typecheck` | TypeScript 类型门禁 | 不应修改源码；Node 子进程由 npm/tsc 管理 | 否 | 否 | 否 | 否 | 禁止 | `tsc` 无错误；终端只保留脱敏错误 |
 | `npm test` | 隔离的 TypeScript 纯逻辑/fixture 测试 | 使用临时 `.codex` 目录；启动受限 Node/Python 子进程 | 否 | 视 fixture 而定 | 个别媒体 fixture 使用测试解释器 | 默认不允许真实外网；网络测试只用 fixture/local server | 禁止 | Node test 全部通过；失败只保留短的脱敏输出 |
 | `npm run test:python` | Python worker、命名空间乱序冷导入、import 无副作用、媒体限制与协议单元测试 | Python unittest 临时输出；不保留 pyc/cache/运行数据 | 否 | 依测试而定 | 是，3.12/3.13 | 禁止真实服务 | 禁止 | `OK`；Python traceback 不得含凭据/绝对路径 |
@@ -18,7 +22,7 @@
 | `npm run check:contracts` | 文档、npm scripts、CI 版本和测试隔离契约一致性 | 只读 | 否 | 否 | 否 | 否 | 禁止 | JSON `PASS`；失败指出漂移的命令、版本或 runner |
 | `npm run check:licenses` | npm/Python 许可证与来源契约 | 只读或读取已安装元数据 | 否 | 否 | 可选 | 否 | 禁止 | JSON `PASS`；证据不得含用户路径/凭据 |
 | `npm run check:release` | npm pack dry-run、发布包内容和敏感文本门禁 | npm dry-run；不应留下归档 | 否 | 否 | 否 | 否 | 禁止 | JSON `PASS`；不得包含 `.codex`、`.runtime`、数据库、日志、凭据、fixture |
-| `npm run verify:release` | 统一源码发布门禁：架构、类型、TS/Python 测试、依赖、构建、文档、许可证、归档检查 | 只允许既有被排除的 `dist/`/临时目录 | 否 | 否 | 是 | 否 | 禁止 | 所有阶段成功；按失败阶段保留脱敏摘要 |
+| `npm run verify:release` | 统一源码发布门禁：架构、技能契约/生成、类型、TS/Python 测试、依赖、构建、文档、许可证、归档检查 | 只允许既有被排除的 `dist/`/临时目录 | 否 | 否 | 是 | 否 | 禁止 | 所有阶段成功；按失败阶段保留脱敏摘要 |
 | `npm run release:pack` | 先运行同一 `verify:release`，再实际生成、校验并清理临时 npm 归档 | 临时目录和归档必须在 `finally` 清理 | 否 | 否 | 否 | 否 | 禁止 | JSON 含归档摘要/hash，不上传原始运行数据 |
 | `npm run test:native` | Harness 原生插件集成：真实 loop、持久化、fixture provider | 临时 profile/workspace、受限子进程；失败才保留脱敏证据 | 是，临时 profile | 仅 fixture 需要 | 测试解释器 | 禁止真实平台/外部模型 | 仅明显假的 fixture credential | `status: PASS`；证据目录只含脱敏摘要 |
 | `npm run test:lifecycle-native` | lifecycle 原生安装、版本握手、主包热升级、排空、监督重启和一次回滚 | 临时 profile、动态端口、子进程树必须停止 | 是，临时 profile | 否 | 测试解释器 | 禁止真实服务 | 仅 fixture 值 | `status: PASS`；coordinator 在主包卸载后保持存活；失败保留必要脱敏日志，不保留 token/数据库 |

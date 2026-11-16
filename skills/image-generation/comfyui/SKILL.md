@@ -5,15 +5,6 @@ description: Service contract for the local ComfyUI image generation adapter.
 
 # ComfyUI image service
 
-This service is selected when the effective image protocol is `comfyui`.
+This is a developer reference for the `comfyui` protocol. The host supplies the local endpoint and operator-selected API workflow, then reports which prompt, reference, size, batch and output-format controls that workflow exposes.
 
-- The endpoint is a local HTTP(S) ComfyUI API and the workflow is an operator-selected API-format JSON document. Formats, editing and optional inputs are limited to nodes in that workflow; do not infer capabilities from another workflow or provider.
-- The Services panel owns the endpoint and workflow; the host passes them as explicit script arguments. ComfyUI settings do not read environment variables.
-- The adapter submits a workflow, waits for the matching history record and materializes image outputs through the ComfyUI view endpoint.
-- Optional per-call `width`/`height` values update supported `SizePicker`, latent-size or named width/height controls; `n` updates supported batch-size controls. These parameters are only set when the user explicitly asks for them, and fail closed when the workflow has no matching controls.
-- `output_format` controls the returned attachment (`png` or `jpg`/`jpeg`); the workflow's internal save extension does not override the final attachment format.
-- Prompt injection targets supported text inputs in the configured workflow; workflows without a text input remain valid for deterministic image jobs.
-- Reference edits upload the selected image to ComfyUI and connect it to the workflow's image input.
-- The host validates output files, bounds their size and keeps all workflow paths and service details operator-owned.
-
-The shared image dispatcher owns service selection and host permissions. This file defines only the ComfyUI service boundary.
+Use only capabilities reported for the current workflow. A missing workflow control is a normal configuration error; do not substitute another workflow or expose its path. The host submits the workflow, validates returned images and registers them for delivery.

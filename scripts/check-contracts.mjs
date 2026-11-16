@@ -10,7 +10,7 @@ const failures = [];
 const scripts = packageJson.scripts ?? {};
 const commands = [...new Set(documentation.flatMap(file => [...text[file].matchAll(/npm run ([a-z0-9:_-]+)/gi)].map(match => match[1])))];
 for (const command of commands) if (!scripts[command]) failures.push(`documented npm script missing: ${command}`);
-for (const command of ['check:architecture', 'typecheck', 'test', 'test:python', 'check:python-dependencies', 'check:environment', 'build', 'check:docs', 'check:contracts', 'check:licenses', 'check:release', 'verify:release', 'release:pack', 'test:native', 'test:lifecycle-native', 'test:install-smoke']) {
+for (const command of ['check:architecture', 'check:skills', 'generate:skills', 'inspect:skills', 'test:skills', 'typecheck', 'test', 'test:python', 'check:python-dependencies', 'check:environment', 'build', 'check:docs', 'check:contracts', 'check:licenses', 'check:release', 'verify:release', 'release:pack', 'test:native', 'test:lifecycle-native', 'test:install-smoke']) {
   for (const file of ['docs/testing.md', 'docs/en/testing.md']) if (!text[file].includes(`npm run ${command}`)) failures.push(`${file}: testing contract missing: ${command}`);
 }
 for (const [chinese, english] of [['CONTRIBUTING.md', 'CONTRIBUTING.en.md'], ['docs/development.md', 'docs/en/development.md'], ['docs/testing.md', 'docs/en/testing.md']]) {

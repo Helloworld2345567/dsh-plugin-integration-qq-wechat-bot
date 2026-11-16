@@ -1,0 +1,11 @@
+{
+  "entries": {
+    "media-analysis": "dsh_bot_runtime.skills.media_analysis.media_api",
+    "music-download": "dsh_bot_runtime.skills.music_download.entry",
+    "singing-conversion": "dsh_bot_runtime.skills.singing_conversion.entry",
+    "voice-generation": "dsh_bot_runtime.skills.voice_generation.voice_api"
+  },
+  "dispatchers": [
+    "image-generation"
+  ]
+}

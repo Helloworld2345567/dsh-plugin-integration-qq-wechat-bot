@@ -4,7 +4,7 @@
   "operations":[
     {"id":"music_search","quotaUnits":50,"inputKinds":[],"deliver":false},
     {"id":"music_acquire","quotaUnits":10,"inputKinds":[],"deliver":false},
-    {"id":"music_delivery","quotaUnits":50,"inputKinds":["audio"],"deliver":false,"localTransform":true,"requiredInputError":"MUSIC_AUDIO_REQUIRED"}
+    {"id":"music_delivery","quotaUnits":50,"inputKinds":["audio"],"internal":true,"deliver":false,"localTransform":true,"requiredInputError":"MUSIC_AUDIO_REQUIRED"}
   ],
   "tools":[{
     "permissionTool":"bot_music",
@@ -22,8 +22,7 @@
     "defaults":{"action":"search"},
     "routes":[
       {"match":{"action":"search"},"operation":"music_search"},
-      {"match":{"action":"download"},"operation":"music_acquire"},
-      {"match":{"action":"delivery"},"operation":"music_delivery"}
+      {"match":{"action":"download"},"operation":"music_acquire"}
     ]
   }]
 }

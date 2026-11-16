@@ -3,6 +3,7 @@ import path from 'node:path';
 import {packageRoot} from './paths.js';
 import type {AnalysisRole} from './analysis.js';
 import {PUBLISHED_SKILL_OPERATIONS} from './published-skill-operations.js';
+import {PUBLISHED_SKILL_ENTRIES} from './published-skill-catalog.js';
 
 export interface SkillOperation {
   id: string;
@@ -17,6 +18,8 @@ export interface SkillOperation {
   urlHosts?: string[];
   urlHostError?: string;
   localTransform?: boolean;
+  /** Internal host operation; never exposed as a model tool route. */
+  internal?: boolean;
 }
 export interface SkillToolDeclaration {
   enabledRoles?: AnalysisRole[];
@@ -34,12 +37,6 @@ export interface SkillOperationManifest {
 }
 export type SkillToolManifest = SkillToolDeclaration & Pick<SkillOperationManifest, 'skill' | 'entry' | 'operations'>;
 
-const PUBLISHED_SKILL_ENTRIES:Readonly<Record<string,string>>=Object.freeze({
-  'media-analysis':'dsh_bot_runtime.skills.media_analysis.media_api',
-  'music-download':'dsh_bot_runtime.skills.music_download.entry',
-  'singing-conversion':'dsh_bot_runtime.skills.singing_conversion.entry',
-  'voice-generation':'dsh_bot_runtime.skills.voice_generation.voice_api',
-});
 function parseSkillManifest(root:string,entryName:string):SkillOperationManifest {
   const file=path.join(root,entryName,'operations.json'),manifest=JSON.parse(readFileSync(file,'utf8')) as SkillOperationManifest;
   if(!manifest||typeof manifest!=='object'||manifest.skill!==entryName||!/^[a-z][a-z0-9_-]*$/.test(manifest.skill)
@@ -50,7 +47,8 @@ function parseSkillManifest(root:string,entryName:string):SkillOperationManifest
     if(!/^[a-z][a-z0-9_]{1,80}$/.test(operation.id)||localIds.has(operation.id)
       ||!Number.isSafeInteger(operation.quotaUnits)||operation.quotaUnits<1||!Array.isArray(operation.inputKinds)
       ||operation.role&&!['asr','video','tts'].includes(operation.role)
-      ||operation.localTransform!==undefined&&typeof operation.localTransform!=='boolean')throw new Error('SKILL_OPERATION_MANIFEST_INVALID');
+      ||operation.localTransform!==undefined&&typeof operation.localTransform!=='boolean'
+      ||operation.internal!==undefined&&typeof operation.internal!=='boolean')throw new Error('SKILL_OPERATION_MANIFEST_INVALID');
     localIds.add(operation.id);
   }
   for(const declaration of manifest.tools){
@@ -61,7 +59,7 @@ function parseSkillManifest(root:string,entryName:string):SkillOperationManifest
     if(!declaration.routes?.length||declaration.routes.some(route=>!localIds.has(route.operation)))throw new Error('SKILL_OPERATION_ROUTE_INVALID');
     for(const route of declaration.routes){if(routed.has(route.operation)&&routed.get(route.operation)!==declaration.tool.name)throw new Error('SKILL_OPERATION_ROUTE_INVALID');routed.set(route.operation,declaration.tool.name);}
   }
-  if(manifest.operations.some(operation=>!routed.has(operation.id)))throw new Error('SKILL_OPERATION_ROUTE_INVALID');
+  if(manifest.operations.some(operation=>!operation.internal&&!routed.has(operation.id)))throw new Error('SKILL_OPERATION_ROUTE_INVALID');
   return manifest;
 }
 

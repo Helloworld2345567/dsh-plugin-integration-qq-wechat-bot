@@ -1,4 +1,4 @@
-import {skillToolManifests, type SkillOperation} from './skill-operations.js';
+import {skillOperationManifests, type SkillOperation} from './skill-operations.js';
 export interface MediaOperationDescriptor {
   id: string;
   /** Namespaced service operation when this legacy worker operation is an approved facade. */
@@ -63,7 +63,10 @@ export function serviceOperationFor(legacyOperation:string,serviceId:string):str
   return SERVICE_OPERATION_BY_LEGACY[legacyOperation];
 }
 export const DEFAULT_MEDIA_OPERATIONS: readonly MediaOperationDescriptor[] = Object.freeze([
-  ...skillToolManifests.flatMap(manifest => manifest.operations.map(operation => ({...operation, serviceOperation:SERVICE_OPERATION_BY_LEGACY[operation.id], source: operation, skill: manifest.skill, tool: manifest.tool.name, permissionTool: manifest.permissionTool ?? manifest.tool.name, handler: 'skill', timeoutMs: 0}))),
+  ...skillOperationManifests.flatMap(manifest => manifest.operations.map(operation => {
+    const declaration=manifest.tools.find(item=>item.routes.some(route=>route.operation===operation.id))??manifest.tools[0];
+    return {...operation,serviceOperation:SERVICE_OPERATION_BY_LEGACY[operation.id],source:operation,skill:manifest.skill,tool:declaration?.tool.name,permissionTool:declaration?.permissionTool??declaration?.tool.name??'bot_media',handler:'skill',timeoutMs:0};
+  })),
   {id: 'image_generate', handler: 'image', timeoutMs: 0, quotaUnits: 10000, inputKinds: []},
   {id: 'image_edit', handler: 'image', timeoutMs: 0, quotaUnits: 10000, inputKinds: ['image']},
   // Legacy worker handlers remain internal; media_download is the public facade.

@@ -3,13 +3,14 @@ name: image-generation
 description: Dispatch image generation to the image service selected by operator configuration.
 ---
 
-# Image service dispatch
+# Image generation
 
-This skill is a dispatcher only. Resolve the effective image service from the operator configuration, then load exactly one service skill:
+Use `image_generation` for an explicit request to create or edit an image. The host appends the selected service contract to the tool result; use those reported capabilities and do not inspect local service paths or guess provider support.
 
-- `openai` loads `openai/SKILL.md`.
-- `comfyui` loads `comfyui/SKILL.md`.
+- Use `operation="edit"` when the user selected reference images; otherwise use generation.
+- Pass `model`, `width`/`height`, `n` or `output_format` only when the user explicitly asks for them. Keep the configured service defaults otherwise.
+- Make one image call per turn. Retry only after a returned configuration error has been corrected; do not replay an unknown or timed-out request.
+- Describe the requested subject, composition, style and exact lettering in the prompt. Keep selected references as uploaded inputs and state what must change or remain.
+- The host validates and registers returned images. Report the actual count, format and delivery state; do not include image Markdown, paths or asset IDs.
 
-An omitted protocol inherits the operator default. An unknown or invalid protocol fails closed and must not fall back to another service. Service-specific configuration, capabilities and failure semantics belong in the selected service skill.
-
-The host supplies the selected service, endpoint, model, workflow and credential binding. Read the service skill before choosing options. Output formats and editing limits come from that service; ComfyUI capabilities are defined by the selected workflow. Do not promise a provider model, format or animation feature that the selected service does not report. Credentials stay outside personas, prompts and skill files.
+Credentials, endpoints and workflows are operator-owned. An invalid service or unsupported option fails closed.

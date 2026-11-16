@@ -133,12 +133,7 @@ def image(job):
     return {"assets": assets}
 
 
-PUBLISHED_SKILL_ENTRIES = {
-    "media-analysis": "dsh_bot_runtime.skills.media_analysis.media_api",
-    "music-download": "dsh_bot_runtime.skills.music_download.entry",
-    "singing-conversion": "dsh_bot_runtime.skills.singing_conversion.entry",
-    "voice-generation": "dsh_bot_runtime.skills.voice_generation.voice_api",
-}
+from dsh_bot_runtime.skill_catalog import PUBLISHED_SKILL_ENTRIES
 
 
 def _read_skill_manifest(manifest_path):
@@ -156,7 +151,8 @@ def _read_skill_manifest(manifest_path):
     result = {}
     for operation in operations:
         operation_id = operation.get("id") if isinstance(operation, dict) else None
-        if not isinstance(operation_id, str) or not re.fullmatch(r"[a-z][a-z0-9_]{1,80}", operation_id) or operation_id in result:
+        if (not isinstance(operation_id, str) or not re.fullmatch(r"[a-z][a-z0-9_]{1,80}", operation_id)
+                or operation_id in result or operation.get("internal") is not None and not isinstance(operation.get("internal"), bool)):
             raise JobError("SKILL_OPERATION_MANIFEST_INVALID")
         result[operation_id] = (skill_name, entry, operation)
     return result

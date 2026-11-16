@@ -19,6 +19,7 @@
       "inputKinds": [
         "audio"
       ],
+      "internal": true,
       "role": "asr",
       "recentInput": "audio",
       "requiredInputError": "AUDIO_INPUT_REQUIRED"
@@ -29,6 +30,7 @@
       "inputKinds": [
         "video"
       ],
+      "internal": true,
       "role": "video",
       "recentInput": "video",
       "exclusiveSourceError": "ONE_VIDEO_SOURCE_REQUIRED",
@@ -139,18 +141,6 @@
         {
           "match": {},
           "operation": "media_analysis"
-        },
-        {
-          "match": {
-            "_dispatch": "transcribe"
-          },
-          "operation": "transcribe"
-        },
-        {
-          "match": {
-            "_dispatch": "video_analyze"
-          },
-          "operation": "video_analyze"
         }
       ]
     },

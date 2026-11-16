@@ -8,14 +8,9 @@ import {z} from 'zod';
 import type {PersonaConfigRepository} from './ports/persona.js';
 import {packageRoot} from './paths.js';
 import type {BotConfig} from './types.js';
+import {PUBLISHED_SKILL_DESCRIPTIONS} from './published-skill-catalog.js';
 
-export const packagedSkills:Readonly<Record<string,string>>={
-  'image-generation':'Generate images or edit reference images using the skill environment; return successful results automatically',
-  'media-analysis':'Download shared media, analyze existing attachments and convert image or video attachments',
-  'voice-generation':'Generate and deliver AI speech when requested by the user',
-  'singing-conversion':'Convert songs or vocals using vocal separation and independent RVC voice models',
-  'music-download':'Search for songs, select real candidates, download music, and pass songs to voice conversion',
-};
+export const packagedSkills:Readonly<Record<string,string>>=PUBLISHED_SKILL_DESCRIPTIONS;
 const nameSchema=z.string().min(1).max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 const reserved=/^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i;
 export interface SkillFile {path:string;content:string}
