@@ -6,7 +6,8 @@ import {execFileSync} from 'node:child_process';
 import z from '@deepseek-ai/schemastery';
 import {credentialRef} from '@deepseek-ai/dsh-credentials';
 import {Context} from '@deepseek-ai/cordis';
-import {LlmAdapter,ToolCallId,MessageId,resolveRetryPolicy,type GenerateOptions,type StreamChunk} from '@deepseek-ai/dsh-llm';
+import {LlmAdapter,ToolCallId,MessageId,createUserMessage,resolveRetryPolicy,type GenerateOptions,type StreamChunk} from '@deepseek-ai/dsh-llm';
+import type {} from '@deepseek-ai/dsh-time-context';
 import {PiAiAdapter,type ResolvedPiAiProviderProfile} from '@deepseek-ai/dsh-llm-pi-ai';
 import {fauxProvider,fauxAssistantMessage,InMemoryCredentialStore} from '@earendil-works/pi-ai';
 import type {} from '../src/index.js';
@@ -135,11 +136,17 @@ export async function apply(ctx:Context){
     assert.ok(!JSON.stringify(requests[1].tools!.find(tool=>tool.name==='bot_remember')!.parameters).includes('sourceId'),'source attribution must remain host-owned');
     assert.equal(memory.memories(scopeKey(scope))[0]?.value,'绿茶');
     assert.equal(memory.memories(scopeKey(scope))[0]?.source,'first');assert.ok(requests[2].messages.some(m=>m.role==='tool'&&JSON.stringify(m.content).includes('Saved the preference')));
+    const recentOnlyAsset=await runtime.assets.save(binding.key,{kind:'image',name:'not-attached-this-turn.png',mime:'image/png'},Buffer.from('unread catalog entry'));
     const second=await bridge.run(binding,[msg('second','接着聊')],AbortSignal.timeout(30000));
     assert.equal(second.snapshot.config.id,'sakura');assert.equal(requests.at(-1)!.model,'second');assert.equal(bridge.live.get(binding.sessionId)!.agent.id,binding.sessionId);
     assert.deepEqual(requestTools(requests.at(-1)!),['bot_tools'],'the next turn must reset loaded schemas while retaining history');
     const serialized=JSON.stringify(requests.at(-1)!.messages);assert.ok(serialized.includes('我喜欢绿茶'));assert.ok(serialized.includes('PERSONA_B_FILE'));assert.ok(!JSON.stringify(requests[2].messages).includes('PERSONA_B_FILE'));
+    assert.deepEqual(requests.at(-1)!.messages.findLast(message=>message.role==='user'&&message.source?.kind==='user')!.content,[{type:'text',text:'接着聊'}],'recent assets must not be appended to the actual user message');
+    assert.doesNotMatch(serialized,/Recent attachments in this session/);assert.ok(!serialized.includes(recentOnlyAsset.id));
     const agent=bridge.live.get(binding.sessionId)!.agent;
+    assert.deepEqual(agent.session.snapshotEvents().flatMap(event=>event.type==='user/message'&&event.data.source.kind==='user'?[event.data.content]:[]).at(-1),[{type:'text',text:'接着聊'}],'the persistent native user message must contain no automatic attachment catalog');
+    assert.match(requestText(requests.at(-1)!),/Current date and time:/);assert.doesNotMatch(requestText(requests.at(-1)!),/Time sampled while preparing turn|Elapsed since the preceding|Browser time zone for this request|\[model changed:|The working directory changed from/);
+    assert.ok(!agent.session.snapshotEvents().some(event=>event.type==='user/message'&&['time-context','model-selection','working-directory'].includes(event.data.source.kind)),'runtime notices must not enter durable user history');
     // This route retains deferred declarations; developer additions/removals decide which tools are active.
     const historyScope={...scope,channelId:'in-history-tools',senderId:'in-history-tools'},historyBinding=sessions.binding(historyScope);
     const historySnapshot=freezeTurn({...personas.config('default'),model:{provider:'bot-fixture-history',model:'first'}},bots.bot('fixture'),historyScope,['history-discovery']);
@@ -249,6 +256,7 @@ export async function apply(ctx:Context){
     const originalCwd=ctx.workingDirectory.get(agent.session);const customCwd=path.join(process.env.BOT_TEST_TMP!,'cwd 空格 & literal');await mkdir(customCwd,{recursive:true});await writeFile(path.join(customCwd,'workspace-proof.txt'),'CUSTOM_WORKSPACE_PROOF');
     runtime.saveBot({...bots.bot('fixture'),workingDirectory:customCwd});assert.equal(ctx.workingDirectory.get(agent.session),originalCwd,'saving does not mutate the current turn cwd');
     await bridge.run(binding,[msg('workspace-switch','在指定目录中继续对话')],AbortSignal.timeout(30000));assert.equal(agent.id,binding.sessionId);assert.equal(ctx.workingDirectory.get(agent.session),await realpath(customCwd));assert.ok(JSON.stringify(requests.at(-1)!.messages).includes('我喜欢绿茶'));
+    assert.doesNotMatch(requestText(requests.at(-1)!),/The working directory changed from/);assert.ok(!agent.session.snapshotEvents().some(event=>event.type==='user/message'&&event.data.source.kind==='working-directory'),'actual cwd changes retain their directory event and context without adding a user notice');
     const inDirectory=await ctx.tools.execute({name:'pwsh',arguments:{command:"Get-Content -LiteralPath './workspace-proof.txt'"},callId:ToolCallId('workspace-command'),agent,signal:AbortSignal.timeout(15000)});assert.equal(inDirectory.isError,false,JSON.stringify(inDirectory));assert.ok(JSON.stringify(inDirectory).includes('CUSTOM_WORKSPACE_PROOF'),JSON.stringify(inDirectory));
     const delivered=await ctx.tools.execute({name:'bot_send_file',arguments:{path:'workspace-proof.txt'},callId:ToolCallId('workspace-file'),agent,signal:AbortSignal.timeout(5000)});assert.equal(delivered.isError,false,JSON.stringify(delivered));
     assert.deepEqual(toolJson(await ctx.tools.execute({name:'bot_tools',arguments:{names:['bot_send_file']},callId:ToolCallId('parent-load-before-child'),agent,signal:AbortSignal.timeout(5000)})).loaded,['bot_send_file']);
@@ -342,6 +350,7 @@ export async function apply(ctx:Context){
       mediaCall={name:'image_generation',args:{prompt:'Generate a single image'}};
       beforeFinal=async()=>{
         const parent=bridge.live.get(binding.sessionId)!.agent;
+        assert.ok(JSON.stringify(ctx.tools.schemas(parent).find(tool=>tool.name==='image_generation')!.parameters).includes('"model"'),'the image tool must expose a per-request model parameter');
         const registered=toolJson(await ctx.tools.execute({name:'bot_send_file',arguments:{path:copyPath,mime:'image/png'},callId:ToolCallId('generated-image-copy'),agent:parent,signal:AbortSignal.timeout(5000)}));
         assert.equal(registered.assetId,asset.id,'path registration must reuse the automatically registered image, even under a different filename');
         const repeated=toolJson(await ctx.tools.execute({name:'bot_send_file',arguments:{path:copyPath},callId:ToolCallId('generated-image-copy-default-mime'),agent:parent,signal:AbortSignal.timeout(5000)}));
@@ -482,6 +491,18 @@ export async function apply(ctx:Context){
     try{
       const oldMarker='NATIVE_MANAGEMENT_OLD_CONTEXT';await runtime.receive(controlMsg('management-warmup',`保存本轮测试标记 ${oldMarker}，后面会通过工具操作会话。`));await runtime.process(controlKey);
       const oldControl=sessions.binding(controlScope);const controlAgent=bridge.live.get(oldControl.sessionId)!.agent;assert.equal(ctx.permissionPresets.current(controlAgent.session),'read-only');assert.ok(ctx.tools.schemas(controlAgent).some(tool=>tool.name==='bot_session'));
+      const queuedAsset=await runtime.assets.save(controlKey,{kind:'image',name:'queued-unrelated.png',mime:'image/png'},Buffer.from('not a current input'));
+      let enteredQueue!:()=>void,releaseQueue!:()=>void;
+      const queueEntered=new Promise<void>(resolve=>enteredQueue=resolve),queueGate=new Promise<void>(resolve=>releaseQueue=resolve);
+      beforeFinal=async()=>{enteredQueue();await queueGate;};
+      await runtime.receive(controlMsg('queue-in-flight','先处理本轮消息。'));const inFlightQueue=runtime.process(controlKey);await queueEntered;
+      await runtime.receive(controlMsg('queue-followup','排队后的原始消息。'));assert.equal(runtime.busy(controlKey),true);assert.ok(inbox.messages(controlKey).some(message=>message.id==='queue-followup'));
+      releaseQueue();await inFlightQueue;
+      const queuedDeadline=Date.now()+10000;while(!requests.some(request=>request.sessionId===oldControl.sessionId&&request.messages.some(message=>message.role==='user'&&message.content.some(block=>block.type==='text'&&block.text==='排队后的原始消息。')))&&Date.now()<queuedDeadline){await runtime.process(controlKey);await new Promise(resolve=>setTimeout(resolve,10));}
+      const queuedRequest=requests.filter(request=>request.sessionId===oldControl.sessionId).at(-1)!;
+      assert.deepEqual(queuedRequest.messages.findLast(message=>message.role==='user'&&message.source?.kind==='user')!.content,[{type:'text',text:'排队后的原始消息。'}]);assert.doesNotMatch(JSON.stringify(queuedRequest.messages),/Recent attachments in this session/);assert.ok(!JSON.stringify(queuedRequest.messages).includes(queuedAsset.id));
+      const queuedHistory=controlAgent.session.snapshotEvents().flatMap(event=>event.type==='user/message'&&event.data.source.kind==='user'?[event.data.content]:[]).at(-1);assert.deepEqual(queuedHistory,[{type:'text',text:'排队后的原始消息。'}]);
+      featureChecks.push('queued and ordinary user messages preserve exact source text without unrelated recent assets in native requests or persistent history');
       const queuedControl=async(action:'compact'|'new',id:string)=>{
         const before=requests.length;const current=sessions.binding(controlScope);let continuationChecked=false;
         beforeFinal=options=>{assert.equal(options.sessionId,current.sessionId);const tool=options.messages.filter(message=>message.role==='tool').at(-1)!;assert.equal(tool.role,'tool');const queued=toolJson(tool);assert.equal(queued.status,'queued');assert.equal(queued.action,action);assert.equal(typeof queued.actionId,'string');assert.equal(actions.findSessionAction<SessionActionRecord>(queued.actionId)?.state,'queued','management action must not run inside its own native turn');assert.equal(sessions.binding(controlScope).sessionId,current.sessionId);continuationChecked=true;};
@@ -562,11 +583,18 @@ export async function apply(ctx:Context){
     shared.script.steps.push({text:'SHARED_INITIAL_ASSISTANT_MARKER'});
     await bridge.run(sharedBinding,[sharedInput],AbortSignal.timeout(30000),{snapshot:shared.snapshot});
     const originalShared=bridge.live.get(sharedBinding.sessionId)!.agent;
+    const oldHostSeqs=new Set([
+      ...([{kind:'time-context'},{kind:'model-selection'},{kind:'working-directory'}] as const).map(source=>originalShared.session.append('user/message',createUserMessage({source,content:[{type:'text',text:`OLD_HOST_NOTICE_${source.kind}`}]}),{surfaceOp:'append'}).seq),
+      originalShared.session.append('user/message',createUserMessage({source:{kind:'user'},content:[{type:'text',text:'OLD_USER_TEXT_PRESERVED'},{type:'text',text:'Recent attachments in this session (newest first; select according to the user request and use tools to read actual content): [{"id":"OLD_UNRELATED_ASSET","kind":"image","name":"old.png"}]'}]}),{surfaceOp:'append'}).seq,
+    ]);
+    const copiedHostPrefix='Recent attachments in this session (newest first; select according to the user request and use tools to read actual content): user copied this text';
+    originalShared.session.append('user/message',createUserMessage({source:{kind:'user'},content:[{type:'text',text:copiedHostPrefix}]}),{surfaceOp:'append'});
+    await ctx.sessions.flush(originalShared.session);
     for(let cycle=0;cycle<3;cycle++){
       await bridge.dispose(sharedBinding.sessionId);assert.equal(ctx.agents.get(originalShared.id),undefined);
       const beforeActivation=shared.script.calls;
       const resolved=await ctx.sessionController.resolveAgent(originalShared.id);
-      assert.ok('agent' in resolved,'a Web view must recover the persisted bot session after restart');
+      assert.ok('agent' in resolved,`a Web view must recover the persisted bot session after restart: ${'error' in resolved?String(resolved.error):''}`);
       const sharedAgent=resolved.agent;
       assert.equal(shared.script.calls,beforeActivation,'opening the Web session must not call the model');
       assert.equal(sharedAgent.id,originalShared.id);assert.equal(bridge.live.get(sharedBinding.sessionId)!.agent,sharedAgent);
@@ -576,6 +604,9 @@ export async function apply(ctx:Context){
       shared.script.steps.push({text:`SHARED_RESTART_${cycle}_DONE`});
       const input={...sharedInput,id:`shared-restart-${cycle}`,text:`继续恢复后的原会话 ${cycle}`};
       const result=await bridge.run(sharedBinding,[input],AbortSignal.timeout(30000),{snapshot:shared.snapshot});
+      const cleanupEvents=sharedAgent.session.snapshotEvents().filter(event=>event.type==='user/message'||event.type==='developer/message').filter(event=>event.sourceEventSeqs?.some(seq=>oldHostSeqs.has(seq)));
+      assert.equal(cleanupEvents.length,4,'restored host additions must be replaced once, including across repeated resumes');
+      assert.ok(sharedAgent.session.snapshotEvents().some(event=>event.type==='user/message'&&event.data.content.some(block=>block.type==='text'&&block.text.includes('OLD_UNRELATED_ASSET'))),'the original append-only source log must remain intact');
       assert.equal(bridge.live.get(sharedBinding.sessionId)!.agent,sharedAgent,'bot continuation must reuse the exact Web-restored agent');
       assert.deepEqual(result.outputs,[{type:'text',text:`SHARED_RESTART_${cycle}_DONE`}]);
       const request=stagedRequests.at(-1)!;
@@ -583,6 +614,7 @@ export async function apply(ctx:Context){
       assert.ok(requestText(request).includes(shared.snapshot.config.personaPrompt),'the shared instance must retain the bot persona');
       assert.ok(requestText(request).includes('SHARED_INITIAL_USER_MARKER'),'restart must keep the original user history');
       assert.ok(requestText(request).includes('SHARED_INITIAL_ASSISTANT_MARKER'),'restart must keep the original assistant history');
+      assert.doesNotMatch(requestText(request),/OLD_HOST_NOTICE_|OLD_UNRELATED_ASSET/);assert.ok(requestText(request).includes('OLD_USER_TEXT_PRESERVED'));assert.ok(requestText(request).includes(copiedHostPrefix),'a user-authored single block matching the host prefix must be preserved');
       assert.deepEqual(requestTools(request),['bot_tools']);
     }
 
@@ -610,8 +642,7 @@ export async function apply(ctx:Context){
     await bridge.run(changedBinding,[{...sharedInput,id:'shared-model-next-turn',text:'下一轮使用机器人新模型'}],AbortSignal.timeout(30000),{snapshot:changedSnapshot});
     assert.equal(bridge.live.get(sharedBinding.sessionId)!.agent,concurrentResolved.agent);
     assert.equal(stagedRequests.at(-1)!.provider,'bot-fixture-staged');assert.equal(stagedRequests.at(-1)!.model,'second');
-    const botModelNotices=modelNoticeEvents(botSelectionStart);assert.equal(botModelNotices.length,1,`a real bot model change must emit exactly one native notice: ${JSON.stringify(botModelNotices)}`);
-    assert.match(JSON.stringify(botModelNotices),/first/);assert.match(JSON.stringify(botModelNotices),/second/);
+    const botModelNotices=modelNoticeEvents(botSelectionStart);assert.equal(botModelNotices.length,0,`a real bot model change must not append runtime notices to user history: ${JSON.stringify(botModelNotices)}`);
     sessions.updateSession({...sessions.findBinding(sharedBinding.key)!,modelOverride:{provider:'bot-fixture-staged',model:'first'}});
 
     await bridge.dispose(sharedBinding.sessionId);
@@ -653,7 +684,7 @@ export async function apply(ctx:Context){
     assert.equal(sessions.findSession(historicalBinding.sessionId)!.personaId,'default');
     assert.deepEqual(sessions.findSession(historicalBinding.sessionId)!.modelOverride,{provider:'bot-fixture-staged',model:'first'});
     await bridge.dispose(historicalBinding.sessionId);
-    featureChecks.push('repeated cold restores keep one shared native instance, original session ID and user/assistant history','Web-first restoration installs the bot persona, channel permissions and tools before bot continuation','Web and bot concurrent restores share one native agent without a second writer','conflicting Web model selection keeps the frozen bot route without a false notice and a real next-turn bot change emits one notice','failed shared restoration rolls back initialization and releases the writer for a successful retry','opening a historical shared session keeps its original persona and model without changing the channel current-session binding');
+    featureChecks.push('repeated cold restores keep one shared native instance, original session ID and user/assistant history','Web-first restoration installs the bot persona, channel permissions and tools before bot continuation','Web and bot concurrent restores share one native agent without a second writer','Web and next-turn bot model changes keep the frozen route without appending runtime notices to user history','failed shared restoration rolls back initialization and releases the writer for a successful retry','opening a historical shared session keeps its original persona and model without changing the channel current-session binding');
     const deletedIds=new Set([...sessions.sessionsAll().filter(item=>item.scope.botId===scope.botId).map(item=>item.id),...statsSessions.listOwners().filter(item=>item.botId===scope.botId).map(item=>item.sessionId)]);
     const independent=await ctx.agents.create({sessionId:('unrelated-'+binding.sessionId) as any,agentOptions:{provider:'bot-fixture',model:'first'}});await ctx.sessions.flush(independent.agent.session);await independent.dispose();
     const coldChild=await ctx.agents.create({sessionId:('cold-child-'+binding.sessionId) as any,meta:{cwd:customCwd,parentSession:binding.sessionId as any,origin:'subagent'},agentOptions:{provider:'bot-fixture',model:'first'}});await ctx.sessions.flush(coldChild.agent.session);await coldChild.dispose();

@@ -10,6 +10,7 @@ import {Assets,MediaService} from '../src/core/media.js';
 import {freezeTurn} from '../src/core/policy.js';
 import {VoiceModelLibrary} from '../src/core/voice-model-library.js';
 import {ProfileStore} from '../src/core/profile-store.js';
+import {validateMediaParameters} from '../src/core/limits.js';
 
 const legacyImage={enabled:true,protocol:'openai',baseUrl:'https://images.example.invalid/v1',model:'fixture-image',keyEnv:'FIXTURE_IMAGE_KEY',workflowEnv:'OLD_WORKFLOW'};
 const persona=()=>({schemaVersion:4,id:'image-config',name:'Image configuration',personaPrompt:'Test persona',media:{image:legacyImage}});
@@ -54,6 +55,32 @@ test('saved image service settings preserve their chosen credential variable',as
   store.voiceLibrarySettings.write({modelsRoot:'',gptSovitsUrl:'http://127.0.0.1:9880',openAiModel:'saved-model',openAiKeyEnv:'OLD_KEY'});
   const library=new VoiceModelLibrary(store.voiceLibrarySettings,root,new ProfileStore(),{scan:async()=>({models:[]})});
   assert.equal(library.view().openAiModel,'saved-model');assert.equal(library.view().openAiKeyEnv,'OLD_KEY');
+});
+
+test('image requests can select a model without changing the default connection or credentials',async t=>{
+  const {store}=await fixture(t),config=store.personas.saveConfig(persona());
+  const bot=botSchema.parse({id:'image',name:'Image',channel:'qq',configId:config.id,enabled:true});store.bots.saveBot(bot);
+  const binding=store.sessions.binding({botId:bot.id,platform:'qq',accountId:bot.id,kind:'private',channelId:'room',senderId:'person'});
+  let settings=imageServiceSettingsSchema.parse({openAiBaseUrl:'https://images.example.invalid/v1',openAiModel:'default-image',openAiKeyEnv:'FIXTURE_IMAGE_KEY'});
+  const calls:any[]=[],assets=new Assets(store.repositories()),media=new MediaService(store.repositories(),assets,undefined,undefined,{run:async(job,_signal,credentials)=>{calls.push({job,credentials});return{};}},undefined,undefined,undefined,()=>settings);
+  const previous=process.env.FIXTURE_IMAGE_KEY;process.env.FIXTURE_IMAGE_KEY='fixture-only-key';
+  t.after(()=>{if(previous===undefined)delete process.env.FIXTURE_IMAGE_KEY;else process.env.FIXTURE_IMAGE_KEY=previous;});
+  const snapshot=freezeTurn(config,bot,binding.scope,[],undefined,'zh',settings);
+  const source=await assets.save(binding.key,{kind:'image',name:'sketch.png',mime:'image/png'},Buffer.from('fixture'));
+  await media.run(binding.key,'image_edit',config,[source.id],{prompt:'exercise',model:' requested-image ',output_format:'gif',baseUrl:'https://ignored.example.invalid/v1',keyEnv:'IGNORED_KEY'},new AbortController().signal,undefined,snapshot);
+  assert.deepEqual(calls[0].job.endpoint,{protocol:'openai',baseUrl:settings.openAiBaseUrl,model:'requested-image',keyEnv:'FIXTURE_IMAGE_KEY'});
+  assert.deepEqual(calls[0].credentials,{FIXTURE_IMAGE_KEY:'fixture-only-key'});
+  assert.equal(store.jobs.jobs()[0].requestedModel,'requested-image');
+  await media.run(binding.key,'image_generate',config,[],{prompt:'another image'},new AbortController().signal,undefined,snapshot);
+  assert.equal(calls[1].job.endpoint.model,'default-image');assert.equal(media.imageEndpoint(config,snapshot).model,'default-image');
+  settings=imageServiceSettingsSchema.parse({...settings,imageProtocol:'comfyui',comfyUiWorkflowPath:path.resolve('fixture.json')});
+  const comfyConfig=configSchema.parse({...config,media:{image:{protocol:'comfyui'}}});
+  await assert.rejects(media.run(binding.key,'image_generate',comfyConfig,[],{prompt:'exercise',model:'requested-image'},new AbortController().signal),/IMAGE_MODEL_OVERRIDE_UNSUPPORTED/);
+  assert.equal(calls.length,2);
+});
+
+test('image model overrides reject invalid names before dispatch',()=>{
+  for(const model of ['', '   ', 1, null, 'a'.repeat(257)])assert.throws(()=>validateMediaParameters('image_generate',[],{prompt:'fixture',model}),/IMAGE_MODEL_INVALID/);
 });
 
 test('image settings and the selected credential variable stay frozen through a turn',async t=>{

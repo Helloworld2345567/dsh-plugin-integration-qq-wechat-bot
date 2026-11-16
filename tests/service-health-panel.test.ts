@@ -107,10 +107,10 @@ test('image settings stay independent and slow picking or background refresh nev
     assert.ok(!render().some(node=>node.type==='label'&&node.children[0]==='生图协议'));
     assert.ok(render().some(node=>node.type==='h3'&&node.children.includes('OpenAI 生图')));
     assert.ok(render().some(node=>node.type==='h3'&&node.children.includes('ComfyUI')));
-    assert.equal(field('模型').props.value,'original');assert.ok(field('ComfyUI 工作流文件'));
+    assert.equal(field('默认模型').props.value,'original');assert.ok(field('ComfyUI 工作流文件'));
     button('选择文件').props.onClick();await settle();
-    assert.equal(button('正在选择…').props.disabled,true);assert.equal(field('模型').props.disabled,false);
-    field('模型').props.onChange({target:{value:'edited-during-picker'}});
+    assert.equal(button('正在选择…').props.disabled,true);assert.equal(field('默认模型').props.disabled,false);
+    field('默认模型').props.onChange({target:{value:'edited-during-picker'}});
     const listing={directory:'E:\\COMFYUI\\workflows',parent:'E:\\COMFYUI',entries:[{name:'sub',path:'E:\\COMFYUI\\workflows\\sub',directory:true},{name:'selected.json',path:'E:\\COMFYUI\\workflows\\selected.json',directory:false}]};
     pickerResolve(Response.json({result:listing}));await settle();
     assert.ok(render().some(node=>node.props?.role==='dialog'&&node.props?.['aria-label']==='选择工作流文件'));
@@ -122,14 +122,14 @@ test('image settings stay independent and slow picking or background refresh nev
     field('工作流目录').props.onChange({target:{value:'E:\\COMFYUI\\workflows'}});button('打开目录').props.onClick();await settle();
     pickerResolve(Response.json({result:listing}));await settle();
     button('selected.json').props.onClick();await settle();
-    assert.equal(field('模型').props.value,'edited-during-picker');assert.equal(field('ComfyUI 工作流文件').props.value,'E:\\COMFYUI\\workflows\\selected.json');
+    assert.equal(field('默认模型').props.value,'edited-during-picker');assert.equal(field('ComfyUI 工作流文件').props.value,'E:\\COMFYUI\\workflows\\selected.json');
     button('选择文件').props.onClick();await settle();button('取消').props.onClick();await settle();
     assert.equal(pickerSignal?.aborted,true);assert.equal(button('选择文件').props.disabled,false);
     assert.equal(field('ComfyUI 工作流文件').props.value,'E:\\COMFYUI\\workflows\\selected.json');
     deferSave=true;deferRefresh=true;button('保存').props.onClick();await settle();
-    assert.equal(button('正在保存…').props.disabled,true);assert.equal(field('模型').props.disabled,false);
-    field('模型').props.onChange({target:{value:'edited-during-save'}});saveResolve();await settle();await settle();
-    assert.equal(field('模型').props.value,'edited-during-save');assert.equal(button('保存').props.disabled,false);
+    assert.equal(button('正在保存…').props.disabled,true);assert.equal(field('默认模型').props.disabled,false);
+    field('默认模型').props.onChange({target:{value:'edited-during-save'}});saveResolve();await settle();await settle();
+    assert.equal(field('默认模型').props.value,'edited-during-save');assert.equal(button('保存').props.disabled,false);
     assert.ok(button('正在刷新…'));assert.ok(render().some(node=>node.props?.role==='status'&&node.children.includes('已保存')));
     // A second save replaces the scan while its first HTTP waiter is still pending.
     deferSave=false;field('GPT-SoVITS 服务地址').props.onChange({target:{value:'http://127.0.0.1:9881'}});
@@ -139,11 +139,11 @@ test('image settings stay independent and slow picking or background refresh nev
     // A superseded scan can also resolve normally. Its response must still lead to the latest scan.
     field('GPT-SoVITS 服务地址').props.onChange({target:{value:'http://127.0.0.1:9882'}});
     button('保存').props.onClick();await settle();await settle();
-    field('模型').props.onChange({target:{value:'edited-during-latest-scan'}});
+    field('默认模型').props.onChange({target:{value:'edited-during-latest-scan'}});
     refreshResolve();await settle();await settle();
     assert.equal(calls.filter(call=>call.name==='service.refresh').length,3);assert.ok(button('正在刷新…'));
     refreshResolve();await settle();await settle();
-    assert.equal(field('模型').props.value,'edited-during-latest-scan');assert.equal(button('保存').props.disabled,false);
+    assert.equal(field('默认模型').props.value,'edited-during-latest-scan');assert.equal(button('保存').props.disabled,false);
     assert.equal(field('GPT-SoVITS 服务地址').props.value,'http://127.0.0.1:9882');assert.ok(button('刷新'));
     deferSave=false;deferRefresh=false;const queriesBefore=calls.filter(call=>call.name==='service.settings').length;
     button('保存').props.onClick();await settle();await settle();
@@ -154,10 +154,10 @@ test('image settings stay independent and slow picking or background refresh nev
       const loadTab=()=>{for(const effect of tabEffects){const cleanup=effect();if(typeof cleanup==='function')cleanups.push(cleanup as ()=>void);}};
       deferSettings=true;deferSave=true;
       if(timing==='before-save'){loadTab();await settle();}
-      field('模型').props.onChange({target:{value:timing}});button('保存').props.onClick();await settle();
+      field('默认模型').props.onChange({target:{value:timing}});button('保存').props.onClick();await settle();
       if(timing==='during-save'){loadTab();await settle();}
       saveResolve();await settle();await settle();settingsResolve();await settle();await settle();
-      assert.equal(field('模型').props.value,timing);assert.equal(button('保存').props.disabled,true);
+      assert.equal(field('默认模型').props.value,timing);assert.equal(button('保存').props.disabled,true);
       deferSettings=false;
     }
   }finally{for(const cleanup of cleanups)cleanup();(globalThis as any).window=previousWindow;globalThis.fetch=previousFetch;}

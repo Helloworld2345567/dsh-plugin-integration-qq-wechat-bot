@@ -134,9 +134,9 @@ def main(argv=None) -> int:
         if args.output_compression is not None and not 0 <= args.output_compression <= 100: raise ValueError()
         if args.output_format not in ("jpeg", "webp") and args.output_compression is not None: raise ValueError()
         if args.output_format != "gif" and (args.frame_count is not None or args.frame_duration_ms is not None): raise ValueError()
-        if args.frame_count is not None and not 2 <= args.frame_count <= 64: raise ValueError()
+        if args.frame_count is not None and not 2 <= args.frame_count <= 16: raise ValueError()
         if args.frame_duration_ms is not None and not 20 <= args.frame_duration_ms <= 2000: raise ValueError()
-        if args.operation == "edit" and args.output_format in ("gif", "svg"): raise ValueError()
+        if args.operation == "edit" and args.output_format == "svg": raise ValueError()
         if args.output_format == "svg" and args.n != 1: raise ValueError()
         base_url = normalize_base_url(args.base_url)
         if args.operation == "edit":

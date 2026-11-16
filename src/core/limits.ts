@@ -163,6 +163,8 @@ export function validateMediaParameters(operation: string, inputs: string[], par
     if (value !== undefined && !stringWithin(value, limit)) throw new Error(`MEDIA_${key.toUpperCase()}_TOO_LARGE`);
   }
   if (operation === 'image_generate' || operation === 'image_edit') {
+    const model = parameters.model;
+    if (model !== undefined && (typeof model !== 'string' || !model.trim() || model.length > 256)) throw new Error('IMAGE_MODEL_INVALID');
     const outputFormat = parameters.output_format;
     if (outputFormat !== undefined && !['png','jpg','jpeg','webp','gif','svg'].includes(String(outputFormat))) throw new Error('IMAGE_OUTPUT_FORMAT_INVALID');
     const width = parameters.width, height = parameters.height;

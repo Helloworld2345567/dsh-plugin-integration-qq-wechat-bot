@@ -375,6 +375,54 @@ class WorkerTests(unittest.TestCase):
             args = image_api.parse_args()
             self.assertEqual((args.output_format, args.frame_count, args.frame_duration_ms, args.complexity), ('gif', 4, 120, 'medium'))
 
+    def test_image_cli_reference_gif_uploads_sources_and_preserves_animation(self):
+        from PIL import Image
+        sources = [self.root / 'subject.png', self.root / 'pose.png']
+        for source, color in zip(sources, ('red', 'blue')):
+            Image.new('RGB', (20, 20), color).save(source)
+        animation = io.BytesIO()
+        Image.new('RGB', (20, 20), 'red').save(animation, format='GIF', save_all=True,
+            append_images=[Image.new('RGB', (20, 20), 'blue')], duration=120, loop=0)
+        gif = animation.getvalue()
+        response = Mock(status_code=200, headers={'content-type': 'image/gif'}, content=gif)
+        response.json.side_effect = ValueError()
+
+        def request(_session, method, url, **kwargs):
+            self.assertEqual((method, url), ('POST', 'https://example.invalid/v1/images/edits'))
+            self.assertEqual(kwargs['data'], {'model': 'animated-image-model', 'prompt': 'exercise', 'n': '1',
+                'output_format': 'gif', 'frame_count': '16', 'frame_duration_ms': '120'})
+            self.assertEqual([field for field, _ in kwargs['files']], ['image', 'image'])
+            for source, (_, (name, handle, mime)) in zip(sources, kwargs['files']):
+                self.assertEqual((name, mime), (source.name, 'image/png'))
+                self.assertEqual(handle.read(), source.read_bytes())
+            return response
+
+        record = self.root / 'gif-result.json'
+        with patch.dict(os.environ, {'OPENAI_API_KEY': 'fixture-key'}, clear=True), \
+                patch('dsh_bot_runtime.skills.image_generation.openai.image_api.request_with_retry', side_effect=request) as mocked, \
+                patch('sys.stdout', new_callable=io.StringIO):
+            result = image_api.main(['edit', '--prompt', 'exercise', '--model', 'animated-image-model',
+                '--base-url', 'https://example.invalid/v1', '--image', str(sources[0]), '--image', str(sources[1]),
+                '--output-format', 'gif', '--frame-count', '16', '--frame-duration-ms', '120',
+                '--output-dir', str(self.root), '--record', str(record)])
+        self.assertEqual(result, 0)
+        mocked.assert_called_once()
+        output = self.root / json.loads(record.read_text(encoding='utf8'))['outputs'][0]
+        self.assertEqual(output.read_bytes(), gif)
+        with Image.open(output) as saved:
+            self.assertEqual((saved.n_frames, saved.info['duration'], saved.info['loop']), (2, 120, 0))
+
+    def test_image_cli_rejects_svg_edits_and_out_of_range_gif_frames(self):
+        from PIL import Image
+        source = self.root / 'source.png'; Image.new('RGB', (20, 20), 'white').save(source)
+        for options in (['--output-format', 'svg'], ['--output-format', 'gif', '--frame-count', '17']):
+            with self.subTest(options=options), patch('sys.stdout', new_callable=io.StringIO), patch('requests.Session') as session:
+                result = image_api.main(['edit', '--prompt', 'test', '--image', str(source), *options, '--dry-run'])
+                self.assertEqual(result, 2)
+                session.assert_not_called()
+        with self.assertRaisesRegex(worker.JobError, '^IMAGE_FRAME_COUNT_INVALID$'):
+            worker.execute(self.job('image_generate', prompt='test', output_format='gif', frame_count=17))
+
     def test_image_cli_uses_explicit_configuration_and_selected_api_key(self):
         retired = dict(BOT_IMAGE_BASE_URL='https://ignored.example/v1', BOT_IMAGE_MODEL='ignored-model',
                        BOT_IMAGE_KEY_ENV='CUSTOM_IMAGE_KEY', SAKURA_IMAGE_BASE_URL='https://ignored.example/v1',

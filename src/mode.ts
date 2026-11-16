@@ -5,7 +5,6 @@ export const inject=['agentPresets'];
 export async function registerMode(ctx:Context):Promise<()=>Promise<void>>{
   const shell=process.platform==='win32'?'pwsh':'bash';
   const dispose=await ctx.agentPresets.register({id:'bot-unified-chat',name:'机器人聊天模式',description:'自然聊天、动态人格；保留 Harness 上下文和工具',order:2,plugins:[
-    {id:'time-context',name:'@deepseek-ai/dsh-time-context'},
     {id:'tool-fs',name:'@deepseek-ai/dsh-tool-fs'},
     {id:'tool-fs-search',name:'@deepseek-ai/dsh-tool-fs-search',config:{sampleOverCapGlobResults:false}},
     {id:'compaction',name:'cordis:group',group:true,isolate:{compaction:true,toolResultPruner:true},config:[

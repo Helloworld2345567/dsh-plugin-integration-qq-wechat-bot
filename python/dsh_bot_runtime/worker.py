@@ -76,7 +76,7 @@ def image(job):
     if complexity is not None and (not isinstance(complexity, str) or complexity not in {"low", "medium", "high"}):
         raise JobError("IMAGE_COMPLEXITY_INVALID")
     frame_count = params.get("frame_count")
-    if frame_count is not None and (isinstance(frame_count, bool) or not isinstance(frame_count, int) or not 2 <= frame_count <= 64):
+    if frame_count is not None and (isinstance(frame_count, bool) or not isinstance(frame_count, int) or not 2 <= frame_count <= 16):
         raise JobError("IMAGE_FRAME_COUNT_INVALID")
     frame_duration_ms = params.get("frame_duration_ms")
     if frame_duration_ms is not None and (isinstance(frame_duration_ms, bool) or not isinstance(frame_duration_ms, int) or not 20 <= frame_duration_ms <= 2000):

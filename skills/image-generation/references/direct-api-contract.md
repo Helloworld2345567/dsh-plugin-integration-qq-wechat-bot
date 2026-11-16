@@ -5,7 +5,7 @@ This document describes the bundled `dsh_bot_runtime.skills.image_generation.ima
 ## Connection and credentials
 
 - Set the service through `--protocol`, the endpoint through `--base-url`, and the OpenAI-compatible model through `--model`. ComfyUI uses `--workflow` for an API-format workflow file. These settings do not read environment variables; the bot passes values saved in the Services panel.
-- Script defaults are protocol `openai`, OpenAI-compatible endpoint `https://api.openai.com/v1` and model `gpt-image-2`; use explicit arguments for the selected service.
+- Script defaults are protocol `openai`, OpenAI-compatible endpoint `https://api.openai.com/v1` and model `gpt-image-2`; use explicit arguments for the selected service. The Services panel model is the default; a user-requested model overrides it for one OpenAI-compatible image request through `image_generation.model`, without changing the saved default, endpoint or credential binding.
 - The OpenAI-compatible adapter reads the credential variable named by `--api-key-env`, defaulting to `OPENAI_API_KEY`. The bot passes the Services panel's `openAiKeyEnv` setting and injects the corresponding credential into the worker. There are no legacy credential aliases.
 - Credentials are read from the environment and sent as a Bearer header. Only HTTPS API URLs without embedded credentials, query or fragment are accepted. Redirects are disabled.
 - A missing selected credential produces a configuration error. The plugin checks the selected variable before starting the client. Direct CLI calls use `--api-key-env` or its `OPENAI_API_KEY` default without an interactive prompt; an empty selected variable does not fall back to another key.
@@ -16,7 +16,7 @@ This document describes the bundled `dsh_bot_runtime.skills.image_generation.ima
 
 ## Reference editing
 
-`POST {base_url}/images/edits` with multipart form data. The text fields include `model`, `prompt`, `n`, and output options. Every selected input is uploaded as a repeated `image` field. An optional PNG mask uses `mask`.
+`POST {base_url}/images/edits` with multipart form data. The text fields include `model`, `prompt`, `n`, and output options. Every selected input is uploaded as a repeated `image` field. An optional PNG mask uses `mask`. Set `output_format=gif` for reference-guided animation when the selected provider and model support it.
 
 ```python
 files = [
@@ -30,12 +30,12 @@ Do not collapse these fields into a dictionary. Input count is independent of `n
 ## Parameters and limits
 
 - `n`: 1–10; omit it unless the user explicitly requests a batch count. Sakura automatic illustration requests exactly 1 output.
-- `output_format`: `png`, `jpg`/`jpeg`, `webp`, `svg`, or `gif`. JPEG is the default; `jpg` is normalized to JPEG. SVG and GIF are generation-only formats; SVG requires `n=1`.
+- `output_format`: `png`, `jpg`/`jpeg`, `webp`, `svg`, or `gif`. JPEG is the default; `jpg` is normalized to JPEG. GIF supports generation and reference editing; SVG is generation-only and requires `n=1`.
 - `width` and `height`: optional paired dimensions for ComfyUI workflows, 64–4096 pixels in multiples of 8. Omit them unless the user explicitly requests a resolution; the selected workflow must expose supported size inputs.
 - `output_compression`: 0–100 for JPEG/WebP; default 96. Do not send it for PNG, SVG, or GIF.
 - `background`: optional `auto`, `opaque`, or `transparent`; transparency is only sent with PNG/WebP.
 - `complexity`: optional `low`, `medium`, or `high` only when the selected provider reports support.
-- `frame_count`: 2–64 and `frame_duration_ms`: 20–2000 for GIF generation only.
+- `frame_count`: 2–16 and `frame_duration_ms`: 20–2000 for GIF generation or reference editing only.
 - The client omits `quality` and `size`; describe composition and framing in the prompt.
 - Each input must be a non-empty PNG/JPEG/WebP file no larger than 10 MiB. Masks must be PNG. Combined input bytes must not exceed 22 MiB.
 - Combined outputs are capped at 24 MiB. When `output_format=jpeg`, the script decodes and re-encodes every successful output as JPEG, even if a compatible provider returns PNG or WebP. Other formats retain their requested format; SVG/GIF fail closed if the provider returns a different signature.

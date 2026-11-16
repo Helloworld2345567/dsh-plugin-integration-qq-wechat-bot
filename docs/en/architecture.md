@@ -52,6 +52,8 @@ Each persona has `config.json`/`persona.md`. SQLite revisions are authoritative;
 
 Bots can share personas but channel scope always isolates identities, sessions, attachments, memory and delivery. Persona/model switching does not reload active turns; main/subtasks retain startup snapshots.
 
+Ordinary and queued messages retain the original user text, current quotes and attachments without an automatic recent-attachment catalog. Time and working directory use the current runtime context; model changes add no chat notices. On resume, native surface replacement excludes known old host notices and separately appended catalog blocks while preserving the original log and user-authored text.
+
 `src/harness/credentials.ts` adapts Harness credentials. Compatible IDs retain `bot-integration/<id>`; other legal IDs use `bot-integration-encoded` and `id-` plus original-ID UTF-8 hex. Reads/writes/deletes share this mapping, allowing numeric/uppercase/underscore IDs without panel failures or collisions with old keys.
 
 `bot.delete` first disables/archives, cancels connections, model work and pending delivery through the stop flow, deletes credentials, stops automation and awaits writes. It locates native session directories through the pinned JSONL backend, releases sessions, removes logs/projection caches and refreshes the public search index, then deletes the bot's messages/sessions/memory/assets/tasks/stats. Only an identity tombstone/shared personas remain; user working directories are preserved. Lists omit deleted bots and ordinary save/connect cannot revive them. Cleanup failure restores a retryable stopped state. Deletion clears QR attempts; pending QR/connect operations recheck bot status before resuming.
