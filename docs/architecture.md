@@ -81,13 +81,13 @@ bot 可以共享人格，但身份、会话、附件、记忆和投递始终按�
 
 ### Skill 操作声明
 
-`media-analysis/operations.json` 是该技能的工具参数、参数到操作的映射、模型角色、配额、来源约束和自动附件交付的唯一声明。构建时从 `skills/*/operations.json` 生成带摘要的不可变 Host registry，框架启动只导入该内存 registry，不扫描 skill 文件；Python worker 在首次 skill 操作时验证已安装声明中的固定 `dsh_bot_runtime.skills...` entry，再用唯一包名导入 `execute(job)`。任务只传操作 ID，不接受调用方提供模块、脚本或包路径；人格、聊天输入和工作区文件均不参与 Python 代码发现。
+`media-analysis/operations.json` 是该技能的工具参数、参数到操作的映射、模型角色、来源约束和自动附件交付的唯一声明。构建时从 `skills/*/operations.json` 生成带摘要的不可变 Host registry，框架启动只导入该内存 registry，不扫描 skill 文件；Python worker 在首次 skill 操作时验证已安装声明中的固定 `dsh_bot_runtime.skills...` entry，再用唯一包名导入 `execute(job)`。任务只传操作 ID，不接受调用方提供模块、脚本或包路径；人格、聊天输入和工作区文件均不参与 Python 代码发现。
 
 新增媒体操作时，修改对应技能的声明、Python 实现与说明即可。每个技能的 `tools` 数组声明一个或多个工具，各自包含 `tool`、`routes`、`defaults`，以及可选的 `enabledRoles` 和 `permissionTool`。`routes` 按顺序匹配参数，`defaults` 补充省略的选择参数；操作上的 `role` 选择 `asr`、`video` 或 `tts` 模型连接，未声明则不注入模型凭据；`deliver` 将结果附件登记到本轮回复。一个操作归属一个工具，可由该工具的多个路由指向；媒体下载、分析与转换分别通过各自工具公开，权限仍由宿主在执行时检查。
 
-`media_transform(operation, inputs, ...)` 归属 media-analysis，但不依赖分析模型角色，也不消耗每日媒体调用配额。`localTransform` 操作使用进程内共享的执行槽位，容量为 `min(4, availableParallelism())`。图片占一个槽位，GIF 取得最多两个当前空闲槽位；无空闲槽位的任务 FIFO 排队，排队取消立即移除。宿主分配的 `processingSlots` 位于 worker 协议顶层，模型参数不能覆盖。任务等待和运行期间均可取消，执行前重新检查当前权限；重启将排队和运行中的媒体作业标记为中断，不重放。非本地转换操作保留原有全局两任务、同作用域一个任务的限制。
+`media_transform(operation, inputs, ...)` 归属 media-analysis，但不依赖分析模型角色。`localTransform` 操作使用进程内共享的执行槽位，容量为 `min(3, availableParallelism())`。图片占一个槽位，GIF 取得最多两个当前空闲槽位；无空闲槽位的任务 FIFO 排队，排队取消立即移除。宿主分配的 `processingSlots` 位于 worker 协议顶层，模型参数不能覆盖。任务等待和运行期间均可取消，执行前重新检查当前权限；重启将排队和运行中的媒体作业标记为中断，不重放。工具指令要求默认串行执行和重试，仅用户明确要求时并发。所有媒体操作共用每个 MediaService 实例最多三路并发的入口限制，同作用域也可并发；第四路直接返回 MEDIA_CONCURRENCY_LIMIT。
 
-可信私聊用户的媒体操作免除每日调用和视频分析累计秒数配额。`MediaService` 同时核对宿主传入的本轮 `TurnSnapshot`、真实聊天绑定和执行时的可信名单；新增信任延至下一轮，撤销立即生效。免额判定通过 worker 协议顶层布尔字段 `dailyQuotaExempt` 传给视频服务，模型工具参数无法设置该字段。视频服务仍记录作业和用量，单文件大小、单次 300 秒、并发及身份隔离保持原有规则。附件不设渠道作用域或全局累计存储硬上限，历史附件的累计大小不阻断新附件的收取或生成，也不会因此删除旧文件。群聊和非可信私聊继续按原每日配额处理。
+所有身份的媒体操作均取消每日次数和视频分析累计时长配额；不再通过 worker 协议传递 quotaUnits 或 dailyQuotaExempt。视频服务保留用量记录和作业归属，单文件大小、单次 300 秒以及身份隔离不变。旧配额记录不再读取或更新。附件不设渠道作用域或全局累计存储硬上限。
 
 图片脚本在一次解码后组合方向校正、缩放、格式转换和质量压缩。GIF 脚本根据输入定位和统一帧时间网格并行编码约 15 秒的片段，30 秒以下或只有一个槽位时整段编码。每段以完整不透明首帧开始，保留帧局部调色板；合并器解析本次生成的 GIF 块，复制压缩像素并统一百分之一秒帧延时和循环信息，不重编码像素。最终文件须严格小于 10,000,000 字节，超限最多四轮降低质量，不缩短所选时长或降至 12 fps 以下。成功文件全量解码验证后登记 Asset，宿主随后清理该转换任务目录；清理失败写入任务的 `cleanupError`。
 
@@ -102,7 +102,7 @@ Breeze TTS 适配器按服务地址串行调用已运行的 `/v1/audio/speech`�
 
 命名空间 skill 模块提供 `execute(job)`，返回统一的文本、附件和覆盖范围结果。只有 `dsh_bot_runtime` 自身定义且格式有效的业务 `code` 可跨进程；未知异常统一映射到稳定 fallback，不输出类型名、traceback、解释器路径、endpoint、credential、模型路径或下载 locator。
 
-框架继续负责轮次权限交集、会话附件 ID 解析、模型凭据、音频格式适配、配额、取消、产物路径校验及投递。人格自定义技能目录不参与可执行入口发现；Python 只发现随包 `operations.json` 声明的固定 entry。损坏的可选声明只使其自身操作返回稳定错误，不阻断 document、image 或其他 skill；更新后重启生效。图片生成的每轮一次规则、原生图片理解、文档和 MP4 转码仍保留其现有宿主实现；`convert_gif` 由技能提供。
+框架继续负责轮次权限交集、会话附件 ID 解析、模型凭据、音频格式适配、取消、产物路径校验及投递。人格自定义技能目录不参与可执行入口发现；Python 只发现随包 `operations.json` 声明的固定 entry。损坏的可选声明只使其自身操作返回稳定错误，不阻断 document、image 或其他 skill；更新后重启生效。图片生成不再限制每轮成功次数；同一请求最多首次加三次模型主动重试，成功后可继续生成或编辑。原生图片理解、文档和 MP4 转码仍保留宿主实现；`convert_gif` 由技能提供。
 
 ### GPT-SoVITS Limitations / Known Issues
 

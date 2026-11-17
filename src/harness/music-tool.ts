@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import type {Assets,MediaService} from '../core/media.js';
 import type {BindingRepository} from '../core/ports/session.js';
 import type {AssetRepository, MusicStateRepository} from '../core/ports/media.js';
@@ -5,7 +6,7 @@ import type {PersonaConfigRepository} from '../core/ports/persona.js';
 import type {CapabilityAcceptanceRepository} from '../core/ports/service.js';
 import type {BotConfig,BotInstance,SessionBinding,TurnSnapshot,Output} from '../core/types.js';
 import {allowedNow,mediaConfigNow} from '../core/policy.js';
-import {assertMediaSession,musicCandidates,musicRequestKey,saveMusicCandidates,publicMusicCandidates,publicMusicTrack,MUSIC_DELIVERY_BYTES,type MusicAcquisition,type MusicCandidate} from '../core/music-state.js';
+import {assertMediaSession,musicCandidates,saveMusicCandidates,publicMusicCandidates,publicMusicTrack,MUSIC_DELIVERY_BYTES,type MusicAcquisition,type MusicCandidate} from '../core/music-state.js';
 import {ServiceContractError} from '../core/service-errors.js';
 
 export interface MusicContext {binding:SessionBinding;snapshot:TurnSnapshot;assets:Output[]}
@@ -35,19 +36,14 @@ export async function acquireMusicSource(live:MusicContext,args:Record<string,an
     parameters={selection:candidates.candidates[candidate-1]};
   }else parameters=query(args);
   parameters={...parameters,includeLyrics:live.snapshot.config.media.music?.includeLyrics===true};
-  const selectionKey=JSON.stringify(parameters),request=musicRequestKey(binding,live.snapshot,'acquire');
+  const selectionKey=JSON.stringify(parameters),request=randomUUID();
   const previous=deps.repos.music.acquisition(binding.key);
   const selected=parameters.selection as MusicCandidate|undefined;
   const sameTrack=previous?.selectionKey===selectionKey||!!previous?.track&&(selected?selected.source===previous.track.source&&selected.id===previous.track.id:parameters.song===previous.track.title&&(!parameters.artist||parameters.artist===previous.track.artist));
   if(previous?.state==='succeeded'&&previous.sessionId===binding.sessionId&&previous.generation===binding.generation&&sameTrack){
     const source=await deps.assets.resolve(binding.key,previous.sourceAssetId!);authorize();if(source.sessionId!==binding.sessionId)throw Error('MUSIC_ATTACHMENT_INVALID');
-    const retryDelivery=previous.request!==request&&previous.deliveryState!=='succeeded';
+    const retryDelivery=previous.deliveryState!=='succeeded';
     const reused={...previous,request,selectionKey,...(retryDelivery?{deliveryState:undefined,deliveryCode:undefined,deliveryAssetIds:undefined}:{})};deps.repos.music.saveAcquisition(binding.key,reused);return reused;
-  }
-  if(previous?.request===request){
-    if(previous.state==='running')throw Error('MUSIC_ALREADY_RUNNING');
-    if(previous.state==='failed')throw Error(previous.code??'MUSIC_ALREADY_ATTEMPTED');
-    throw Error('MUSIC_ALREADY_ACQUIRED');
   }
   const record:MusicAcquisition={scope:binding.key,sessionId:binding.sessionId,generation:binding.generation,request,selectionKey,state:'running'};
   deps.repos.music.saveAcquisition(binding.key,record);
@@ -70,8 +66,6 @@ export async function executeMusicTool(live:MusicContext,args:Record<string,any>
   if(args.action!=='download')throw Error('MUSIC_ACTION_INVALID');
   // Lyrics are a frozen persona preference, never a model/tool override.
   const record=await acquireMusicSource(live,args,signal,deps),scope=live.binding.key;
-  if(record.deliveryState==='running')throw Error('MUSIC_ALREADY_RUNNING');
-  if(record.deliveryState==='failed')throw Error(record.deliveryCode??'MUSIC_ALREADY_ATTEMPTED');
   let ids=record.deliveryAssetIds,reused=!!ids;
   if(!ids){
     deps.repos.music.saveAcquisition(scope,{...record,deliveryState:'running'});

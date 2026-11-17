@@ -13,7 +13,7 @@ const result=items.filter(item=>!selected||item.skill===selected).map(item=>({
   dispatcher:catalog.dispatchers.includes(item.skill),
   context:{chars:item.source.length,words:(item.source.match(/\S+/g)??[]).length},
   tools:item.manifest?.tools?.map(declaration=>({name:declaration.tool.name,parameters:Object.fromEntries(Object.entries(declaration.tool.parameters??{}).map(([name,value])=>[name,{required:value.required===true,enum:value.enum}]))}))??[],
-  operations:item.manifest?.operations?.map(operation=>({id:operation.id,internal:operation.internal===true,quotaUnits:operation.quotaUnits,inputKinds:operation.inputKinds,role:operation.role,deliver:operation.deliver===true}))??[],
+  operations:item.manifest?.operations?.map(operation=>({id:operation.id,internal:operation.internal===true,inputKinds:operation.inputKinds,role:operation.role,deliver:operation.deliver===true}))??[],
 }));
 if(selected&&!result.length)throw new Error(`SKILL_NOT_FOUND:${selected}`);
 console.log(JSON.stringify({status:'PASS',skills:result},null,2));

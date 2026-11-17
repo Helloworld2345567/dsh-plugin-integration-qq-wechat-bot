@@ -123,9 +123,9 @@ class SourceResolver:
 
     def check_storage(self, caller):
         self.cleanup()
-        if sum(a.owner == caller.scope for a in self.attachments.values()) >= self.limits.daily_jobs_per_user:
+        if sum(a.owner == caller.scope for a in self.attachments.values()) >= self.limits.max_attachments_per_user:
             raise VideoError("ATTACHMENT_LIMIT")
-        if len(self.attachments) >= self.limits.daily_total_jobs + self.limits.queue_capacity:
+        if len(self.attachments) >= self.limits.max_total_attachments + self.limits.queue_capacity:
             raise VideoError("ATTACHMENT_LIMIT")
         used = sum(path.stat().st_size for path in self.root.iterdir() if path.is_file())
         if used + self.limits.max_download_bytes > self.limits.max_storage_bytes:

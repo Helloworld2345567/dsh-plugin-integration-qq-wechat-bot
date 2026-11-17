@@ -66,7 +66,7 @@ test('a published skill accepts only its fixed namespaced entry', async () => {
   const root=await mkdtemp(path.resolve('.codex/skill-contract-'));
   try {
     await mkdir(path.join(root,'media-analysis'),{recursive:true});
-    const manifest={skill:'media-analysis',entry:'dsh_bot_runtime.skills.media_analysis.media_api',tools:[{tool:{name:'fixture_media',description:'fixture',parameters:{mode:{type:'string'}}},defaults:{mode:'extract'},routes:[{match:{mode:'extract'},operation:'fixture_extract'}]}],operations:[{id:'fixture_extract',quotaUnits:1,inputKinds:[],deliver:true,urlRequiredError:'FIXTURE_URL_REQUIRED'}]};
+    const manifest={skill:'media-analysis',entry:'dsh_bot_runtime.skills.media_analysis.media_api',tools:[{tool:{name:'fixture_media',description:'fixture',parameters:{mode:{type:'string'}}},defaults:{mode:'extract'},routes:[{match:{mode:'extract'},operation:'fixture_extract'}]}],operations:[{id:'fixture_extract',inputKinds:[],deliver:true,urlRequiredError:'FIXTURE_URL_REQUIRED'}]};
     await writeFile(path.join(root,'media-analysis/operations.json'),JSON.stringify(manifest));
     const [loaded]=loadSkillOperations(root);
     assert.equal(resolveSkillOperation(loaded.tools[0],{}),'fixture_extract');
@@ -80,8 +80,8 @@ test('a broken optional skill does not block valid packaged declarations',async(
   const root=await mkdtemp(path.resolve('.codex/skill-isolation-'));
   try{
     for(const [name,manifest] of Object.entries({
-      'media-analysis':{skill:'media-analysis',entry:'dsh_bot_runtime.skills.media_analysis.media_api',tools:[{tool:{name:'valid_tool',description:'fixture',parameters:{}},defaults:{},routes:[{match:{},operation:'valid_run'}]}],operations:[{id:'valid_run',quotaUnits:1,inputKinds:[]}]},
-      broken:{skill:'broken',entry:'outside.worker',tools:[{tool:{name:'broken_tool',description:'fixture',parameters:{}},defaults:{},routes:[{match:{},operation:'broken_run'}]}],operations:[{id:'broken_run',quotaUnits:1,inputKinds:[]}]},
+      'media-analysis':{skill:'media-analysis',entry:'dsh_bot_runtime.skills.media_analysis.media_api',tools:[{tool:{name:'valid_tool',description:'fixture',parameters:{}},defaults:{},routes:[{match:{},operation:'valid_run'}]}],operations:[{id:'valid_run',inputKinds:[]}]},
+      broken:{skill:'broken',entry:'outside.worker',tools:[{tool:{name:'broken_tool',description:'fixture',parameters:{}},defaults:{},routes:[{match:{},operation:'broken_run'}]}],operations:[{id:'broken_run',inputKinds:[]}]},
     })){await mkdir(path.join(root,name),{recursive:true});await writeFile(path.join(root,name,'operations.json'),JSON.stringify(manifest));}
     const loaded=loadSkillOperations(root,{tolerateInvalid:true});assert.deepEqual(loaded.map(item=>item.skill),['media-analysis']);
     assert.throws(()=>loadSkillOperations(root),/MANIFEST_INVALID/);

@@ -22,7 +22,7 @@ test('platform video URLs reach media worker, mixed sources and private URLs do 
 
 test('default media operations have no wall-clock deadline but explicit expired jobs still fail',()=>{
   assert.ok(DEFAULT_MEDIA_OPERATIONS.every(d=>d.timeoutMs===0));
-  const job:MediaWorkerJob={protocol:MEDIA_WORKER_PROTOCOL,protocolVersion:MEDIA_WORKER_PROTOCOL_VERSION,id:'job',scope:'scope',operation:'video_analyze',handler:'analyze_media',inputs:[],parameters:{},output:'C:/job',usagePath:'C:/job/usage.json',deadline:0,timeoutMs:0,quotaUnits:1};
+  const job:MediaWorkerJob={protocol:MEDIA_WORKER_PROTOCOL,protocolVersion:MEDIA_WORKER_PROTOCOL_VERSION,id:'job',scope:'scope',operation:'video_analyze',handler:'analyze_media',inputs:[],parameters:{},output:'C:/job',usagePath:'C:/job/usage.json',deadline:0,timeoutMs:0,};
   assert.doesNotThrow(()=>validateMediaWorkerJob(job));
   assert.throws(()=>validateMediaWorkerJob({...job,timeoutMs:1000}),/JOB_EXPIRED/);
 });

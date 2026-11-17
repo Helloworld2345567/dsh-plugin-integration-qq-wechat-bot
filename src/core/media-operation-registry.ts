@@ -13,8 +13,6 @@ export interface MediaOperationDescriptor {
   localTransform?: boolean;
   /** Optional timeout; zero means run until completion or cancellation. */
   timeoutMs: number;
-  /** Per-scope daily call limit; trusted private turns and local transforms are exempt. */
-  quotaUnits: number;
   /** Worker handler name in the versioned protocol. */
   handler: string;
   inputKinds?: readonly string[];
@@ -30,7 +28,6 @@ export class MediaOperationRegistry {
     if (!/^[a-z][a-z0-9_]{1,80}$/.test(descriptor.id)) throw new Error('MEDIA_OPERATION_ID_INVALID');
     if(descriptor.serviceOperation!==undefined&&!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/.test(descriptor.serviceOperation))throw new Error('MEDIA_SERVICE_OPERATION_ID_INVALID');
     if (!Number.isSafeInteger(descriptor.timeoutMs) || (descriptor.timeoutMs !== 0 && descriptor.timeoutMs < 1000) || descriptor.timeoutMs > 15 * 60 * 1000) throw new Error('MEDIA_OPERATION_TIMEOUT_INVALID');
-    if (!Number.isSafeInteger(descriptor.quotaUnits) || descriptor.quotaUnits < 1) throw new Error('MEDIA_OPERATION_QUOTA_INVALID');
     if (this.entries.has(descriptor.id)) throw new Error(`MEDIA_OPERATION_ALREADY_REGISTERED: ${descriptor.id}`);
     if(descriptor.serviceOperation&&this.serviceOperations.has(descriptor.serviceOperation))throw new Error(`MEDIA_SERVICE_OPERATION_ALREADY_REGISTERED: ${descriptor.serviceOperation}`);
     this.entries.set(descriptor.id, Object.freeze({...descriptor, inputKinds: descriptor.inputKinds ? Object.freeze([...descriptor.inputKinds]) : undefined}));
@@ -67,14 +64,14 @@ export const DEFAULT_MEDIA_OPERATIONS: readonly MediaOperationDescriptor[] = Obj
     const declaration=manifest.tools.find(item=>item.routes.some(route=>route.operation===operation.id))??manifest.tools[0];
     return {...operation,serviceOperation:SERVICE_OPERATION_BY_LEGACY[operation.id],source:operation,skill:manifest.skill,tool:declaration?.tool.name,permissionTool:declaration?.permissionTool??declaration?.tool.name??'bot_media',handler:'skill',timeoutMs:0};
   })),
-  {id: 'image_generate', handler: 'image', timeoutMs: 0, quotaUnits: 10000, inputKinds: []},
-  {id: 'image_edit', handler: 'image', timeoutMs: 0, quotaUnits: 10000, inputKinds: ['image']},
+  {id: 'image_generate', handler: 'image', timeoutMs: 0,  inputKinds: []},
+  {id: 'image_edit', handler: 'image', timeoutMs: 0,  inputKinds: ['image']},
   // Legacy worker handlers remain internal; media_download is the public facade.
-  {id: 'image_download', handler: 'image_download', timeoutMs: 0, quotaUnits: 1, inputKinds: [], permissionTool: 'media_download'},
-  {id: 'video_download', handler: 'video_download', timeoutMs: 0, quotaUnits: 1, inputKinds: [], permissionTool: 'media_download'},
-  {id: 'image_understand', handler: 'native', timeoutMs: 0, quotaUnits: 1, inputKinds: ['image']},
-  {id: 'document_read', handler: 'document', timeoutMs: 0, quotaUnits: 50, inputKinds: ['file']},
-  {id: 'social_read', handler: 'social_read', timeoutMs: 0, quotaUnits: 20, inputKinds: []},
+  {id: 'image_download', handler: 'image_download', timeoutMs: 0,  inputKinds: [], permissionTool: 'media_download'},
+  {id: 'video_download', handler: 'video_download', timeoutMs: 0,  inputKinds: [], permissionTool: 'media_download'},
+  {id: 'image_understand', handler: 'native', timeoutMs: 0,  inputKinds: ['image']},
+  {id: 'document_read', handler: 'document', timeoutMs: 0,  inputKinds: ['file']},
+  {id: 'social_read', handler: 'social_read', timeoutMs: 0,  inputKinds: []},
 ]);
 
 export const mediaOperationRegistry = new MediaOperationRegistry(DEFAULT_MEDIA_OPERATIONS);

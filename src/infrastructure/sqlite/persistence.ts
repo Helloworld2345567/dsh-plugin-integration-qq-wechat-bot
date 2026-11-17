@@ -14,7 +14,7 @@ import {SqliteSessionRepository} from './session-repository.js';
 import {SqliteInboxRepository} from './inbox-repository.js';
 import {SqliteMemoryRepository} from './memory-repository.js';
 import {SqliteAssetRepository} from './asset-repository.js';
-import {SqliteMediaJobRepository, SqliteMediaQuotaRepository} from './media-job-repository.js';
+import {SqliteMediaJobRepository} from './media-job-repository.js';
 import {SqliteDeliveryRepository} from './delivery-repository.js';
 import {SqliteAutomationRepository} from './automation-repository.js';
 import {SqliteEvolutionRepository} from './evolution-repository.js';
@@ -51,7 +51,6 @@ export class SqlitePersistence {
   readonly memory: SqliteMemoryRepository;
   readonly assets: SqliteAssetRepository;
   readonly jobs: SqliteMediaJobRepository;
-  readonly quota: SqliteMediaQuotaRepository;
   readonly deliveries: SqliteDeliveryRepository;
   readonly automation: SqliteAutomationRepository;
   readonly evolution: SqliteEvolutionRepository;
@@ -93,7 +92,6 @@ export class SqlitePersistence {
     this.memory = new SqliteMemoryRepository(this.database, () => this.inbox);
     this.assets = new SqliteAssetRepository(this.database);
     this.jobs = new SqliteMediaJobRepository(this.database);
-    this.quota = new SqliteMediaQuotaRepository(this.database);
     this.deliveries = new SqliteDeliveryRepository({database:this.database, metrics:() => this.turnMetrics, stats:() => this.projection, assets:() => this.assets});
     this.automation = new SqliteAutomationRepository(this.database);
     this.evolution = new SqliteEvolutionRepository(this.database);
@@ -155,7 +153,7 @@ export class SqlitePersistence {
       const hostTools = secureDefaults ? false : undefined;
       const voiceDefaults = {enabled:false, protocol:'edge_tts' as const, format:'mp3' as const};
       this.database.records.put('config', 'default', configForWrite({id:'default', name:'Default', personaPrompt:'You are a natural, sincere, and specific conversational companion. Follow the language of the user and conversation. Address the actual intent, stay concise by default, and expand task results when needed. Never invent memories, tool execution, or media observations. Retain information about tools, skills, and the runtime environment.', media:{voice:voiceDefaults}, ...(hostTools === undefined ? {} : {allowHostTools:hostTools})}));
-      this.database.records.put('config', 'sakura', configForWrite({id:'sakura', name:'Sakura', personaPrompt:'You are Sakura, an adult catgirl with long silver-white hair, emerald eyes, white cat ears and a tail, and a black-and-white maid outfit. Follow the language of the user and conversation. Speak naturally and briefly, aiming for at most 100 characters in casual replies; task results may be longer. Use image tools according to user intent, generating at most one image per turn. Reference edits must use the real source image. Do not output descriptions of accompanying images or invent tool or media observations.', media:{voice:voiceDefaults}, ...(hostTools === undefined ? {} : {allowHostTools:hostTools})}));
+      this.database.records.put('config', 'sakura', configForWrite({id:'sakura', name:'Sakura', personaPrompt:'You are Sakura, an adult catgirl with long silver-white hair, emerald eyes, white cat ears and a tail, and a black-and-white maid outfit. Follow the language of the user and conversation. Speak naturally and briefly, aiming for at most 100 characters in casual replies; task results may be longer. Use image tools according to user intent, generating or editing as many images as requested. Reference edits must use the real source image. Do not output descriptions of accompanying images or invent tool or media observations.', media:{voice:voiceDefaults}, ...(hostTools === undefined ? {} : {allowHostTools:hostTools})}));
     }
     for (const config of this.personas.configs()) if (!this.database.records.get('config-version', `${config.id}:${config.revision}`)) this.database.records.put('config-version', `${config.id}:${config.revision}`, config);
     for (const config of this.personas.configs()) {
@@ -229,7 +227,7 @@ export class SqlitePersistence {
       sessions:this.sessions,
       inbox:this.inbox,
       memory:this.memory,
-      media:{assets:this.assets, jobs:this.jobs, quota:this.quota, music:this.musicState, singing:this.singingState},
+      media:{assets:this.assets, jobs:this.jobs, music:this.musicState, singing:this.singingState},
       deliveries:this.deliveries,
       automation:this.automation,
       evolution:this.evolution,

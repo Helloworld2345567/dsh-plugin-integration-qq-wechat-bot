@@ -19,15 +19,15 @@ test('capability registry applies authorization and scope concurrency',async()=>
 });
 
 test('media operation registry accepts one fixture descriptor without a switch',async()=>{
-  const registry=new MediaOperationRegistry([{id:'fixture',handler:'fixture',timeoutMs:1000,quotaUnits:1,execute:async()=>({text:'fixture'})}]);
+  const registry=new MediaOperationRegistry([{id:'fixture',handler:'fixture',timeoutMs:1000,execute:async()=>({text:'fixture'})}]);
   assert.equal(registry.get('fixture').handler,'fixture');assert.deepEqual(registry.ids(),['fixture']);assert.deepEqual(await registry.dispatch('fixture',{}),{text:'fixture'});
-  assert.throws(()=>registry.register({id:'fixture',handler:'other',timeoutMs:1000,quotaUnits:1}),/ALREADY_REGISTERED/);
+  assert.throws(()=>registry.register({id:'fixture',handler:'other',timeoutMs:1000,}),/ALREADY_REGISTERED/);
 });
 
 test('MediaService dispatches a registered native operation handler',async()=>{
   const home=await mkdtemp(path.resolve('.codex/phase5-media-'));
   try{
-    const registry=new MediaOperationRegistry([{id:'fixture',handler:'fixture',timeoutMs:1000,quotaUnits:1,execute:async(job:any)=>{assert.equal(job.operation,'fixture');return{text:'fixture-result'};}}]);
+    const registry=new MediaOperationRegistry([{id:'fixture',handler:'fixture',timeoutMs:1000,execute:async(job:any)=>{assert.equal(job.operation,'fixture');return{text:'fixture-result'};}}]);
     const store={storage:{home},sessions:{findBinding:()=>undefined},bots:{bot:()=>({})},media:{jobs:{patchJob:()=>{}},quota:{consume:()=>{}}},stats:{projection:{upsertMediaCalls:()=>{}}}} as any;
     const assets={workspace:async()=>home,resolve:async()=>{throw new Error('unexpected asset lookup');}} as any;
     const media=new MediaService(store,assets,'python',undefined,undefined,registry);
@@ -36,7 +36,7 @@ test('MediaService dispatches a registered native operation handler',async()=>{
 });
 
 test('worker job protocol is versioned and rejects stale jobs',()=>{
-  const job:MediaWorkerJob={protocol:MEDIA_WORKER_PROTOCOL,protocolVersion:MEDIA_WORKER_PROTOCOL_VERSION,id:'job',scope:'scope',operation:'fixture',handler:'fixture',inputs:[],parameters:{},output:'C:/job',usagePath:'C:/job/usage.json',deadline:Date.now()+10000,timeoutMs:1000,quotaUnits:1};
+  const job:MediaWorkerJob={protocol:MEDIA_WORKER_PROTOCOL,protocolVersion:MEDIA_WORKER_PROTOCOL_VERSION,id:'job',scope:'scope',operation:'fixture',handler:'fixture',inputs:[],parameters:{},output:'C:/job',usagePath:'C:/job/usage.json',deadline:Date.now()+10000,timeoutMs:1000,};
   assert.doesNotThrow(()=>validateMediaWorkerJob(job));assert.throws(()=>validateMediaWorkerJob({...job,protocolVersion:99}),/PROTOCOL_UNSUPPORTED/);
 });
 

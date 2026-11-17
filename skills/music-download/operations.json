@@ -2,9 +2,9 @@
   "skill":"music-download",
   "entry":"dsh_bot_runtime.skills.music_download.entry",
   "operations":[
-    {"id":"music_search","quotaUnits":50,"inputKinds":[],"deliver":false},
-    {"id":"music_acquire","quotaUnits":10,"inputKinds":[],"deliver":false},
-    {"id":"music_delivery","quotaUnits":50,"inputKinds":["audio"],"internal":true,"deliver":false,"localTransform":true,"requiredInputError":"MUSIC_AUDIO_REQUIRED"}
+    {"id":"music_search","inputKinds":[],"deliver":false},
+    {"id":"music_acquire","inputKinds":[],"deliver":false},
+    {"id":"music_delivery","inputKinds":["audio"],"internal":true,"deliver":false,"localTransform":true,"requiredInputError":"MUSIC_AUDIO_REQUIRED"}
   ],
   "tools":[{
     "permissionTool":"bot_music",

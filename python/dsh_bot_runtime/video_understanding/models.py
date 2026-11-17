@@ -17,7 +17,6 @@ class CallerContext:
     bot: str
     user: str
     session: str
-    daily_quota_exempt: bool = False
 
     @property
     def scope(self) -> tuple[str, str, str]:
@@ -57,10 +56,8 @@ class Limits:
     max_analysis_seconds: float = 300
     queue_capacity: int = 10
     global_concurrency: int = 1
-    daily_jobs_per_user: int = 10
-    daily_seconds_per_user: float = 1800
-    daily_total_seconds: float = 18000
-    daily_total_jobs: int = 100
+    max_attachments_per_user: int = 10
+    max_total_attachments: int = 100
     resolve_timeout: float = 20
     download_timeout: float = 90
     process_timeout: float = 90
@@ -74,7 +71,7 @@ class Limits:
             raise ValueError("limits must be positive and finite")
         if self.max_inline_bytes > self.max_download_bytes:
             raise ValueError("inline limit exceeds download limit")
-        for name in ("queue_capacity", "global_concurrency", "daily_jobs_per_user", "daily_total_jobs"):
+        for name in ("queue_capacity", "global_concurrency", "max_attachments_per_user", "max_total_attachments"):
             if type(getattr(self, name)) is not int:
                 raise ValueError("counts must be integers")
 

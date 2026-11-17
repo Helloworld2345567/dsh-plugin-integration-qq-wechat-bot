@@ -84,7 +84,7 @@ Each boundary exposes only needed application methods through ports, implemented
 | Session/binding/generation | SessionRepository, BindingRepository | session-repository.ts | Binding/session written together; reset increments generation; unforgeable ownership | SESSION_OWNERSHIP_MISMATCH, missing/nonowned session; repository-contract |
 | Inbox | InboxRepository | inbox-repository.ts | Idempotent (scope,id), explicit processor transitions | Inbound validation; core/processing-failures |
 | Memory | MemoryRepository | memory-repository.ts | Verbatim user-sourced memory; deletion tombstones | Invalid length, ConflictError; core |
-| Asset/job/quota | AssetRepository, MediaJobRepository, MediaQuotaRepository | asset-repository.ts, media-job-repository.ts | Atomic asset/index; quota check then increment | MEDIA_DAILY_LIMIT, missing/nonowned attachment; media-assets/media-quota |
+| Asset/job | AssetRepository, MediaJobRepository | asset-repository.ts, media-job-repository.ts | Atomic asset/index | missing/nonowned attachment; media-assets/media-quota |
 | Delivery/recovery | DeliveryRepository, DeliveryQueueRepository | delivery-repository.ts | Turn output index order, no unknown replay, retry reuses intent | PROGRESS_DELIVERY_EXPIRED; repository-contract/delivery-worker |
 | Automation/proactive | AutomationRepository | automation-repository.ts | Definitions separate from runs; disabling stops triggers | SCHEDULE_*, PROACTIVE_*; automation |
 | Stats/projections | StatsDataPort, StatsProjectionRepository, StatsSessionRepository | stats-data.ts, stats-projection.ts, stats-session-repository.ts | Facts unchanged, projections rebuildable, missing stays unknown | stats |

@@ -1,5 +1,5 @@
 import {randomUUID} from 'node:crypto';
-import type {SessionBinding,TurnSnapshot} from './types.js';
+import type {SessionBinding} from './types.js';
 import type {BindingRepository} from './ports/session.js';
 import type {MusicCandidate, MusicCandidates, MusicAcquisition, MusicStateRepository} from './ports/media.js';
 
@@ -30,4 +30,3 @@ export function musicCandidates(ports:MusicSessionPorts,binding:SessionBinding):
 }
 export function publicMusicTrack(value:MusicCandidate){const {locator:_,id:__,...safe}=value;return safe;}
 export function publicMusicCandidates(value:MusicCandidates){return {status:'prepared',candidateSet:value.id,candidates:value.candidates.map((item,index)=>({...publicMusicTrack(item),candidate:index+1}))};}
-export function musicRequestKey(binding:SessionBinding,snapshot:TurnSnapshot,selection:unknown):string {return JSON.stringify([binding.sessionId,binding.generation,snapshot.sourceIds,snapshot.sourceIds.length?undefined:snapshot.startedAt,selection]);}

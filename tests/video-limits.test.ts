@@ -56,7 +56,6 @@ test('audio input retains its 100 MiB budget and generated audio reaches 200 MiB
 
 test('worker video output reaches registration at 500 MiB and rejects larger output before reading it',async t=>{
   const {store,assets}=await fixture(t);const binding=store.sessions.binding(scope);let outputSize=500*MiB;let kind:MediaInput['kind']='video';let target='';
-  t.mock.method(store.quota,'consume',()=>{});
   const worker:WorkerPort={run:async job=>{target=path.join(job.output,'clip.mp4');await writeFile(target,'fixture');return{assets:[{path:target,name:'clip.mp4',kind,mime:'video/mp4'}]};}};
   const media=new MediaService(store.repositories(),assets,undefined,undefined,worker);const originalStat=fs.stat;
   const stated=t.mock.method(fs,'stat',(async(file:any,options:any)=>{const result=await originalStat(file,options);return file===target?Object.assign(result,{size:outputSize}):result;}) as typeof fs.stat);

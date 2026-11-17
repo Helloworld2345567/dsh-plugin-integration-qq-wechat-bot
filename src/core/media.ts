@@ -1,13 +1,11 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, realpath, rm, stat, writeFile,rename,cp } from 'node:fs/promises';
 import path from 'node:path';
 import {resolveImageSkill} from './image-skill.js';
 import {imageServiceSettingsSchema,type ImageServiceSettings} from './image-service-config.js';
 import {analysisEnabled,type AnalysisProvider,type AnalysisRole} from './analysis.js';
-import {scopeKey} from './identity.js';
 import type {RuntimeRepositories} from './ports/application.js';
 import type { Asset, BotConfig, MediaInput, TurnSnapshot } from './types.js';
-import {trusted} from './policy.js';
 import {normalizeProviderUsage,type MediaUsageCall} from './usage.js';
 import {validateMediaParameters,INPUT_LIMITS,VIDEO_LIMITS,AUDIO_LIMITS,isAudioInput} from './limits.js';
 import {mediaOperationRegistry,MediaOperationRegistry,serviceOperationFor,type MediaOperation} from './media-operation-registry.js';
@@ -88,13 +86,6 @@ export class MediaService {
   }
   async analysisStatus(config:BotConfig,role:AnalysisRole){try{if(!this.analysisProvider)throw new Error('MEDIA_PROVIDER_SETTINGS_UNAVAILABLE');const value=await this.analysisProvider.resolve(config,role);const model=value.endpoint.protocol==='edge_tts'?value.endpoint.voice:value.endpoint.model;return{enabled:true,configured:true,provider:value.provider,model,keyConfigured:!!value.apiKey,protocol:value.endpoint.protocol};}catch(error){return{enabled:analysisEnabled(config,role),configured:false,error:error instanceof Error?error.message:'MEDIA_CONFIGURATION_INVALID',keyConfigured:false};}}
   cancelScope(scope:string):void{for(const item of this.active.values()) if(item.scope===scope)item.controller.abort(new Error('任务已取消'));}
-  private dailyQuotaExempt(scope:string,snapshot?:TurnSnapshot):boolean {
-    if(!snapshot?.trusted)return false;
-    const binding=this.deps.sessions.findBinding(scope);
-    if(!binding||binding.key!==scope||scopeKey(binding.scope)!==scope||binding.scope.botId!==snapshot.botId)return false;
-    const bot=this.deps.bots.bot(binding.scope.botId);
-    return bot.id===snapshot.botId&&trusted(bot,binding.scope);
-  }
   async run(scope:string,operation:MediaOperation,config:BotConfig,inputs:string[],parameters:Record<string,unknown>,signal:AbortSignal,authorize?:()=>void,snapshot?:TurnSnapshot):Promise<{text?:string;coverage?:string;assetIds:string[];contextAssetIds?:string[];incomplete?:boolean;music?:MusicData}>{
     const descriptor=this.operations.get(operation);
     const serviceRole=operation==='voice_speak'?'voice':operation==='singing_convert'?'singing':operation.startsWith('music_')?'music':undefined;
@@ -114,8 +105,7 @@ export class MediaService {
       if(parameters.format===undefined)parameters.format=voice?.format??'mp3';
     }
     validateMediaParameters(operation,inputs,parameters);
-    const other=[...this.active.values()].filter(a=>!a.localTransform);
-    if(!descriptor.localTransform&&(other.length>=2||other.some(a=>a.scope===scope)))throw new Error('MEDIA_CONCURRENCY_LIMIT');
+    if(this.active.size>=3)throw new Error('MEDIA_CONCURRENCY_LIMIT');
     const id=randomUUID();const controller=new AbortController(); const combined=AbortSignal.any([signal,controller.signal,...(descriptor.timeoutMs>0?[AbortSignal.timeout(descriptor.timeoutMs)]:[])]);
     this.active.set(id,{scope,controller,localTransform:descriptor.localTransform});
     const workspace=await this.assets.workspace(scope).catch(error=>{this.active.delete(id);throw error;}),directory=path.join(workspace,'.bot','jobs',scope,id),startedAt=Date.now();let provider:string|undefined;let requestedModel:string|undefined;
@@ -153,18 +143,16 @@ export class MediaService {
         const wav=path.join(directory,'decoded.wav');await writeFile(wav,Buffer.concat([header,pcm]));source[0]={...source[0],path:wav,name:'decoded.wav',mime:'audio/wav'};
       }
     }
-      const job:MediaWorkerJob={protocol:MEDIA_WORKER_PROTOCOL,protocolVersion:MEDIA_WORKER_PROTOCOL_VERSION,id,scope,operation,handler:descriptor.handler,inputs:source.map(a=>({path:a.path,name:a.name,mime:a.mime,kind:a.kind})),parameters,endpoint:endpoint as unknown as Record<string,unknown>|undefined,output:directory,usagePath:path.join(directory,'model-usage.json'),deadline:descriptor.timeoutMs>0?Date.now()+descriptor.timeoutMs:0,timeoutMs:descriptor.timeoutMs,quotaUnits:descriptor.quotaUnits,processingSlots:lease?.slots};
+      const job:MediaWorkerJob={protocol:MEDIA_WORKER_PROTOCOL,protocolVersion:MEDIA_WORKER_PROTOCOL_VERSION,id,scope,operation,handler:descriptor.handler,inputs:source.map(a=>({path:a.path,name:a.name,mime:a.mime,kind:a.kind})),parameters,endpoint:endpoint as unknown as Record<string,unknown>|undefined,output:directory,usagePath:path.join(directory,'model-usage.json'),deadline:descriptor.timeoutMs>0?Date.now()+descriptor.timeoutMs:0,timeoutMs:descriptor.timeoutMs,processingSlots:lease?.slots};
       combined.throwIfAborted();
       authorize?.();
-      job.dailyQuotaExempt=this.dailyQuotaExempt(scope,snapshot);
-      if(!descriptor.localTransform&&!job.dailyQuotaExempt)this.deps.media.quota.consume(`${new Date().toISOString().slice(0,10)}:${scope}:${operation}`,descriptor.quotaUnits);
       // Registered fixture/native handlers stay in the same operation registry;
       // worker-backed operations cross the versioned process boundary.
       let result:MediaResult;
       if(useService){
         const frozen=snapshot!.services[serviceRole!]!.snapshot!,serviceOperation=serviceOperationFor(operation,frozen.serviceId);if(!serviceOperation)throw Error('SERVICE_OPERATION_MAPPING_MISSING');
         const selectedParameters:Record<string,unknown>=operation==='voice_speak'?Object.fromEntries(['text','style','speed','format'].filter(key=>parameters[key]!==undefined).map(key=>[key,parameters[key]])):operation==='singing_convert'?Object.fromEntries(['sourceType','format'].filter(key=>parameters[key]!==undefined).map(key=>[key,parameters[key]])):operation==='music_search'?Object.fromEntries(['song','artist'].filter(key=>parameters[key]!==undefined).map(key=>[key,parameters[key]])):operation==='music_acquire'?Object.fromEntries(['song','artist','selection','includeLyrics'].filter(key=>parameters[key]!==undefined).map(key=>[key,parameters[key]])):{};
-        const serviceResult=await this.serviceRuntime!.execute({operation:serviceOperation,profile:{serviceId:frozen.serviceId,profileId:frozen.profileId},profileRevision:frozen.profileRevision,profileContentHash:frozen.profileContentHash,inputHandles:source.map(item=>item.id),resolvedInputs:source.map(item=>({handle:item.id,kind:item.kind,path:item.path,name:item.name,mime:item.mime})),parameters:selectedParameters,outputDirectory:directory,idempotencyKey:createHash('sha256').update(JSON.stringify([scope,snapshot!.personaId,snapshot!.personaRevision,snapshot!.sourceIds,serviceOperation,selectedParameters,source.map(item=>item.id)])).digest('hex'),deadline:descriptor.timeoutMs>0?Date.now()+descriptor.timeoutMs:Date.now()+15*60*1000,scopeKey:scope,signal:combined,authorize});
+        const serviceResult=await this.serviceRuntime!.execute({operation:serviceOperation,profile:{serviceId:frozen.serviceId,profileId:frozen.profileId},profileRevision:frozen.profileRevision,profileContentHash:frozen.profileContentHash,inputHandles:source.map(item=>item.id),resolvedInputs:source.map(item=>({handle:item.id,kind:item.kind,path:item.path,name:item.name,mime:item.mime})),parameters:selectedParameters,outputDirectory:directory,idempotencyKey:id,deadline:descriptor.timeoutMs>0?Date.now()+descriptor.timeoutMs:Date.now()+15*60*1000,scopeKey:scope,signal:combined,authorize});
         result={text:serviceResult.text,assets:serviceResult.outputs.map(output=>({path:output.path,name:path.basename(output.relativePath),mime:output.mime,kind:output.kind})),observations:serviceResult.observations};
         const music=(serviceResult.observations as any)?.music;if(music)result.music=music;
       }else result=descriptor.execute

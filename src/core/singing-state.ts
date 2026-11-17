@@ -1,5 +1,5 @@
 import {randomUUID} from 'node:crypto';
-import type {SessionBinding,TurnSnapshot} from './types.js';
+import type {SessionBinding} from './types.js';
 import type {BindingRepository} from './ports/session.js';
 import type {MusicCandidate, SingingCandidate, SingingAttempt, SingingCandidates, SingingStateRepository} from './ports/media.js';
 
@@ -37,6 +37,5 @@ export function saveSingingCandidates(ports:SingingSessionPorts,binding:SessionB
   const value:SingingCandidates={id:randomUUID(),scope:binding.key,sessionId:binding.sessionId,generation:binding.generation,waiting,candidates:candidates.map((item,index)=>({...item,number:index+1})),createdAt:Date.now()};
   ports.singing.saveCandidates(binding.key,value);return value;
 }
-export function singingRequestKey(binding:SessionBinding,snapshot:TurnSnapshot):string {return JSON.stringify([binding.sessionId,binding.generation,snapshot.sourceIds,snapshot.sourceIds.length?undefined:snapshot.startedAt]);}
 export function publicSingingCandidates(value:SingingCandidates|undefined){return value?{status:value.waiting?'waiting_for_audio':'prepared',candidateSet:value.id,candidates:value.candidates.map(({assetId:_,number,...item})=>({...item,candidate:number}))}:{status:'empty',candidates:[]};}
 export type {MusicCandidate};

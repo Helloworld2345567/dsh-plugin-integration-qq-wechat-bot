@@ -4,7 +4,6 @@
   "operations": [
     {
       "id": "voice_speak",
-      "quotaUnits": 10,
       "inputKinds": [],
       "role": "tts",
       "deliver": true

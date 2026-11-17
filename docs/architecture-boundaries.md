@@ -85,7 +85,7 @@ Python skills    -> python 共享模块和 vendored 命名空间
 | session／binding／generation | `SessionRepository`、`BindingRepository` | `session-repository.ts` | binding 与 session 记录同一次写入；generation 每次重置递增；ownership 键不可伪造 | `SESSION_OWNERSHIP_MISMATCH`、`会话不存在或不属于当前渠道身份`；repository-contract |
 | message／inbox | `InboxRepository` | `inbox-repository.ts` | `(scope,id)` 幂等接收；processor 状态只由显式方法推进 | 接收校验错误；core／processing-failures 测试 |
 | memory | `MemoryRepository` | `memory-repository.ts` | 记忆必须逐字来自用户原文；删除保留 tombstone | `记忆长度无效`、`ConflictError`；core 测试 |
-| asset／media job／quota | `AssetRepository`、`MediaJobRepository`、`MediaQuotaRepository` | `asset-repository.ts`、`media-job-repository.ts` | 附件记录与索引同一事务；quota 先检查后自增 | `MEDIA_DAILY_LIMIT`、`附件不存在或不属于当前会话`；media-assets／media-quota |
+| asset／media job | `AssetRepository`、`MediaJobRepository` | `asset-repository.ts`、`media-job-repository.ts` | 附件记录与索引同一事务 | `附件不存在或不属于当前会话`；media-assets／media-quota（历史配额不再阻断） |
 | delivery／attempt／recovery | `DeliveryRepository`、`DeliveryQueueRepository` | `delivery-repository.ts` | 同一 turn 的输出按 index 排序；unknown 不自动重放；retry 复用原 intent ID | `PROGRESS_DELIVERY_EXPIRED`；repository-contract、delivery-worker |
 | automation／proactive | `AutomationRepository` | `automation-repository.ts` | 计划任务与运行记录分离；禁用后不再触发 | `SCHEDULE_*`、`PROACTIVE_*`；automation 测试 |
 | statistics／projection | `StatsDataPort`、`StatsProjectionRepository`、`StatsSessionRepository` | `stats-data.ts`、`stats-projection.ts`、`stats-session-repository.ts` | 原始证据不可改写；投影可重建且缺失保持 `unknown` | stats 测试 |

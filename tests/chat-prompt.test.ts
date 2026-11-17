@@ -16,8 +16,8 @@ test('plain chat carries its persona and channel rules without unloaded capabili
 
 test('the compatibility media entry keeps image retry limits and explicit speech consent',()=>{
   const prompt=buildChatPrompt({...input,loadedTools:new Set(['bot_media'])});
-  assert.match(section(prompt,'bot-images'),/never run image generation in parallel/);
-  assert.match(section(prompt,'bot-images'),/do not automatically retry an unknown or timed-out result/);
+  assert.match(section(prompt,'bot-images'),/at most three concurrent media operations/);
+  assert.match(section(prompt,'bot-images'),/at most three retries after the initial attempt/);
   assert.match(section(prompt,'bot-voice'),/only for an explicit speech request/);
   assert.equal(section(prompt,'bot-singing'),'');
 });
@@ -34,9 +34,11 @@ test('remembering is disclosed only with the tool and retains host-owned source 
 
 test('loaded media instructions retain execution limits and disappear when tools become unavailable',()=>{
   const prompt=buildChatPrompt({...input,loadedTools:new Set(['image_generation','bot_sing','bot_send_file'])});
-  assert.match(section(prompt,'bot-images'),/never run image generation in parallel/);
-  assert.match(section(prompt,'bot-images'),/do not automatically retry an unknown or timed-out result/);
-  assert.match(section(prompt,'bot-singing'),/only once and do not retry a failure with another source/);
+  assert.match(section(prompt,'bot-images'),/at most three concurrent media operations/);
+  assert.match(section(prompt,'bot-images'),/at most three retries after the initial attempt/);
+  assert.match(section(prompt,'bot-singing'),/Multiple conversions and retries are allowed/);
+  assert.match(section(prompt,'bot-media'),/sequentially by default/);
+  assert.match(section(prompt,'bot-media'),/only when the user explicitly requests parallel execution/);
   assert.match(section(prompt,'bot-media'),/resend=true/);
   assert.equal(section(prompt,'bot-voice'),'');
   const revoked=buildChatPrompt({...input,loadedTools:new Set(['bot_send_file'])});

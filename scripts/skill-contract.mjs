@@ -41,7 +41,7 @@ export function validateManifest(manifest,skill,catalog,{checkEntry=true}={}){
   if(checkEntry&&(!Array.isArray(manifest.operations)||!manifest.operations.length||!Array.isArray(manifest.tools)||!manifest.tools.length))failures.push('shape');
   const operationIds=new Set(),toolNames=new Set(),routed=new Map();
   for(const operation of manifest.operations??[]){
-    if(!operation||typeof operation!=='object'||!OPERATION_ID_RE.test(String(operation.id??''))||operationIds.has(operation.id)||!Number.isSafeInteger(operation.quotaUnits)||operation.quotaUnits<1||!Array.isArray(operation.inputKinds)||operation.inputKinds.some(value=>typeof value!=='string')||operation.role!==undefined&&!ANALYSIS_ROLES.has(operation.role)||operation.internal!==undefined&&typeof operation.internal!=='boolean'||operation.localTransform!==undefined&&typeof operation.localTransform!=='boolean')failures.push(`operation:${operation?.id??'<missing>'}`);
+    if(!operation||typeof operation!=='object'||!OPERATION_ID_RE.test(String(operation.id??''))||operationIds.has(operation.id)||!Array.isArray(operation.inputKinds)||operation.inputKinds.some(value=>typeof value!=='string')||operation.role!==undefined&&!ANALYSIS_ROLES.has(operation.role)||operation.internal!==undefined&&typeof operation.internal!=='boolean'||operation.localTransform!==undefined&&typeof operation.localTransform!=='boolean')failures.push(`operation:${operation?.id??'<missing>'}`);
     else operationIds.add(operation.id);
   }
   for(const declaration of manifest.tools??[]){

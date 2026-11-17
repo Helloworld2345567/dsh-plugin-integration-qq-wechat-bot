@@ -4,18 +4,15 @@
   "operations": [
     {
       "id": "media_download",
-      "quotaUnits": 1,
       "inputKinds": [],
       "urlRequiredError": "MEDIA_URL_REQUIRED"
     },
     {
       "id": "media_analysis",
-      "quotaUnits": 1,
       "inputKinds": []
     },
     {
       "id": "transcribe",
-      "quotaUnits": 50,
       "inputKinds": [
         "audio"
       ],
@@ -26,7 +23,6 @@
     },
     {
       "id": "video_analyze",
-      "quotaUnits": 10,
       "inputKinds": [
         "video"
       ],
@@ -47,7 +43,6 @@
     },
     {
       "id": "image_convert",
-      "quotaUnits": 1,
       "inputKinds": [
         "image"
       ],
@@ -57,7 +52,6 @@
     },
     {
       "id": "image_compress",
-      "quotaUnits": 1,
       "inputKinds": [
         "image"
       ],
@@ -67,7 +61,6 @@
     },
     {
       "id": "image_resize",
-      "quotaUnits": 1,
       "inputKinds": [
         "image"
       ],
@@ -77,7 +70,6 @@
     },
     {
       "id": "convert_gif",
-      "quotaUnits": 50,
       "inputKinds": [
         "video"
       ],
@@ -87,7 +79,6 @@
     },
     {
       "id": "convert_mp4",
-      "quotaUnits": 50,
       "inputKinds": [
         "video"
       ],

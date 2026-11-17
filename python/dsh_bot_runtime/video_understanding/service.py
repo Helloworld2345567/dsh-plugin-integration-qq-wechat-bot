@@ -1,4 +1,4 @@
-"""Scoped use-case API: bounded queue, deadlines, quotas, cache, cancellation, deletion."""
+"""Scoped use-case API: bounded queue, deadlines, usage accounting, cache, cancellation, deletion."""
 import asyncio
 from dataclasses import asdict
 import hashlib

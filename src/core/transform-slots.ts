@@ -7,8 +7,8 @@ interface Waiting {maximum:number; signal:AbortSignal; resolve:(lease:Lease)=>vo
 export class TransformSlots {
   private used=0;
   private readonly queue:Waiting[]=[];
-  constructor(readonly capacity=Math.min(4,availableParallelism())) {
-    if(!Number.isInteger(capacity)||capacity<1||capacity>4)throw new Error('TRANSFORM_CAPACITY_INVALID');
+  constructor(readonly capacity=Math.min(3,availableParallelism())) {
+    if(!Number.isInteger(capacity)||capacity<1||capacity>3)throw new Error('TRANSFORM_CAPACITY_INVALID');
   }
   acquire(maximum:number,signal:AbortSignal):Promise<Lease> {
     signal.throwIfAborted();

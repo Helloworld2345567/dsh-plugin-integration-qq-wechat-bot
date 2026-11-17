@@ -35,10 +35,12 @@ async function fixture(t:TestContext){
     if(job.operation==='music_acquire'){const lyric=path.join(job.output,'song.lrc');await writeFile(lyric,'[00:00]歌词');return {assets:[{path:file,name,mime:format==='mp3'?'audio/mpeg':'audio/flac',kind:'audio' as const},{path:lyric,name:'song.lrc',mime:'text/plain',kind:'file' as const}],music:{track:{...track,format}}};}
     return {assets:[{path:file,name,mime:'audio/mpeg',kind:'audio' as const}]};
   }};
+  const serviceKeys=new Set<string>();
   const serviceRuntime={execute:async(request:any)=>{
+    assert.ok(!serviceKeys.has(request.idempotencyKey),'each explicit media call needs its own service idempotency key');serviceKeys.add(request.idempotencyKey);
     request.authorize?.();
     const operation=({'music.search':'music_search','music.acquire':'music_acquire','rvc.convert':'singing_convert'} as const)[request.operation as 'music.search'|'music.acquire'|'rvc.convert'];
-    const result=await worker.run({protocol:'dsh.media-worker',protocolVersion:1,id:'fixture',scope:request.scopeKey,operation,handler:'skill',inputs:request.resolvedInputs,parameters:request.parameters,output:request.outputDirectory,usagePath:path.join(request.outputDirectory,'usage.json'),deadline:request.deadline,timeoutMs:240000,quotaUnits:1} as MediaWorkerJob);
+    const result=await worker.run({protocol:'dsh.media-worker',protocolVersion:1,id:request.idempotencyKey,scope:request.scopeKey,operation,handler:'skill',inputs:request.resolvedInputs,parameters:request.parameters,output:request.outputDirectory,usagePath:path.join(request.outputDirectory,'usage.json'),deadline:request.deadline,timeoutMs:240000,} as MediaWorkerJob);
     return {outputs:result.assets?.map(file=>({kind:file.kind,path:file.path,relativePath:file.name,mime:file.mime}))??[],observations:{music:result.music}};
   }};
   const media=new MediaService(store.repositories(),assets,undefined,undefined,worker,undefined,undefined,serviceRuntime as any),deps={repos:{bindings:store.sessions,music:store.musicState,singing:store.singingState,personas:store.personas,capabilities:store.capability,assets:store.assets},assets,media,current:()=>config,bot:()=>bot};
@@ -106,12 +108,12 @@ test('non-MP3 is acquired once and encoded once, with frozen lyrics disabled',as
   assert.equal(response.track.format,'flac');assert.equal(response.delivery.format,'mp3');assert.equal(response.delivery.transcoded,true);
   assert.deepEqual(f.jobs[1].inputs.map(file=>file.name),['source.flac']);
 });
-test('failed acquisition and failed delivery are not automatically repeated in one request',async t=>{
+test('failed acquisition and delivery can be retried in the same request',async t=>{
   const f=await fixture(t);f.setHook(async()=>{throw Error('private-path-secret');});
-  await assert.rejects(f.call({action:'download',song:'晴天'}),/^Error: MUSIC_OPERATION_FAILED$/);await assert.rejects(f.call({action:'download',song:'晴天'}),/MUSIC_OPERATION_FAILED/);assert.deepEqual(f.calls,['music_acquire']);
+  await assert.rejects(f.call({action:'download',song:'晴天'}),/^Error: MUSIC_OPERATION_FAILED$/);await assert.rejects(f.call({action:'download',song:'晴天'}),/MUSIC_OPERATION_FAILED/);assert.deepEqual(f.calls,['music_acquire','music_acquire']);
   f.live.snapshot=freezeTurn(f.config,f.bot,f.binding.scope,['new-request'],testServiceProfiles());f.setFormat('flac');f.setHook(async job=>{if(job.operation==='music_delivery')throw Error('bad encode');});
   await assert.rejects(f.call({action:'download',song:'晴天'}),/MUSIC_OPERATION_FAILED/);await assert.rejects(f.call({action:'download',song:'晴天'}),/MUSIC_OPERATION_FAILED/);
-  assert.deepEqual(f.calls,['music_acquire','music_acquire','music_delivery']);assert.equal(f.live.assets.length,0);
+  assert.deepEqual(f.calls,['music_acquire','music_acquire','music_acquire','music_delivery','music_delivery']);assert.equal(f.live.assets.length,0);
 });
 
 test('download and named singing preserve safe music provider codes from service errors',async t=>{
@@ -119,7 +121,7 @@ test('download and named singing preserve safe music provider codes from service
     const f=await fixture(t);f.setHook(async()=>{throw new ServiceContractError({category:'PROVIDER_ERROR',providerCode:'MUSIC_NO_RESULTS',safeDiagnostic:'Private provider detail',retryable:false,blocksService:false},Error('https://provider.invalid/private token=secret'));});
     const call=()=>action==='download'?f.call({action,song:'晴天'}):executeSingingTool(f.live,{action,song:'晴天'},new AbortController().signal,f.deps);
     await assert.rejects(call(),/^Error: MUSIC_NO_RESULTS$/);await assert.rejects(call(),/^Error: MUSIC_NO_RESULTS$/);
-    assert.equal(f.store.musicState.acquisition(f.binding.key)?.code,'MUSIC_NO_RESULTS');assert.deepEqual(f.calls,['music_acquire']);assert.equal(f.live.assets.length,0);
+    assert.equal(f.store.musicState.acquisition(f.binding.key)?.code,'MUSIC_NO_RESULTS');assert.deepEqual(f.calls,['music_acquire','music_acquire']);assert.equal(f.live.assets.length,0);
   });
 });
 
@@ -158,23 +160,23 @@ test('named singing reuses the downloaded original and never makes a delivery MP
   const args={action:'sing',song:'晴天'};const result=JSON.parse(await executeSingingTool(f.live,args,new AbortController().signal,f.deps));
   assert.equal(result.track.title,'晴天');assert.deepEqual(f.calls,['music_acquire','music_delivery','singing_convert']);assert.equal(f.live.assets.length,1);
   assert.equal(f.jobs[2].inputs[0].path,f.store.assets.asset(f.binding.key,acquired.sourceAssetId).path);assert.deepEqual(f.jobs[2].parameters,{sourceType:'mixed',format:'mp3'});
-  await executeSingingTool(f.live,args,new AbortController().signal,f.deps);assert.equal(f.calls.filter(value=>value==='singing_convert').length,1);
+  await executeSingingTool(f.live,args,new AbortController().signal,f.deps);assert.equal(f.calls.filter(value=>value==='singing_convert').length,2);
 });
-test('legacy singing selection and canonical retries reuse one converted result without sending the original',async t=>{
+test('legacy singing selectors allow repeated conversions without sending the original',async t=>{
   const f=await fixture(t),prepared=JSON.parse(await f.call({action:'search',song:'晴天'}));
   const candidate=prepared.candidates[1].candidate,args={action:'sing',candidateSet:prepared.candidateSet};
   const result=JSON.parse(await executeSingingTool(f.live,{...args,number:candidate},new AbortController().signal,f.deps));
   for(const selector of [{candidate,number:1},{number:candidate}]){
     const retry=JSON.parse(await executeSingingTool(f.live,{...args,...selector},new AbortController().signal,f.deps));
-    assert.equal(retry.reused,true);assert.deepEqual(retry.files,result.files);
+    assert.equal(retry.reused,undefined);assert.deepEqual(retry.files,result.files);
   }
-  assert.equal((f.jobs.find(job=>job.operation==='music_acquire')!.parameters.selection as any).id,'song-2');assert.deepEqual(f.calls,['music_search','music_acquire','singing_convert']);assert.equal(f.live.assets.length,1);
+  assert.equal((f.jobs.find(job=>job.operation==='music_acquire')!.parameters.selection as any).id,'song-2');assert.deepEqual(f.calls,['music_search','music_acquire','singing_convert','singing_convert','singing_convert']);assert.equal(f.live.assets.length,3);
 });
-test('an existing attachment conversion attempt blocks a second named-song acquisition',async t=>{
+test('an attachment conversion allows a second named-song acquisition in the same turn',async t=>{
   const f=await fixture(t),input=await f.assets.save(f.binding.key,{kind:'audio',name:'vocals.wav',mime:'audio/wav'},Buffer.from('source'));
   const prepared=JSON.parse(await executeSingingTool(f.live,{action:'prepare',inputs:[input.id]},new AbortController().signal,f.deps));
   await executeSingingTool(f.live,{action:'convert',candidateSet:prepared.candidateSet,candidate:1,sourceType:'vocals'},new AbortController().signal,f.deps);
-  await assert.rejects(executeSingingTool(f.live,{action:'sing',song:'晴天'},new AbortController().signal,f.deps),/SINGING_ALREADY_ATTEMPTED/);assert.deepEqual(f.calls,['singing_convert']);
+  await executeSingingTool(f.live,{action:'sing',song:'晴天'},new AbortController().signal,f.deps);assert.deepEqual(f.calls,['singing_convert','music_acquire','singing_convert']);
 });
 test('music cannot bypass the dedicated tool through bot_media',async()=>{
   for(const operation of ['music_search','music_acquire','music_delivery'])await assert.rejects((NativeHarness.prototype as any).mediaTool.call({},{} as any,undefined,operation,[],{},new AbortController().signal),/MUSIC_USE_BOT_MUSIC/);

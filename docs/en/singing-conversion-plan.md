@@ -57,7 +57,7 @@ Candidates are stored in repository records bound to scope, session, generation 
 
 `vocals` runs RVC; `unknown` asks about accompaniment; `mixed` without configured separation is rejected with a request for vocals. Fully configured RVC/PyMSS first separates vocals, then uses `instrumentalMix`/`volume` to decide accompaniment remixing. STS enabled state, `bot_sing` and `singing-conversion` are all required. Media tools cannot bypass the dedicated singing-conversion entry.
 
-A conversion attempt is created before initial download/inference. Re-preparing candidates cannot reset it. Success reuses the result; failure/cancellation/unknown does not retry or switch candidates automatically. A new explicit user request is required for a new attempt.
+Each conversion call creates its own attempt. Multiple conversions and model-directed retries are allowed within a turn. Named-song sources remain local to each call so parallel calls cannot overwrite each other through the shared candidate set. A previously downloaded source can be reused; delivery retries reuse registered attachments rather than automatically replaying platform messages.
 
 The service returns WAV. The worker produces selected WAV or MP3 192 kbps and checks full decoding, valid samples, non-silence, duration match and size. Input has a 100 MiB local budget; generated audio and QQ delivery support 200 MiB. Video-source download limits apply before extracted-audio limits. QQ preparation preserves the original product and creates SILK bubbles of at most 300 seconds each. Longer audio is segmented and also sent as a full MP3 without losing the tail. Direct upload is limited to 5,000,000 bytes; larger files use official multipart.
 
@@ -72,7 +72,7 @@ The STS media card has independent settings. Enabling adds required tools/skills
 - Actual voice acceptance: fully convert, inspect and listen, then record `singing` evidence with `capability.record`.
 - Separation protocol/model ID/path completeness/remix/volume; off by default, permitting `mixed` when complete.
 
-Records bind persona ID/revision; changes show not-yet-accepted. Tests cover candidate/attachment ownership, ASR compatibility, triple permissions, frozen inputs, one attempt, output limits, protocol state, FIFO cancellation and attachment reuse. Before packaging:
+Records bind persona ID/revision; changes show not-yet-accepted. Tests cover candidate/attachment ownership, ASR compatibility, triple permissions, frozen inputs, repeated attempts, output limits, protocol state, FIFO cancellation and attachment reuse. Before packaging:
 
 ```text
 npm run typecheck

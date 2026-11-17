@@ -398,15 +398,12 @@ def _validate_protocol(job):
         raise JobError("MEDIA_WORKER_PROTOCOL_UNSUPPORTED")
     if 'processingSlots' in job and (type(job['processingSlots']) is not int or not 1 <= job['processingSlots'] <= 2):
         raise JobError('MEDIA_WORKER_SLOTS_INVALID')
-    if 'dailyQuotaExempt' in job and type(job['dailyQuotaExempt']) is not bool:
-        raise JobError('MEDIA_WORKER_QUOTA_INVALID')
     # Keep the pre-Phase-5 direct Python API usable for existing integrations;
     # jobs crossing the process boundary are emitted with an explicit version.
     if "protocol" not in job and "protocolVersion" not in job:
         job["protocol"] = PROTOCOL
         job["protocolVersion"] = PROTOCOL_VERSION
         job.setdefault("timeoutMs", 180000)
-        job.setdefault("quotaUnits", 1)
         job.setdefault("usagePath", str(Path(job.get("output", ".")) / "model-usage.json"))
         job.setdefault("handler", job.get("operation"))
     if "handler" not in job:
@@ -475,8 +472,6 @@ def _validate_protocol(job):
         raise JobError("JOB_EXPIRED")
     if not isinstance(job.get("timeoutMs"), int) or (job["timeoutMs"] != 0 and job["timeoutMs"] < 1000) or job["timeoutMs"] > 15 * 60 * 1000:
         raise JobError("MEDIA_WORKER_TIMEOUT_INVALID")
-    if not isinstance(job.get("quotaUnits"), int) or job["quotaUnits"] < 1 or job["quotaUnits"] > 10000:
-        raise JobError("MEDIA_WORKER_QUOTA_INVALID")
 
 
 OPERATIONS = OperationRegistry()

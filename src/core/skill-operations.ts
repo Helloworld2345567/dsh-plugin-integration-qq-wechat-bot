@@ -7,7 +7,6 @@ import {PUBLISHED_SKILL_ENTRIES} from './published-skill-catalog.js';
 
 export interface SkillOperation {
   id: string;
-  quotaUnits: number;
   inputKinds: string[];
   role?: AnalysisRole;
   deliver?: boolean;
@@ -45,7 +44,7 @@ function parseSkillManifest(root:string,entryName:string):SkillOperationManifest
   const localIds=new Set<string>(),localTools=new Set<string>(),routed=new Map<string,string>();
   for(const operation of manifest.operations){
     if(!/^[a-z][a-z0-9_]{1,80}$/.test(operation.id)||localIds.has(operation.id)
-      ||!Number.isSafeInteger(operation.quotaUnits)||operation.quotaUnits<1||!Array.isArray(operation.inputKinds)
+      ||!Array.isArray(operation.inputKinds)
       ||operation.role&&!['asr','video','tts'].includes(operation.role)
       ||operation.localTransform!==undefined&&typeof operation.localTransform!=='boolean'
       ||operation.internal!==undefined&&typeof operation.internal!=='boolean')throw new Error('SKILL_OPERATION_MANIFEST_INVALID');

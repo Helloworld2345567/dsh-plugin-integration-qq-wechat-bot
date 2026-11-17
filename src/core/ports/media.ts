@@ -37,11 +37,6 @@ export interface MediaJobRepository {
   countJobs(): number;
 }
 
-/** Durable per-key daily media quota.  The adapter owns the atomic check-and-increment. */
-export interface MediaQuotaRepository {
-  consume(key: string, limit: number): void;
-}
-
 export interface MusicCandidate {source:string;id:string;title:string;artist:string;album?:string;duration?:number;format?:string;size?:number;version?:string;locator?:unknown}
 export interface MusicCandidates {id:string;scope:string;sessionId:string;generation:number;candidates:MusicCandidate[];createdAt:number}
 export interface MusicAcquisition {scope:string;sessionId:string;generation:number;request:string;selectionKey:string;state:'running'|'succeeded'|'failed';sourceAssetId?:string;lyricAssetId?:string;track?:MusicCandidate;deliveryState?:'running'|'succeeded'|'failed';deliveryAssetIds?:string[];deliveryCode?:string;code?:string}

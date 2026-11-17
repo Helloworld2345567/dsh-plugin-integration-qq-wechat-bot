@@ -3,7 +3,7 @@ import type {PersonaConfigRepository} from './persona.js';
 import type {BindingRepository, SessionRepository} from './session.js';
 import type {InboxRepository} from './inbox.js';
 import type {MemoryRepository} from './memory.js';
-import type {AssetRepository, MediaJobRepository, MediaQuotaRepository, MusicStateRepository, SingingStateRepository} from './media.js';
+import type {AssetRepository, MediaJobRepository, MusicStateRepository, SingingStateRepository} from './media.js';
 import type {DeliveryRepository} from './delivery.js';
 import type {AutomationRepository} from './automation.js';
 import type {EvolutionRepository} from './evolution.js';
@@ -46,7 +46,6 @@ export interface BotHistoryPort {
 export interface MediaRepositories {
   assets: AssetRepository;
   jobs: MediaJobRepository;
-  quota: MediaQuotaRepository;
   music: MusicStateRepository;
   singing: SingingStateRepository;
 }
