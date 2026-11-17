@@ -1,4 +1,4 @@
-"""Direct Douyin share-page resolution without a third-party parser service."""
+"""Direct Douyin share-page and feed resolution without a third-party parser."""
 from html import unescape
 import json
 import os
@@ -162,9 +162,10 @@ def _find_item(payloads, work_id):
     for payload in payloads:
         for item in _dicts(payload):
             ids = {str(item.get(key)) for key in ("aweme_id", "awemeId", "item_id", "itemId", "id") if item.get(key) is not None}
-            if work_id in ids:
+            has_media = any(item.get(key) for key in ("images", "image_list", "image", "video"))
+            if work_id in ids and has_media:
                 identified.insert(0, item)
-            elif item.get("images") or item.get("image_list") or item.get("image") or item.get("video"):
+            elif has_media:
                 if not ids:
                     fallback.append(item)
     return identified[0] if identified else (fallback[0] if fallback else None)
@@ -343,8 +344,16 @@ async def _fetch_feed(work_id):
                         payload = json.loads(raw)
                     except (TypeError, ValueError, json.JSONDecodeError):
                         continue
+                    if not isinstance(payload, dict) or not isinstance(payload.get("aweme_list"), list):
+                        continue
                     try:
-                        return _parse_payloads([payload], str(work_id))
+                        # Feed responses may include recommendations. Select the requested
+                        # work before walking its media, never an unrelated feed entry.
+                        items = [item for item in payload.get("aweme_list", [])
+                                 if isinstance(item, dict) and str(item.get("aweme_id")) == str(work_id)]
+                        result = _parse_payloads(items, str(work_id))
+                        if result["video"] or result["images"]:
+                            return result
                     except VideoError:
                         continue
             except VideoError:
@@ -375,6 +384,19 @@ async def resolve_images(url, cookie_file=""):
     if result["id"] != final["work_id"]:
         raise VideoError("SOURCE_IDENTITY_MISMATCH")
     return result["images"]
+
+
+async def resolve_video(url, cookie_file=""):
+    source = await resolve_reference(url, cookie_file)
+    if source["media"] == "image":
+        raise VideoError("LINK_IS_IMAGE_GALLERY_USE_IMAGE")
+    result = await _fetch_feed(source["work_id"])
+    if result["images"]:
+        raise VideoError("LINK_IS_IMAGE_GALLERY_USE_IMAGE")
+    if not result["video"]:
+        raise VideoError("RESOLVE_FAILED")
+    return {"source": source, "streams": [{"url": result["video"], "headers": {
+        "User-Agent": MEDIA_USER_AGENT, "Referer": "https://www.douyin.com/"}}]}
 
 
 def configured_cookie_file():

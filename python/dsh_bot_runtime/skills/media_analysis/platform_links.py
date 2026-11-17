@@ -1,6 +1,6 @@
 """Platform share-link resolvers.
 
-Douyin links are resolved locally from the platform's own share pages. The
+Douyin links are resolved from the platform's own share pages and feed. The
 legacy public parser remains isolated to the Bilibili image path for now.
 """
 import json
@@ -12,7 +12,7 @@ import aiohttp
 from dsh_bot_runtime.video_understanding.models import VideoError
 from dsh_bot_runtime.video_understanding.network import PublicResolver, validate_url
 from dsh_bot_runtime.video_understanding.sources import SourceResolver, platform_source
-from dsh_bot_runtime.skills.media_analysis.douyin_links import resolve_reference
+from dsh_bot_runtime.skills.media_analysis.douyin_links import configured_cookie_file, resolve_video
 
 # Legacy Bilibili image endpoint; Douyin never enters this path.
 MEDIA_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
@@ -87,10 +87,7 @@ class PublicLinkResolver(SourceResolver):
         if source['kind'] == 'attachment' or source.get('page', 1) != 1:
             return await super().resolve(source, caller)
         if source['kind'] == 'douyin':
-            stable = await resolve_reference(source['ref'], self.cookie_file)
-            if stable.get('media') == 'image':
-                raise VideoError('LINK_IS_IMAGE_GALLERY_USE_IMAGE')
-            return await super().resolve(stable, caller)
+            return await resolve_video(source['ref'], self.cookie_file or configured_cookie_file())
         result = await resolve_link(source['ref'])
         if not result['video']:
             raise VideoError('LINK_IS_IMAGE_GALLERY_USE_IMAGE')

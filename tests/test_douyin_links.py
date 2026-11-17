@@ -2,7 +2,7 @@ import json
 import asyncio
 from urllib.parse import quote
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from dsh_bot_runtime.skills.media_analysis import douyin_links, platform_links
 from dsh_bot_runtime.skills.media_analysis.douyin_links import parse_page
@@ -77,6 +77,53 @@ class DouyinLinkTests(unittest.TestCase):
         router_html = f"window._ROUTER_DATA = {json.dumps(page_payload())};"
         self.assertEqual(len(parse_page(router_html, WORK_ID)["images"]), 2)
 
+    def test_work_media_is_not_shadowed_by_statistics_or_status(self):
+        payload = page_payload()
+        item = payload['__DEFAULT_SCOPE__']['webapp.video-detail']['itemInfo']['itemStruct']
+        item['statistics'] = {'aweme_id': WORK_ID, 'play_count': 10}
+        item['status'] = {'aweme_id': WORK_ID, 'is_private': False}
+        html = f'window._ROUTER_DATA = {json.dumps(payload)};'
+        self.assertEqual(parse_page(html, WORK_ID)['video'], 'https://v.douyinstatic.com/live-photo.mp4')
+
+    def test_video_resolution_uses_feed_and_rejects_galleries(self):
+        source = {'kind': 'douyin', 'media': 'video', 'ref': f'https://www.douyin.com/video/{WORK_ID}', 'work_id': WORK_ID}
+        with patch.object(douyin_links, 'resolve_reference', new=AsyncMock(return_value=source)), \
+                patch.object(douyin_links, '_fetch_feed', new=AsyncMock(return_value={
+                    'id': WORK_ID, 'video': 'https://cdn.example/video.mp4', 'images': []})) as feed:
+            resolved = asyncio.run(douyin_links.resolve_video('https://v.douyin.com/example/'))
+            self.assertEqual(resolved['streams'][0]['url'], 'https://cdn.example/video.mp4')
+            feed.assert_awaited_once_with(WORK_ID)
+            feed.return_value['images'] = ['https://cdn.example/photo.jpg']
+            with self.assertRaisesRegex(VideoError, 'LINK_IS_IMAGE_GALLERY_USE_IMAGE'):
+                asyncio.run(douyin_links.resolve_video(source['ref']))
+
+    def test_feed_skips_unrelated_works_and_empty_media(self):
+        item = {'aweme_id': WORK_ID, 'video': {'play_addr': {'url_list': ['https://cdn.example/right.mp4']}},
+                'status': {'aweme_id': WORK_ID}}
+        unrelated = {'aweme_id': '999', 'video': {'play_addr': {'url_list': ['https://cdn.example/wrong.mp4']}}}
+
+        async def chunks(payload):
+            yield json.dumps(payload).encode()
+
+        for first in ({'aweme_list': [unrelated]}, {'aweme_list': [{'aweme_id': WORK_ID}]}, []):
+            with self.subTest(first=first):
+                responses = []
+                for payload in (first, {'aweme_list': [item, unrelated]}):
+                    response = MagicMock(status=200)
+                    response.content.iter_chunked.return_value = chunks(payload)
+                    context = MagicMock()
+                    context.__aenter__ = AsyncMock(return_value=response)
+                    responses.append(context)
+                client = MagicMock()
+                client.get.side_effect = responses
+                session = MagicMock()
+                session.__aenter__ = AsyncMock(return_value=client)
+                with patch.object(douyin_links.aiohttp, 'TCPConnector'), \
+                        patch.object(douyin_links.aiohttp, 'ClientSession', return_value=session):
+                    result = asyncio.run(douyin_links._fetch_feed(WORK_ID))
+                self.assertEqual(result['video'], 'https://cdn.example/right.mp4')
+                self.assertEqual(client.get.call_count, 2)
+
     def test_parse_json_ld_image_gallery(self):
         payload = {
             "@type": "Article",
@@ -109,12 +156,12 @@ class DouyinLinkTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             resolver = platform_links.PublicLinkResolver(root, Limits())
             caller = CallerContext("scope", "user", "session")
-            with patch.object(platform_links, "resolve_reference", new=AsyncMock(return_value=source)) as reference, \
+            with patch.object(platform_links, "resolve_video", new=AsyncMock(return_value=result)) as video, \
                     patch.object(platform_links, "resolve_link", new=AsyncMock(side_effect=AssertionError("public parser called"))), \
-                    patch.object(SourceResolver, "resolve", new=AsyncMock(return_value=result)):
+                    patch.object(SourceResolver, "resolve", new=AsyncMock(side_effect=AssertionError("yt-dlp called"))):
                 resolved = asyncio.run(resolver.resolve(source, caller))
             self.assertEqual(resolved, result)
-            reference.assert_awaited_once()
+            video.assert_awaited_once()
 
 
 if __name__ == "__main__":
