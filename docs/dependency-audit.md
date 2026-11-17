@@ -1,74 +1,50 @@
-# 依赖与供应链审计
+# 依赖审计与升级
 
 简体中文 | [English](en/dependency-audit.md)
 
-本文件记录阶段 2 的可复核基线，不把安全工具的非零计数伪装成“零漏洞”。审计日期为 2026-11-03，工作树使用 Node 24.17.0、npm 11.13.0 和 Python 3.13.14；CI 仍覆盖 Python 3.12。
+本页说明依赖来源、审计入口和已知暂缓项。漏洞数量随公告与 lockfile 变化，以当次报告为准；历史检查通过不代表当前无漏洞。
 
-## 来源与可复现安装
+## 安装来源
 
-- `package-lock.json` 是 lockfile v3，所有 `resolved` 归一到 `https://registry.npmjs.org/`，同时保留 npm integrity。项目根 `.npmrc` 明确该公共 registry；未把区域或私有镜像作为隐含供应链。
-- `npm ci` 使用 lockfile，不运行 lifecycle 脚本以外的项目安装逻辑；发布检查使用 `npm pack --ignore-scripts`。受限网络可通过 `npm_config_registry`、命令行 `--registry` 或组织缓存显式覆盖下载端点，但不应改写提交的公共 registry resolved 来源。
-- `requirements.txt` 和 `requirements-voice-generation.txt` 是用户输入文件，保留兼容范围；安全修复要求的 Pillow 版本范围从 `>=10,<13` 收紧为 `>=13,<14`。`requirements-ci.txt` 与 `requirements-voice-generation-ci.txt` 记录当前 CI 验证用的精确版本，但不把 Python 环境或外部服务打进主包。
-- 基础媒体依赖与可选 voice-generation 依赖分离。Music、RVC、GPT-SoVITS、CUDA、模型权重和外部服务不在 npm 或 Python 主依赖中。
-- 阶段 5 静态 import 审计确认 vendored 网络模块直接导入 `yarl`；因此用户范围显式声明 `yarl>=1.17,<2`，CI 快照使用已随 aiohttp 环境验证的 `1.25.1`。这消除对传递安装的隐式依赖，不新增网络能力。
+- Node 使用 lockfile v3 和 `npm ci`；提交的 `resolved` 指向 `https://registry.npmjs.org/` 并保留 integrity。受限网络通过 registry 参数或组织缓存显式覆盖，不将私有镜像写入 lockfile。
+- Python 用户范围、CI 快照、可选依赖与外部服务边界见 [Python 依赖](python-dependencies.md)。审计工具仅装入临时环境，不进入运行时包。
+- 许可证清单与转发义务见[第三方声明](../THIRD_PARTY_NOTICES.md)。
 
-## npm 审计结果
-
-本次执行过：
-
-```text
-npm audit --json
-npm ls --all
-npm outdated --json
-```
-
-快照结果为 `196` 个报告项：`189 high`、`7 moderate`、`0 critical`、`0 low`。`npm audit --omit=dev --json` 与包含开发依赖的结果相同，说明本次非零结果不是开发依赖单独造成的。`npm ls --all` 成功；`npm outdated` 的主要差异来自 Harness 上游候选版本和跨大版本工具升级。
-
-### 运行时漏洞与暂缓项
-
-| 范围 | 结果 | 处理 |
-| --- | --- | --- |
-| DeepSeek Harness `@deepseek-ai/dsh` 及其 `0.2.1-rc.5` 子包 | 高危报告项，直接运行时依赖和大量固定间接包 | 暂缓。当前插件的扩展行为和 peer 契约绑定 `0.2.1-rc.5`；升级候选至少涉及兼容性变化，不能用 `audit fix --force` 代替原生验收。 |
-| `undici` | 由 Harness/其 LLM 依赖引入的运行时高危报告项 | 暂缓到兼容的 Harness 版本；不是本项目直接声明依赖。 |
-| `zod` < 4.6.6 | 仅出现在 Harness 子树中的旧嵌套版本；顶层直接版本为 4.6.7 | 暂缓到 Harness 兼容升级；不能强行 override 破坏 Harness 的 peer/运行时契约。 |
-| `@modelcontextprotocol/client` 2.2.0 | Harness MCP 子树中的中危报告项 | 暂缓到 Harness 兼容升级；本项目不直接调用它的业务 API。 |
-| `fflate` 0.8.2 | Harness LibreOffice 子树中的中危报告项；其他路径已为 0.8.3 | 暂缓到 Harness 兼容升级。 |
-
-审计脚本 `npm run audit:dependencies` 只允许上表中已记录的 Harness 传递项通过，并报告实际计数；出现未记录的包、直接业务依赖漏洞或新的严重等级时会失败。该策略是“已知暂缓”，不是安全豁免或零漏洞声明。
-
-### 可安全处理的直接依赖
-
-- `ws` 从 `8.22.0` 更新到 `8.22.1`，仍在 Node 24 支持的同一 major 内，许可证为 MIT，lockfile integrity 已更新。已运行类型检查、TypeScript/Python 测试、构建和发布检查。
-- `yaml`、`zod`、`json-bigint`、`qrcode`、`silk-wasm` 和开发工具没有在本次审计中发现需要强制升级的直接漏洞。大版本 TypeScript、esbuild、Node types 或 Harness 候选不因 outdated 输出而盲目升级。
-- `@deepseek-ai/dsh`、Cordis 及其 Harness peer 包保持 `0.2.1-rc.5` / `~4.0.5`；本阶段没有证明更高版本兼容，因此不升级。
-
-## Python 审计
-
-用户范围和 CI 快照分别为：
-
-| 文件 | 用途 | 版本策略 |
-| --- | --- | --- |
-| `requirements.txt` | 用户安装的基础媒体/文档/下载依赖 | 兼容范围；支持 Python 3.12/3.13，具体 wheel 由 pip 解析 |
-| `requirements-voice-generation.txt` | 可选 Edge TTS | 兼容范围；不安装不会影响基础机器人和媒体能力 |
-| `requirements-ci.txt` | CI 可复现验证 | 2026-11-03 测试版本精确记录 |
-| `requirements-voice-generation-ci.txt` | CI 可复现可选 TTS 验证 | 2026-11-03 测试版本精确记录 |
-
-本次 `python -m pip check` 通过。初始 Python 审计在 Pillow `12.3.0` 上报告 39 个 Pillow 漏洞；它们均有 `13.0.0` 修复版本。本阶段将用户范围收紧为 `Pillow>=13,<14`，CI 快照使用 `13.0.0`，并在升级后重新运行 `pip-audit`：基础依赖和可选 Edge TTS 当前均报告 `vulns: []`。许可证清单使用 `pip-licenses --from=mixed --format=json` 复核；审计工具只在临时环境运行，不进入主包。
-
-维护者可复核：
+## 审计命令与判断
 
 ```powershell
-python -m pip install -r requirements-ci.txt -r requirements-voice-generation-ci.txt
-python -m pip install pip-audit==2.10.1 pip-licenses==5.5.5
+npm run audit:dependencies
+npm ls --all
+```
+
+`audit:dependencies` 报告实际漏洞计数和已知暂缓项，并拒绝未知包名、直接业务依赖漏洞、非公共 registry 来源和缺失许可证元数据。它**不按漏洞总数或严重等级变化单独阻断**，维护者仍需阅读报告中的新公告和严重等级。
+
+需要查明版本升级范围时使用 `npm outdated`，不要直接运行 `npm audit fix --force`。直接依赖可以在兼容范围内修复；Harness 升级须验证插件和 peer 契约，不能靠强制 override 降低审计数字。
+
+在项目 `.codex/` 下的临时 Python 环境中安装 CI 依赖及审计工具后复核，完成后删除该环境：
+
+```powershell
+python -m pip install -r requirements-ci.txt -r requirements-voice-generation-ci.txt -r requirements-audit-ci.txt
+python -m pip check
 pip-audit -r requirements.txt -r requirements-voice-generation.txt
 pip-licenses --from=mixed --format=table
 ```
 
-许可证风险边界：基础依赖的许可证以安装包元数据和上游声明为准；`edge-tts` 的 LGPLv3 仅属于可选依赖，部署者应保留其上游声明。`pypdfium2` 还涉及 PDFium 及其依赖许可，不能只按 Python wrapper 的许可证判断。`yt-dlp` 当前元数据标注 Unlicense，使用者仍需遵守目标站点和媒体内容规则。
+`pip check` 检测安装依赖冲突；`pip-audit` 发现漏洞后应确认修复版本和兼容性；许可证结果需与上游声明核对。运行这些命令前确认 `python` 和工具属于该临时环境。
 
-## 决策原则
+## Harness 已知暂缓项
 
-1. 不直接执行 `npm audit fix` 或 `npm audit fix --force`。
-2. 每次直接依赖升级都必须说明原因、许可证和上游来源，并通过 Node 24、Harness `0.2.1-rc.5`、Windows、完整测试和发布检查。
-3. Harness 固定版本的风险记录为“不可独立升级的已知暂缓项”；在上游兼容版本可验证前，不通过 override、patch 或删除审计结果来降低数量。
-4. lockfile 变更必须使用公共 registry、保留 integrity，并在受限网络中由缓存/镜像配置显式控制，而不是提交隐含镜像地址。
+2026-11-03 的审计登记了下列暂缓范围，当前脚本仍按这些包名处理；是否已修复以本次审计结果为准：
+
+| 范围 | 暂缓原因 |
+| --- | --- |
+| `@deepseek-ai/dsh*` 与 `@deepseek-ai/libreoffice-kit` | 插件绑定 Harness `0.2.1-rc.5`，需要兼容版本及原生验收 |
+| `undici`、嵌套 `zod`、`@modelcontextprotocol/client`、`fflate` | Harness 依赖树引入，需随兼容上游版本处理 |
+
+这不是零漏洞声明。顶层直接业务依赖的漏洞仍会失败；同一包名下的新风险仍需评估。已知包名集合以 `scripts/audit-dependencies.mjs` 为准。
+
+## 变更要求
+
+升级须说明原因、来源和许可证，保留 lockfile integrity，并通过[开发指南](development.md)规定的相关测试与发布门禁。支持范围为 Node 24、Python 3.12/3.13 及当前 Harness 契约。
+
+可选 `edge-tts` 有 LGPLv3 义务；`pypdfium2` 还涉及 PDFium 及其第三方许可，不能只看 Python wrapper。模型权重与媒体来源另有各自许可，不由主包许可证覆盖。

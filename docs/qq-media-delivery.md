@@ -2,64 +2,49 @@
 
 简体中文 | [English](en/qq-media-delivery.md)
 
-QQ 的媒体总大小限制与 `file_data` 直传限制独立。插件对单聊和群聊统一执行媒体硬限制，大文件使用官方分片接口。
+QQ 单聊与群聊使用相同的插件大小限制，大文件通过官方分片接口上传。生成或下载成功只表示文件可用，平台回执才确认送达。
 
-## 最终附件与格式
+## 选择最终附件
 
-媒体工具默认登记附件，在本轮结束后统一投递。下载或生成仅作中间材料时传 `deliver=false`。本地转换成功后默认移除本轮已登记的输入附件，只发送转换成品；用户明确要求原文件和成品时传 `keepInputs=true`。转换失败保留原登记，原文件本身不会删除。
+媒体工具默认登记附件，在本轮结束后投递。中间材料使用 `deliver=false`；本地转换成功后默认只发送成品，用户需要原件时使用 `keepInputs=true`。转换失败保留原登记，源文件不会删除。
 
-用户要 GIF 时只登记 GIF，要视频时只登记视频，要 PNG 时只登记 PNG。可信私聊用 shell 压缩或转码后，`bot_send_file(path=最终文件, mime=实际类型)` 默认替换本轮唯一的同类自动附件，避免原音频与压缩音频各发送一次。多个同类自动附件不推测对应关系；`append=true` 可明确另附版本，已经显式选择的其他文件保留。相同文件再次登记复用已有附件。
+`bot_send_file(path=最终文件, mime=实际类型)` 默认替换本轮唯一同类自动附件，避免同时发送原件和压缩版；存在多个同类附件时不猜测对应关系。`append=true` 明确追加，重复登记同一文件复用原附件。需要原图或指定格式文件时使用 `bot_send_file(assetId=成品ID, asFile=true)`，此选项也适用于微信。
 
-用户要求原图或指定格式原文件时，用 `bot_send_file(assetId=成品ID, asFile=true)` 将同一登记改为文件投递，避免额外发送预览图。该选择同时适用于 QQ 和微信。
+QQ 音频优先转换为 24 kHz 单声道 SILK 语音气泡。超过 300 秒时完整分段，每段独立排队，并额外发送完整 MP3；原音频保留。明确要求文件、语音准备失败或上传返回 `40093013` 时可使用普通文件投递。
 
-## 语音气泡
+## 大小与上传
 
-QQ 音频回复先转换为 24 kHz 单声道 SILK，以可直接点击播放的语音气泡发送。2026-11-02 本机实测：15 秒与 300 秒语音发送成功，用户确认显示为语音气泡；305 秒及约 320 秒上传返回 `40093013`。插件据此将超过 300 秒的音频完整分段，各段独立登记、排队和保存发送回执，并额外保留整曲 MP3 文件；原始音频不覆盖，未超过 300 秒的音频保持单条语音。
-
-明确要求发送文件的输出按普通文件上传。准备语音失败时保留原音频文件；QQ 上传明确返回 `40093013` 时，也可将完整音频改按普通文件上传。
-
-## 限制
-
-| 类型 | 官方软限制 | 投递硬上限 |
+| 类型 | QQ 文档软限制 | 插件投递硬上限 |
 | --- | --- | --- |
 | 图片 | 20 MB | 200 MiB |
 | 视频 | 30 MB | 200 MiB |
 | 音频 | 20 MB | 200 MiB |
 | 普通文件 | 200 MB | 200 MiB |
 
-官方文档把大小写为 MB，并给出 30 MB 对应 `file_size=31457280` 的示例；硬上限据此使用 `200 * 1024 * 1024` 字节。超过软限制时由 QQ 降级为文件，不在插件中拒绝。普通文件使用官方 `file_type=4`。
+硬上限为 `200 * 1024 * 1024` 字节，上传前检查登记大小和实际文件大小。超过软限制由 QQ 决定是否降级为文件，插件不提前拒绝。普通文件使用 `file_type=4`。
 
-`file_data` 只用于不超过 5,000,000 字节的文件；这是保守的直传选择阈值，不是附件硬上限。超过阈值自动分片，不要求运营者配置公网文件地址。上传前同时检查登记大小与磁盘实际大小，不能通过伪造附件元数据绕过硬上限。
+不超过 **5,000,000 字节**时使用 Base64 `file_data` 直传；更大文件依次执行 `upload_prepare`、分片 PUT、`upload_part_finish` 和 `files` 合并，无需公网文件地址。预签名 PUT 不携带机器人鉴权头。获得 `file_info` 后再提交消息。
 
-音频输入的 100 MiB 是本地处理预算；生成音频和 QQ 投递支持到 200 MiB。音乐下载与按歌名翻唱的完整 MP3 小于 20,000,000 字节，仍是该功能既定交付策略，不代表 QQ 平台上限。其他渠道保持各自限制。
+单附件投递最长 15 分钟，每次上传请求超时 60 秒；文字投递超时 90 秒。停止任务或关闭机器人仍立即取消上传。协议实现见 [qq-upload.ts](../src/channels/qq-upload.ts)。
 
-## 上传与发送
+本地音频输入的 100 MiB 预算和[音乐功能](music-integration.md)的完整 MP3 小于 20,000,000 字节策略，均与 QQ 平台上限独立；微信使用自己的渠道限制。
 
-小文件调用 `POST /v2/{users|groups}/{id}/files`，传递 `file_name`、Base64 `file_data` 和 `srv_send_msg=false`。
+## 状态与恢复
 
-大文件先调用同一目标的 `upload_prepare`，传递文件大小、名称、类型、完整 MD5/SHA1 和前 10,002,432 字节的 MD5。按响应中的分片编号、大小及预签名 URL 顺序 PUT，每片成功后调用 `upload_part_finish`，最后用 `upload_id` 调用 `files` 合并。预签名 PUT 不携带机器人鉴权头；取消信号贯穿文件读取和所有网络请求。
+| 状态 | 含义与处理 |
+| --- | --- |
+| `registered` / 已排队 | 等待投递，`platformSent=false`，不能称为已经收到 |
+| 平台已确认 | 消息提交取得平台回执 |
+| `failed` | 准备或上传明确失败，可按记录处理 |
+| `unknown` | 提交后连接中断，不能确认平台是否接受，不盲目重发 |
 
-取得 `file_info` 后才调用消息提交接口。持久投递重试复用原附件及仍在官方 `ttl` 有效期内的 `file_info`；`ttl=0` 表示长期有效，过期或未记录有效期时重新上传原附件，不重新运行 TTS、RVC 或歌曲下载。没有完成的分片上传可重新建立上传任务。
+投递恢复复用原附件及有效期内的 `file_info`；`ttl=0` 表示长期有效，过期或未记录有效期时重新上传，不重复生成、转换或下载。未完成分片可新建上传任务。投递记录保存脱敏的状态、业务错误码与追踪标识，供管理页诊断。
 
-附件单次投递最长 15 分钟，每个上传请求仍有 60 秒超时；文字投递保持 90 秒。关闭机器人、停止会话或取消任务时仍立即中止上传，避免大文件被原有 90 秒总时限提前打断。
+本地测试不向 QQ 发消息。真实平台验收需实际发送并核对回执；开发验证范围见[测试指南](testing.md)。
 
-## 状态与错误
-
-工具生成文件后返回 `registeredForDelivery=true`、`deliveryState=registered`、`platformSent=false`。这些状态表示等待宿主在本轮结束后投递，不能表述为用户已经收到。重试重新排队也不是发送成功；只有平台回执才确认送达。
-
-准备或上传阶段终止失败时标记 `failed`。消息提交后网络中断、无法确认平台是否接受时保留 `unknown`，避免盲目重发。平台 HTTP 状态、业务错误码、经过脱敏的错误说明及追踪标识保留在投递记录中，供管理页诊断；不保存完整响应、密钥或上传签名 URL。
-
-## 验证
-
-回归测试覆盖真实超过直传阈值的文件、跨软限制的分片、硬上限、实际文件大小、分片完整性与校验、取消、上传拒绝、提交后断线，以及登记/排队/已送达的状态区别。本地测试适配器不向 QQ 发送消息，真实平台消息验收需运营者授权。
-
-## 官方来源
-
-核对日期：2026-11-01。
+## 官方接口参考
 
 - [单聊富媒体上传](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_users_user_openid_files.post.html)
-- [单聊分片预上传](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_users_user_id_upload_prepare.post.html)
-- [单聊分片完成](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_users_user_id_upload_part_finish.post.html)
+- [单聊分片预上传](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_users_user_id_upload_prepare.post.html)与[分片完成](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_users_user_id_upload_part_finish.post.html)
 - [群聊富媒体上传](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_openid_files.post.html)
-- [群聊分片预上传](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_id_upload_prepare.post.html)
-- [群聊分片完成](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_id_upload_part_finish.post.html)
+- [群聊分片预上传](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_id_upload_prepare.post.html)与[分片完成](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_id_upload_part_finish.post.html)

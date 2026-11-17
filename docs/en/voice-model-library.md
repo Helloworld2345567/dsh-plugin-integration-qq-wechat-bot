@@ -1,20 +1,14 @@
-# Local Voice Model Library
+# Speech and local voice model library
 
 [简体中文](../voice-model-library.md) | English
 
-Manage installation-wide services on **Services**, then select registered voice Profiles under **Bots → Media**. TTS and STS have separate voice selectors. Services provides:
+Configure installation-wide models and inference services in **Services**, then choose separate TTS speaking and STS singing voices under **Bots → Media**. Operators manage services, weights and local paths; bot settings retain Profile references and business preferences.
 
-- **Model directory:** shared TTS/STS project's `models` directory.
-- **Service address:** HTTP inference endpoint.
-- **Breeze TTS address:** `breeze-tts-2-cpp`, default local HTTP port 8080.
-- **Startup directory:** optional, explicitly operator-configured external project for starting GPT-SoVITS/Breeze; arbitrary commands are not accepted.
-- **Breeze TTS voice directory:** saved `.breeze` files, such as the external project's `voices`. Refresh detects them even with Breeze stopped; synthesis still requires the service.
+## Configure the library
 
-Click **Save**. The built-in scanner treats the model root's parent as the operator's external project root, reading its managed `.codex/venv` Python environment and relative `RVC`/`GPT-SoVITS` layout. These directories/weights are not in the main package. Breeze discovery reads `/v1/voices` and scans the configured `.breeze` directory; health/synthesis require a running service. Refresh/synthesis do not auto-start services. Only a configured startup directory plus its Start button runs a fixed external launcher and waits for health. On Windows, long-lived services are started through a short-lived independent broker so they are no longer direct descendants in the DSH/Harness process tree; the plugin still only starts and health-checks them and never stops them. Initial defaults may come from `BOT_VOICE_MODELS_ROOT`, `BREEZE_TTS_URL`, `GPT_SOVITS_ROOT`, `BREEZE_TTS_ROOT`, `BREEZE_TTS_VOICES_ROOT`; saved settings take precedence. Filenames and `<external-project>` below are sanitized examples, not real paths or bundled weights.
+Set the shared project's `models` directory, GPT-SoVITS endpoint and any required Breeze endpoint, voice directory and launch directory. GPT-SoVITS defaults to local port 9880; Breeze defaults to 8080. Environment variables in the [configuration reference](configuration.md) can supply initial defaults; saved panel settings take precedence.
 
-## Organize and add models
-
-The shared project exposes `scripts/model_catalog.py`; the bot uses the same scanning logic. Organize by service, character ID and version:
+The scanner treats the model root's parent as the external project root and uses its `.codex/venv`, `RVC` and `GPT-SoVITS` layout. Organize models by service, character and version:
 
 ```text
 models/
@@ -29,45 +23,48 @@ models/
     model.json
 ```
 
-Put each new model in its own directory and refresh. The scanner checks file contents/relationships and generates `model.json`, retaining Chinese display names, stable IDs, versions, relative paths and reference text/language. Metadata stays with the model; moving the library does not rebuild IDs.
+Click **Refresh** after adding models. The scanner creates or updates `model.json`, preserving stable IDs, names, versions, relative paths and reference text/language; moving the whole library does not require new IDs. RVC indexes are optional, with retrieval rate zero when absent. GPT-SoVITS needs paired GPT/SoVITS weights and valid reference audio/text. Split directories or correct `model.json` when resources are ambiguous, corrupt or have duplicate IDs; the scanner does not guess a pair.
 
-RVC indexes are optional, with zero retrieval without one. GPT-SoVITS requires GPT/SoVITS weights and valid reference audio/text. One resource set can pair automatically; multiple weights, ambiguous references or corrupt files produce missing/ambiguous status. Split models or complete generated metadata and refresh; the system never guesses another resource set.
+HuBERT, RMVPE, text encoders and base models retain the external project's layout instead of being copied per character. Saving settings returns immediately while relevant scanning runs in the background. Refreshing unchanged resources preserves Profile revisions. After replacement and refresh, old turns cannot execute with the old resource revision.
 
-Shared HuBERT, RMVPE, text encoders, GPT-SoVITS base models and vocoders retain the external project's layout rather than being copied into every character folder.
+Breeze discovers voices through `/v1/voices` and `.breeze` files in its configured directory. Offline discovery can display voices before the service runs; synthesis still requires an online service. Refresh never starts services automatically. A configured trusted launch directory enables a button that runs the fixed launcher and waits for health. On Windows, long-running services detach from DSH/Harness's direct process tree and are not stopped when the plugin exits. RVC and Music run per job and have no persistent-service button.
 
-## Select a voice
+## Choose voices and reply modes
 
-In a bot's Media section, select TTS **Speak** and STS **Sing** voices separately. Selection updates the bot draft, enables the capability and adds tools/skills. GPT-SoVITS/Breeze use WAV; other settings remain. **Save** applies next turn; discarding restores previous settings.
+Selecting a voice updates the bot draft, enables its capability and adds the required tool/skill. **Save** applies it from the next turn. Missing, disabled or incomplete Profiles cannot be applied, and the plugin never silently substitutes another model.
 
-Incomplete, missing-file or disabled Profiles cannot be applied. Services centralizes directories, addresses, refresh and startup. Refresh neither starts a service nor switches voices. RVC is a per-task worker and Music a per-task tool; neither has a persistent-service button.
+TTS offers two reply modes:
 
-## Session voice commands
+- **On demand** calls `bot_voice` when the user requests speech.
+- **Text plus automatic voice** adds audio for final text in chat, scheduled tasks and proactive conversations. Explicit voice or STS attempts suppress duplicate automatic speech for that turn. Code blocks and bare URLs are skipped while link labels are retained; text remains available when it is too long, has no readable content or synthesis fails.
 
-Trusted private chats can override voices for the current session, effective next turn, without changing bot defaults. The current turn keeps its frozen selection.
+| Provider | Configuration and output | Limitations |
+| --- | --- | --- |
+| Edge TTS | Install the [optional voice dependencies](python-dependencies.md); no API key; MP3 output | Uses the built-in `edge_tts` protocol |
+| GPT-SoVITS | Profile contains endpoint, paired weights and 3–10 seconds of reference audio with matching text; non-streaming WAV with speed control | Style requests degrade to ordinary reading; no `chant` or explicit MP3 |
+| Breeze TTS | Saved voices from `breeze-tts-2-cpp`; JSON `response_format=wav`; 24 kHz mono WAV | Chinese and English are officially supported, Japanese is experimental; speed requests have no effect and are recorded as degraded |
+
+GPT-SoVITS supports v1, v2, v2Pro, v2ProPlus, v3, v4, v5dev and v5turbo; the configured version must match the weights. Each queued request fully loads SoVITS, GPT and reference audio without caching a current character. One bot process exclusively owns an instance; do not manually switch models or restart it during jobs. Restart before initial integration and when changing the language or v1/non-v1 text frontend family for identical reference text. Identical reference text should use a consistent language/frontend family. Client cancellation does not guarantee immediate server-side termination.
+
+See [QQ media delivery](qq-media-delivery.md) for voice bubbles and long audio. WeChat sends playable audio files. RVC setup and separation are covered in [STS integration](singing-conversion.md).
+
+## Temporary session voices
+
+Trusted private chats first use `list`, then `set` with the exact returned ID; `reset` restores the bot default:
 
 ```text
 /tts list
 /tts set edge/zh-CN-XiaoxiaoNeural
 /tts set gpt-sovits/<profileId>
+/tts set breeze-tts/<profileId>
 /tts reset
-
 /sts list
 /sts set rvc/<profileId>
 /sts reset
 ```
 
-`list` returns current selection and candidates. Edge voices are built in; Profile candidates expose only public IDs, names and states. STS lists RVC Profiles only. `set` requires an exact listed ID and a `ready` Profile. The bot must already enable TTS/STS; commands cannot enable it. `reset` removes the override and restores bot defaults. Overrides survive new/restored sessions and persona switches.
+These commands store only session overrides and apply from the next turn. New sessions, restored history and persona switches retain overrides. Profiles must be `ready` and the bot must already have the capability enabled; commands cannot enable it. Natural-language switching uses `bot_voice_control` with the same list/set/reset flow.
 
-## Interfaces and revisions
+## Acceptance
 
-- `service.settings`: library settings, startup directories, configuration revision and per-model diagnostics.
-- `service.settings.save`: save `modelsRoot`, addresses, GPT-SoVITS/Breeze startup directories, Breeze voice directory and `expectedRevision`, then refresh models/voices.
-- `service.start`: accepts only `gpt-sovits` or `breeze-tts`; runs the configured fixed launcher, returns `already-running` when applicable; plugin exit does not stop the external process.
-- `service.refresh`: refresh `rvc`, `gpt-sovits` or `breeze-tts`; RVC/GPT-SoVITS share a scan, Breeze reads its HTTP voices.
-- `catalog.profiles`, `service.health`, `bot.save`: list, check and save bot settings respectively.
-
-Resource digests/discovery sources stay in private Profile metadata; adapters receive execution config only. Identical refreshes create no revision; changing one character does not affect another, and training logs do not affect identity. Once original paths are replaced and refreshed, older turns cannot execute with old resource versions; later turns use the new revision.
-
-## Limitations / Known Issues
-
-Scanning and listing Breeze voices do not establish inference acceptance. Operators must verify filename-derived reference text against audio. Unclear formats, duplicate IDs and ambiguous resources require correcting the model package. Stopped Breeze, deleted voices or non-WAV output make a Profile unavailable; there is no automatic provider fallback.
+Discovery, complete configuration and health checks do not establish voice quality. Check the complete audio and listen to the target character before recording synthesis acceptance for the current configuration revision; repeat after changes. In particular, verify reference text inferred from filenames against the actual audio. Missing voices, unavailable services and invalid formats are reported explicitly without provider fallback.

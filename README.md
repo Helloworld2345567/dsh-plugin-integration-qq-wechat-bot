@@ -2,191 +2,51 @@
 
 简体中文 | [English](README.en.md)
 
-为 DeepSeek Harness 提供 QQ 与微信机器人接入、多人格配置、会话管理和媒体能力。
+为 DeepSeek Harness 提供 QQ 官方渠道、微信 iLink、多机器人与人格管理，以及图片、语音、音乐和视频能力。
 
 ## 功能
 
-- QQ 官方渠道与微信 iLink 渠道
-- 多 bot、独立会话和会话级身份隔离
-- 独立的人格与机器人模型、工具、技能配置
-- 图片生成、图片理解、自动语音识别、AI 语音回复和视频分析
-- 独立 RVC 音色转换（STS），将用户选定的纯人声转换为机器人配置的目标音色
-- 通过独立 Music 环境搜索并下载歌曲，将当前会话的歌曲交给 RVC 音色转换
-- media-analysis 统一处理抖音/B站免登录链接解析、视频下载与分析、图集和网页原图下载
-- media_transform 并发处理图片格式/质量/尺寸，将完整视频分段并发转换为 10 MB 以下 GIF（最低 12 fps）
-- 私聊长任务每分钟发送符合当前人设的简短进度提醒
-- 受控文件、媒体与消息投递
-- 统计、失败记录和可恢复的生命周期管理
-- React 管理面板，支持配置热切换并在下一轮生效
+- 独立的机器人设置、渠道会话、附件和长期记忆；切换人格保留会话。
+- 图片生成与编辑、图片理解、语音识别、TTS 回复、视频分析和媒体转换。
+- 音乐搜索下载与 RVC 音色转换，可按需接入外部服务和模型。
+- 可信私聊中的定时任务、主动聊天、受控工具和长任务进度提醒。
+- 中英文管理面板，配置从下一轮生效；界面语言与机器人固定提示语言独立。
+- 独立产品部署支持监督启动、受管升级和回滚。
 
-## 语言支持
+## 安装与上手
 
-文档和管理界面支持简体中文与英文。界面跟随 Harness 的语言设置，可实时切换；服务页的“机器人固定提示语言”独立控制所有机器人的帮助、错误和进度提示，默认中文，保存后对新操作生效。
+需要 Node.js 24+、Python 3.12/3.13、DeepSeek Harness `0.2.1-rc.5`；音视频处理需要 `ffmpeg` 和 `ffprobe`。Windows 使用 PowerShell 7。
 
-从面板新建人格时按当前界面语言填入起始人设，已有人格和编辑中的草稿不会随语言切换改写。首次安装的内置人格按用户对话语言回复；模型回复语言与 TTS 推理语言不由界面或固定提示设置强制改变。内置技能和模型操作说明维护单份英文版本。
+先阅读[快速开始](docs/getting-started.md)，选择一种安装方式：
 
-## 环境要求
+| 方式 | 适用场景 |
+| --- | --- |
+| [安装到已有 Harness](docs/install-existing-harness.md) | 向现有 profile 添加主插件，由你管理该 profile 的启停和更新 |
+| [部署独立机器人产品](docs/deploy-product-profile.md) | 由安装器管理隔离的 `bots` profile、工作区和生命周期协调器 |
 
-- Node.js 24+
-- Python 3.12 或 3.13
-- DeepSeek Harness 0.2.1-rc.5
-- 音频和视频处理需要 `ffmpeg` 与 `ffprobe`
+基础安装不要求 CUDA、GPT-SoVITS、Music、RVC 或模型权重；这些能力按需单独部署。未配置的能力显示为 `missing` 或 `blocked`。
 
-## 快速开始
+安装后，在 Harness 配置聊天模型与凭据，进入“机器人面板”创建人格和机器人，完成 QQ/微信授权，再发送第一条测试消息。每个机器人独立保存模型、媒体和权限；人格文件仅支持 `schemaVersion: 4`。
 
-首次安装请先阅读[快速开始](docs/getting-started.md)，其中按“已有 Harness profile”和“独立机器人产品 profile”分别给出可复制命令、首次验证、升级、回滚和卸载边界。环境变量完整说明见[配置参考](docs/configuration.md)，常见故障见[排障文档](docs/troubleshooting.md)。
+## 文档
 
-## 选择安装方式
+| 任务 | 文档 |
+| --- | --- |
+| 配置机器人、环境变量与工作区 | [配置参考](docs/configuration.md) |
+| 诊断安装、连接和媒体故障 | [排障](docs/troubleshooting.md) |
+| 配置 TTS、RVC 模型和音色 | [模型库](docs/voice-model-library.md) · [RVC 音色转换](docs/singing-conversion.md) |
+| 接入音乐与了解 QQ 投递限制 | [音乐接入](docs/music-integration.md) · [QQ 媒体投递](docs/qq-media-delivery.md) |
+| 开发、测试与架构 | [开发指南](docs/development.md) · [测试](docs/testing.md) · [架构](docs/architecture.md) · [依赖边界](docs/architecture-boundaries.md) · [ADR](docs/adr/) |
+| 检查依赖与许可证 | [Python 依赖](docs/python-dependencies.md) · [依赖审计](docs/dependency-audit.md) · [第三方声明](THIRD_PARTY_NOTICES.md) |
 
-项目保留两种交付方式，二者共享主插件，但不会相互修改：
+## 开发与发布
 
-### 方式一：安装到已有 Harness
+实现位于 `src/`，媒体 worker 位于 `python/`，技能位于 `skills/`，辅助 bundle 位于 `packages/`；脚本与测试分别位于 `scripts/`、`tests/`。
 
-适合已经维护 Harness profile 的用户。通过 Harness 插件命令安装主 bundle，不创建项目专属 profile，也不安装独立生命周期协调器。
+`npm run verify:release` 执行发布门禁；生成归档使用 `npm run release:pack`。开发准备和按变更选择验证的方式见[开发指南](docs/development.md)。
 
-请按[安装到已有 DeepSeek Harness](docs/install-existing-harness.md)操作。
-
-### 方式二：部署独立机器人产品 profile
-
-适合希望由项目管理隔离 `bots` profile、工作区、受监督启动、升级和回滚的运营者。产品安装器会同时安装主 bundle 和独立 `dsh-bot-lifecycle` bundle。
-
-请按[部署独立机器人产品 profile](docs/deploy-product-profile.md)操作。
-
-两种方式都支持没有 GPT-SoVITS、Music、RVC、CUDA 或模型权重的最小安装。Catalog 会将未登记能力显示为 `missing` 或 `blocked`，不会静默选择其他服务。基础媒体依赖见 `requirements.txt`，Edge TTS 可选依赖见 `requirements-voice-generation.txt`；外部服务项目和模型权重始终由运营者单独部署。
-
-## 开源治理与依赖
-
-贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，开发初始化和变更最低验证见[开发指南](docs/development.md)，测试分层和验收边界见[测试契约](docs/testing.md)，静态依赖方向与扩展规则见[架构边界契约](docs/architecture-boundaries.md)。安全问题请看 [SECURITY.md](SECURITY.md)，使用支持按 [SUPPORT.md](SUPPORT.md) 分流。依赖来源、审计结果、Python 3.12/3.13 支持范围和许可证边界见 [依赖审计](docs/dependency-audit.md)、[Python 依赖说明](docs/python-dependencies.md) 与 [第三方声明](THIRD_PARTY_NOTICES.md)。
-
-## 配置
-
-本机 RVC/GPT-SoVITS 模型可在机器人面板的“服务”栏设置目录并自动识别，然后在“机器人 → 媒体”中分别选择音色并保存。新增模型后在服务栏刷新即可登记，详见 [模型库配置与一键选择](docs/voice-model-library.md)。
-
-人格配置仅支持 `schemaVersion: 4`；V3 及更早版本不再读取、迁移或回退。服务模型路径由 Profile 私有配置管理。
-
-1. 在 Harness 模型设置中配置聊天模型和凭据。
-2. 在“人格”页创建或选择人格，填写名称与人设。
-3. 在“机器人”页创建 bot、绑定人格，配置模型、回复行为和媒体，并完成渠道授权。
-4. 启动 bot，随后即可在 QQ 或微信中使用。
-
-服务面板分别提供“OpenAI 生图”和“ComfyUI”配置，两套配置可同时保存。新建机器人只需填写 ID、名称、渠道和人格，创建成功后自动弹出扫码授权窗口；生图设置沿用默认配置，可在该机器人的“媒体 → 图片”中修改。图片脚本优先读取面板指定的密钥变量，未配置变量名时使用 `OPENAI_API_KEY`。宿主将变量名与对应凭据传给 worker；地址、默认模型、协议和工作流由服务面板配置作为显式参数传入，不读取同名环境配置。用户可在单次请求中指定 OpenAI 兼容模型，未指定时使用默认模型；不会自动换成其他模型。支持的服务和模型可通过参考图编辑请求输出 GIF。语音、音乐和音色转换继续通过受管 Service Profile 配置。保存配置后立即显示结果，相关模型扫描在后台完成；选择工作流文件时在面板内浏览本机目录和 JSON 文件，支持切换目录、选择或取消。
-
-配置文件由 `config.json` 和 `persona.md` 组成，生效版本由 SQLite 保存。修改配置后从面板应用，变更在下一轮生效；当前轮继续使用已冻结的配置。
-
-人格页只管理人设和文件；模型、回复行为、媒体与工具权限由每个机器人独立保存。升级时，现有机器人会从原人格配置复制一次运行设置，此后修改人格文件不会改动机器人设置。切换人格只更换人设，保留机器人设置及当前会话的模型、音色覆盖；同一人格可供不同设置的机器人共用。
-
-可信私聊用户可使用机器人允许的受控工具。权限在执行时再次检查，撤销后立即阻止后续调用。
-
-聊天采用渐进式工具披露：每轮先提供简短能力目录，模型通过 `bot_tools` 加载本轮需要的工具参数和使用指南，下一轮重新按需加载。人格和渠道规则常驻，网页界面说明不进入机器人提示。新消息正文不再附带平台消息 ID；记忆来源由宿主按本轮用户原文解析。已有聊天正文保持原样，可用 `/compact` 压缩历史或新建会话减少旧上下文。
-
-工具调用前的完整正文会先发送；工具执行结束、本轮完成后，再发送尚未发送的结尾和附件。这适用于各类工具，以及普通聊天、定时任务和主动会话。不会转发推理内容或原始工具 JSON；自动 TTS 仅朗读最终正文，不朗读工具前的阶段正文。
-
-机器人 ID 支持 1～80 位英文字母、数字、下划线和连字符，可使用纯数字 ID。授权凭据按原始 ID 隔离保存在 Harness 凭据服务中；已有小写字母开头、只含小写字母、数字和连字符的 ID 继续使用原凭据。
-
-机器人卡片提供“删除”按钮，确认框显示名称和 ID。删除会停止连接及运行中的任务、清除账号授权、永久删除该机器人的全部会话（含旧会话和子会话）、消息、记忆、附件、媒体任务及自动化记录，并从列表移除。人格配置和用户工作目录保留；机器人 ID 保留以防止等待中的旧操作恢复身份，新建机器人请使用新的 ID。
-
-总览中的每条聊天会话也有“删除”按钮，确认后永久清除该会话及其对话历史，保留渠道附件和长期记忆。删除当前会话会停止任务并建立保留模型、音色覆盖的空白会话；删除历史会话不影响当前会话。其他界面正在持有的会话会拒绝删除，需先释放后重试。
-
-服务设置中的目录浏览复用 DSH 原生目录选择器，选中路径仅更新草稿，点击保存才生效。Windows 独立安装会创建重定向用户目录中的 `Desktop`，避免系统文件夹窗口因默认位置不存在而报错。
-
-聊天文件默认保存在 `BOT_WORKSPACE_ROOT/<机器人ID>/<渠道会话标识>/`，自定义工作目录使用所选目录。`history/<会话标识>/` 保存可读 JSONL 聊天记录；`images`、`videos`、`audio`、`files` 分别保存图片、视频、语音和其他附件，再按 `received`（收到）、`generated`（生成）、`sent`（登记发送）、日期、会话标识和附件 ID 分类，同名文件不会覆盖。模型创建的其他产物放 `outputs/`。媒体任务临时文件在 `.bot/jobs/` 中，执行后清理。
-
-安装器把共享数据库、原始会话日志、附件索引和引擎缓存放到 `BOT_WORKSPACE_ROOT/.runtime/`，迁移旧数据时保留原生会话 ID。独立启动器为第三方工具配置工作区内的进程用户目录和临时目录；人格与凭据仍在明确配置的产品数据目录。修改目录后原附件会迁移，按原 ID 继续读取。删除机器人会同时清除分类附件及可读历史，保留工作目录中的其他用户文件。
-
-媒体操作不设每日调用次数或每日视频分析累计时长上限，适用于私聊与群聊。每轮可多次生图、改图、生成语音、下载音乐或翻唱；同一生图请求失败后由模型决定是否重试，最多额外重试三次（总共四次），不自动连发。媒体任务默认串行执行和重试，仅用户明确要求时才并发；执行层共用最多三路并发，第四路返回忙碌错误。权限、附件归属、单次文件大小、视频分析 300 秒和后端服务自身的队列仍适用。
-
-## Edge TTS / GPT-SoVITS / Breeze TTS 语音回复
-
-在机器人的“媒体 → 语音 TTS”中开启语音。Edge TTS 不需要 API key，输出 MP3。GPT-SoVITS 和 Breeze TTS 通过运营者登记的受管 Service Profile 接入：服务地址、模型权重、参考音频或 Breeze 保存音色 ID 位于 profile 私有配置，机器人只保存 profile 选择、启用状态和回复模式。人格只接受 V4 配置，服务地址和本机路径通过受管 Profile 保存。参考文本须与 3～10 秒主参考音频的实际内容一致。
-
-“按需语音”通过现有 `bot_voice` 工具响应朗读请求；“文字加自动语音”会为聊天、定时任务和主动会话的最终正文追加音频，保留文字。本轮已尝试显式语音时不再次自动合成。自动朗读跳过代码块和裸链接，保留链接文字；正文过长或没有可读文字时保留文字，普通合成失败会提示并返回文字。
-
-可信私聊可用 `/tts` 和 `/sts` 临时切换当前会话的音色：先执行 `/tts list` 或 `/sts list`，再使用准确 ID 执行 `set`；`/tts reset`、`/sts reset` 恢复机器人默认音色。TTS 支持 `edge/<voice>`、GPT-SoVITS 和 Breeze Profile，STS 支持 RVC Profile。切换从下一轮生效，不修改机器人默认设置；机器人未启用对应能力时不能通过命令开启。模型收到自然语言请求时使用 `bot_voice_control`，遵循相同的 list/set/reset 流程。
-
-GPT-SoVITS 服务按队列依次执行加载 SoVITS、加载 GPT、设置参考音频和合成。每次都完整加载，不缓存当前角色，支持 v1、v2、v2Pro、v2ProPlus、v3、v4、v5dev、v5turbo 的配置；实际模型版本须与所填版本一致。输出为非流式 WAV；语速可调整，风格请求降级为普通朗读，`chant` 和显式 MP3 不受支持。内置语音使用 `edge_tts` 协议。
-Breeze TTS 使用 `breeze-tts-2-cpp` HTTP 服务，默认地址为本机 HTTP 8080 端口，服务栏中的 Breeze 设置可修改地址。刷新服务时读取 `/v1/voices`，只登记服务已保存的音色；请求使用 JSON `response_format=wav`，输出为 24 kHz 单声道 WAV。填写受信的 Breeze 项目目录后，服务栏的“启动 Breeze TTS”按钮可以执行固定的 `Start-Breeze.ps1` 并等待健康检查；Windows 上长期服务通过独立启动桥接进程脱离 DSH/Harness 的直接子进程树，插件不会在刷新或关闭时自动停止 Breeze。中文和英文属于官方支持范围，日语输入仅作实验用途。Breeze 没有速度控制，传入速度时会保留文字结果并记录降级观察信息。
-
-管理页的“配置完整”只说明参数已配置；“当前版本合成已验收”来自对该人格修订版本登记的实际验收记录，两者独立。真实验收应检查完整音频并试听目标角色，换版本后重新验收。
-
-### Limitations / Known Issues
-
-一个推理服务实例由一个机器人进程独占，运行任务期间不要人工切模型或重启服务。首次接入前重新启动服务；改变已有参考文本对应的语言或 v1/非 v1 文本前端家族时，也先重启服务清除旧缓存。同一服务中的相同参考文本应使用一致的参考语言和文本前端家族。每次加载模型会增加延迟，客户端取消不表示服务端计算立即停止。微信当前以可播放音频文件发送。
-
-## RVC 音色转换（STS）
-
-RVC 音色转换通过运营者登记的受管 Service Profile 选择模型/角色。服务地址、`.pth` 权重和可选 `.index` 索引只保存在 profile 私有配置；机器人只保存 profile 引用、启用状态和音高、输出格式等白名单业务偏好。支持 RVC v1/v2 的 F0 模型，无索引时检索比例为 `0`。启用能力会同时加入 `bot_sing` 工具和 `singing-conversion` 技能；缺失或 blocked 的 profile 会明确显示且不会静默换模型。
-
-RVC 适配服务使用安装了 `rvc` 包的 Python 环境，复用 RVC 项目的 `VoiceConverter` 推理接口。服务与 GPT-SoVITS 分别运行，使用不同端口；可以共享已兼容的 Python 环境。安装 FFmpeg、HuBERT/ContentVec、RMVPE 和目标角色模型后，启动随插件提供的适配器：
-
-```powershell
-# 在插件目录执行；变量填写运营者实际使用的解释器、RVC 根目录及运行数据目录。
-& $env:RVC_PYTHON -B python/rvc_service.py --rvc-root $env:RVC_ROOT --data-dir $env:RVC_DATA_DIR --device cuda --port 9881
-```
-
-没有可用 CUDA 时使用 `--device cpu`。服务只监听本机回环地址。管理页“检查服务”验证适配协议；真实验收需要完整转换并试听，再登记当前配置版本的结果。编辑配置后，旧版本验收不会被复用。
-
-用户可以上传音频（包括微信的普通文件音频），或先搜索并选择公开 HTTPS 音频、B站或抖音来源。`bot_sing` 的 `prepare/list/convert` 分别登记、列出和转换候选；源音频须属于当前会话。用户明确说明是纯人声后才转换；包含伴奏的音频在分离未配置时会要求改用纯人声。RVC Profile 的私有配置保存分离模型（`vocals` 或 `vocals-aggressive`）、权重路径、是否混回伴奏及伴奏音量；默认分离关闭，`mixed` 输入仍阻断，直到分离模型配置完整。默认生成 MP3 192 kbps，也可选择 WAV。音频输入保留 100 MiB 本地处理预算，生成音频支持到 200 MiB，超限不会截短或悄悄换格式。
-
-QQ 图片、视频、音频和普通文件的投递硬上限均为 200 MiB。直传仅用于不超过 5,000,000 字节的文件，更大文件走官方分片上传并保留原格式；软限制不作为本地拒绝条件，降级文件类型由 QQ 决定。微信仍保留独立渠道限制。附件登记、等待投递和平台确认送达分别展示，上传被拒记为失败，提交后的网络中断才保留未知状态。具体限制、分片流程和文档来源见 [QQ 媒体投递](docs/qq-media-delivery.md)。
-
-转换任务绑定本轮冻结的人格，取消会终止服务端子进程树；权限撤销或会话切换后禁止继续投递。一次失败不自动重跑或换源，投递恢复复用已有附件。本轮尝试 STS 后，不再自动 TTS 朗读结果说明。协议、配置及验收细节见 [STS 接入说明](docs/singing-conversion-plan.md)。
-
-### Limitations / Known Issues
-
-分离模型配置完整后支持 `mixed` 输入，先提取人声再转换并按配置决定是否混回伴奏；默认关闭时仍要求纯人声。RVC 角色权重与 GPT-SoVITS 权重不兼容；模型版本、资源完整性和真实音色需分别验收。公开来源可能失效，搜索候选不保证可下载。每次转换独立加载模型，耗时受设备和音频长度影响。
-
-## 音乐搜索与下载
-
-音乐下载复用独立 Music 项目的 Python 环境，通过受管 JSON 子进程接口调用。运营者在 Music Service Profile 的私有 `home` 字段登记项目根目录；机器人只保存 profile 引用、`enabled` 与 `includeLyrics`。本机路径、运行依赖和来源配置不随人格复制，也不提供给聊天模型。音乐目录和来源只读取所选 Profile 的 `home`、`sources`。
-
-在机器人“媒体 → 音乐搜索与下载”中开启能力，会同时加入 `bot_music` 工具和 `music-download` 技能；默认关闭。用户可以按歌名、歌手直接下载最高匹配的歌曲，也可先搜索再选择候选；当前会话歌曲可用于音色转换。歌词默认不附带，可在卡片中开启。
-
-受管 Music Profile 可声明来源顺序，支持 `MiguMusicClient`（咪咕）、`KuwoMusicClient`（酷我）、`QQMusicClient`（QQ 音乐）、`NeteaseMusicClient`（网易云音乐）；默认只使用已通过完整下载验证的来源，新增来源须先做真实搜索与完整下载验证。下载交付和按歌名翻唱均输出完整且严格小于 20 MB 的音频，合规 MP3 直接复用，其他格式按时长完整转码。面板“检查 health”只检查当前 Profile 是否可探测，实际下载验收单独记录并同时绑定人格 revision、Profile revision/content hash 与 operation。操作和验收细节见 [音乐接入说明](docs/music-integration.md)。
-
-### Limitations / Known Issues
-
-来源可能返回空结果、试听片段或下载失败，搜索成功不保证完整下载。发送受平台格式和大小限制；下载原件与发送附件分别处理，超过限制不会截短歌曲。唱歌转换仍需要单独配置 RVC 与人声分离，下载能力不会替代音色模型。
-
-## 定时任务与每日主动会话
-
-可信私聊可直接说“十分钟后提醒我喝水”“每天北京时间零点说晚安”“开启每日主动聊天”。模型分别通过 `bot_schedule` 和 `bot_proactive` 保存任务及设置，无需开启本机工具权限。查询、暂停、恢复、删除任务和修改主动会话设置也可用自然语言完成。
-
-定时任务支持一次性时间、重复间隔和按时区每天固定时刻；主动聊天默认每日最多 3 次，00:00–09:00 静默，两次至少相隔 180 分钟，用户聊天后冷却 30 分钟。保存设置保留开关和其他选项，管理面板显示下次主动时间。任务与下次触发时间在重启后恢复；会话忙碌时延后执行，一次性任务执行后显示完成。
-
-后台任务使用当前会话的历史与人格；停止当前任务会取消正在生成的后台回复，暂停或删除计划则停止后续触发。QQ 后台消息使用主动发送请求，微信使用本会话最近的上下文凭据。
-
-## 长任务进度提醒
-
-用户发起的私聊任务执行满 60 秒后开始提醒，之后每 60 秒触发一次，不设次数上限。覆盖附件准备、语音转写、模型等待和工具执行；群聊、定时任务和主动问候保持原有反馈方式。
-
-每条提醒不超过 80 字，使用本轮冻结的人设和聊天模型生成，不调用工具或写入长期记忆。额外模型调用可在统计面板的“进度提醒”类别中查看。任务完成、失败或取消后立即停止；重启不会补发旧进度。
-
-### Limitations / Known Issues
-
-提醒会额外消耗少量模型用量。文案生成超过 8 秒或失败时使用简短的本地阶段提示，其语气可能与人设不同。实际送达受模型响应、网络和平台回复额度/有效期影响，应用层不限次数不代表平台无限接受消息；平台已经接受的消息无法通过本地取消撤回。定时和主动会话需要宿主持续运行，QQ 主动消息额度和微信上下文有效期仍由平台决定；任务生成完成表示已交给投递队列，实际发送状态以投递记录为准。
-
-## 常用命令
-
-```bash
-npm run verify:release
-```
-
-`verify:release` 依次执行静态架构检查、类型检查、隔离的 TypeScript/Python 测试、Python 依赖检查、构建、文档/契约/许可证检查和发布包检查。生成发布归档统一使用 `npm run release:pack`，它先执行同一门禁，再以禁用 lifecycle scripts 的方式打包；`npm publish` 由 `prepublishOnly` 强制执行门禁。`npm run test:native`、`npm run test:lifecycle-native` 和 `npm run test:install-smoke` 用于完整 Harness 集成与独立产品安装验收。
-
-## 项目结构
-
-```text
-src/       TypeScript 运行时、渠道适配器、管理 API 和面板
-python/    媒体处理 worker
-skills/    图片与媒体技能
-packages/  可独立安装的辅助 bundle
-scripts/   构建、安装、启动和验证脚本
-docs/      项目架构文档
-tests/     TypeScript 与 Python 测试
-```
+贡献请读 [CONTRIBUTING.md](CONTRIBUTING.md)；使用问题见 [SUPPORT.md](SUPPORT.md)，安全报告见 [SECURITY.md](SECURITY.md)，协作规则见 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) 与 [AGENTS.md](AGENTS.md)。版本记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 许可证
 
-MIT。第三方依赖和来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
-
-总体架构见 [docs/architecture.md](docs/architecture.md)，可执行的依赖方向、composition root 例外和扩展规则见[架构边界契约](docs/architecture-boundaries.md)，长期设计决策见 [docs/adr/](docs/adr/)，自动化代理和仓库安全约束见 [AGENTS.md](AGENTS.md)。
+[MIT](LICENSE)。外部服务、模型和第三方依赖遵守各自许可证，见[第三方声明](THIRD_PARTY_NOTICES.md)。

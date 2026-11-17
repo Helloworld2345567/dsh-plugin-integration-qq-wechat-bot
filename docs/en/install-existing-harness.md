@@ -2,54 +2,35 @@
 
 [简体中文](../install-existing-harness.md) | English
 
-See [Getting started](getting-started.md) for prerequisites, first verification and capability boundaries, [configuration](configuration.md) for variables and [troubleshooting](troubleshooting.md) for failures.
-
-This mode adds QQ/WeChat bots to a Harness profile you already maintain. It installs only the main bundle, without taking over the profile or installing the standalone coordinator.
-
-> Documentation and UI support Simplified Chinese and English. The UI follows Harness language; bot system-message language is independent on Services.
-
-## Prerequisites
-
-- Windows 10/11 and PowerShell 7.
-- Node.js 24+.
-- Python 3.12 or 3.13.
-- DeepSeek Harness 0.2.1-rc.5.
-- `ffmpeg` and `ffprobe`.
-- A Harness profile you can stop and restart.
-- No CUDA, RVC, GPT-SoVITS, Music or weights required for the base installation.
+This mode adds only the main plugin to an existing profile, without the standalone lifecycle coordinator. See [Getting started](getting-started.md) for prerequisites and initial setup. Choose [standalone deployment](deploy-product-profile.md) for supervised startup and managed upgrades.
 
 ## Install from source
 
+Stop Harness using the target profile, then run these commands from the project root. Replace `my-profile` with the existing profile name:
+
 ```powershell
+$profileName = 'my-profile'
 npm ci
 python -m pip install -r requirements.txt
-npm run build
 npm run verify:release
-
-dsh plugin --profile <profile> add .
-dsh --profile <profile> --no-open
+dsh plugin --profile $profileName add .
+dsh --profile $profileName --no-open
 ```
 
-Replace `<profile>` with your existing profile. Stop Harness using it before installation and restart afterward. Do not manually edit its `package.json` or copy `cordis.patch.yml`.
+`verify:release` already includes the build. Install through the Harness plugin command; do not manually edit the profile's `package.json` or copy `cordis.patch.yml`.
 
-If media workers use an interpreter other than command-line `python`, set `BOT_PYTHON` before starting Harness to a Python 3.12/3.13 interpreter with dependencies installed. Edge TTS also needs:
+Media workers use `python` by default. For another interpreter, set `BOT_PYTHON` before starting Harness and install dependencies with that Python 3.12/3.13 interpreter. For Edge TTS, also install into the same environment:
 
 ```powershell
 python -m pip install -r requirements-voice-generation.txt
 ```
 
-## Verification
+Confirm **Bot panel** appears in Harness settings, then follow [first setup and verification](getting-started.md) to create a persona, authorize a channel and test text. If the panel is absent, check that the target profile loads `dsh-plugin-integration-qq-wechat-bot` and Harness is `0.2.1-rc.5`.
 
-1. Open Harness settings.
-2. Confirm **Bot panel** in the sidebar.
-3. Configure a chat model and credentials in Harness model settings.
-4. Create a persona/bot and complete QQ or WeChat authorization.
-5. Start the bot and send a test message.
+## Update, rollback and removal
 
-If the panel is absent, check that the profile loads `dsh-plugin-integration-qq-wechat-bot` and Harness is `0.2.1-rc.5`.
+Use the existing profile's maintenance procedure to stop its process, back up data and replace the main package. Verify source releases with `npm run verify:release`; keep the previous trusted source or archive for offline recovery. This mode does not provide project-managed hot upgrades, supervised restarts or automatic rollback, and does not support undeclared version combinations.
 
-## Capability boundaries
+Remove the plugin through that Harness version's Plugin Manager/settings action; do not manually delete dependencies or profile files. Plugin removal and runtime-data deletion are separate operations. Back up personas, sessions, attachments and credentials you need to retain first.
 
-This mode creates no project `bots` profile and installs no `dsh-bot-lifecycle`. The main plugin works normally, but version handshakes, managed hot upgrades, supervised restarts, offline paired-bundle journals and automatic rollback belong only to [standalone deployment](deploy-product-profile.md). Existing-profile operators must replace the main package using their own shutdown/upgrade procedure. Do not copy in the standalone coordinator; undeclared cross-version combinations are not supported.
-
-GPT-SoVITS, Music, RVC, CUDA, weights and third-party external projects are not installed with the main plugin. Unregistered capabilities show `missing`/`blocked` without silently switching services.
+Deploy GPT-SoVITS, Music, RVC, CUDA and model weights separately. See [Configuration](configuration.md) for variables/paths and [Troubleshooting](troubleshooting.md) for failures.

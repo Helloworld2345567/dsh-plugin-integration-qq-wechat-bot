@@ -2,111 +2,79 @@
 
 [简体中文](../deploy-product-profile.md) | English
 
-See [Getting started](getting-started.md) for prerequisites, first verification and boundaries, [configuration](configuration.md) for variables and [troubleshooting](troubleshooting.md) for failures.
+The installer creates an isolated `bots` profile, product data, media Python environment and workspace, installing the main plugin and `dsh-bot-lifecycle` together. Other Harness profiles are unaffected. See [Getting started](getting-started.md) for prerequisites/initial setup and [Configuration](configuration.md) for variables.
 
-This mode creates/manages an isolated `bots` profile, product data directory, media Python environment, workspace, main bundle and coordinator bundle. Other Harness profiles are not modified.
+## Install from source and start/stop
 
-> Documentation and UI support Simplified Chinese and English. UI language follows Harness; bot system-message language is independent on Services.
-
-## Prerequisites
-
-- Windows 10/11, PowerShell 7, Node.js 24+, Python 3.12/3.13 and DeepSeek Harness 0.2.1-rc.5.
-- `ffmpeg` and `ffprobe`.
-- No CUDA/RVC/GPT-SoVITS/Music/weights needed for the base installation.
-- Optional `uv`; otherwise Python `venv` and `pip` are used.
-
-## Local source deployment
+Run from the project root. For production, replace the placeholders below with absolute paths. Development can omit both variables to use `.runtime/bot-data` and `.runtime/workspaces`:
 
 ```powershell
+$env:BOT_HOME = '<absolute-product-home>'
+$env:BOT_WORKSPACE_ROOT = '<absolute-workspace-root>'
 npm ci
+python -m pip install -r requirements.txt
 npm run verify:release
 node scripts/install.mjs .
 node scripts/start.mjs --port 3080
 ```
 
-Defaults are `.runtime/bot-data` for product data and `.runtime/workspaces` for workspaces. Set explicit production directories before installation:
+The initial Python dependencies support source verification. The installer creates a separate media environment and installs base dependencies, using `uv` when available or Python `venv`/`pip` otherwise. If `BOT_PYTHON` is set, it uses that interpreter.
 
-```powershell
-$env:BOT_HOME = '<BOT_HOME>'
-$env:BOT_WORKSPACE_ROOT = '<BOT_WORKSPACE_ROOT>'
-node scripts/install.mjs .
-node scripts/start.mjs --port 3080
-```
-
-Stop the supervised instance:
+Open the Harness URL printed at startup and follow [first setup and verification](getting-started.md). Stop the supervised instance with:
 
 ```powershell
 node scripts/stop.mjs
 ```
 
-Defaults install `core,basic-media`, not CUDA, external GPT-SoVITS/Music/RVC projects or weights. For optional Edge TTS:
+Use the same `BOT_HOME` for installation, startup, shutdown and updates; set the environment variables again in a new terminal.
+
+### Optional dependencies
+
+Default layers are `core,basic-media`. For Edge TTS, replace the installation command with:
 
 ```powershell
 node scripts/install.mjs . --layers=core,basic-media,voice-generation
 ```
 
-Available layers are `core`, `basic-media`, `voice-generation`, `music`, `singing-rvc`; the first two are required. Optional layers install only this project's declared supporting dependencies. External services still require separate deployment and acceptance.
+You can also set `BOT_INSTALL_LAYERS`. Available layers are `core`, `basic-media`, `voice-generation`, `music` and `singing-rvc`; the first two are required. Optional layers install only declared project dependencies. Deploy external services, CUDA and models separately.
 
-## Load the panel separately from bot services
+### Control the bot service separately
 
-Keep the original profile, plugins and session storage. Switching to an empty profile to separate start/stop would hide existing plugins, the bot panel and history.
+Set main-plugin configuration `autoStart: false` to load the panel, settings and history without connecting channels or executing background tasks. The panel toolbar's **Start/Stop bot service** preserves individual bot enabled preferences; each card's **Run** switch controls that bot. Keep the same profile and a single Harness process. External TTS/RVC services use their own start/stop procedures.
 
-Set main Config `autoStart: false` to load the panel, personas, models and history without connecting channels or consuming background tasks. Hosts can call `startService()`, `stopService()` and `serviceRunning()` independently. Stopping preserves bot enabled preferences/history; starting a single bot in the panel also starts its required background consumers.
+## Install a pinned GitHub Release
 
-One Harness process owns each bot data directory. Service commands control the runtime inside that process, not a second Harness writing the same database. External GPT-SoVITS, Breeze TTS and RVC retain their own lifecycle entries.
-
-The panel toolbar's **Start bot service** and **Stop bot service** change channel services without changing individual enabled preferences. Each bot's **Run** switch independently connects/disconnects that bot.
-
-## Pinned GitHub Release deployment
-
-Remote production installation pins repository, semver release tag, `.tgz` asset and expected SHA-256 together:
+Pin the repository, semver tag, `.tgz` asset and expected SHA-256:
 
 ```powershell
 node scripts/bootstrap-github.mjs `
   --repository=OWNER/REPO `
   --ref=v1.2.3 `
   --asset=PACKAGE.tgz `
-  --sha256=<64-lowercase-hex-digest> `
-  --home=<BOT_HOME>
+  '--sha256=<64-lowercase-hex-digest>' `
+  '--home=<absolute-product-home>'
 ```
 
-Bootstrap permits HTTPS GitHub addresses only, validates redirects/DNS at each hop, and calls the installer only after hash/tar safety checks. Recovery uses a previous archive only if its hash still matches.
+Replace all example values. Bootstrap checks the GitHub HTTPS download, expected hash and archive structure before installation. Local source/archive installation records its current hash and package identity, which does not establish download provenance.
 
-## Verification
+## Update and recover
 
-1. Open the Harness URL printed at startup.
-2. Open **Bot panel** in settings.
-3. Configure the chat model, personas and channel authorization.
-4. Verify core chat.
-5. Separately verify actual GPT-SoVITS output, full music downloads and RVC conversion.
+Back up `BOT_HOME` and `BOT_WORKSPACE_ROOT` before updating. The former contains personas/product state; the latter contains sessions, attachment indexes, engine caches and workspaces. Harness credentials manages credentials.
 
-Profile health means detectable now, not accepted media output. Acceptance binds persona and Profile revisions.
+When the current coordinator and candidate main package are mutually compatible, a managed upgrade can drain work and replace only the main package. Activation failure restores the previous verified main package at most once. After a successful upgrade, trusted administrators can request `/evolve rollback <task-id>` with a historical task ID. Unknown external delivery outcomes are never replayed.
 
-## Data and upgrades
-
-- Personas/product state live in `BOT_HOME`.
-- Sessions, attachment indexes, engine caches and default workspaces live in `BOT_WORKSPACE_ROOT`.
-- Harness credentials manages credentials; they never enter release files.
-- `dsh-bot-lifecycle` is a separate bundle, not an internal main-plugin service. `installation.json` retains its schema; `lifecycle-installation.json` separately records current/previous main/coordinator archive hashes, identities, versions and contracts.
-
-### Replace only the main package
-
-A managed hot upgrade requires the coordinator to accept the candidate runtime protocol, package version and capabilities, and the candidate to accept the coordinator API/capabilities. The coordinator validates candidate/previous hashes/contracts before draining. Activation failure restores the previous main package only once, without replaying unknown external outcomes.
-
-### Update both bundles offline
-
-When protocol major, coordinator API, package ranges or required capabilities change, the old coordinator does not hot-replace itself:
+Coordinator changes, protocol-major changes or incompatible capabilities require an offline paired-bundle update. Replace the path with a trusted package directory or archive:
 
 ```powershell
 node scripts/stop.mjs
-node scripts/install.mjs <package-directory-or-tgz>
+node scripts/install.mjs '<package-directory-or-tgz>'
 node scripts/start.mjs --port 3080
 ```
 
-The installer checks paired compatibility before profile changes and requires a stopped launcher. Installer/launcher share a product-level exclusive lock. It installs coordinator and main offline, records a safe journal, and verifies both hashes, identities, versions and contracts. An interrupted install tries one previous-main → previous-coordinator recovery. After forced termination, rerun the installer to converge a nonterminal journal. A mismatched old archive hash keeps the product stopped; do not delete the journal, guess versions or manually replace only one bundle. See [upgrade/rollback troubleshooting](troubleshooting.md#11-upgrade-or-rollback-fails-after-installation) for manual lock archival conditions.
+The installer verifies paired compatibility, records a journal and excludes concurrent launcher use. Rerun the installer after interruption to complete recovery. If a previous archive fails verification, keep the product stopped; do not delete the journal or manually replace only one bundle. Older installations without `lifecycle-installation.json` also require offline paired installation.
 
-### Incompatible recovery
+On `LIFECYCLE_*` errors, retain `installation.json`, `lifecycle-installation.json`, `lifecycle-installations/`, `evolution/` and package archives, then rerun the installer from trusted source or a verified archive. See [upgrade/rollback troubleshooting](troubleshooting.md#11-upgrade-or-rollback-fails-after-installation) for locks and recovery, and the [lifecycle bundle](../../packages/bot-lifecycle/README.en.md) / [ADR 0004](adr/0004-lifecycle-bundle-compatibility.md) for compatibility and retained data.
 
-On `LIFECYCLE_*` errors, keep the profile stopped; retain `installation.json`, `lifecycle-installation.json`, `lifecycle-installations/`, `evolution/` and archives; rerun the installer from trusted source or a verified archive; start the launcher only after startup checks pass. Older installations without `lifecycle-installation.json` are not silently migrated and require the same offline paired installation.
+## Uninstall
 
-See [ADR 0001](adr/0001-delivery-modes.md), [ADR 0003](adr/0003-lifecycle-and-uncertain-outcomes.md) and [ADR 0004](adr/0004-lifecycle-bundle-compatibility.md).
+There is no dedicated uninstall command. Run `node scripts/stop.mjs`, back up data to retain, then remove the product profile, `BOT_HOME` and workspace according to your retention policy. Deleting these directories deletes their runtime data. Remove external services and models using their own deployment procedures.

@@ -1,133 +1,76 @@
-# Project Architecture
+# Architecture
 
 [简体中文](../architecture.md) | English
 
-This QQ/WeChat plugin runs inside DeepSeek Harness. Harness owns the Agent loop, history, model calls, tool execution and lifecycle; the plugin owns channels, identity binding, personas, media, persistence and management UI. See [architecture boundaries](architecture-boundaries.md) for static dependency rules, composition-root exceptions and extension rules.
-
-Standalone shared storage lives under workspace `.runtime/`. Both default and custom workspace roots append bot ID and scope layers; attachments are classified by kind/origin/date, with actual paths stored and ownership rechecked on reads. Agent working directories live under each channel's `sessions/<sessionId>/`, including an `outputs/` folder for ordinary artifacts. Worker cwd/home/temp use a per-job directory and are cleaned afterward. Original engine logs remain authoritative for restoration; readable `history/` files are exported only on request.
+Harness owns the Agent loop, model calls, session logs and tool execution. The plugin owns QQ/WeChat integration, identity, personas, media, persistence and management UI. See [architecture boundaries](architecture-boundaries.md) for dependencies/extensions and [configuration](configuration.md) for operator settings.
 
 ## Runtime flow
 
 ```mermaid
 flowchart LR
-  QQ[QQ] --> Channel[Channel adapter]
-  WX[WeChat] --> Channel
-  Channel --> Identity[Identity and binding]
-  Identity --> Queue[Session queue]
-  Queue --> Runtime[BotRuntime]
-  Runtime --> Snapshot[Turn snapshot]
+  Channel[QQ / WeChat adapter] --> Identity[Channel identity and session queue]
+  Identity --> Runtime[BotRuntime]
+  Runtime --> Snapshot[Turn configuration snapshot]
   Snapshot --> Harness[Harness Agent]
-  Harness --> Tools[Tools and skills]
-  Harness --> Media[Media operations]
-  Media --> Worker[Python worker]
-  Runtime --> Repos[Narrow repository ports]
-  Repos --> SQLite[SQLite and file adapters]
-  SQLite --> Delivery[Delivery queue]
+  Harness --> Tools[Controlled tools and media worker]
+  Runtime --> Repos[Repository ports]
+  Repos --> Storage[SQLite / files]
+  Tools --> Delivery[Durable delivery queue]
   Delivery --> Channel
-  SQLite --> Admin[Management API]
-  Admin --> Panel[React panel]
-  Runtime --> Stats[Statistics projection]
-  Stats --> Panel
-  Runtime --> Lifecycle[Lifecycle coordinator]
+  Repos --> Admin[Admin API and panel]
+  Runtime --> Lifecycle[Independent lifecycle coordinator]
 ```
 
-## Core boundaries
+`src/index.ts` composes ports and implementations. Application services use `src/core/ports/` for SQLite/file adapters; the panel consumes public API projections. Media workers receive host-resolved inputs and fixed operations, without owning identity, permissions or platform delivery.
 
-- **Channels:** normalize platform events and restore platform targets before sending.
-- **Identity:** scope derives from channel identity, account, conversation kind and sender, never model-provided identity/paths.
-- **BotRuntime:** coordinates receipt, queues, commands, Harness turns, permissions and delivery.
-- **Snapshots:** freeze persona/model/tools/skills/media at turn start; edits apply next turn.
-- **Repositories/adapters:** applications see narrow `src/core/ports/` contracts. `src/infrastructure/sqlite/` persists bots, persona revisions, bindings, jobs, delivery, media and stats without changing schemas/error codes.
-- **Media worker:** implementations reside in `python/dsh_bot_runtime/`, accepting only host-resolved attachments/fixed operations. The host launches with a controlled package root and `-P -m`; credentials are per-job, never persisted in config/results.
-- **Management API:** summaries, paginated reads and protected commands; the UI never accesses storage directly.
-- **Lifecycle:** independent bundle, not a main-plugin service. Buildable coordinator/integrity/protocol/entry live in `packages/bot-lifecycle/src/`; main connects through a neutral runtime port. Bidirectional protocol/API/package-range/capability/instance/artifact checks fail closed and keep lifecycle state outside mutable plugin logic.
+## Identity, configuration and permissions
 
-## Lifecycle update boundaries
+Channel identity owns sessions, attachments, memories and outputs. Models cannot supply trusted identity or local paths. Bots may share personas while channel ownership remains isolated. Each turn freezes persona, model, skill, tool and media configuration; edits apply next turn. Execution also checks current permissions, so revocation blocks subsequent calls.
 
-Standalone startup checks `installation.json` and `lifecycle-installation.json`: archive hashes, installed identities, versions and contracts must agree. Only a coordinator explicitly accepting the candidate may drain and hot-replace main. API/protocol-major/package-range/required-capability changes require launcher shutdown and trusted offline installation of both bundles; the old coordinator never replaces itself. Failure rolls back only still-matching previous main/coordinator artifacts once each. See [ADR 0004](adr/0004-lifecycle-bundle-compatibility.md).
+Personas are edited through `config.json` and `persona.md`. Only `schemaVersion: 4` is supported; V3 is not read, migrated or used as fallback. SQLite revisions are the active snapshots; applying files validates schema, revision and file state. Bots keep independent runtime settings; persona switching retains history and session model/voice overrides. Harness credentials owns authorization secrets with a consistent mapping for valid bot IDs.
 
-## Configuration and personas
+Ordinary and queued messages retain original text, current quotes and attachments. Attachment metadata/transcripts use internal context; time and working directory come from runtime context. Tools are disclosed on demand; raw tool JSON and reasoning are not sent to platforms.
 
-Each persona has `config.json`/`persona.md`. SQLite revisions are authoritative; files are editing inputs. Applying/saving validates schema, revision and fingerprints, creating a new active revision.
+## Sessions, workspaces and cleanup
 
-Bots can share personas but channel scope always isolates identities, sessions, attachments, memory and delivery. Persona/model switching does not reload active turns; main/subtasks retain startup snapshots.
+Standalone shared runtime data lives under workspace `.runtime/`. Default and custom workspace roots append `<botId>/<scopeKey>`. Agents work under each channel's `sessions/<sessionId>/`, with ordinary artifacts in `outputs/`; sessions do not share a working directory.
 
-Ordinary and queued messages retain the original user text, current quotes and attachments without an automatic recent-attachment catalog. Time and working directory use the current runtime context; model changes add no chat notices. On resume, native surface replacement excludes known old host notices and separately appended catalog blocks while preserving the original log and user-authored text.
+DSH native logs own full history and recovery. Plugin SQLite holds bindings, history indexes and delivery records. Overview export or `session.export {id}` produces `history/<scope>/<sessionId>.jsonl` on request instead of rewriting it each turn.
 
-`src/harness/credentials.ts` adapts Harness credentials. Compatible IDs retain `bot-integration/<id>`; other legal IDs use `bot-integration-encoded` and `id-` plus original-ID UTF-8 hex. Reads/writes/deletes share this mapping, allowing numeric/uppercase/underscore IDs without panel failures or collisions with old keys.
+Channel media storage is separate from session directories. SQLite records attachment IDs, source sessions, channel ownership and actual paths. Recent selection stays within the current session; explicit IDs can reuse older attachments from the same channel. Long-term memories also belong to the channel.
 
-`bot.delete` first disables/archives, cancels connections, model work and pending delivery through the stop flow, deletes credentials, stops automation and awaits writes. It locates native session directories through the pinned JSONL backend, releases sessions, removes logs/projection caches and refreshes the public search index, then deletes the bot's messages/sessions/memory/assets/tasks/stats. Only an identity tombstone/shared personas remain; user working directories are preserved. Lists omit deleted bots and ordinary save/connect cannot revive them. Cleanup failure restores a retryable stopped state. Deletion clears QR attempts; pending QR/connect operations recheck bot status before resuming.
+- **Delete session:** `session.delete {id}` stops the target and its owned child Agents, releases instances held by other interfaces, waits for writers and prevents reload during cleanup. It removes logs, projections, readable exports, the session directory and related records. Deleting the current session creates a blank replacement retaining persona/model/voice overrides; deleting history does not stop current work. Independent forks, channel attachments, memories, schedules and user files outside session directories remain.
+- **Clean attachments:** Workspace filters registered attachments by kind, origin and cutoff, with usage statistics, preview and keep markers. Execution rechecks bot ownership and protects current sessions, busy scopes, queued/running jobs, pending or retryable deliveries and kept items. It does not delete unregistered files. Counts exclude native DSH attachments, logs and caches; deleting a session does not reclaim channel media capacity.
+- **Delete bot:** Stop connections, tasks and automations, wait for writers, then remove authorization, owned sessions, attachments, memories and business records. Keep an identity tombstone against stale operations, shared personas and other user files. Failed cleanup can be retried.
+- **Reclaim job directories:** Worker cwd/home/temp stay inside a per-job directory cleaned after execution. After exclusive runtime ownership, startup retries completed/interrupted job cleanup. Paths must match persisted workspace, scope and job ID; active jobs or live child processes defer cleanup until a later startup.
 
-## Session and attachment management
+## Tools and media
 
-Storage has three layers: DSH native event logs hold complete conversations and recovery state; plugin SQLite holds channel ownership, active bindings, historical session indexes and delivery records; workspace `history/<scope>/<sessionId>.jsonl` is a readable export produced by the Overview export action or `session.export {id}`, without rewriting it after every turn. Channel workspace folders hold attachment bytes, while SQLite records their IDs, source sessions, owning channels and actual paths. Automatic recent-attachment selection stays within the current session; explicit IDs resolve by channel ownership, so a new session can still use older channel attachments. Long-term memories also belong to the channel.
+| Entry | Responsibility |
+| --- | --- |
+| `media_download` | Download actual media from supported share links and return attachment IDs; no analysis or delivery by default |
+| `media_analysis` | Accept attachment IDs and a question; host dispatches image/document/audio/video analysis |
+| `media_transform` | Convert existing attachment format, size, quality or video GIF/MP4; no URL input |
+| `image_generation` | Generate/edit through configured OpenAI-compatible services or ComfyUI workflows |
+| `bot_voice`, `bot_music`, `bot_sing` | Speech, music acquisition and RVC conversion using shared jobs and attachment delivery |
+| `bot_session` | Query, create, compact or resume sessions; host commands handle immediate stop |
+| `bot_model`, `bot_voice_control` | Change current-session overrides for the next turn |
+| `bot_skills` | Enable/disable skills on the shared persona, affecting sessions that use it |
 
-Overview uses `session.delete {id}` for individual deletion. Deleting the current session stops its tasks and creates a blank session retaining persona, model and voice overrides; deleting an older session does not cancel current work. Cleanup covers native logs, owned child Agents, search projections, readable exports, ordinary artifacts in `sessions/<sessionId>/` and related plugin records. Independent forks, channel attachments, long-term memories, schedules and user files outside session directories remain. A Cordis service-read hook retains the real disposal handles returned by the native factory. Deletion also stops the target session held by another interface, waits for its writer to close, and prevents the same session from reloading until cleanup finishes.
+`skills/catalog.json` and each skill's `operations.json` declare fixed entries, routes, parameters, model roles and delivery. Builds generate Host/Python registries. The host dispatches operation IDs; Python imports fixed `dsh_bot_runtime` entries from a trusted package root. Personas, workspaces and model responses never discover executable code; skills cannot send platform messages directly.
 
-The bot Workspace page shows resolved channel/session directories and registered attachment counts and bytes. Operators can filter by kind, origin and cutoff time, preview explicit cleanup, and mark attachments to keep. Cleanup rechecks bot ownership and protects current sessions, busy scopes, queued/running jobs, pending or retryable deliveries and kept attachments. It never removes unregistered user files. Counts exclude native DSH attachments, logs and caches; deleting a session does not reclaim channel attachment storage.
+Media calls/retries are serial by default; explicit user requests allow concurrency. MediaService permits three concurrent calls and returns `MEDIA_CONCURRENCY_LIMIT` for a fourth. Local transforms also share up to three processing slots, with at most two per GIF. Waiting/running tasks can be cancelled; interrupted jobs are not replayed after restart. There are no daily call or cumulative video-duration quotas; file-size limits, 300-second video analysis, permissions and ownership still apply. A failed image request allows up to three additional model-directed retries.
 
-DSH local attachments deduplicate by content and separate durable objects from request-transform caches. Plugin attachments still use separate files; a future shared immutable object store could retain channel ownership and session references.
+Inbound audio uses channel transcripts when available, otherwise automatic ASR before the turn; failure stops the turn instead of guessing. Automatic TTS follows final text and is skipped after an explicit voice or STS attempt. Service Profiles freeze revisions and keep private endpoints, weights and credentials out of model projections. See [media delivery](qq-media-delivery.md) for QQ SILK, WeChat audio and limits, and [voice models](voice-model-library.md) for service constraints.
 
-## Permissions
+## Durable delivery and unknown outcomes
 
-Channel identity, persona grants and current runtime state jointly determine permissions. Trust comes only from channel events and only for private chats. Tool execution uses the intersection of frozen/current permissions; revocation prevents subsequent calls and cancels cancellable work.
+Delivery intent binds scope, session, turn and Asset; repeated registration reuses existing state. Recovery retains the original attachment and platform identity, with upload metadata persisted per attempt. Only connection failures proving the request never started receive automatic backoff retries. Unconfirmed submission becomes `unknown` and must not be blindly replayed. Earlier `unknown`/`failed` results do not permanently block later outputs in the turn.
 
-## Media and outputs
+Unconfirmed cancellation or remote state can fence a managed service until its state is resolved. Workers return stable business codes and sanitized diagnostics; the host validates output paths, formats, size, identity and execution-time permissions. See [repository responsibilities](repository-responsibility-matrix.md) for atomicity and recovery.
 
-Images/audio/video/files enter workers through a unified registry; models cannot submit paths/scripts. Success, failure and unknown tasks feed delivery/statistics. Only networking failures proving no request was established may retry automatically.
+## Lifecycle and panel
 
-Delivery records are stable intents and recovery entries. The same scope/Asset has one pending/accepted intent; reregistration across turns returns its status, not a new request. Unknown/failed recovery reuses the record/platform identity; only explicit recovery/resend semantics create a new intent when required. Unknown/failed earlier output does not permanently block later outputs in the turn. QQ upload credentials and WeChat CDN metadata persist per attempt for recovery. Only DNS, unreachable route, refused connection or connection-establishment timeout triggers two backoff retries at commit; other submission failures remain unknown with `cause.code`.
+Standalone products install both the main plugin and `dsh-bot-lifecycle`. The coordinator remains independent of the replaceable main plugin and negotiates versioned protocols, capabilities and artifact identities. The launcher validates installation records and artifacts. Compatible updates may drain and hot-replace the main bundle; incompatible pairs require offline dual-bundle updates. Failure allows one rollback to still-matching previous artifacts. See [ADR 0004](adr/0004-lifecycle-bundle-compatibility.md).
 
-### Skill operation declarations
-
-`media-analysis/operations.json` is the single declaration for tool parameters/routes, roles, source rules and automatic attachment delivery. Build generates a hashed immutable host registry from `skills/*/operations.json`; startup imports memory only, not skill files. On first skill execution Python validates the installed fixed `dsh_bot_runtime.skills...` entry and imports `execute(job)` by its unique package name. Jobs supply operation IDs, never caller module/script/package paths. Personas, chat and workspaces are not code discovery sources.
-
-Add media operations by editing the skill declaration, Python implementation and documentation. Each `tools` entry supplies `tool`, ordered `routes`, `defaults`, optional `enabledRoles`/`permissionTool`. Defaults fill omitted selectors. Operation `role` selects `asr`, `video` or `tts`; absent role injects no model credentials. `deliver` registers attachments with the turn. Each operation belongs to one tool, possibly through multiple routes; downloads, analysis and transforms are exposed through separate tools, with host-side permission checks at execution.
-
-`media_transform(operation, inputs, ...)` belongs to media-analysis but needs no analysis-model role. `localTransform` shares `min(3, availableParallelism())` slots: one per image, up to two currently free per GIF. Waiters are FIFO; cancelled waiters leave immediately. Host-assigned `processingSlots` is a top-level worker field inaccessible to model arguments. Waiting/running work is cancellable and permissions are rechecked before execution. Restart marks queued/running jobs interrupted without replay. Tool instructions require sequential calls/retries by default and parallel execution only on explicit user request. All media operations share a maximum of three concurrent tasks per MediaService instance, including tasks in the same scope; a fourth returns MEDIA_CONCURRENCY_LIMIT.
-
-Daily call and cumulative video-duration caps are removed for all callers. The worker protocol no longer carries quotaUnits or dailyQuotaExempt. Video usage and ownership remain recorded; per-file size, the 300-second single-video limit and isolation still apply. Historical quota records are no longer read or updated. Attachments have no per-channel or global cumulative storage cap.
-
-After claiming exclusive runtime ownership, startup retries cleanup of completed/interrupted job directories. Paths must match the job's persisted workspace, scope and ID. Active jobs and directories with live child processes are retained for a later startup.
-
-Images combine orientation, resize, conversion and compression after one decode. GIFs scan the entire selected interval to build a shared 32-color palette by default, then use proportional Lanczos resizing, transparent differences and changed rectangles. Long videos sample five evenly spaced positions in parallel for up to six estimate rounds. Up to ten full encodes use actual byte counts to bracket dimensions and target 98% of the budget, stopping at 95% utilization. Source/requested dimension ceilings are never exceeded just to fill the budget. Duration and fps (default 12) are preserved; colors decrease only if the minimum canvas still exceeds the budget. The default limit is 10,000,000 bytes; `maxBytes` accepts up to 50 MiB. Output must be strictly below the limit. Pixel granularity, content and search limits can leave unused budget; results report actual utilization.
-
-GIFs retain a common frame grid and roughly 15-second parallel segments; videos below 30 seconds or one-slot work encode whole. Samples and full encodes share at most two host-assigned slots. All segments use the same palette and start with opaque full frames. Merge copies compressed GIF blocks, normalizes centisecond delays/loops and never reencodes pixels. Only the chosen output receives one full decode before Asset registration. The host cleans the job directory and records `cleanupError` on failure. Channel-specific delivery limits still apply.
-
-Inbound audio prefers channel transcription; otherwise runtime runs ASR before the model and writes real transcription back to the message. Failure stops the turn rather than guessing. Voice-generation produces an audio Asset for the existing queue. QQ derives SILK bubbles, fully segments above 300 seconds and attaches a full MP3 with independent part states. WeChat initially uses playable ordinary audio files.
-
-Only V4 personas are accepted. `media.voice` selects GPT-SoVITS/Breeze by `profileRef` or built-in `protocol: edge_tts`; `replyMode` is `on_demand`/`auto`. Addresses, weights, references, Breeze voice IDs and languages are private Profile fields; tools supply text/speed and other business input only.
-
-GPT-SoVITS serializes by address and always performs `set_sovits_weights → set_gpt_weights → set_refer_audio → tts`. Jobs bind frozen Profile revisions; the host owns revocation/cancellation/session checks.
-
-Breeze serializes `/v1/audio/speech`, fixes WAV output and requires 24 kHz in health. Explicit panel Start runs only a fixed external launcher. Refresh, synthesis and plugin exit do not own Breeze's process; uncertain server state after cancelling submitted work fences it.
-
-Automatic speech runs after final text and before delivery segmentation, for ordinary and automated turns. `HarnessResult.voiceAttempted` suppresses automatic resynthesis even after an explicit failure. Delivery retries only existing assets. Ordinary synthesis failure retains text; revoked permissions/invalid context stop delivery. Management separates configuration completeness from revision-bound synthesis acceptance.
-
-Namespaced skills expose `execute(job)` returning common text/attachments/coverage. Only valid business codes defined by `dsh_bot_runtime` cross processes; unknown exceptions become stable fallbacks without type names, traces, interpreter/endpoints/credentials/model paths or download locators.
-
-The host owns permission intersections, attachment resolution, model credentials, audio adaptation, cancellation, output paths and delivery. Custom persona skill directories never discover executables; Python uses packaged fixed entries only. Broken optional declarations affect their own operations without blocking documents/images/others, with updates effective after restart. Image generation has no per-turn success cap; each failed request allows an initial attempt plus three model-directed retries. Native image understanding, documents and MP4 conversion retain host implementations; `convert_gif` is skill-provided.
-
-### GPT-SoVITS Limitations / Known Issues
-
-One bot process exclusively owns a service. Restart before first use and before changing language/frontend meaning of old reference text to clear caches. Loading models per request costs time; local-worker cancellation does not prove inference stopped. Resources/version support require independent setup/acceptance.
-
-### Breeze TTS Limitations / Known Issues
-
-Voices must be saved server-side and listed by `/v1/voices`; unavailable service/deleted voices make Profiles unavailable. Explicit configured Start may run `Start-Breeze.ps1`, but refresh/synthesis/exit never automatically manage the process. No speed control; Japanese is experimental. Actual audio/delivery needs independent acceptance.
-
-### RVC voice conversion
-
-`media.singing` is separate, default-off STS and shares no target weights/references with voice. `bot_sing` requires STS enabled, tool permission and `singing-conversion`. It owns prepare/list/convert candidates and per-call attempts; media tools cannot bypass the dedicated singing-conversion entry. The host supplies addresses, paths and job IDs.
-
-Persistent candidates bind scope/session/generation/set ID. The host resolves session audio/file attachments or retains real-search public URLs/titles/available license info. Worker reuses download/extraction; known mixed audio without separation is rejected before download, unknown type asks the user. Private separation settings hold model ID/weights/remix/volume and default off; complete settings enable vocals-first conversion/remix. Explicit user conversion requests/waiting uploads may bypass ASR; ordinary voice still transcribes.
-
-Host serializes normalized addresses; HTTP service adds a single-slot FIFO and a dedicated RVC child per job. Runner validates checkpoint/F0/speaker/index dimensions before RMVPE conversion. Unique host job IDs deduplicate submissions; a lost response queries status without inference replay. The surviving host cancels directly, releasing only after tree exit; unknown fences the service until idle.
-
-Service WAV is encoded as MP3/WAV and checked for full decode, valid frames, non-silence, duration and size. One success registers one session audio Asset and uses durable delivery. Failure/cancellation/unknown never switches source or reruns. `HarnessResult.singingAttempted` suppresses extra automatic TTS. Permissions/session identity are checked at queuing, execution and registration.
-
-Management reports configuration, RVC protocol, separation protocol/model completeness and real `singing` acceptance, with revision-bound evidence. `skill.singing.probe` calls health without inference; operators record actual full-output/listening acceptance. Model-visible projections strip addresses and RVC/separation paths.
-
-## Panel
-
-Overview, Bots, Services, Personas and Automation show runtime/bot status, health and token use. Bots has Run, Media, Persona, Authorization and Workspace; Run contains model/reply behavior, while Personas manages prompts/files. Writes use management APIs and configuration applies next turn.
+The panel organizes Overview, Bots, Services, Personas and Automation, with bot runtime, media, authorization and workspace managed independently. Writes use the admin API; UI never accesses the database directly. Third-party Service Adapter ABI is not available; see [adapter boundaries](service-adapter-abi-threat-model.md) for reasons and reassessment requirements.

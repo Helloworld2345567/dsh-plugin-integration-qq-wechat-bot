@@ -1,132 +1,76 @@
-# 项目架构
+# 架构概览
 
 简体中文 | [English](en/architecture.md)
 
-本项目是一个运行在 DeepSeek Harness 中的 QQ / 微信机器人插件。Harness 负责 Agent 循环、会话历史、模型调用、工具执行和生命周期；插件负责渠道接入、身份绑定、人格配置、媒体能力、持久化和管理面板。模块职责、允许／禁止的静态依赖方向、composition root 例外和扩展规则见[架构边界契约](architecture-boundaries.md)。
-
-独立安装的共享运行存储位于工作区根目录 `.runtime/`。默认和自定义工作区根目录都按机器人 ID 和 scope key 分层；渠道附件按类型、用途和日期分类，数据库保存实际路径，读取核对作用域归属。Agent 的工作目录为渠道目录下的 `sessions/<sessionId>/`，其中 `outputs/` 保存普通产物，各会话不共用此目录。媒体 worker 的 cwd、用户目录和临时目录位于渠道工作区的单次任务目录，完成后清理。原始引擎日志负责会话恢复，可读 `history/` 仅按需导出。
+Harness 负责 Agent 循环、模型调用、会话日志和工具执行；插件负责 QQ/微信接入、身份绑定、人格、媒体、持久化和管理面板。源码依赖与扩展规则见[架构边界](architecture-boundaries.md)，操作设置见[配置参考](configuration.md)。
 
 ## 运行链路
 
 ```mermaid
 flowchart LR
-  QQ[QQ] --> Channel[渠道适配器]
-  WX[微信] --> Channel
-  Channel --> Identity[身份与会话绑定]
-  Identity --> Queue[会话队列]
-  Queue --> Runtime[BotRuntime]
+  Channel[QQ / 微信适配器] --> Identity[渠道身份与会话队列]
+  Identity --> Runtime[BotRuntime]
   Runtime --> Snapshot[轮次配置快照]
   Snapshot --> Harness[Harness Agent]
-  Harness --> Tools[工具与技能]
-  Harness --> Media[媒体操作]
-  Media --> Worker[Python worker]
-  Runtime --> Repos[窄 Repository 端口]
-  Repos --> SQLite[SQLite／文件 adapter]
-  SQLite --> Delivery[投递队列]
+  Harness --> Tools[受控工具与媒体 worker]
+  Runtime --> Repos[Repository 端口]
+  Repos --> Storage[SQLite / 文件]
+  Tools --> Delivery[持久投递队列]
   Delivery --> Channel
-  SQLite --> Admin[管理 API]
-  Admin --> Panel[React 面板]
-  Runtime --> Stats[统计投影]
-  Stats --> Panel
-  Runtime --> Lifecycle[生命周期协调器]
+  Repos --> Admin[管理 API 与面板]
+  Runtime --> Lifecycle[独立生命周期协调器]
 ```
 
-## 核心边界
+`src/index.ts` 组装端口和实现。应用服务通过 `src/core/ports/` 访问 SQLite/文件 adapter，面板通过管理 API 访问公共投影。媒体 worker 只接收宿主解析的输入与固定操作，不拥有身份、权限或平台投递。
 
-- **渠道适配器**：将平台事件转换为统一消息，并在发送前恢复平台目标信息。
-- **身份绑定**：由渠道身份、账号、会话类型和发送者组成作用域；模型不能提供身份或路径。
-- **BotRuntime**：协调接收、排队、命令、Harness turn、权限和投递。
-- **配置快照**：每轮开始时冻结人格、模型、工具、技能和媒体能力；后续修改从下一轮生效。
-- **Repository 端口与 adapter**：应用服务只看 src/core/ports/ 的窄 contract；bot、人格版本、会话绑定、任务、投递、媒体记录和统计事件由 src/infrastructure/sqlite/ 的 adapter 持久化，schema 与错误码保持不变。
-- **媒体 worker**：实现统一位于 `python/dsh_bot_runtime/`，只接受宿主解析后的附件和固定操作；宿主以受控包根和 `-P -m` 启动，凭据按任务注入，不写入配置或结果。
-- **管理 API**：提供摘要、分页查询和受保护命令；面板只使用 API，不直接访问存储层。
-- **生命周期协调器**：是独立 bundle，不是主插件内部服务。其可构建源码、integrity、protocol 和入口位于 `packages/bot-lifecycle/src/`；主插件只连接中立 runtime port。双方按 runtime protocol、coordinator API、package version range、capabilities、instance 与 artifact identity 双向握手；不兼容组合 fail closed，不把生命周期状态交给可变插件逻辑。
+## 身份、配置与权限
 
-## Lifecycle 更新边界
+渠道身份拥有会话、附件、记忆和输出，模型不能指定可信身份或本机路径。bot 可以共享人格，但渠道所有权始终隔离。每轮冻结人格、模型、技能、工具和媒体配置，修改从下一轮生效；执行时还要检查当前权限，撤权立即阻止后续调用。
 
-独立产品 profile 在启动前核对 `installation.json` 和独立的 `lifecycle-installation.json`：两份归档 hash、实际安装 identity、package version 与 contract 必须一致。当前 coordinator 明确接受 candidate 主包时，才允许排空后只热替换主包；涉及 coordinator API、protocol major、package range 或 required capability 变化时，旧 coordinator 不会替换自己，必须由 launcher 停机后运行可信安装器离线安装两个 bundle。失败时只使用 hash 仍匹配的 previous 主包与 coordinator 各回滚一次。详见 [ADR 0004](adr/0004-lifecycle-bundle-compatibility.md)。
+人格由 `config.json` 与 `persona.md` 编辑，只支持 `schemaVersion: 4`，不读取、迁移或回退 V3。SQLite revision 是生效快照；应用文件时校验 schema、revision 与文件状态。机器人独立保存运行设置，切换人格保留会话历史与模型、音色覆盖。授权凭据由 Harness credentials 管理，合法机器人 ID 经一致映射读写，避免键冲突。
 
-## 配置与人格
+普通与排队消息保留原文、当前引用和附件；附件元数据及转写放入内部上下文，时间和工作目录由运行上下文提供。工具按需披露，宿主不把原始工具 JSON 或推理内容转发给平台。
 
-每个人格由 `config.json` 和 `persona.md` 组成。SQLite 中的配置版本是运行时权威快照，文件是编辑入口。应用文件或保存面板配置时会校验 schema、版本和文件指纹，并生成新的生效版本。
+## 会话、工作区与清理
 
-bot 可以共享人格，但身份、会话、附件、记忆和投递始终按渠道作用域隔离。人格或模型切换不会重载当前轮；正在执行的主任务和子任务继续使用启动时的快照。
+独立安装的共享运行数据位于工作区根目录 `.runtime/`。默认和自定义工作区根目录均追加 `<botId>/<scopeKey>`；Agent 使用渠道目录下的 `sessions/<sessionId>/`，普通产物放在其中的 `outputs/`，不同会话不共用工作目录。
 
-普通消息与排队消息都保留用户原文、本次引用和附件，不自动附加近期附件目录。时间和工作目录通过当前运行上下文提供，模型切换不追加聊天通知。恢复会话时用原生 surface replacement 排除已知的旧宿主通知和单独追加的附件目录块，保留原始日志及用户自己输入的文字。
+DSH 原生日志负责完整历史与恢复；插件 SQLite 保存绑定、历史索引和投递等业务记录；总览导出按钮或 `session.export {id}` 按需生成 `history/<scope>/<sessionId>.jsonl`，不在每轮重复写入。
 
-渠道授权由 `src/harness/credentials.ts` 适配 Harness 凭据服务。符合 Harness 键格式的机器人 ID 沿用 `bot-integration/<id>`；其余合法 ID 使用独立的 `bot-integration-encoded` 作用域，键名为 `id-` 加原始 ID 的 UTF-8 十六进制编码。读、写、删除使用同一映射，纯数字、大写和下划线 ID 不会破坏面板查询，也不会与已有凭据发生键冲突。
+渠道媒体库独立于会话目录。SQLite 记录附件 ID、来源会话、渠道归属和实际路径；最近附件选择只看当前会话，显式 ID 可复用同渠道旧附件。长期记忆同样归渠道所有。
 
-`bot.delete` 先禁用并归档机器人，复用停止流程取消连接、模型处理和待投递消息，再删除授权、停止关联自动化并等待所有写入结束。通过固定版本 JSONL 后端的 locate 定位原生会话目录，释放会话后删除日志及投影缓存，并通过公开搜索接口刷新索引；清除插件数据库中该机器人的消息、会话、记忆、附件、任务和统计记录。仅保留机器人身份墓碑及共享人格，用户自定义工作目录保留。管理列表过滤已删除项，普通保存和连接操作不能恢复它。清理失败时恢复为可重试的停止状态；删除会清除扫码尝试，等待中的扫码和连接操作在恢复执行前重新检查机器人状态。
+- **删除会话**：`session.delete {id}` 停止目标会话及其真实子 Agent，释放其他界面持有的实例，等待写入关闭并阻止清理期间重新载入；清除日志、投影、可读导出、会话目录与相关记录。删除当前会话后建立保留人格、模型和音色覆盖的空白会话；删除历史会话不停止当前工作。独立 fork、渠道附件、记忆、定时任务和会话目录外的用户文件保留。
+- **清理附件**：工作区页按类型、来源、截止时间筛选登记附件，提供容量统计、预览和保留标记。执行时复查 bot 归属，保护当前会话、忙碌作用域、排队/运行任务、未完成或可重试投递和保留项，不删除未注册用户文件。统计不包含 DSH 原生附件、日志与缓存；删除会话不等于释放渠道媒体容量。
+- **删除机器人**：停止连接、任务和自动化，等待写入结束，再清除授权、所属会话、附件、记忆与业务记录；保留身份墓碑防止旧操作复活，也保留共享人格和其他用户文件。失败后可重试清理。
+- **任务目录回收**：worker 的 cwd、用户目录与临时目录限定在单次任务目录，结束后清理。启动取得运行目录独占权后重试已终结或中断任务的清理；路径须匹配登记的工作区、scope 与 job ID。活跃任务或仍有子进程的目录保留至后续启动处理。
 
-## 会话与附件管理
+## 工具与媒体
 
-当前存储分为三层：DSH 原生事件日志负责完整对话和恢复；插件 SQLite 负责渠道归属、当前绑定、历史会话索引及投递记录；工作区 `history/<scope>/<sessionId>.jsonl` 是通过总览的导出按钮或 `session.export {id}` 生成的可读导出，不在每轮结束时重复写入。附件文件位于渠道工作区分类目录，SQLite 保存附件 ID、来源会话、所属渠道和实际路径。自动选择最近附件限定当前会话，显式附件 ID 按渠道归属读取，因此新建会话后仍可使用该渠道旧附件。长期记忆同样归渠道所有。
+| 入口 | 职责 |
+| --- | --- |
+| `media_download` | 从支持的分享链接下载实际媒体，返回附件 ID；默认不投递，不分析 |
+| `media_analysis` | 接收附件 ID 与问题，宿主按图片、文档、音频或视频分派分析 |
+| `media_transform` | 转换已有附件的格式、尺寸、质量或视频 GIF/MP4，不接收 URL |
+| `image_generation` | 使用已配置的 OpenAI 兼容服务或 ComfyUI 工作流生成、编辑图片 |
+| `bot_voice`、`bot_music`、`bot_sing` | 分别处理语音、音乐获取和 RVC 转换；复用统一任务与附件投递 |
+| `bot_session` | 查询、新建、压缩或恢复会话；即时停止由宿主命令处理 |
+| `bot_model`、`bot_voice_control` | 修改当前会话覆盖，下一轮生效 |
+| `bot_skills` | 修改共享人格的技能启停，影响使用该人格的会话 |
 
-总览通过 `session.delete {id}` 删除单条会话。当前会话先停止任务再建立保留人格、模型和音色覆盖的空白会话；历史会话删除不取消当前会话。清理包含原生日志、真正的子 Agent、搜索投影、可读导出、`sessions/<sessionId>/` 中的普通产物和相关插件记录，独立 fork、渠道附件、长期记忆、定时任务及会话目录外的用户文件保留。插件通过 Cordis 的服务读取钩子保留原生工厂返回的真实释放句柄；删除时也会停止其他界面持有的目标会话，等待写入器关闭，并在清理完成前阻止同一会话重新载入。
+`skills/catalog.json` 与各技能 `operations.json` 声明固定入口、工具路由、参数、模型角色及交付。构建生成 Host/Python registry；宿主只派发操作 ID，Python 从受信包根导入固定 `dsh_bot_runtime` 入口。人格、工作区和模型响应不参与代码发现，技能代码不能自行发送平台消息。
 
-机器人工作区页显示实际渠道和会话目录，以及附件登记数量与字节数；可按媒体类型、来源和截止时间筛选、预览并显式清理，也可标记附件保留。执行清理时重新核对机器人归属，保护当前会话、正在处理的作用域、运行或排队任务、未完成或可重试投递及标记保留的附件，不删除未注册用户文件。统计不包含 DSH 原生附件、日志和缓存；删除会话不等于释放渠道附件容量。
+媒体默认串行执行和重试，仅用户明确要求时并发；MediaService 入口最多三路，第四路返回 `MEDIA_CONCURRENCY_LIMIT`。本地转换另共享最多三个处理槽，GIF 最多占两个。等待和运行均可取消，重启中断任务不自动重放。不设每日次数或累计视频时长配额，单文件大小、单次视频分析 300 秒、权限和所有权仍适用。同一生图请求可由模型最多额外重试三次。
 
-DSH 本地附件库按内容去重，原始对象与请求转换缓存分离。插件媒体库仍保存独立文件；未来可接入统一不可变对象存储，同时保留渠道所有权和会话引用。
+入站音频优先使用渠道转写，否则先自动 ASR；失败会停止本轮，避免猜测内容。自动 TTS 在最终正文后生成，本轮已尝试显式语音或 STS 时不重复合成。服务 Profile 冻结修订版本，私有地址、模型路径和凭据不进入模型投影。QQ SILK、微信音频及大小限制见[媒体投递](qq-media-delivery.md)，音色和外部服务限制见[模型库](voice-model-library.md)。
 
-## 权限模型
+## 持久投递与未知结果
 
-权限由渠道身份、人格授权和当前运行状态共同决定。可信身份仅来自渠道事件，并限定在私聊场景。工具执行前检查冻结权限与当前权限的交集；撤权会阻止后续调用并取消可取消工作。
+投递意图绑定 scope、session、turn 和 Asset，重复登记复用已有状态。恢复使用原附件和平台身份；上传元数据随尝试持久化。只有能确认请求未建立的连接错误才自动退避重试，提交后无法确认的结果标记 `unknown`，不能直接重放。前序 `unknown`/`failed` 不永久阻塞同轮后续输出。
 
-## 媒体与产物
+取消或远端状态无法确认时，受管服务可进入 fence，须确认状态后恢复。worker 错误只返回稳定业务 code 和脱敏诊断；宿主负责结果路径、格式、大小、身份和执行时权限检查。Repository 原子性与恢复规则见[职责矩阵](repository-responsibility-matrix.md)。
 
-图片、音频、视频和文件都通过统一媒体操作注册表进入 worker。worker 不接受模型提交的路径或脚本。成功、失败和结果未知的任务都会写入投递与统计记录；只有能确认请求未建立的网络错误才会自动重试。
+## 生命周期与面板
 
-投递记录同时承担稳定的投递意图和恢复入口。相同作用域的同一 Asset 只登记一个未决或已接受的意图；跨轮次再次登记会返回已有状态，不会生成新的平台请求。`unknown`/`failed` 会复用原记录和原平台身份；只有明确恢复或重新请求才创建新的投递意图。前序投递进入 `unknown` 或 `failed` 后不再永久阻塞同轮后续输出，避免文字回执不确定时把图片留在 pending。QQ 的上传凭据和微信 CDN 上传元数据随投递尝试保存，以便恢复时复用；提交阶段只有 DNS、路由不可达、连接拒绝或连接建立超时等明确未建立请求的错误才自动退避重试两次，其他提交失败仍保持 `unknown`，并记录底层 `cause.code`。
+独立产品同时安装主插件和 `dsh-bot-lifecycle`。协调器独立于可变主插件，通过版本化协议、capabilities 与 artifact identity 握手；launcher 核对安装记录和归档身份。兼容时可排空后热替换主包，不兼容组合须停机双包升级；失败只对仍匹配的 previous 归档回滚一次。详见 [ADR 0004](adr/0004-lifecycle-bundle-compatibility.md)。
 
-### Skill 操作声明
-
-`media-analysis/operations.json` 是该技能的工具参数、参数到操作的映射、模型角色、来源约束和自动附件交付的唯一声明。构建时从 `skills/*/operations.json` 生成带摘要的不可变 Host registry，框架启动只导入该内存 registry，不扫描 skill 文件；Python worker 在首次 skill 操作时验证已安装声明中的固定 `dsh_bot_runtime.skills...` entry，再用唯一包名导入 `execute(job)`。任务只传操作 ID，不接受调用方提供模块、脚本或包路径；人格、聊天输入和工作区文件均不参与 Python 代码发现。
-
-新增媒体操作时，修改对应技能的声明、Python 实现与说明即可。每个技能的 `tools` 数组声明一个或多个工具，各自包含 `tool`、`routes`、`defaults`，以及可选的 `enabledRoles` 和 `permissionTool`。`routes` 按顺序匹配参数，`defaults` 补充省略的选择参数；操作上的 `role` 选择 `asr`、`video` 或 `tts` 模型连接，未声明则不注入模型凭据；`deliver` 将结果附件登记到本轮回复。一个操作归属一个工具，可由该工具的多个路由指向；媒体下载、分析与转换分别通过各自工具公开，权限仍由宿主在执行时检查。
-
-`media_transform(operation, inputs, ...)` 归属 media-analysis，但不依赖分析模型角色。`localTransform` 操作使用进程内共享的执行槽位，容量为 `min(3, availableParallelism())`。图片占一个槽位，GIF 取得最多两个当前空闲槽位；无空闲槽位的任务 FIFO 排队，排队取消立即移除。宿主分配的 `processingSlots` 位于 worker 协议顶层，模型参数不能覆盖。任务等待和运行期间均可取消，执行前重新检查当前权限；重启将排队和运行中的媒体作业标记为中断，不重放。工具指令要求默认串行执行和重试，仅用户明确要求时并发。所有媒体操作共用每个 MediaService 实例最多三路并发的入口限制，同作用域也可并发；第四路直接返回 MEDIA_CONCURRENCY_LIMIT。
-
-所有身份的媒体操作均取消每日次数和视频分析累计时长配额；不再通过 worker 协议传递 quotaUnits 或 dailyQuotaExempt。视频服务保留用量记录和作业归属，单文件大小、单次 300 秒以及身份隔离不变。旧配额记录不再读取或更新。附件不设渠道作用域或全局累计存储硬上限。
-
-启动取得运行目录独占权后，会回收已终结或中断的媒体任务目录并重试以前失败的清理。回收路径必须与任务记录的工作区、作用域和任务 ID 一致；活跃任务或仍有存活子进程的目录保留，下次启动再处理。
-
-图片脚本在一次解码后组合方向校正、缩放、格式转换和质量压缩。GIF 先扫描所选完整时段，默认生成共享的 32 色调色板，再通过 Lanczos 等比缩放、透明差分帧和变化区域编码减少体积。长视频在五个均匀位置并发试编码，最多六轮估算尺寸；完整编码的实际字节数决定上下界，最多十轮向目标的 98% 收敛，达到 95% 即可停止。若已达到源尺寸或用户指定的尺寸上限，不为了填满预算而放大。保留所选时长和帧率（默认 12 fps）；仅最小尺寸仍超限时逐级减少色数。默认上限为 10,000,000 字节，可通过 `maxBytes` 指定到 50 MiB；成品必须严格低于上限。单像素尺寸步长、内容复杂度或搜索轮数可能使成品低于目标区间，结果报告实际预算利用率。
-
-GIF 仍使用统一帧时间网格并行编码约 15 秒的片段，30 秒以下或只有一个槽位时整段编码。试编码和完整编码共用宿主分配的最多两个槽位。各片段共享同一调色板，并以完整不透明首帧开始；合并器复制 GIF 压缩块、统一百分之一秒延时和循环信息，不重编码像素。最终只对选中的成品做一次全量解码验证，再登记 Asset；宿主随后清理任务目录，清理失败写入 `cleanupError`。平台自己的投递大小限制仍适用。
-
-入站音频优先使用渠道提供的转写；没有转写时，BotRuntime 在送入模型前自动调用 ASR，并把真实转写写回当前消息。自动转写失败会停止本轮模型调用，避免根据未识别音频猜测内容。语音输出由 `voice-generation` skill 生成 `audio` Asset，再沿现有投递队列发送。QQ 在渠道发送准备阶段派生 SILK 语音气泡，超过 300 秒时完整分段并另附整曲 MP3，各段独立保存投递状态；微信首期使用可播放的普通音频文件。
-
-人格配置只接受 V4。`media.voice` 使用 `profileRef` 选择 GPT-SoVITS 或 Breeze TTS 服务，或通过 `protocol: edge_tts` 使用内置语音；`replyMode` 支持 `on_demand` 与 `auto`。服务地址、模型权重、参考音频、Breeze 音色 ID 和语言保存在 Profile 的私有配置中，工具参数只提供朗读文本、语速等业务输入。
-
-GPT-SoVITS 适配器按服务地址串行执行，每个请求完整执行 `set_sovits_weights → set_gpt_weights → set_refer_audio → tts`。运行任务绑定冻结的 Profile 修订版本；权限撤销、取消及会话身份检查由宿主管理。
-Breeze TTS 适配器按服务地址串行调用已运行的 `/v1/audio/speech`，请求固定返回 WAV；健康检查要求服务报告 24 kHz。面板的显式启动命令只执行固定的外部启动器，插件不在刷新、合成或关闭时接管 Breeze 进程；取消提交后的请求无法确认服务端状态时会封锁该服务。
-
-自动语音在成功取得最终回复后、分段入投递队列前生成，正常聊天和自动化使用同一处理方式。`HarnessResult.voiceAttempted` 记录本轮显式语音尝试，失败也不会自动再合成。投递队列只重发已登记资产；普通合成失败保留正文，权限撤销或上下文失效终止投递。管理状态把配置完整性与当前人格修订版本的合成验收记录分别展示。
-
-命名空间 skill 模块提供 `execute(job)`，返回统一的文本、附件和覆盖范围结果。只有 `dsh_bot_runtime` 自身定义且格式有效的业务 `code` 可跨进程；未知异常统一映射到稳定 fallback，不输出类型名、traceback、解释器路径、endpoint、credential、模型路径或下载 locator。
-
-框架继续负责轮次权限交集、会话附件 ID 解析、模型凭据、音频格式适配、取消、产物路径校验及投递。人格自定义技能目录不参与可执行入口发现；Python 只发现随包 `operations.json` 声明的固定 entry。损坏的可选声明只使其自身操作返回稳定错误，不阻断 document、image 或其他 skill；更新后重启生效。图片生成不再限制每轮成功次数；同一请求最多首次加三次模型主动重试，成功后可继续生成或编辑。原生图片理解、文档和 MP4 转码仍保留宿主实现；`convert_gif` 由技能提供。
-
-### GPT-SoVITS Limitations / Known Issues
-
-服务需要由一个机器人进程独占，首次使用及变更旧参考文本的语言/前端含义前须重新启动服务清空缓存。每次加载模型有额外耗时；取消本地 worker 不证明服务端推理立即停止。服务端模型资源和版本能力须单独配置与验收。
-
-### Breeze TTS Limitations / Known Issues
-
-Breeze 音色必须先在服务端保存并能通过 `/v1/voices` 列出；服务未启动或音色被删除时 Profile 会变为不可用。面板可以在运营者明确配置项目目录后执行固定 `Start-Breeze.ps1`，但刷新、合成和插件关闭都不会自动管理外部进程。Breeze 不提供速度控制，日语输入仍属于实验用途；真实音频和平台投递需要独立验收。
-
-### RVC 音色转换
-
-`media.singing` 是独立、默认关闭的 STS 配置，与 `media.voice` 不共享目标权重或参考音频。`bot_sing` 同时要求人格开启 STS、允许该工具并启用 `singing-conversion`。专用工具维护 `prepare/list/convert` 候选和单轮 attempt；媒体操作不会绕过专用的歌声转换入口。服务地址、角色路径和 job ID 由宿主提供，工具参数不能覆盖。
-
-候选保存于持久化 records，绑定 scope、session、generation 和候选集 ID。宿主解析当前会话的 audio/file 附件，或保留真实搜索结果的公开 URL、标题及可得许可信息。worker 复用公开链接下载与音轨提取；已知混音且无分离配置在下载前拒绝，类型未知要求用户确认。RVC Profile 的私有 `separation` 保存分离模型 ID、权重路径、伴奏混音开关和音量；默认关闭，配置完整后才允许 `mixed`，并先提取人声再转换和按偏好混音。明确的用户转换请求及待上传状态可绕过前置 ASR，普通语音仍自动转写。
-
-宿主按规范化服务地址串行执行；`rvc_http_v1` 服务另有单槽 FIFO，每个作业创建专用 RVC 子进程。runner 使用已安装 RVC 包的 `VoiceConverter`，校验 checkpoint 版本、F0、speaker 和索引维度，再执行 RMVPE 转换。提交使用宿主生成的唯一 job ID；重复 ID 复用已有状态，提交响应丢失只查状态，不重放推理。取消由仍存活的宿主发往服务，确认子进程树结束才释放队列；状态未知时封锁该服务，确认空闲后恢复。
-
-服务返回 WAV 字节，机器人媒体 worker 编码 MP3/WAV，检查完整解码、有效帧、非静音、源/结果时长和大小。单次成功只登记一个当前会话 audio Asset，沿已有持久投递队列发送。失败、取消和未知状态不会自动换源或重跑；已有 STS 尝试令 `HarnessResult.singingAttempted` 为真，停止该轮额外的自动 TTS。实时权限与会话身份在排队、执行、结果登记前复核。
-
-管理状态分别报告配置完整性、RVC 协议验证、分离协议/模型完整性和 `singing` 真实转换验收，后两者绑定人格 ID 和 revision。`skill.singing.probe` 只访问 `/health` 检查协议，不启动推理；真实音色验收由运营者根据完整输出与试听登记。模型可见的配置投影剥离 RVC 服务地址、RVC/分离模型路径。
-
-## 面板
-
-面板按“总览、机器人、服务、人格、自动化”组织功能，显示运行状态、bot 状态、服务健康和 Token 用量。机器人页按“运行、媒体、人格、认证、工作区”管理独立设置；模型与回复行为归入运行，人格页管理人设和文件。所有写操作经过管理 API，配置变更在下一轮生效。
+面板按总览、机器人、服务、人格和自动化组织；机器人运行、媒体、授权和工作区独立管理。写操作经过管理 API，UI 不直接访问数据库。第三方 Service Adapter ABI 尚未开放，原因与重新评估前提见[适配器边界](service-adapter-abi-threat-model.md)。

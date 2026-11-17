@@ -1,39 +1,47 @@
-# Repository 职责矩阵
+# Repository 职责与恢复
 
 简体中文 | [English](en/repository-responsibility-matrix.md)
 
-本页记录 Store／Repository 拆分后的稳定业务边界。它是对 `docs/architecture-boundaries.md` 的展开，不改变任何运行语义：schema、migration、cursor 编码、错误码、delivery／权限／session generation／取消与 lifecycle 行为均保持原样。
+应用服务只依赖 `src/core/ports/` 的窄接口，SQLite 与文件实现位于 `src/infrastructure/`。依赖方向见[架构边界](architecture-boundaries.md)，设计决定见 [ADR 0005](adr/0005-repository-ports.md)。本页保留业务约束；具体方法、表和错误码以对应端口、adapter 与测试为准。
 
-每个边界只有一个 Port 定义（`src/core/ports/`）和一个 SQLite 或文件 adapter（`src/infrastructure/`）。调用方只能看到 Port。
+## 责任划分
 
-| 业务边界 | 当前读写调用方 | 表／record kind | 事务边界 | revision／cursor／CAS | 所有权与隔离键 | 重启恢复 | Port | Adapter | 保留错误码与测试 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| bot／persona 配置 | `BotRuntime`、`BotFeatures`、`BotManagement`、`Admin`、自动化调度、媒体服务、投递 worker、bot 删除 | `records: bot`、`config`、`config-version`、`persona-files`；人格目录文件 | `saveBot` 校验同事务；`saveConfig` 在文件 journal 成功后单事务写入 revision 与 baseline | `config.revision` 单向递增；写入要求 `expectedRevision`，不匹配抛 `ConflictError`；人格文件 digest 参与校验 | `bot.id`；人格 `config.id`；渠道身份 `(channel, accountId)` 唯一 | 人格 `.pending.json` journal 先恢复；缺省人格补齐 baseline；无 revision 变更 | `BotRepository`、`PersonaConfigRepository` | `bot-repository.ts`、`persona-repository.ts`、`files/persona-files.ts` | `配置不存在或已归档`、`机器人不存在`、`该平台账号已经绑定其他机器人`、`ConflictError`；personas／core 测试 |
-| session／binding／generation | `BotRuntime`、`BotFeatures`、`BotManagement`、`Admin`、投递 worker、自动化、`Assets`、失败上下文、music／singing 状态 | `records: binding`、`session`；`collection_revisions: sessions` | binding 与 session 记录在同一次写入中更新；`enqueue` 等复合操作使用外层事务 | `generation` 只在 reset／activate 时递增；keyset 分页使用 `updatedAt + id`，cursor 绑定 filter fingerprint 与 revision | scopeKey（platform、botId、accountId、kind、channelId、senderId 的哈希） | 启动时从 binding 与 delivery 证据回填缺失 session；processing 入站转 `interrupted` | `SessionRepository`、`BindingRepository` | `session-repository.ts` | `SESSION_OWNERSHIP_MISMATCH`、`会话不存在或不属于当前渠道身份`、`PAGE_CURSOR_MISMATCH`、`PAGE_STALE`、`PAGE_CURSOR_INVALID`；repository-contract、core 测试 |
-| message／inbox | `BotRuntime`、自动化最新上下文、失败上下文、统计迁移、bot 删除 | `inbox` 表 | 接收为单条 `INSERT OR IGNORE`；状态推进逐条更新并联动 metric | 幂等键 `(scope,id)`；无 cursor | scope | `processing` → `interrupted`；pending 继续调度 | `InboxRepository` | `inbox-repository.ts` | 入站校验错误；core／processing-failures 测试 |
-| memory | `NativeHarness`（记忆工具）、`Admin` | `memory`、`memory_sources`、`forgotten` | `correctMemory`／`forget` 在单事务内更新并写 tombstone | 更正使用 `version` CAS，失败抛 `ConflictError` | scope | 无需重建；tombstone 防止旧来源复活 | `MemoryRepository` | `memory-repository.ts` | `记忆长度无效`、`该来源的记忆已被删除或更正`；core 测试 |
-| asset／attachment／media job | `Assets`、`MediaService`、投递 worker、Harness 工具、统计迁移、bot 删除 | `records: asset`、`job`；`asset_index` | `saveAsset` 记录与索引同一事务；worker 任务记录 `patchJob` 逐步持久化 | `asset.id`、`job.id` | scopeKey；session 归属校验；job scope | running／queued job 转 `interrupted`；adapter 启动时重建缺失索引 | `AssetRepository`、`MediaJobRepository` | `asset-repository.ts`、`media-job-repository.ts` | `附件不存在或不属于当前会话`、`ASSET_OUTSIDE_STORAGE`；media-assets／media-quota（历史配额不再阻断） 测试 |
-| delivery／attempt／recovery | `BotRuntime`、`DurableDeliveryWorker`、`Admin`、自动化、失败上下文、统计迁移、bot 删除 | `deliveries`、`records: reply-sequence`；`collection_revisions: deliveries` | `enqueue` 使用 savepoint；状态转换单条更新；`deliveryState` 与统计观察一起完成 | intent id 由 `(scope,session,source,turn,index)` 哈希；retry 复用原 id 并 CAS 于 `unknown|failed`；cursor 绑定 filter 与 revision | scopeKey、botId、sessionId、turnId | `sending` → `unknown`（不自动重放）；pending progress → `cancelled`；unknown／failed 由显式 retry 恢复 | `DeliveryRepository`、`DeliveryQueueRepository` | `delivery-repository.ts` | `PROGRESS_DELIVERY_EXPIRED`；repository-contract、delivery-worker 测试 |
-| automation／proactive／schedule | `BotRuntime.initialize／deleteBot`、`Admin`、`AutomationScheduler` | `records: scheduled-job`、`proactive-config`、`job-run`、`proactive-run` | 任务与运行记录分别写入；删除为单条删除 | 任务 id 随机；运行 id 随机；无 cursor | scopeKey／botId | 启动时重新装载启用任务；运行中断记录保留 | `AutomationRepository` | `automation-repository.ts` | `SCHEDULE_*`、`PROACTIVE_*`；automation 测试 |
-| statistics／projection | `BotFeatures`、`StatsEventAdapter`、`NativeHarness`、`Admin`、启动扩展 | `records: stats-session`、`stats-native`、`stats-auxiliary`、`stats-group`、`stats-group-event`、`stats-meta`、`stats-owned-start`；`stats_usage_calls`、`stats_message_facts`、`stats_group_projection`、`stats_projection_meta` | 事实记录单条写入；投影可重建，不参与业务事务 | 原始事实 id 幂等；投影覆盖写入 | botId／sessionId；scope | 投影缺数据保持 `unknown`；历史迁移只读证据 | `StatsDataPort`、`StatsProjectionRepository`、`StatsSessionRepository` | `stats-data.ts`、`stats-projection.ts`、`stats-session-repository.ts` | stats 测试 |
-| service profile／revision／acceptance／health／fence | composition root（`ProfileStore`）、`ServiceManagement`、`ServiceRuntime`、`Admin`、policy | `records: service-profile`、`capability-status`、`capability-acceptance`、`service-health`、`service-fence`、`service-job` | profile 保存与验收各自单条写入；fence 与 job 独立 | revision 不可变且必须递增；content hash 绑定 managed config 与 resource hash；验收绑定 persona revision 与 profile revision | serviceId／profileId／revision；personaId／revision | fence 与 job 保留，由人工或下一步操作解除 | `ProfileRepository`、`CapabilityAcceptanceRepository`、`ServiceHealthRepository`、`ServiceStateRepository` | `profile-repository.ts`、`capability-repository.ts`、`service-state-repository.ts` | `PROFILE_REVISION_IMMUTABLE`、`PROFILE_CONTENT_HASH_MISMATCH`、`PROFILE_REVISION_NOT_MONOTONIC`；service-contract／service-management 测试 |
-| evolution／lifecycle journal | `BotFeatures`、composition root | `records: evolution`、`evolution-content`；lifecycle journal 文件 | 任务保存与 journal 写入顺序保持原实现 | 任务 id 随机；phase 由状态机推进 | scopeKey／configId | 未完成 phase 在启动时按当前配置校正 | `EvolutionRepository` | `evolution-repository.ts` | `LIFECYCLE_*`；evolution／lifecycle 测试 |
-| runtime ownership／lock | `BotRuntime.initialize`、关闭流程 | `records: runtime` | claim／release 各为一个事务 | 仅 `owner` 与 pid | 数据目录 | 进程存活性检查；非 ESRCH 视为仍被占用 | `RuntimeOwnershipRepository`、`RuntimeLifecyclePort` | `runtime-ownership-repository.ts`、`persistence.ts` | `此数据目录已有活动 Harness 消费实例`、`STORE_CLOSED`；phase5 测试 |
-| telemetry／failure／session action | `BotRuntime`、`NativeHarness`、`Admin`、失败上下文、保留策略 | `records: turn-metric`、`turn-snapshot`、`failure`、`session-action` | 指标更新单条；session action 入队与输出在同一外层事务 | 指标 ownership 字段不可变；action 状态机 queued→running→终态 | scopeKey／sessionId | running action → `interrupted`；失败与指标按窗口保留 | `TurnMetricRepository`、`TurnSnapshotRepository`、`FailureRepository`、`SessionActionRepository` | `telemetry-repositories.ts` | `TURN_METRIC_INVALID`、`TURN_METRIC_OWNERSHIP_MISMATCH`、`SESSION_ACTION_CANCELLED`；session-actions／processing-failures 测试 |
-| workspace／history-location | `Assets`、`NativeHarness`、bot 删除、技能草稿、`Admin.directories` | `records: history-location`；工作区文件 | 历史文件先写临时文件再 rename；位置记录随后写入 | sessionId 为键 | scopeKey；路径由 identity 推导，不接受模型路径 | 无迁移；旧位置在写入时移动 | `HistoryLocationRepository`、`ChatHistoryPort`、`BotHistoryPort`、`WorkspacePort` | `files/workspace-files.ts`、`bot-history.ts` | `BOT_HISTORY_PATH_INVALID`、`SESSION_NOT_FOUND`、`ASSET_CLEANUP_PATH_INVALID`；workspace-storage／bot-history 测试 |
-| channel cursor／reply metadata | 微信 adapter（channel port）、QQ 投递 | `records: cursor`、`channel-cursor`、`reply-sequence` | cursor 读写与 legacy 键双写在同一事务 | cursor 为平台 JSON 值；reply sequence 单调递增 | channelId／botId | 读取优先新键，回退 legacy 键 | `CursorStore`、delivery 内 reply sequence | `channel-cursor-repository.ts`、`delivery-repository.ts` | channel-compat／progress-delivery 测试 |
-| 交互状态（music／singing／voice library） | 音乐／翻唱工具、`BotRuntime` 清理、语音模型库 | `records: music-candidates`、`music-acquisition`、`singing-candidates`、`singing-attempt`、`voice-model-library` | 每条状态单次写入；清除写入显式 null | 状态绑定 session generation；候选集 id 随机 | scopeKey；generation | 状态随 generation 失效，不跨会话复用 | `MusicStateRepository`、`SingingStateRepository`、`VoiceLibrarySettingsRepository` | `session-state-repositories.ts` | `MUSIC_SESSION_CHANGED`、`SINGING_SESSION_CHANGED`；music-host／singing-host 测试 |
-| generic records（基础设施内部） | 仅基础设施 adapter；legacy／故障注入测试统一经 `tests/sqlite-fixtures.ts` | `records` 表（固定 kind） | 由所属 adapter 决定 | 不对外暴露 | 由所属 adapter 固定 | 由所属 adapter 负责 | 无公开 Port | `record-table.ts`（内部） | `record-access` 静态门禁 |
+| 边界 | 主要端口 | 必须保留的约束 |
+| --- | --- | --- |
+| bot / persona | `BotRepository`、`PersonaConfigRepository` | bot ID 与渠道账号归属；persona revision 单调递增，写入检查 expectedRevision；文件 journal 与生效版本一致 |
+| 会话与绑定 | `SessionRepository`、`BindingRepository` | scope 所有权；binding 与 session 原子更新；reset/activate 推进 generation；分页绑定筛选与集合 revision |
+| 入站消息与记忆 | `InboxRepository`、`MemoryRepository` | 入站按 scope/message ID 幂等；记忆更正使用 version CAS，forget tombstone 防止旧来源复活 |
+| 附件与媒体任务 | `AssetRepository`、`MediaJobRepository` | 附件记录与索引同事务；scope、来源会话与实际路径有明确归属；任务状态持久化 |
+| 投递 | `DeliveryRepository`、`DeliveryQueueRepository` | intent、attempt 与状态使用稳定身份；retry 复用原记录，按允许状态更新；不可自动重放未知结果 |
+| 自动化 | `AutomationRepository` | schedule/proactive 与运行记录归 scope/bot；启动恢复启用计划，保留中断记录 |
+| 统计 | `StatsDataPort`、`StatsProjectionRepository`、`StatsSessionRepository` | 事实幂等、投影可重建；缺少证据时保持 unknown，不伪造统计 |
+| 受管服务 | `ProfileRepository`、`CapabilityAcceptanceRepository`、`ServiceHealthRepository`、`ServiceStateRepository` | Profile revision 不可变，content hash 绑定配置/资源；验收绑定修订，health/fence/job 独立持久化 |
+| 运行与诊断 | `RuntimeOwnershipRepository`、`EvolutionRepository`、telemetry ports | 单数据目录运行所有权；演进 phase 持久化；指标 ownership 不可变，session action 有显式状态 |
+| 工作区与历史 | `HistoryLocationRepository`、`ChatHistoryPort`、`BotHistoryPort`、`WorkspacePort` | 路径由渠道身份推导；历史按需原子导出；删除仅处理该 bot/会话拥有的文件 |
+| 渠道与交互状态 | `CursorStore`、`MusicStateRepository`、`SingingStateRepository`、`VoiceLibrarySettingsRepository` | 渠道 cursor 按渠道/bot 隔离；音乐/翻唱候选绑定 scope、session generation，不跨会话复用 |
 
-## 事务与恢复规则
+底层 `records` 没有公开业务端口。其 kind 和读写只由所属基础设施 adapter 控制；需要 legacy 数据或故障注入的测试通过 `tests/sqlite-fixtures.ts`。
 
-1. 所有多步写入必须在一个 `SqliteDatabase.transaction` 内，或使用 `savepoint` 加入外层事务；拆分不得把原有原子操作变成多次独立提交。
-2. 恢复只做确定性转换：`processing → interrupted`、`sending → unknown`、running／queued job → `interrupted`、running session action → `interrupted`、pending progress → `cancelled`。不自动重放。
-3. 保留策略只删除终态记录（complete／sent／failed／cancelled／unknown 与窗口内失败），不删除 pending、sending 或未决 session action。
-4. 任何新增端口都必须带显式 scope／identity；不得接受模型提供的路径、身份或 record kind。
+## 事务与冲突
+
+`SqlitePersistence` 管理单连接，`UnitOfWork.transaction` 承载多步原子操作，嵌套复合写入使用 savepoint 或复用外层事务。拆分代码不得把原有原子操作改成独立提交。外部文件 journal 与数据库提交按所属 adapter 的恢复顺序处理，不能假定文件 I/O 也受 SQLite 回滚保护。
+
+新端口输入须包含明确 scope/identity，分页使用强类型 request/cursor。保留已有 revision/CAS 和错误类别：例如 `ConflictError`、`SESSION_OWNERSHIP_MISMATCH`、`PAGE_CURSOR_MISMATCH`、`PAGE_STALE`、`PAGE_CURSOR_INVALID` 及 Profile revision/content hash 错误。新增兼容性或 schema 变化应单独说明，不能藏在职责调整里。
+
+## 启动恢复
+
+| 持久状态 | 恢复行为 |
+| --- | --- |
+| 入站 `processing` | 标记 `interrupted` |
+| 投递 `sending` | 标记 `unknown`，不自动重发 |
+| pending 进度提醒 | 标记 `cancelled`，不发送陈旧提示 |
+| 媒体任务 running/queued | 标记 `interrupted`，不重放；目录清理遵守任务所有权和存活进程保护 |
+| session action running | 标记 `interrupted` |
+| 人格文件 journal | 先恢复 journal，再读取生效配置 |
+| Service fence / job | 保留状态，确认服务状态后显式恢复 |
+
+保留策略不得清除仍在排队、发送或未决操作所需的记录。会话、附件及任务目录清理边界见[架构概览](architecture.md#会话工作区与清理)。
 
 ## 验证入口
 
-- 静态边界：`npm run check:architecture`（见 `docs/architecture-boundaries.md`）。
-- 行为契约：`tests/repository-contract.test.ts` 对真实临时 SQLite 运行 contract 套件。
-- 完整门禁：`npm run verify:release`。
+`npm run check:architecture` 检查 SQL 与 repository 所有权；`tests/repository-contract.test.ts` 在真实临时 SQLite 上验证重开、隔离、CAS、cursor、事务回滚和恢复。相关业务测试验证各边界行为，完整发布使用 `npm run verify:release`。

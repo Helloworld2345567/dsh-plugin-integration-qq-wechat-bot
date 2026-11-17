@@ -1,41 +1,47 @@
-# Repository Responsibility Matrix
+# Repository responsibilities and recovery
 
 [简体中文](../repository-responsibility-matrix.md) | English
 
-This expands the stable business boundaries after Store/Repository separation, as described in [architecture boundaries](architecture-boundaries.md). It changes no runtime semantics: schemas, migrations, cursor encoding, codes, delivery, permissions, generation, cancellation and lifecycle remain intact.
+Application services depend on narrow `src/core/ports/` interfaces. SQLite/file implementations live under `src/infrastructure/`. See [architecture boundaries](architecture-boundaries.md) and [ADR 0005](adr/0005-repository-ports.md). This page records business constraints; ports, adapters and tests own exact methods, tables and error codes.
 
-Each boundary has one Port in `src/core/ports/` and a SQLite/file adapter in `src/infrastructure/`. Callers see Ports only.
+## Responsibilities
 
-| Boundary | Current callers | Table/record kind | Transaction | Revision/cursor/CAS | Ownership/isolation | Restart recovery | Port | Adapter | Preserved errors/tests |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Bot/persona config | Runtime, Features, Management, Admin, automation, media, delivery, deletion | records: bot, config, config-version, persona-files; persona files | saveBot validation in one transaction; saveConfig writes revision/baseline atomically after file journal | Monotonic config.revision, expectedRevision CAS with ConflictError; file digest checked | bot.id, config.id; unique (channel, accountId) | Recover .pending.json first; fill missing default baselines without changing revision | BotRepository, PersonaConfigRepository | bot-repository.ts, persona-repository.ts, files/persona-files.ts | Missing/archived config, missing bot, account already bound, ConflictError; personas/core |
-| Session/binding/generation | Runtime, Features, Management, Admin, delivery, automation, Assets, failures, music/singing | records: binding, session; collection_revisions: sessions | Binding/session together; enqueue uses outer transaction | Generation increments only reset/activate; keyset updatedAt + id, cursor binds filter fingerprint/revision | scopeKey hashes platform, botId, accountId, kind, channelId, senderId | Backfill sessions from bindings/delivery; processing inbound becomes interrupted | SessionRepository, BindingRepository | session-repository.ts | SESSION_OWNERSHIP_MISMATCH, missing/nonowned session, PAGE_CURSOR_MISMATCH, PAGE_STALE, PAGE_CURSOR_INVALID; repository-contract/core |
-| Message/inbox | Runtime, latest automation context, failures, stats migration, deletion | inbox | INSERT OR IGNORE per receipt; per-state update with metric | Idempotent (scope,id); no cursor | scope | processing → interrupted; pending resumes scheduling | InboxRepository | inbox-repository.ts | Inbound validation; core/processing-failures |
-| Memory | NativeHarness tools, Admin | memory, memory_sources, forgotten | correctMemory/forget update and tombstone atomically | version CAS; ConflictError | scope | Persistent tombstones prevent old source resurrection | MemoryRepository | memory-repository.ts | Invalid length, source removed/corrected; core |
-| Asset/attachment/media job | Assets, MediaService, delivery, Harness tools, stats migration, deletion | records: asset, job; asset_index | Asset/index together; patchJob stepwise | asset.id/job.id | scopeKey, session ownership, job scope | Running/queued jobs interrupted; rebuild missing index | AssetRepository, MediaJobRepository | asset-repository.ts, media-job-repository.ts | missing/nonowned attachment, ASSET_OUTSIDE_STORAGE; media-assets/media-quota |
-| Delivery/attempt/recovery | Runtime, DurableDeliveryWorker, Admin, automation, failures, stats migration, deletion | deliveries, records: reply-sequence; collection_revisions: deliveries | enqueue savepoint; state update with statistical observation | Intent hash(scope,session,source,turn,index); retry reuses ID with unknown/failed CAS; filter/revision cursor | scopeKey, botId, sessionId, turnId | sending → unknown without replay; pending progress → cancelled; explicit retry for unknown/failed | DeliveryRepository, DeliveryQueueRepository | delivery-repository.ts | PROGRESS_DELIVERY_EXPIRED; repository-contract/delivery-worker |
-| Automation/proactive/schedule | Runtime initialize/delete, Admin, AutomationScheduler | scheduled-job, proactive-config, job-run, proactive-run | Tasks/runs written separately; single delete | Random task/run IDs; no cursor | scopeKey/botId | Reload enabled tasks; retain interrupted runs | AutomationRepository | automation-repository.ts | SCHEDULE_*, PROACTIVE_*; automation |
-| Statistics/projection | Features, StatsEventAdapter, NativeHarness, Admin, startup extensions | stats-session/native/auxiliary/group/group-event/meta/owned-start; stats_usage_calls, stats_message_facts, stats_group_projection, stats_projection_meta | Single fact writes; rebuildable projection outside business transactions | Idempotent fact IDs; overwrite projection | botId/sessionId/scope | Missing facts stay unknown; historical migration reads evidence only | StatsDataPort, StatsProjectionRepository, StatsSessionRepository | stats-data.ts, stats-projection.ts, stats-session-repository.ts | stats |
-| Service Profile/revision/acceptance/health/fence | Composition root/ProfileStore, ServiceManagement, ServiceRuntime, Admin, policy | service-profile, capability-status, capability-acceptance, service-health, service-fence, service-job | Profile/acceptance single writes; fence/job independent | Immutable increasing revision; hash binds config/resource hashes; acceptance binds persona/Profile revisions | serviceId/profileId/revision, personaId/revision | Retain fences/jobs for explicit recovery | ProfileRepository, CapabilityAcceptanceRepository, ServiceHealthRepository, ServiceStateRepository | profile-repository.ts, capability-repository.ts, service-state-repository.ts | PROFILE_REVISION_IMMUTABLE, PROFILE_CONTENT_HASH_MISMATCH, PROFILE_REVISION_NOT_MONOTONIC; service-contract/service-management |
-| Evolution/lifecycle journal | Features, composition root | evolution, evolution-content; journal files | Preserve task/journal write order | Random task ID, state-machine phases | scopeKey/configId | Reconcile unfinished phases with current config at startup | EvolutionRepository | evolution-repository.ts | LIFECYCLE_*; evolution/lifecycle |
-| Runtime ownership/lock | Runtime initialize/close | records: runtime | claim/release each transactional | owner and PID only | Data directory | Process liveness; non-ESRCH counts as occupied | RuntimeOwnershipRepository, RuntimeLifecyclePort | runtime-ownership-repository.ts, persistence.ts | Active consumer, STORE_CLOSED; phase5 |
-| Telemetry/failure/session action | Runtime, NativeHarness, Admin, failure context, retention | turn-metric, turn-snapshot, failure, session-action | Single metric updates; enqueue/action output share outer transaction | Immutable metric ownership; queued→running→terminal actions | scopeKey/sessionId | Running actions interrupted; metrics/failures retained by window | TurnMetricRepository, TurnSnapshotRepository, FailureRepository, SessionActionRepository | telemetry-repositories.ts | TURN_METRIC_INVALID, TURN_METRIC_OWNERSHIP_MISMATCH, SESSION_ACTION_CANCELLED; session-actions/processing-failures |
-| Workspace/history location | Assets, NativeHarness, deletion, skill drafts, Admin.directories | history-location; files | Temp-write/rename history, then record location | sessionId key | scopeKey; identity-derived paths, never model paths | No migration; move old location on write | HistoryLocationRepository, ChatHistoryPort, BotHistoryPort, WorkspacePort | files/workspace-files.ts, bot-history.ts | BOT_HISTORY_PATH_INVALID, SESSION_NOT_FOUND, ASSET_CLEANUP_PATH_INVALID; workspace-storage/bot-history |
-| Channel cursor/reply metadata | WeChat adapter, QQ delivery | cursor, channel-cursor, reply-sequence | New/legacy cursor dual write in one transaction | Platform JSON cursor; monotonic reply sequence | channelId/botId | Prefer new key, fallback to legacy | CursorStore, delivery reply sequence | channel-cursor-repository.ts, delivery-repository.ts | channel-compat/progress-delivery |
-| Interaction state: music/singing/voice library | Music/singing tools, Runtime cleanup, model library | music-candidates, music-acquisition, singing-candidates, singing-attempt, voice-model-library | One state write; explicit null for clearing | State binds generation; random candidate-set ID | scopeKey/generation | Invalidated by generation; no cross-session reuse | MusicStateRepository, SingingStateRepository, VoiceLibrarySettingsRepository | session-state-repositories.ts | MUSIC_SESSION_CHANGED, SINGING_SESSION_CHANGED; music-host/singing-host |
-| Generic records (internal) | Infrastructure only; legacy/fault tests through tests/sqlite-fixtures.ts | records, fixed kinds | Adapter-owned | Not exposed | Adapter-owned keys | Adapter-owned | No public Port | record-table.ts | record-access gate |
+| Boundary | Main ports | Preserved constraints |
+| --- | --- | --- |
+| Bot / persona | `BotRepository`, `PersonaConfigRepository` | Bot/channel-account ownership; monotonic persona revisions and expectedRevision checks; file journal and active version consistency |
+| Sessions / bindings | `SessionRepository`, `BindingRepository` | Scope ownership; atomic binding/session updates; reset/activate advance generation; cursors bind filters and collection revision |
+| Inbox / memory | `InboxRepository`, `MemoryRepository` | Scope/message-ID inbox idempotency; version CAS for memory correction; forget tombstones prevent stale-source resurrection |
+| Assets / media jobs | `AssetRepository`, `MediaJobRepository` | Asset/index writes in one transaction; explicit scope/source-session/path ownership; durable job state |
+| Delivery | `DeliveryRepository`, `DeliveryQueueRepository` | Stable intent/attempt/state identity; retry reuses records with allowed-state checks; unknown results are not automatically replayed |
+| Automation | `AutomationRepository` | Schedules/proactive settings and runs belong to scope/bot; restart reloads enabled schedules and preserves interrupted runs |
+| Statistics | `StatsDataPort`, `StatsProjectionRepository`, `StatsSessionRepository` | Idempotent facts, rebuildable projections; missing evidence remains unknown |
+| Managed services | `ProfileRepository`, `CapabilityAcceptanceRepository`, `ServiceHealthRepository`, `ServiceStateRepository` | Immutable Profile revisions, configuration/resource content hashes, revision-bound acceptance and durable health/fence/jobs |
+| Runtime / diagnostics | `RuntimeOwnershipRepository`, `EvolutionRepository`, telemetry ports | Exclusive data-directory ownership, durable evolution phases, immutable metric ownership and explicit session-action states |
+| Workspace / history | `HistoryLocationRepository`, `ChatHistoryPort`, `BotHistoryPort`, `WorkspacePort` | Identity-derived paths; atomic on-demand history exports; deletion only touches owned bot/session files |
+| Channel / interaction state | `CursorStore`, `MusicStateRepository`, `SingingStateRepository`, `VoiceLibrarySettingsRepository` | Channel/bot cursor isolation; music/singing candidates bind scope and session generation, without cross-session reuse |
 
-The error column describes preserved legacy human messages in English; it does not rename machine error codes or alter runtime matching.
+Raw `records` has no public business port. Owning infrastructure adapters control kinds and access; legacy/fault-injection tests use `tests/sqlite-fixtures.ts`.
 
-## Transactions and recovery
+## Transactions and conflicts
 
-1. Multi-step writes stay within one `SqliteDatabase.transaction`, or join through `savepoint`; separation must not turn atomic work into independent commits.
-2. Recovery makes deterministic transitions only: processing → interrupted, sending → unknown, running/queued jobs → interrupted, running session actions → interrupted, pending progress → cancelled. No automatic replay.
-3. Retention deletes terminal records only (complete/sent/failed/cancelled/unknown and windowed failures), not pending/sending/unresolved actions.
-4. New ports require explicit scope/identity and never model-supplied paths, identities or record kinds.
+`SqlitePersistence` owns one connection. `UnitOfWork.transaction` provides multi-step atomicity; nested composite writes use savepoints or the outer transaction. Refactoring must not split atomic operations into independent commits. File journals and database commits follow each adapter's recovery sequence; SQLite rollback does not cover file I/O.
 
-## Verification entries
+New ports require explicit scope/identity and typed pagination requests/cursors. Preserve revision/CAS and existing error categories, including `ConflictError`, `SESSION_OWNERSHIP_MISMATCH`, `PAGE_CURSOR_MISMATCH`, `PAGE_STALE`, `PAGE_CURSOR_INVALID` and Profile revision/content-hash errors. Explain schema or compatibility changes separately instead of hiding them in responsibility changes.
 
-- Static: `npm run check:architecture`, detailed in [architecture boundaries](architecture-boundaries.md).
-- Behavioral: `tests/repository-contract.test.ts` against real temporary SQLite.
-- Full gate: `npm run verify:release`.
+## Startup recovery
+
+| Persisted state | Recovery |
+| --- | --- |
+| Inbox `processing` | Mark `interrupted` |
+| Delivery `sending` | Mark `unknown`, without automatic replay |
+| Pending progress notice | Mark `cancelled`, without stale delivery |
+| Media job running/queued | Mark `interrupted`; directory cleanup respects ownership and live processes |
+| Session action running | Mark `interrupted` |
+| Persona file journal | Recover journal before reading active configuration |
+| Service fence / job | Preserve until service state is resolved and recovery is explicit |
+
+Retention must preserve records required by queued, sending or unresolved operations. See [session/workspace cleanup](architecture.md#sessions-workspaces-and-cleanup) for deletion boundaries.
+
+## Verification
+
+`npm run check:architecture` checks SQL/repository ownership. `tests/repository-contract.test.ts` uses real temporary SQLite for reopen persistence, isolation, CAS, cursors, rollback and recovery. Related business tests cover each boundary; `npm run verify:release` runs the complete source release gate.

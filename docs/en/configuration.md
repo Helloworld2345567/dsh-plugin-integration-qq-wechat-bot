@@ -6,53 +6,43 @@ This page documents only configuration read by current code/tests. Setting an un
 
 ## Precedence and general rules
 
-- The installer/launcher inject product-profile directories together; existing Harness profiles do not automatically adopt them.
-- The Services panel owns the image endpoint, default model, key variable name and ComfyUI workflow. Choose the image protocol when creating each bot, and change it later in that bot's media settings. `openAiKeyEnv` selects the credential variable, defaulting to `OPENAI_API_KEY` when unset. The host passes the name and corresponding credential to the worker, and the image script reads that variable directly. Endpoint, default model, protocol and workflow are passed as explicit arguments without environment fallbacks. Users can set `image_generation.model` for one OpenAI-compatible image request without changing the saved default, endpoint or credential. Failures never silently select another model. ComfyUI model selection follows the configured workflow.
-- QQ/WeChat, chat-model and media-analysis credentials belong to Harness credentials or controlled worker injection, not personas, repositories, CLI arguments or archives.
-- Environment changes do not increment persona revisions and usually require restarting the inheriting Harness/product process. Persona edits create revisions; bot settings save independently. Both apply next turn.
-- Directory variables have defaults; set them before installation/start only when overriding. Use no real absolute paths in Issues, logs or examples.
+- Personas own prompts and files; each bot stores its model, replies, media, tool and skill permissions. Bots can share personas; switching preserves history, bot settings and session overrides.
+- Persona edits create revisions; bot settings save independently. Both apply next turn, while running turns keep frozen configuration. Existing bots copy runtime settings once from their V4 persona; later legacy persona-field edits cannot overwrite them.
+- Configure image services under Services and select them in bot media settings; other media use managed Service Profiles. Harness credentials owns QQ/WeChat, chat-model and media-analysis credentials.
 
 ## Product and runtime directories
 
+Environment variables do not change persona revisions; changes normally require restarting the process that inherits them. Configure paths locally and use placeholders in public reports.
+
 Standalone scripts directly accept only `BOT_HOME`, `BOT_WORKSPACE_ROOT` and `BOT_PYTHON` for operator directory configuration. Children receive fixed `DSH_HOME=BOT_HOME`, `DSH_AGENTS_HOME=BOT_HOME/agents`, `BOT_PERSONAS_ROOT=BOT_HOME/personas`, and `BOT_DATA_HOME=BOT_WORKSPACE_ROOT/.runtime/storages/bot-integration`. External values with those names do not override product layout. Only existing-Harness/direct-plugin launches use their individual defaults.
 
-None of the variables below changes persona revisions.
 
-| Variable/configuration | Sensitivity | Default behavior and scope | Restart | Standalone-only? | Package/Issue guidance |
-| --- | --- | --- | --- | --- | --- |
-| `BOT_HOME` | Path may reveal private information | Product root; defaults to working-directory `.runtime/bot-data`; used by launcher, lifecycle and installation records | Yes | Primarily | Use `<absolute-product-home>` placeholders |
-| `DSH_HOME` | Path may be private | Existing-Harness/direct-plugin data-root fallback; participates in plugin-directory derivation. Standalone fixes it to `BOT_HOME` | Yes | No | Names/placeholders only |
-| `BOT_DATA_HOME` | Path may be private | Existing/direct-plugin SQLite directory, ahead of `DSH_HOME` derivation. Standalone fixes workspace `.runtime/storages/bot-integration` | Yes | No | No real paths |
-| `BOT_WORKSPACE_ROOT` | Path may be private | Defaults to working-directory `.runtime/workspaces`; first standalone install writes `BOT_HOME/workspace.json`, reused at startup. Sessions, attachments, caches and worker workspaces | Yes | No | No real/database/log paths |
-| `BOT_PERSONAS_ROOT` | Path may be private | Existing/direct-plugin persona root, otherwise derived from plugin data. Standalone fixes `BOT_HOME/personas` | Yes | No | No real paths |
-| `DSH_AGENTS_HOME` | Path may be private | Harness agents; standalone injects `BOT_HOME/agents`, not an independent operator setting | Yes | Primarily | No real paths |
-| `BOT_PYTHON` | Nonsensitive config | Media interpreter; existing Harness defaults to `python`, standalone to `BOT_HOME/media-venv`. Requires Python 3.12/3.13 and base requirements | Yes | No | Name only, no local interpreter path |
-| `OPENAI_API_KEY` or the variable selected in Services | **Secret** | Credential source for OpenAI-compatible image services; the image script reads the variable selected by `openAiKeyEnv`, defaulting to `OPENAI_API_KEY` when no name is configured. ComfyUI does not use this key | After changing the value | No | Variable name only; exclude real values from packages, Issues, logs and `.env.example` |
-| `BOT_ANALYSIS_API_KEY` | **Short-lived secret** | Fixed ASR/media worker injection name. Key comes from Harness model-provider credentials and is injected for each subprocess, not operator-supplied | No manual setting/restart | No | No real/fabricated values; not public configuration |
-| `BOT_VOICE_MODELS_ROOT` | Path may be private | Initial voice-library root; saved panel settings win. Models/weights/reference audio remain external | Yes, or reopen/refresh service | No | No real/weight paths or files |
-| `BREEZE_TTS_URL` | Nonsensitive config | Default Breeze-TTS-2.cpp HTTP address; saved panel address wins | Yes, or reopen/refresh | No | Placeholders; no credentials/runtime logs |
-| `GPT_SOVITS_ROOT` | Path | Default external GPT-SoVITS startup directory; saved panel value wins. Used only by explicit Start, never automatic | Yes | No | Placeholders only |
-| `BREEZE_TTS_ROOT` | Path | Default external Breeze startup directory; saved panel value wins. Explicit Start only | Yes | No | Placeholders only |
-| `BREEZE_TTS_VOICES_ROOT` | Path | Default `.breeze` directory; saved panel value wins; refresh discovers saved voices | Yes, or refresh | No | Placeholders only |
-| `BOT_LAUNCH_TOKEN` | **Runtime secret nonce** | Random per `scripts/start.mjs` launch for local launcher/bot/lifecycle IPC stop/ready/restart handshake; never fix manually | Launcher-managed | Yes | Never record, copy or commit |
-| `BOT_OPEN_DIRECTORY` | Short-lived private path | Windows Open directory injects a validated path into a PowerShell helper; not user configuration | Per action | No | No real values or `.env.example` entry |
+| Variable/configuration | Default behavior and scope | Restart |
+| --- | --- | --- |
+| `BOT_HOME` | Product root; defaults to working-directory `.runtime/bot-data`; used by launcher, lifecycle and installation records | Yes |
+| `DSH_HOME` | Existing-Harness/direct-plugin data-root fallback; participates in plugin-directory derivation. Standalone fixes it to `BOT_HOME` | Yes |
+| `BOT_DATA_HOME` | Existing/direct-plugin SQLite directory, ahead of `DSH_HOME` derivation. Standalone fixes workspace `.runtime/storages/bot-integration` | Yes |
+| `BOT_WORKSPACE_ROOT` | Defaults to working-directory `.runtime/workspaces`; first standalone install writes `BOT_HOME/workspace.json`, reused at startup. Sessions, attachments, caches and worker workspaces | Yes |
+| `BOT_PERSONAS_ROOT` | Existing/direct-plugin persona root, otherwise derived from plugin data. Standalone fixes `BOT_HOME/personas` | Yes |
+| `BOT_PYTHON` | Media interpreter; existing Harness defaults to `python`, standalone to `BOT_HOME/media-venv`. Requires Python 3.12/3.13 and base requirements | Yes |
+| `OPENAI_API_KEY` or the variable selected in Services | Credential source for OpenAI-compatible image services; the image script reads the variable selected by `openAiKeyEnv`, defaulting to `OPENAI_API_KEY` when no name is configured. ComfyUI does not use this key | After changing the value |
+| `BOT_VOICE_MODELS_ROOT` | Initial voice-library root; saved panel settings win. Models/weights/reference audio remain external | Yes, or reopen/refresh service |
+| `BREEZE_TTS_URL` | Default Breeze-TTS-2.cpp HTTP address; saved panel address wins | Yes, or reopen/refresh |
+| `GPT_SOVITS_ROOT` | Default external GPT-SoVITS startup directory; saved panel value wins. Used only by explicit Start, never automatic | Yes |
+| `BREEZE_TTS_ROOT` | Default external Breeze startup directory; saved panel value wins. Explicit Start only | Yes |
+| `BREEZE_TTS_VOICES_ROOT` | Default `.breeze` directory; saved panel value wins; refresh discovers saved voices | Yes, or refresh |
+
+The host injects `BOT_ANALYSIS_API_KEY` from Harness credentials per task; the launcher generates `BOT_LAUNCH_TOKEN`; directory-opening actions temporarily inject `BOT_OPEN_DIRECTORY`. Do not set, record or commit these runtime values.
 
 The OpenAI-compatible address saved in the Services panel must be HTTPS without credentials, query or fragment. The key field stores only an uppercase environment-variable name, never its value. ComfyUI uses the saved local `comfyUiBaseUrl` and API workflow path. Direct script calls use `--protocol`, `--base-url`, `--model` and `--workflow` for the relevant settings; `--api-key-env` selects the credential variable and defaults to `OPENAI_API_KEY`. A missing selected credential fails without trying another variable. See the [image-generation skill](../../skills/image-generation/SKILL.md).
 
+Address, model, protocol and workflow are explicit arguments, without environment fallbacks. OpenAI-compatible requests can set `image_generation.model` for one operation without changing defaults or automatically switching models on failure; ComfyUI models come from the workflow.
+
 ## Installer, launcher and Harness variables
 
-These do not change persona revisions.
+`BOT_INSTALL_LAYERS` defaults to required `core,basic-media`, with optional `voice-generation`, `music`, `singing-rvc`; CLI `--layers=` takes priority. `BOT_SOURCE_ROOT` is for source installation, testing and rollback validation only.
 
-| Variable/argument | Sensitivity | Purpose/default | Restart | Scope | Package/Issue guidance |
-| --- | --- | --- | --- | --- | --- |
-| `BOT_INSTALL_LAYERS` | Nonsensitive | Layer list; `--layers=` wins. Defaults to required `core,basic-media`; optional `voice-generation`, `music`, `singing-rvc` | Reinstall | Standalone installer | Layer names, no local paths |
-| `BOT_SOURCE_ROOT` | Path | Source-root override for local source/test/rollback validation; not normal release installation | Reinstall | Development/test/rollback | No real paths |
-| `DSH_PROFILE` | Harness/CLI-managed | Selected profile; plugin does not read it, define a default or write credentials | Harness-managed | Existing Harness/CLI | `<profile>` only |
-| `DSH_PROFILE_DIR` | Harness-managed private path | Current profile directory; plugin does not read it or define a default | Harness-managed | Existing Harness/CLI | No real paths |
-| `DSH_SESSION_ID` | Runtime identifier | Harness test isolation; not plugin configuration | Harness-managed | Harness/testing | No real session IDs |
-| `DSH_WEB_URL` | Runtime information | Harness-managed Web URL; not a product endpoint setting | Harness-managed | Harness/testing | No real URLs |
-
-Existing profiles use `dsh plugin --profile <profile> add .`; standalone profiles use `scripts/install.mjs`, `scripts/start.mjs`, `scripts/stop.mjs`. Do not forge profile identity with environment variables.
+Harness manages `DSH_PROFILE`, `DSH_PROFILE_DIR`, `DSH_SESSION_ID` and `DSH_WEB_URL`; they are not plugin settings. Existing Harness installs with `dsh plugin --profile <profile> add .`; standalone products use `scripts/install.mjs`, `scripts/start.mjs` and `scripts/stop.mjs`.
 
 ## Plugin Config (not environment variables)
 
@@ -60,23 +50,23 @@ TTS and STS voices are independent. Refresh under **Bots → Media** scans saved
 
 **Processing replies** under **Bots → Run** controls stage notices during unfinished private tasks. It defaults on, at 60-second intervals configurable from 10–3600 seconds; off sends final results only.
 
-`bot.settings` independently stores models, media, reply behavior, image style, tools and skills. Existing bots copy settings once from their V4 persona on first load. Later `bot.save` preserves settings when absent and replaces them in full when supplied. Persona files retain V4 and legacy runtime fields for reading compatibility, but those fields cannot overwrite migrated bot settings. Personas edits ID, name, prompt and files only; switching preserves bot settings and session overrides.
-
 The main Config schema has these fields, configurable in the Harness bundle:
 
-| Field | Default/purpose | Restart | Persona revision |
-| --- | --- | --- | --- |
-| `dataDir` | Bot runtime directory; absent value derives from `BOT_DATA_HOME`, `DSH_HOME` and `.runtime/bot-data` | Plugin reload | No |
-| `python` | Media worker interpreter; otherwise `BOT_PYTHON` or `python` | Plugin reload | No |
-| `debounceMs` | Merge delay for inbound messages in one session; `2000` ms, range `0–60000` | Plugin reload | No |
-| `autoStart` | `true`; `false` loads panel/configuration/history and waits for explicit service start before channels/background tasks | Plugin reload | No |
-| `messageLocale` | `zh` (default) or `en` for all bots' help/results/errors/progress. Saves immediately under **Services → Bot service**, persisted by Harness | No; subsequent operations | No |
+| Field | Default/purpose | Restart |
+| --- | --- | --- |
+| `dataDir` | Bot runtime directory; absent value derives from `BOT_DATA_HOME`, `DSH_HOME` and `.runtime/bot-data` | Plugin reload |
+| `python` | Media worker interpreter; otherwise `BOT_PYTHON` or `python` | Plugin reload |
+| `debounceMs` | Merge delay for inbound messages in one session; `2000` ms, range `0–60000` | Plugin reload |
+| `autoStart` | `true`; `false` loads panel/configuration/history and waits for explicit service start before channels/background tasks | Plugin reload |
+| `messageLocale` | `zh` (default) or `en` for all bots' help/results/errors/progress. Saves immediately under **Services → Bot service**, persisted by Harness | No; subsequent operations |
 
 ### Workspaces and attachment cleanup
 
 A bot's custom Workspace path is a root. Both default and custom roots append `<botId>/<scopeKey>`; Agents work under `sessions/<sessionId>/`, with ordinary artifacts in `outputs/`. The channel media library remains separate, so new sessions can reuse retained media by attachment ID. The panel shows resolved directories.
 
 Workspace provides registered-byte statistics, kind/origin/cutoff filters, a cleanup preview and keep markers. Cleanup only removes selected registered attachments, protecting current sessions, active tasks, pending or retryable deliveries and kept items. Session deletion removes its session directory; channel attachments require separate cleanup. Overview exports readable JSONL on request instead of rewriting it after every turn.
+
+Deleting the current session stops its tasks and creates a blank session retaining model/voice overrides; deleting an older session leaves the current one unaffected. User files outside session directories, channel attachments and long-term memories remain. Bot deletion stops tasks, removes authorization and permanently clears its sessions, messages, memories, attachments, media jobs and automation records, retaining personas and other user files. The old bot ID stays reserved; use a new ID for a new bot.
 
 ### Language scopes
 
@@ -88,8 +78,16 @@ Panel-created personas receive initial text once in the current UI language. Fre
 
 ## Development/test-only variables
 
-These are read by test runners, not user configuration; do not copy them into production `.env` or Issues: `CI_PYTHON`, `BOT_TEST_PYTHON`, `BOT_TEST_TMP`, `BOT_TEST_WEB_TOOLS_SOURCE`, `NATIVE_TEST_RESULT`, `LIFECYCLE_NATIVE_FOLDER`. Runners also clear or temporarily set isolation variables such as `HOME`, `TEMP`, `npm_config_store_dir`.
+See [testing](testing.md) for interpreter, temporary-directory and native-test variables; do not copy them into production configuration.
 
 ## Contents excluded from environment/release files
 
 Do not put QQ/WeChat tokens, account/user/group IDs, Harness credentials, API keys, cookies, signed URLs, databases, full logs, weights or absolute local paths into `.env`, personas, Issues, PRs or npm archives. `.env.example` contains names, empty values and safe guidance only; it is not a credential template. See [security](../../SECURITY.en.md) and [support](../../SUPPORT.en.md).
+
+## Schedules, proactive conversations and progress
+
+Trusted private users can manage tasks in natural language, such as “remind me in ten minutes,” “say good night daily at midnight Beijing time” or “enable daily proactive chats,” without enabling local tools. Schedules support one-off, interval and daily zoned times, survive restarts and defer while busy. Proactive conversations default off; enabled defaults are three per day, quiet hours 00:00–09:00, at least 180 minutes apart and a 30-minute cooldown after user activity.
+
+Background tasks use the current session's history/persona and require a running host. Stopping the current task cancels reply generation; pausing/deleting the schedule stops future triggers. QQ proactive quotas and WeChat context validity are platform-controlled. Generation completion does not confirm delivery; consult delivery records.
+
+Processing replies calls the turn's chat model for private stage notices, falls back to local text on failure and stops on completion/cancellation. Groups, scheduled tasks and proactive conversations do not use these notices.

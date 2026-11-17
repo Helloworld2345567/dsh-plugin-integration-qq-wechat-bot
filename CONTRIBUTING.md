@@ -2,102 +2,25 @@
 
 简体中文 | [English](CONTRIBUTING.en.md)
 
-感谢参与本项目。项目维护简体中文与英文文档和界面；本文件描述代码、文档和发布流程。
+开发环境使用 Node.js 24+、Python 3.12/3.13、DeepSeek Harness `0.2.1-rc.5`；Windows 使用 PowerShell 7。初始化和按变更选择检查见[开发指南](docs/development.md)，命令用途、测试隔离与 CI 见[测试契约](docs/testing.md)，模块依赖见[架构边界](docs/architecture-boundaries.md)。
 
 ## 双语维护规范
 
-- 中文文档保留原路径；根目录和子包文档使用同名 `.en.md`，详细英文文档位于 `docs/en/`，文件名与 ADR 编号保持对应。
-- 每对文档顶部保留 `简体中文 | English` 互链；英文页面的文档导航优先链接英文对应页，源代码、许可证和单份英文技能说明共享原目标。
-- 功能、命令、配置、版本或限制变更必须在同一变更中同步两种语言，保持章节顺序、命令、配置键、数字和兼容性事实一致。
-- 术语统一使用：机器人 / bot，人格 / persona，会话 / session，服务配置 / Service Profile，投递 / delivery，能力 / capability，固定系统提示 / system message。名称、ID、用户内容与第三方原始诊断不自动翻译。
-- UI、系统提示和诊断通过语义 key 和参数管理；中英词条和占位符必须对应。内置 `SKILL.md` 和模型操作说明只维护英文运行指令，不复制两套运行时指令。
-- `npm run check:docs` 检查配对、互链、链接和锚点；`npm run check:contracts` 检查两版开发文档的命令契约。自动检查不能替代翻译语义审阅。
+- 中文文档保留原路径；根目录和子包英文文档使用 `.en.md`，详细英文文档位于 `docs/en/`，文件名与 ADR 编号对应。
+- 每对文档顶部保留 `简体中文 | English` 互链；正文优先链接同语言页面。功能、命令、配置、版本和限制须同批同步。
+- UI、固定提示和诊断使用语义 key 与参数，中英文词条和占位符对应。名称、用户内容及第三方原始诊断不自动翻译。
+- 内置技能及模型操作说明只维护一份英文运行指令。`npm run check:docs` 检查配对和链接，`npm run check:contracts` 检查命令一致性；翻译含义仍需人工审阅。
 
-## 开发入口与测试契约
+## 提交与评审
 
-首次初始化、目录职责、测试安全边界和按变更类型的最低验证见[开发指南](docs/development.md)；测试分层、变量分类、CI 对照和脱敏证据要求见[测试契约](docs/testing.md)；模块职责、合法依赖方向和扩展限制见[架构边界契约](docs/architecture-boundaries.md)。前两页是贡献者命令的唯一维护入口。
+- 从最新 `main` 创建短期分支，提交信息说明实际变化，一个 PR 聚焦一个问题。
+- PR 说明行为变化、兼容性或依赖影响、实际运行的检查与结果。未做原生集成或外部验收时写明原因，fixture 不代表真实平台或模型结果。
+- 发布归档使用 `npm run release:pack`，它包含统一源码门禁与归档检查；不必先重复运行相同发布门禁。
+- 没有明确授权时不得 push、publish 或发送平台消息。
 
-## 开发环境（Windows）
+## 依赖与数据
 
-- Windows 10/11，PowerShell 7。
-- Node.js 24 或更高版本；`package.json` 中的 Harness 运行时固定为 `0.2.1-rc.5`。
-- Python 3.12 或 3.13。基础媒体依赖安装自 `requirements.txt`，Edge TTS 是可选依赖，安装自 `requirements-voice-generation.txt`。
-- `ffmpeg` 和 `ffprobe` 可从 PowerShell 直接调用。
-- QQ、微信、Music、RVC、GPT-SoVITS、CUDA 和模型权重不是开发依赖，不应加入主包或 CI。
-
-不要把本机 Harness profile、运行数据、凭据、用户 ID 或服务端点复制到仓库。
-
-## 安装
-
-```powershell
-npm ci
-python -m pip install -r requirements.txt
-# 需要语音生成时再安装：
-python -m pip install -r requirements-voice-generation.txt
-```
-
-CI 使用经过记录的测试版本文件 `requirements-ci.txt` 和 `requirements-voice-generation-ci.txt`；它们用于可复现的 CI 验证，不替代用户输入文件。
-
-## 本地验证
-
-提交前至少运行：
-
-```powershell
-npm run check:environment
-npm run check:architecture
-npm run typecheck
-npm test
-npm run test:python
-npm run check:python-dependencies
-npm run build
-npm run check:docs
-npm run check:contracts
-npm run check:licenses
-npm run check:release
-npm run verify:release
-npm run release:pack
-$env:BOT_TEST_PYTHON = (Get-Command python).Source
-npm run test:native
-npm run test:lifecycle-native
-npm run test:install-smoke
-npm run audit:dependencies
-```
-
-`test:native` 需要可运行的 Harness 原生环境，安装 smoke 需要设置项目约定的测试 Python 解释器。没有 Harness 或外部平台凭据时，应在 PR 中说明哪些验收未运行及原因，不要用模拟结果替代。
-
-发布检查使用：
-
-```powershell
-npm run release:pack
-```
-
-该命令只在临时目录生成归档，验证归档内容后清理临时文件；不会提交或发布包。不要直接运行 `npm audit fix` 或 `npm audit fix --force`，依赖升级必须逐项评估。
-
-## 依赖和许可证
-
-- `package-lock.json` 使用 npm 公共 registry 的完整性校验；不要把区域镜像写入 lockfile。
-- `@deepseek-ai/dsh`、Cordis 和同一 Harness 运行时的 peer 包固定在当前兼容版本，未经兼容性证明不得升级。
-- 新增或升级依赖时，在 PR 中说明原因、运行时/开发时范围、许可证、上游地址、Node 24 和 Windows 验证结果。
-- 修改 Python 依赖时，同时更新版本范围、CI 测试版本说明和 `THIRD_PARTY_NOTICES.md`；不要把 CUDA、模型、RVC 或 Music 项目带入主依赖。
-- 供应链或许可证无法确认时先停止合并，并补充来源证据；不要凭猜测填写 commit、版权人或许可证。
-
-## 分支、提交和 PR
-
-- 从最新 `main` 创建短生命周期分支；不要直接改写共享分支历史。
-- 提交信息使用简洁的动词开头，建议遵循 `type: summary`，例如 `chore: ...`、`fix: ...`、`feat: ...`。
-- 一个 PR 聚焦一个问题，说明行为变化、兼容性边界、依赖/许可证影响和回滚方式。
-- PR 必须附上实际运行的命令和结果；如果跳过 Harness 原生测试、平台验收或外部服务测试，必须明确写出原因。
-- 不要在没有明确授权时 push、publish 或发送 QQ/微信/其他平台消息。
-- 不要在 PR 中上传凭据、运行时日志、数据库、用户数据、模型权重、签名下载链接或本机路径。
-
-## 不应提交的文件
-
-禁止提交或打包：
-
-- `.runtime/`、`.codex/`、`node_modules/`、虚拟环境、缓存和 `__pycache__/`；
-- 数据库、日志、归档（包括 `.tgz`）、临时输出和测试工作区；
-- `.env`、平台 token、API key、Harness credentials、用户 ID 或签名 URL；
-- RVC/GPT-SoVITS/CUDA 模型、checkpoint、索引和其他模型权重；
-- 外部 Music、QQ、微信或 TTS 服务的运行数据。
-
-凭据必须通过 Harness credentials 管理；图片服务的密钥只能由环境变量或受管配置提供。
+- npm lockfile 使用公共 registry；Harness 与 Cordis 版本变更须提供兼容性依据，不用升级依赖绕过测试失败，也不直接运行 `npm audit fix --force`。
+- 新增依赖说明用途、来源、许可证和运行环境验证。Python 依赖变更同步需求范围、CI 测试版本及[第三方声明](THIRD_PARTY_NOTICES.md)。来源或许可证未确认前不合并。
+- 凭据由 Harness credentials 管理；图片密钥通过受控环境注入。运行数据、端点、用户 ID、签名 URL、数据库、日志、模型权重、外部服务项目和本机 profile 不得提交或打包。
+- 临时文件和测试产物放在项目 `.codex/` 等约定目录，使用后清理。不要提交缓存、虚拟环境、归档或构建中间产物。

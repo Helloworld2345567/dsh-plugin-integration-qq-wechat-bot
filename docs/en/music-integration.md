@@ -1,37 +1,27 @@
-# Music Integration
+# Music search and download
 
 [简体中文](../music-integration.md) | English
 
-The plugin invokes Music search/download through the `musicdl_json_v1` JSON subprocess protocol. Music keeps its own Python environment/CLI; this plugin owns session identity, candidate selection, permissions, jobs, attachments and delivery.
+The plugin calls a separately deployed Music project through the `musicdl_json_v1` subprocess protocol. Operators manage that project and its Python environment; the bot owns permissions, session candidates, attachments and delivery.
 
-## Configuration
+## Configure and use
 
-A Music Service Profile's private `home` points to the project root, and `sources` orders `MiguMusicClient`, `KuwoMusicClient`, `QQMusicClient`, `NeteaseMusicClient`. Defaults enable Migu/Kuwo after full-download verification; enable others after complete search/download checks. No chat model, music HTTP port or per-persona interpreter is required.
+1. Register the project root in the managed Music Profile's private `home`; set source order in Services. Supported sources are `MiguMusicClient`, `KuwoMusicClient`, `QQMusicClient` and `NeteaseMusicClient`, with Migu and Kuwo enabled by default.
+2. Enable **Bots → Media → Music search and download** and select the Profile. This also enables `bot_music` and `music-download`. Bot settings retain only the Profile reference, enabled state and lyrics preference; lyrics are off by default.
+3. Download the best match by song/artist, or search and select a candidate. Candidates and original tracks belong to the current channel session; resetting the session invalidates old candidates.
 
-The Services panel manages source priority only, with a compact horizontal list for adding, removing and moving sources. The Music project directory comes from the deployment default or a legacy backend setting and is not selected again in the panel. The selected order is passed unchanged to the Music JSON interface.
+The Services panel does not separately select the project directory. The chat model cannot choose interpreters, output paths or media URLs. When a source needs authorization, the host injects `MUSIC_QQ_COOKIES` or `MUSIC_NETEASE_COOKIES` into the controlled subprocess as Cookie JSON or a semicolon-separated string; proxy configuration uses `MUSIC_HTTP_PROXY`. Harness manages credentials; bot settings, candidates and model context do not contain them.
 
-Persona `media.music` holds `profileRef`, `enabled` and `includeLyrics`, with both toggles defaulting to `false`. Enabling in the panel adds `bot_music` and `music-download`. Disabling immediately revokes further permissions for active jobs; grants take effect next turn. The current task keeps its frozen lyrics preference.
+## Conversion and delivery
 
-Operators/the host determine root directories, interpreters and output paths; model arguments cannot override them. Initial sources pass download acceptance without extra login. Future sources needing cookies/authorization must use Harness credentials, not persona/candidate/tool-result storage.
+`bot_sing action=sing` accepts `song/artist` or a selected `candidateSet/candidate`. An existing original track in the current session is reused. A conversion-only request does not also send the original song. Library tracks count as mixed audio and require an available RVC Profile with separation configured; see [RVC voice conversion](singing-conversion.md).
 
-## Sessions and delivery
+Downloads and named-song conversions produce complete MP3 files strictly below **20,000,000 bytes**. Compliant MP3s are reused; other sources are encoded in full from the original. Encoding starts at 192 kbps and selects 160/128/96/64 kbps as duration requires. If the complete song still cannot fit, the operation fails without truncating it. This policy is independent of [QQ's platform limit](qq-media-delivery.md).
 
-Search returns real candidates and a host-generated candidate-set ID. Download selects the best title/artist match or an explicitly selected prior candidate; the model does not construct media URLs. Candidates, original audio, lyrics and download records belong to the current channel session. Expired/cross-session candidates and results arriving after a reset cannot be used.
+Validated files become attachments and job temporary directories are cleaned. Download completion, attachment registration and platform delivery are separate states. Delivery recovery reuses the existing attachment without searching, downloading or converting again. Disabling the capability or revoking permissions prevents subsequent execution and delivery.
 
-QQ Music and NetEase search return source metadata first and resolve an audio URL only during acquisition, so third-party parsers cannot consume the single-source search deadline. When login access is needed, the host may inject `MUSIC_QQ_COOKIES` or `MUSIC_NETEASE_COOKIES` into the controlled Music subprocess (JSON or semicolon-separated cookies), and `MUSIC_HTTP_PROXY` for a proxy. These values never enter personas, candidates, logs, release files or model context.
+## Checks and limitations
 
-Songs enter the job directory, are validated and registered as session attachments, then temporary files are cleaned. `bot_sing action=sing` accepts `song/artist` or earlier `candidateSet/candidate`; an already acquired source for the same song/session is reused. Catalog songs are treated as mixed audio. The selected RVC Profile is checked before download, and the adapter validates separation. If only conversion was requested, the original song remains input and is not additionally queued for sending.
+**Check health** verifies only the environment and protocol. Acceptance requires a real search and full download, duration/decode checks, any required lyrics and delivery on the target platform. Records bind persona and Profile revisions and must be renewed after changes.
 
-Compliant native MP3 is delivered directly. Other sources are encoded once in full from the original, defaulting to 192 kbps, then choosing among 160/128/96/64 kbps according to duration. Downloaded songs and title-based covers must be strictly below 20,000,000 bytes, with actual size, full decode and duration checked. If they cannot fit, fail explicitly rather than truncate. WAV conversion of explicitly uploaded audio retains existing audio limits.
-
-Delivery reuses the attachment queue. Download completion, attachment registration and platform delivery are distinct. Retrying delivery reuses the completed attachment rather than searching/downloading again. Session stop, bot shutdown, permission revocation and deletion follow existing cancellation/ownership cleanup.
-
-## Checks and acceptance
-
-**Check health** calls `service.health` for environment/protocol only. Source availability does not prove a particular song is downloadable. Full downloads have separate `music` acceptance. Health binds the Profile revision; actual acceptance binds both persona and Profile revisions. Stored check times inform operators; opening the panel does not repeatedly run external processes.
-
-Acceptance includes real search, ambiguous candidate selection, complete download/decode, optional lyrics, subsequent conversion, stop, permission revocation, session reset and cross-session rejection. Verify QQ/WeChat attachments separately for format/size, confirming the original song remains complete.
-
-## Limitations / Known Issues
-
-Sources may change APIs, require authorization, return previews or reject songs; only downloading confirms availability. Input has a 100 MiB local-processing budget, generated audio supports 200 MiB, and QQ delivery supports 200 MiB with multipart above the direct threshold. WeChat ordinary attachments retain 20 MiB. Complete MP3 below 20,000,000 bytes is this feature's delivery policy, independent of QQ soft limits. Music does not supply RVC weights, separation models or music generation.
+Sources may disappear, require login or return previews; successful search does not guarantee a complete download. Validate new sources with a full download first. Music download supplies neither RVC/separation models nor music generation. Local input budgets and explicit-upload conversion limits are documented under [RVC voice conversion](singing-conversion.md).
