@@ -177,7 +177,8 @@
             "type": "number"
           },
           "maxBytes": {
-            "type": "number"
+            "type": "number",
+            "description": "Output byte limit. GIF defaults to 10000000; set the user's requested limit (up to 52428800). GIF preserves duration and fps, and iterates toward the limit without exceeding it."
           },
           "startSeconds": {
             "type": "number"

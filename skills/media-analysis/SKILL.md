@@ -13,6 +13,8 @@ Use `media_transform` for local image/video conversion. It accepts attachment ID
 
 Choose `image_convert`, `image_compress`, `image_resize`, `convert_mp4` or `convert_gif` from the tool schema. Supply only the options needed by the user's request. Preserve complete duration unless an excerpt was explicitly requested; the host reports actual format, dimensions, size and any partial result.
 
+For GIF, pass the user’s byte limit as `maxBytes` (for example, 40000000 for 40 MB); the default is 10000000. The converter uses a shared 32-color palette by default, preserves duration and fps, and searches for dimensions close to the limit. Report the actual output size and dimensions; a low-detail source or a dimension ceiling may leave unused budget. Platform delivery limits still apply.
+
 ## Calls
 
 - Download shared media: `media_download(url="https://v.douyin.com/…/")`. Supports configured image, gallery and video hosts and returns `assetId`, `kind`, `mime` and `name`.

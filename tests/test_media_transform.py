@@ -166,7 +166,7 @@ class VideoTransformTests(TransformFixture):
         source = self.clip(32.25, size='960x540')
         result = video_transform.execute(self.job(source, fps=24))
         detail = json.loads(result['text'])
-        self.assertGreater(detail['attempts'], 1)
+        self.assertGreater(detail['sampleAttempts'], 0)
         self.assertLess(Path(result['assets'][0]['path']).stat().st_size, 10_000_000)
         self.assertEqual(detail['durationSeconds'], 32.25)
         self.assertGreaterEqual(detail['fps'], 12)
@@ -190,6 +190,52 @@ class VideoTransformTests(TransformFixture):
         self.assertFalse((self.root/'result.gif').exists())
         self.assertFalse(list(self.root.glob('gif-parts-*')))
 
+    def test_requested_budgets_converge_without_dropping_fps_or_colors(self):
+        source = self.clip(8.25, size='320x180')
+        initial = json.loads(video_transform.execute(self.job(source, fps=24))['text'])
+        for ratio in (.43, .72):
+            budget = int(initial['bytes'] * ratio)
+            with self.subTest(budget=budget):
+                result = video_transform.execute(self.job(source, fps=24, maxBytes=budget))
+                detail = json.loads(result['text'])
+                self.assertLess(detail['bytes'], budget)
+                self.assertGreaterEqual(detail['budgetUtilization'], .95)
+                self.assertEqual(detail['targetBytes'], budget)
+                self.assertEqual((detail['fps'], detail['colors']), (24, 32))
+                self.assertEqual(detail['durationSeconds'], initial['durationSeconds'])
+        for budget in (0, True, float('nan'), video_transform.MAX_OUTPUT_BYTES+1):
+            with self.subTest(budget=budget), self.assertRaisesRegex(TransformError, 'INVALID_TRANSFORM_PARAMETERS'):
+                video_transform.execute(self.job(source, maxBytes=budget))
+
+        # An unrepresentative sample must not make a small first fit final.
+        with patch.object(video_transform, 'SPLIT_SECONDS', 3), \
+                patch.object(video_transform, 'estimate_edge', return_value=(64, 1)):
+            result = video_transform.execute(self.job(source, fps=24, maxBytes=int(initial['bytes']*.72)))
+        detail = json.loads(result['text'])
+        self.assertGreater(detail['attempts'], 1)
+        self.assertGreaterEqual(detail['budgetUtilization'], .95)
+        self.assertLess(detail['budgetUtilization'], 1)
+
+    def test_shared_palette_and_delta_frames_preserve_static_background(self):
+        source = self.root / 'overlay.mp4'
+        subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
+                        'color=c=gray:s=320x240:r=24:d=4[bg];testsrc2=s=64x64:r=24:d=4[fg];[bg][fg]overlay=128:80',
+                        '-c:v', 'libx264', '-threads', '1', str(source)], check=True, capture_output=True)
+        result = video_transform.execute(self.job(source))
+        target = Path(result['assets'][0]['path'])
+        with video_transform.gif_blocks(target) as (header, size, frames):
+            self.assertTrue(header[10] & 128)  # One shared global palette.
+            records = list(frames)
+            self.assertTrue(any(gce[3] & 1 for gce, _ in records[1:]))
+            self.assertTrue(any(video_transform.struct.unpack_from('<HH', pixels, 5) != size
+                                for _, pixels in records[1:]))
+        with Image.open(target) as image:
+            background = image.convert('RGB').getpixel((0, 0))
+            for index in range(image.n_frames):
+                image.seek(index)
+                self.assertEqual(image.convert('RGB').getpixel((0, 0)), background)
+        self.assertEqual(self.frames(target)[1], 4000)
+
     def test_failed_segment_does_not_leave_outputs(self):
         source = self.clip()
         with patch.object(video_transform, 'encode_segment', side_effect=TransformError('ENCODING_FAILED')):
@@ -202,8 +248,10 @@ class VideoTransformTests(TransformFixture):
         source = self.clip()
         first, second = self.root/'a.gif', self.root/'b.gif'
         job = self.job(source)
-        video_transform.encode_segment(job, source, first, 0, 0, 12, 12, (96,64), 128)
-        video_transform.encode_segment(job, source, second, 0, 12, 12, 12, (48,32), 128)
+        palette = self.root / 'palette.png'
+        video_transform.make_palette(job, source, palette, 0, 24, 12, (96,64), 128)
+        video_transform.encode_segment(job, source, first, 0, 0, 12, 12, (96,64), palette)
+        video_transform.encode_segment(job, source, second, 0, 12, 12, 12, (48,32), palette)
         with self.assertRaisesRegex(TransformError, 'GIF_SEGMENT_SIZE_MISMATCH'):
             video_transform.merge([first,second], self.root/'merged.gif',24,12,2)
         first.write_bytes(first.read_bytes()[:-4])

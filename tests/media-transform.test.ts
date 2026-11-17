@@ -45,7 +45,8 @@ test('transform validation rejects missing inputs and invalid parameters before 
   for(const [inputs,args] of [[[],{}],[['a','b'],{}],[['a'],{quality:0}],[['a'],{maxWidth:1.5}],[['a'],{format:'tiff'}],[['a'],{url:'https://example.com/file'}]] as const){assert.throws(()=>validateMediaParameters('image_convert',[...inputs],args));}
   assert.throws(()=>validateMediaParameters('image_resize',['a'],{}),/IMAGE_SIZE_REQUIRED/);
   assert.throws(()=>validateMediaParameters('convert_gif',['a'],{fps:11}));
-  assert.throws(()=>validateMediaParameters('convert_gif',['a'],{maxBytes:100}),/GIF_SIZE_LIMIT_FIXED/);
+  assert.doesNotThrow(()=>validateMediaParameters('convert_gif',['a'],{maxBytes:40_000_000}));
+  for(const maxBytes of [0,50*1024*1024+1,NaN,1.5])assert.throws(()=>validateMediaParameters('convert_gif',['a'],{maxBytes}),/INVALID_TRANSFORM_PARAMETERS/);
   assert.doesNotThrow(()=>validateMediaParameters('convert_gif',['a'],{}));
 });
 
