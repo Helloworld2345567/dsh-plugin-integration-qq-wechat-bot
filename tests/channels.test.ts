@@ -19,6 +19,19 @@ test('QQ group @ and private identities normalize without combining senders',()=
  const a=qqInbound(qq,{t:'GROUP_AT_MESSAGE_CREATE',d:{id:'m',content:'<@123> hello',group_openid:'room',author:{member_openid:'alice'},attachments:[{filename:'a.jpg',content_type:'image/jpeg',url:'//cdn.example/a'}]}})!;
  assert.equal(a.scope.kind,'group');assert.equal(a.scope.channelId,'room');assert.equal(a.scope.senderId,'alice');assert.equal(a.text,'hello');assert.equal(a.attachments[0].url,'https://cdn.example/a');assert.equal(qqInbound(qq,{t:'MESSAGE_CREATE',d:{}}),undefined);
 });
+test('QQ face segments become readable labels instead of leaking numeric IDs',()=>{
+ const input=qqInbound(qq,{t:'C2C_MESSAGE_CREATE',d:{id:'face',content:'早安<faceType=1,faceId="13",ext="eyJ0ZXh0Ijoi5ZGy54mZIn0=">晚安',author:{user_openid:'alice'}}})!;
+ assert.equal(input.text,'早安[QQ表情：呲牙]晚安');
+});
+test('QQ face segments without a label use a generic marker',()=>{
+ const input=qqInbound(qq,{t:'C2C_MESSAGE_CREATE',d:{id:'face-empty',content:'<faceType=6,faceId="0",ext="eyJ0ZXh0IjoiIn0=">',author:{user_openid:'alice'}}})!;
+ assert.equal(input.text,'[QQ表情]');
+});
+test('QQ malformed face metadata does not leak the encoded payload',()=>{
+ const input=qqInbound(qq,{t:'C2C_MESSAGE_CREATE',d:{id:'face-invalid',content:'<faceType=6,faceId="999",ext="not-base64-json">',author:{user_openid:'alice'}}})!;
+ assert.equal(input.text,'[QQ表情]');
+ assert.doesNotMatch(input.text,/faceType|faceId|not-base64/);
+});
 test('QQ microphone messages normalize the platform voice type and retain platform ASR',()=>{
  const input=qqInbound(qq,{t:'C2C_MESSAGE_CREATE',d:{id:'voice-only',content:'',author:{user_openid:'alice'},attachments:[{content_type:'voice',filename:'dc86e7940b9d33f718f09537ad2942f2.amr',url:'//multimedia.nt.qq.com.cn/voice',asr_refer_text:'  今天的天气怎么样？  '}]}})!;
  assert.equal(input.text,'');assert.equal(input.attachments.length,1);assert.equal(input.attachments[0].kind,'audio');assert.equal(input.attachments[0].mime,'audio/amr');assert.equal(input.attachments[0].transcript,'今天的天气怎么样？');assert.equal(input.attachments[0].url,'https://multimedia.nt.qq.com.cn/voice');

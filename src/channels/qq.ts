@@ -11,6 +11,25 @@ import {assertQQResponse,uploadQQAsset} from './qq-upload.js';
 
 const API='https://api.sgroup.qq.com';
 const QQ_ATTACHMENT_HOSTS=new Set(['multimedia.nt.qq.com.cn']);
+const QQ_FACE_TAG=/<faceType=\d+,faceId="[^"]*",ext="([^"]*)">/g;
+const QQ_FACE_EXTENSION_LIMIT=4096;
+
+function qqFaceLabel(encoded:string):string {
+  if(encoded.length>QQ_FACE_EXTENSION_LIMIT)return 'QQ表情';
+  try{
+    const decoded=Buffer.from(encoded,'base64').toString('utf8');
+    if(decoded.length>QQ_FACE_EXTENSION_LIMIT) return 'QQ表情';
+    const payload=JSON.parse(decoded) as {text?:unknown};
+    const text=typeof payload.text==='string'?payload.text.trim():'';
+    return text?`QQ表情：${text}`:'QQ表情';
+  }catch{return 'QQ表情';}
+}
+
+export function normalizeQQContent(value:unknown):string {
+  const content=typeof value==='string'?value:String(value??'');
+  return content.replace(QQ_FACE_TAG,(_match,_encoded:string)=>`[${qqFaceLabel(_encoded)}]`);
+}
+
 export function decryptBinding(encoded:string,key:string):string { const raw=Buffer.from(encoded,'base64');if(raw.length<=28)throw new Error('INVALID_BINDING_CREDENTIAL');const decipher=createDecipheriv('aes-256-gcm',Buffer.from(key,'base64'),raw.subarray(0,12));decipher.setAuthTag(raw.subarray(-16));return Buffer.concat([decipher.update(raw.subarray(12,-16)),decipher.final()]).toString('utf8'); }
 export function qqInbound(bot:BotInstance,event:any):InboundMessage|undefined {
   if(!['C2C_MESSAGE_CREATE','GROUP_AT_MESSAGE_CREATE'].includes(event.t))return;
@@ -27,7 +46,7 @@ export function qqInbound(bot:BotInstance,event:any):InboundMessage|undefined {
     const transcript=typeof a.asr_refer_text==='string'?a.asr_refer_text.trim()||undefined:undefined;
     return {name,mime,kind:mime.startsWith('image/')?'image':mime.startsWith('video/')?'video':mime.startsWith('audio/')?'audio':'file',url:String(a.url).startsWith('//')?`https:${a.url}`:a.url,transcript};
   });
-  return {id:String(data.id),scope:{botId:bot.id,platform:'qq',accountId:bot.accountId,kind:group?'group':'private',channelId:group?String(data.group_openid):sender,senderId:sender},text:String(data.content??'').replace(/<@!?\d+>/g,'').trim(),attachments,quoted:data.message_reference?{id:String(data.message_reference.message_id)}:undefined,reply:{target:group?String(data.group_openid):sender,kind:group?'group':'private',msgId:String(data.id)},timestamp:Date.now()};
+  return {id:String(data.id),scope:{botId:bot.id,platform:'qq',accountId:bot.accountId,kind:group?'group':'private',channelId:group?String(data.group_openid):sender,senderId:sender},text:normalizeQQContent(String(data.content??'')).replace(/<@!?\d+>/g,'').trim(),attachments,quoted:data.message_reference?{id:String(data.message_reference.message_id)}:undefined,reply:{target:group?String(data.group_openid):sender,kind:group?'group':'private',msgId:String(data.id)},timestamp:Date.now()};
 }
 export function qqGroupObservation(bot:BotInstance,event:any):ChannelEvent|undefined{
   if(!['GROUP_AT_MESSAGE_CREATE','GROUP_ADD_ROBOT','GROUP_DEL_ROBOT'].includes(event?.t)||!event.d)return;

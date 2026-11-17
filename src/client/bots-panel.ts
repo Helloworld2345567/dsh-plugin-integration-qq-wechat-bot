@@ -47,8 +47,6 @@ export interface BotsPanelProps {
   onRemoveTrustedUser:(bot:any, user:string)=>unknown;
   credential?:any;
   credentialForm?:any;
-  qr?:any;
-  qrForm?:any;
 }
 
 const h = (React:any, type:any, props:any, ...children:any[]) => React.createElement(type, props, ...children);
@@ -136,7 +134,6 @@ function botDetail(React:any, props:BotsPanelProps, bot:any){
       canCredentials?ui.button(t('credentials'),()=>props.onCredentials(bot),{disabled:props.busy||bot.enabled}):null,
     ),
     props.credential?.id===bot.id?props.credentialForm??null:null,
-    props.qr?.botId===bot.id?props.qrForm??null:null,
   );
   if(section==='workspace')content=h(React,'div',{className:'section-grid'},
     h(React, 'section', {className:'detail-section'},

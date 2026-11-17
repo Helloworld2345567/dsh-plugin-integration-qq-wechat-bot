@@ -146,34 +146,83 @@ test('bot page renders creation before data arrives and with no bots, then edits
   }finally{harness.restore();}
 });
 
-test('new bots save their own image protocol while preserving the other initial settings',async()=>{
+test('creating QQ and WeChat bots opens authorization and leaves settings defaults to the host',async()=>{
   const persona=configSchema.parse({id:'default',name:'默认',personaPrompt:'hello',model:{provider:'P',model:'model'},media:{image:{protocol:'comfyui'},voice:{enabled:false,protocol:'edge_tts'}}});
-  const summary={bots:[],configs:[persona],counts:{pendingDeliveries:0},health:{activeTasks:0}};
-  const calls:any[]=[],states:any[]=['bots',summary,'','','',false,[]];
+  const saved:any[]=[{id:'existing',name:'Existing',channel:'qq',configId:'default',settings:botSettingsFromConfig(persona)}];
+  const summary=()=>({bots:saved,configs:[persona],counts:{pendingDeliveries:0},health:{activeTasks:0}});
+  const calls:any[]=[],states:any[]=['bots',summary(),'','','',false,saved];
   const harness=panelHarness(states,body=>{
     calls.push(body);
-    if(body.name==='catalog.config')return{data:persona};
-    if(body.action==='bot.save')return{...body.input,settings:botSettingsSchema.parse(body.input.settings)};
-    if(body.name==='bots.list')return{data:[]};
-    return{data:summary};
+    if(body.action==='bot.save'){const bot={...body.input,settings:botSettingsFromConfig(persona)};saved.push(bot);return bot;}
+    if(body.action==='login.begin')return{status:'pending',attempt:body.input.id,qrImage:'data:image/png;base64,fixture'};
+    if(body.action==='skill.image.status'||body.action==='skill.media.status')return{};
+    if(body.name==='bots.list')return{data:saved};
+    return{data:summary()};
   });
   const field=(label:string)=>harness.render().find(node=>node.type==='label'&&node.children[0]===label).children[1];
   try{
-    await harness.start('new-bot-image-protocol');
-    for(const protocol of ['openai','comfyui']){
+    await harness.start('new-bot-authorization');
+    for(const channel of ['qq','weixin']){
       harness.render().find(node=>node.props?.['aria-label']==='新建机器人').props.onClick();await settlePanel();
-      if(protocol==='openai')assert.equal(field('生图协议').props.value,'openai');
-      field('ID').props.onChange({target:{value:protocol}});
-      field('名称').props.onChange({target:{value:protocol}});
-      field('生图协议').props.onChange({target:{value:protocol}});
+      const form=flattenPanel(harness.render().find(node=>node.props?.className==='card create-form'));
+      assert.deepEqual(form.filter(node=>node.type==='label').map(node=>node.children[0]),['ID','名称','渠道','人格']);
+      field('ID').props.onChange({target:{value:channel}});
+      field('名称').props.onChange({target:{value:channel}});
+      field('渠道').props.onChange({target:{value:channel}});
       await settlePanel();
       harness.render().find(node=>node.type==='button'&&node.children.includes('创建')).props.onClick();
       await settlePanel();await settlePanel();
       const created=calls.filter(body=>body.action==='bot.save').at(-1).input;
-      assert.equal(created.settings.media.image.protocol,protocol);
+      assert.equal('settings' in created,false);
       assert.equal('imageProtocol' in created,false);
-      assert.deepEqual({...created.settings,media:{...created.settings.media,image:persona.media.image}},botSettingsFromConfig(persona));
+      assert.deepEqual(calls.filter(body=>body.action==='login.begin').at(-1).input,{id:channel});
+      assert.ok(!calls.some(body=>body.name==='catalog.config'));
+      assert.equal(states[27],channel);assert.equal(states[28],'auth');assert.equal(states[15],false);
+      assert.equal(saved.at(-1).settings.media.image.protocol,'comfyui');
+      const dialog=harness.render().find(node=>node.type==='dialog'&&node.props['aria-label']==='扫码授权');
+      assert.ok(dialog);assert.equal(dialog.props['aria-modal'],true);
+      assert.ok(flattenPanel(dialog).some(node=>node.type==='img'&&node.props.src==='data:image/png;base64,fixture'));
+      flattenPanel(dialog).find(node=>node.type==='button'&&node.children.includes('关闭')).props.onClick();await settlePanel();
+      assert.ok(!harness.render().some(node=>node.type==='dialog'));
     }
+  }finally{harness.restore();}
+});
+
+test('creation failures keep the form, authorization retries keep the bot, and closing ignores a late QR response',async()=>{
+  const persona=configSchema.parse({id:'default',name:'默认',personaPrompt:'hello'}),saved:any[]=[],calls:any[]=[];
+  const summary=()=>({bots:saved,configs:[persona],counts:{pendingDeliveries:0},health:{activeTasks:0}});
+  const states:any[]=['bots',summary(),'','','',false,[]];let failSave=true,failLogin=true,finishLogin:(value:any)=>void;
+  const harness=panelHarness(states,async body=>{
+    calls.push(body);
+    if(body.action==='bot.save'){
+      if(failSave)throw Error('Save failed');
+      const bot={...body.input,settings:botSettingsFromConfig(persona)};saved.push(bot);return bot;
+    }
+    if(body.action==='login.begin'){
+      if(failLogin)throw Error('QR unavailable');
+      return new Promise(resolve=>{finishLogin=resolve;});
+    }
+    if(body.action==='skill.image.status'||body.action==='skill.media.status')return{};
+    return{data:body.name==='bots.list'?saved:summary()};
+  });
+  try{
+    await harness.start('new-bot-authorization-failure');
+    harness.render().find(node=>node.props?.['aria-label']==='新建机器人').props.onClick();await settlePanel();
+    for(const label of ['ID','名称'])harness.render().find(node=>node.type==='label'&&node.children[0]===label).children[1].props.onChange({target:{value:'new'}});
+    const create=async()=>{harness.render().find(node=>node.type==='button'&&node.children.includes('创建')).props.onClick();await settlePanel();await settlePanel();};
+    await create();assert.equal(states[3],'Save failed');assert.equal(states[15],true);assert.equal(states[19],null);
+    assert.ok(!calls.some(body=>body.action==='login.begin'));
+    failSave=false;await create();assert.equal(saved.length,1);assert.equal(states[15],false);
+    let dialog=harness.render().find(node=>node.type==='dialog');
+    assert.ok(flattenPanel(dialog).some(node=>node.props?.role==='alert'&&node.children.includes('QR unavailable')));
+    failLogin=false;flattenPanel(dialog).find(node=>node.type==='button'&&node.children.includes('授权')).props.onClick();await settlePanel();
+    dialog=harness.render().find(node=>node.type==='dialog');
+    assert.ok(flattenPanel(dialog).some(node=>node.props?.role==='status'&&node.children.includes('读取中…')));
+    dialog.props.onCancel({preventDefault:()=>{},stopPropagation:()=>{}});await settlePanel();
+    finishLogin!({status:'pending',attempt:'late',qrImage:'data:image/png;base64,fixture'});await settlePanel();await settlePanel();
+    assert.equal(states[19],null);assert.ok(!harness.render().some(node=>node.type==='dialog'));
+    assert.equal(saved.length,1);assert.equal(calls.filter(body=>body.action==='bot.save').length,2);
+    assert.equal(calls.filter(body=>body.action==='login.begin').length,2);
   }finally{harness.restore();}
 });
 
@@ -288,10 +337,10 @@ test('bot deletion still confirms, cancels and clears only matching authorizatio
     await harness.start('bot-delete');let tree=harness.render();
     assert.equal(tree.filter(n=>n.type==='button'&&n.children.includes('删除')).length,2);
     tree.find(n=>n.props?.['aria-label']==='删除机器人 sakura（1）').props.onClick();await settlePanel();
-    tree=harness.render();assert.match(tree.find(n=>n.props?.role==='dialog').props['aria-label'],/ID：1/);assert.match(tree.find(n=>n.props?.role==='dialog').props['aria-label'],/永久删除.*聊天记录/);
-    flattenPanel(tree.find(n=>n.props?.role==='dialog')).find(n=>n.type==='button'&&n.children.includes('取消')).props.onClick();await settlePanel();assert.deepEqual(deleted,[]);
+    tree=harness.render();assert.match(tree.find(n=>n.type==='form'&&n.props?.role==='dialog').props['aria-label'],/ID：1/);assert.match(tree.find(n=>n.type==='form'&&n.props?.role==='dialog').props['aria-label'],/永久删除.*聊天记录/);
+    flattenPanel(tree.find(n=>n.type==='form'&&n.props?.role==='dialog')).find(n=>n.type==='button'&&n.children.includes('取消')).props.onClick();await settlePanel();assert.deepEqual(deleted,[]);
     tree=harness.render();tree.find(n=>n.props?.['aria-label']==='删除机器人 sakura（1）').props.onClick();await settlePanel();
-    tree=harness.render();tree.find(n=>n.props?.role==='dialog').props.onSubmit({preventDefault:()=>{}});await settlePanel();await settlePanel();
+    tree=harness.render();tree.find(n=>n.type==='form'&&n.props?.role==='dialog').props.onSubmit({preventDefault:()=>{}});await settlePanel();await settlePanel();
     tree=harness.render();assert.deepEqual(deleted,['1']);assert.equal(states[18],null);assert.equal(states[19],null);
     assert.ok(!tree.some(n=>n.props?.['aria-label']==='删除机器人 sakura（1）'));assert.ok(tree.some(n=>n.props?.['aria-label']==='删除机器人 sakura（2）'));
     states[5]=true;tree=harness.render();assert.equal(tree.find(n=>n.props?.['aria-label']==='删除机器人 sakura（2）').props.disabled,true);

@@ -105,7 +105,7 @@ The ComfyUI start button searches upward from the workflow directory for a proje
 
 **Possible causes:** A misspelled key variable, the backend missing the selected variable or not restarted, incorrect protocol/endpoint/model/workflow saved in the Services panel, unsupported model or unavailable provider.
 
-**Recovery:** Check the endpoint, model and key variable under **OpenAI image generation**, and the endpoint and workflow under **ComfyUI** in Services. Both configurations can be saved together; each bot selects its image protocol during creation or later under **Media → Image**. Saved changes apply next turn. Inject the key securely into the selected variable and restart after changing its value. Legacy environment settings for endpoint, model, protocol and workflow no longer apply. Verify provider model support, then test one image. Defaults `https://api.openai.com/v1` / `gpt-image-2` do not imply third-party-provider support.
+**Recovery:** Check the endpoint, model and key variable under **OpenAI image generation**, and the endpoint and workflow under **ComfyUI** in Services. Both configurations can be saved together; new bots inherit the defaults, and their image protocol can be changed under **Media → Image**. Saved changes apply next turn. Inject the key securely into the selected variable and restart after changing its value. Legacy environment settings for endpoint, model, protocol and workflow no longer apply. Verify provider model support, then test one image. Defaults `https://api.openai.com/v1` / `gpt-image-2` do not imply third-party-provider support.
 
 **Sanitized evidence:** Field presence, model name, HTTPS status, error category and HTTP status class; no query parameters.
 
