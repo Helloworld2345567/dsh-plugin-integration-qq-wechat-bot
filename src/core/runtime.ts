@@ -156,11 +156,11 @@ export class BotRuntime {
     const command=this.inboundCommand(message);
     if(command){this.repos.inbox.mark(key,[message.id],'control');if(!this.quiescing||(command.name==='stop'&&(this.busy(key)||this.repos.telemetry.actions.sessionActions<SessionActionRecord>().some(action=>action.scopeKey===key&&['queued','running'].includes(action.state)))))await this.dispatchCommand(message,command);return;}
     const escaped=unescapeChat(message.text);if(escaped!==message.text){message={...message,text:escaped};this.repos.inbox.updateMessage(key,message);}
-    const stripped=message.text.trim();const onlyUrl=/^https?:\/\/\S+$/.test(stripped);const hold=/(?:先别|不要|暂不|等我).*(?:分析|处理|指令)/.test(stripped);
+    const stripped=message.text.trim();const hold=/(?:先别|不要|暂不|等我).*(?:分析|处理|指令)/.test(stripped);
     const uploadBinding=this.repos.sessions.binding(message.scope);
     if(!message.attachments.some(input=>input.kind==='audio'||input.kind==='file')||!permitted('bot_sing',this.effectiveConfig(uploadBinding),bot,message.scope))clearPendingSingingUpload(this.sessionPorts,uploadBinding);
     const awaitingSinging=hasPendingSingingUpload(this.sessionPorts,uploadBinding);
-    if(hold||onlyUrl||(!awaitingSinging&&!stripped&&message.attachments.length>0&&message.attachments.every(a=>a.kind==='video'||a.kind==='file'))){this.repos.inbox.mark(key,[message.id],'deferred');return;}
+    if(hold||(!awaitingSinging&&!stripped&&message.attachments.length>0&&message.attachments.every(a=>a.kind==='video'||a.kind==='file'))){this.repos.inbox.mark(key,[message.id],'deferred');return;}
     this.schedule(key);
   }
   private interrupt(scope:CallerScope,preserveActionId?:string):void {

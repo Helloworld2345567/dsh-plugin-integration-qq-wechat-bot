@@ -199,6 +199,10 @@ test('runtime batches every message, deduplicates events and changes persona wit
   setup.runtime.saveBot({...setup.store.bots.bot('one'),configId:'sakura'});await setup.runtime.receive(message('3','third'));await setup.runtime.process(scopeKey(scope()));
   assert.equal(batches[0].binding.sessionId,batches[1].binding.sessionId);assert.equal(batches[1].snapshot.config.id,'sakura');assert.equal(setup.store.deliveries.deliveries(['sent']).length,2);
 });
+test('URL-only messages start a turn without waiting for a follow-up message',async t=>{
+  let calls=0;const f=await runtimeFixture(t,async(_binding,messages)=>{calls++;assert.equal(messages[0].text,'https://example.com/article');return{turnId:'url',outputs:[],snapshot:freezeTurn(configSchema.parse({id:'x',name:'X',personaPrompt:'X'}),botSchema.parse({id:'one',name:'One',channel:'qq'}),scope(),messages.map(m=>m.id))};});
+  await f.runtime.receive(message('url','https://example.com/article'));assert.equal(f.store.inbox.messages(scopeKey(scope()),['pending']).length,1);await f.runtime.process(scopeKey(scope()));assert.equal(calls,1);
+});
 test('deferred video is silent, materialized only after instruction, handles stay scoped',async t=>{
   let calls=0;const f=await runtimeFixture(t,async(binding,messages)=>{calls++;assert.equal(messages.length,2);assert.ok(messages[0].attachments[0].handle);return{turnId:'t',outputs:[],snapshot:freezeTurn(configSchema.parse({id:'x',name:'X',personaPrompt:'X'}),botSchema.parse({id:'one',name:'One',channel:'qq'}),binding.scope,[])};});
   const clip=message('v','');clip.attachments=[{kind:'video',mime:'video/mp4',name:'video.mp4',bytes:Buffer.from('fixture').toString('base64')}];await f.runtime.receive(clip);await f.runtime.process(scopeKey(scope()));assert.equal(calls,0);assert.equal(f.store.assets.allAssets().length,0);
