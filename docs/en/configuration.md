@@ -72,6 +72,12 @@ The main Config schema has these fields, configurable in the Harness bundle:
 | `autoStart` | `true`; `false` loads panel/configuration/history and waits for explicit service start before channels/background tasks | Plugin reload | No |
 | `messageLocale` | `zh` (default) or `en` for all bots' help/results/errors/progress. Saves immediately under **Services → Bot service**, persisted by Harness | No; subsequent operations | No |
 
+### Workspaces and attachment cleanup
+
+A bot's custom Workspace path is a root. Both default and custom roots append `<botId>/<scopeKey>`; Agents work under `sessions/<sessionId>/`, with ordinary artifacts in `outputs/`. The channel media library remains separate, so new sessions can reuse retained media by attachment ID. The panel shows resolved directories.
+
+Workspace provides registered-byte statistics, kind/origin/cutoff filters, a cleanup preview and keep markers. Cleanup only removes selected registered attachments, protecting current sessions, active tasks, pending or retryable deliveries and kept items. Session deletion removes its session directory; channel attachments require separate cleanup. Overview exports readable JSONL on request instead of rewriting it after every turn.
+
 ### Language scopes
 
 UI follows Harness `locale.preference` independently of global `messageLocale`. UI switching does not rewrite system-message settings, personas, drafts or TTS `promptLang`/`textLang`.

@@ -32,7 +32,7 @@ export class SqliteSessionRepository implements SessionRepository, BindingReposi
     const previous = this.records.get<SessionRecord>('session', binding.sessionId);
     if (previous && previous.scopeKey !== binding.key) throw new Error('SESSION_OWNERSHIP_MISMATCH');
     const now = Date.now();
-    this.records.put('session', binding.sessionId, {id:binding.sessionId, scopeKey:binding.key, scope:binding.scope, generation:binding.generation, persisted:binding.persisted, createdAt:previous?.createdAt ?? now, updatedAt:now, personaId:binding.personaId, modelOverride:binding.modelOverride, ttsOverride:binding.ttsOverride, stsOverride:binding.stsOverride, recentSince:binding.recentSince} satisfies SessionRecord);
+    this.records.put('session', binding.sessionId, {id:binding.sessionId, scopeKey:binding.key, scope:binding.scope, generation:binding.generation, persisted:binding.persisted, createdAt:previous?.createdAt ?? now, updatedAt:now, personaId:binding.personaId, modelOverride:binding.modelOverride, ttsOverride:binding.ttsOverride, stsOverride:binding.stsOverride, recentSince:binding.recentSince,workspace:previous?.workspace} satisfies SessionRecord);
   }
   updateSession(binding: SessionBinding): SessionBinding {
     if (binding.key !== scopeKey(binding.scope)) throw new Error('SESSION_OWNERSHIP_MISMATCH');
@@ -52,6 +52,11 @@ export class SqliteSessionRepository implements SessionRepository, BindingReposi
   findBinding(key: string): SessionBinding | undefined {return this.records.get<SessionBinding>('binding', key);}
   bindings(): SessionBinding[] {return this.records.list<SessionBinding>('binding');}
   findSession(id: string): SessionRecord | undefined {return this.records.get<SessionRecord>('session', id);}
+  setWorkspace(scopeKey: string, id: string, workspace: string): void {
+    const record=this.findSession(id);if(!record||record.scopeKey!==scopeKey)throw Error('SESSION_OWNERSHIP_MISMATCH');
+    if(record.workspace===workspace)return;
+    this.records.put('session',id,{...record,workspace});this.database.bump('sessions');
+  }
   session(scope: CallerScope, id: string): SessionRecord {
     const record = this.findSession(id);
     if (!record || record.scopeKey !== scopeKey(scope)) throw new LocalizedError(storageDescriptor('sessionNotOwned'),'会话不存在或不属于当前渠道身份');

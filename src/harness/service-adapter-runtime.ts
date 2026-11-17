@@ -36,7 +36,7 @@ export class ProcessMusicFacade implements MusicFacadePort {
       protocol:MUSIC_PROTOCOL,version:1,action:request.action,song:request.song,artist:request.artist,
       selection:request.selection,purpose:'source',includeLyrics:request.includeLyrics??false,
       output:request.outputDirectory,deadline:request.deadline,sources:request.sources,
-    },{cwd:request.outputDirectory,signal,timeoutMs,env:await this.resolveEnvironment(request.outputDirectory,credentialNames)});
+    },{cwd:request.outputDirectory,signal,timeoutMs,env:await this.resolveEnvironment(request.outputDirectory,credentialNames),trackProcess:true});
     if(response.protocol!==MUSIC_PROTOCOL||response.version!==1)throw Error('MUSIC_PROTOCOL_UNSUPPORTED');
     if(response.ok!==true)throw Error(/^MUSIC_[A-Z_]+$/.test(response.error?.code??'')?response.error.code:'MUSIC_OPERATION_FAILED');
     return response.result;

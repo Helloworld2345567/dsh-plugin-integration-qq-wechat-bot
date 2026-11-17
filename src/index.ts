@@ -92,7 +92,7 @@ export async function apply(ctx:Context,config:Config={}):Promise<void>{
   const shutdown=(message:unknown)=>{handleLifecycleShutdown(message);};
   process.on('message',shutdown);ctx.effect(()=>()=>process.off('message',shutdown));
   if(features.evolution.history().some(task=>['queued','draining','applying','restarting','reconnecting','rolling-back'].includes(task.phase)))runtime.pauseProcessing();
-  await assets.migrate();await harness.exportHistory();await features.backfill({readSession:id=>ctx.sessionQuery.readSession(SessionId(id))});await runtime.initialize({autoStart:config.autoStart??true});persistence.start();
+  await assets.migrate();await features.backfill({readSession:id=>ctx.sessionQuery.readSession(SessionId(id))});await runtime.initialize({autoStart:config.autoStart??true});persistence.start();
   const runtimePackageRoot=packageRoot();
   const runtimeIdentity=packageIdentity(runtimePackageRoot);
   detachLifecycle=registerLifecycleRuntime({packageRoot:runtimePackageRoot,quiesce:()=>runtime.quiesce(),resumeProcessing:()=>runtime.resumeProcessing(),health:()=>runtime.health()},runtimeIdentity);

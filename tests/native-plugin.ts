@@ -13,6 +13,7 @@ import {fauxProvider,fauxAssistantMessage,InMemoryCredentialStore} from '@earend
 import type {} from '../src/index.js';
 import type {NativeHarness} from '../src/harness/bridge.js';
 import {scopeKey} from '../src/core/identity.js';
+import {sessionWorkingDirectory} from '../src/core/workspaces.js';
 import {freezeTurn} from '../src/core/policy.js';
 import {botSchema,type BotSettings,type InboundMessage} from '../src/core/types.js';
 import type {SessionActionRecord} from '../src/core/session-actions.js';
@@ -252,10 +253,12 @@ export async function apply(ctx:Context){
     await bridge.run(binding,[msg('trusted','可信私聊测试')],AbortSignal.timeout(30000));
     assert.equal(ctx.permissionPresets.current(agent.session),'danger-full-access');assert.ok(ctx.tools.schemas(agent).some(t=>t.name==='pwsh'));
     const executed=await ctx.tools.execute({name:'pwsh',arguments:{command:"Write-Output 'trusted-fixture'"},callId:ToolCallId('trusted-command'),agent,signal:AbortSignal.timeout(15000)});assert.equal(executed.isError,false,JSON.stringify(executed));
-    // CI's longer checkout path still needs room for .bot/jobs/<scope>/<job> below this fixture.
-    const originalCwd=ctx.workingDirectory.get(agent.session);const customCwd=path.join(process.env.BOT_TEST_TMP!,'cwd 空格 & literal');await mkdir(customCwd,{recursive:true});await writeFile(path.join(customCwd,'workspace-proof.txt'),'CUSTOM_WORKSPACE_PROOF');
-    runtime.saveBot({...bots.bot('fixture'),workingDirectory:customCwd});assert.equal(ctx.workingDirectory.get(agent.session),originalCwd,'saving does not mutate the current turn cwd');
+    // Job directories add only .bot/jobs/<job> below the already isolated scope workspace.
+    assert.equal(historyLocations.find(binding.sessionId),undefined,'turns must not create automatic readable exports');
+    const originalCwd=ctx.workingDirectory.get(agent.session),customRoot=path.join(process.env.BOT_TEST_TMP!,'cwd 空格 & literal'),customBot={...bots.bot('fixture'),workingDirectory:customRoot},customCwd=sessionWorkingDirectory(customBot,binding.key,binding.sessionId,home);await mkdir(customRoot,{recursive:true});await writeFile(path.join(originalCwd,'workspace-proof.txt'),'CUSTOM_WORKSPACE_PROOF');await writeFile(path.join(customRoot,'keep-user-file.txt'),'KEEP_USER_FILE');
+    runtime.saveBot(customBot);assert.equal(ctx.workingDirectory.get(agent.session),originalCwd,'saving does not mutate the current turn cwd');
     await bridge.run(binding,[msg('workspace-switch','在指定目录中继续对话')],AbortSignal.timeout(30000));assert.equal(agent.id,binding.sessionId);assert.equal(ctx.workingDirectory.get(agent.session),await realpath(customCwd));assert.ok(JSON.stringify(requests.at(-1)!.messages).includes('我喜欢绿茶'));
+    await assert.rejects(readFile(path.join(originalCwd,'workspace-proof.txt')),{code:'ENOENT'});
     assert.doesNotMatch(requestText(requests.at(-1)!),/The working directory changed from/);assert.ok(!agent.session.snapshotEvents().some(event=>event.type==='user/message'&&event.data.source.kind==='working-directory'),'actual cwd changes retain their directory event and context without adding a user notice');
     const inDirectory=await ctx.tools.execute({name:'pwsh',arguments:{command:"Get-Content -LiteralPath './workspace-proof.txt'"},callId:ToolCallId('workspace-command'),agent,signal:AbortSignal.timeout(15000)});assert.equal(inDirectory.isError,false,JSON.stringify(inDirectory));assert.ok(JSON.stringify(inDirectory).includes('CUSTOM_WORKSPACE_PROOF'),JSON.stringify(inDirectory));
     const delivered=await ctx.tools.execute({name:'bot_send_file',arguments:{path:'workspace-proof.txt'},callId:ToolCallId('workspace-file'),agent,signal:AbortSignal.timeout(5000)});assert.equal(delivered.isError,false,JSON.stringify(delivered));
@@ -302,6 +305,7 @@ export async function apply(ctx:Context){
     for(let i=0;i<transformed.length;i++){
       const result=toolJson(transformed[i]);assert.equal(result.registeredForDelivery,true);assert.equal(result.assetIds.length,1);
       const output=assets.asset(binding.key,result.assetIds[0]);assert.equal(output.mime,i===0?'image/png':'image/webp');assert.ok((await runtime.assets.read(binding.key,output.id)).length>0);
+      const job=repos.media.jobs.findJob(output.jobId!)!;assert.equal(path.dirname(job.directory!),path.join(job.workspace!,'.bot','jobs'));
     }
     const currentPhoto=msg('current-photo','直接查看这次消息上传的参考照片');currentPhoto.attachments=[{kind:'image',name:'reference.png',mime:'image/png',handle:asset.id}];
     await bridge.run(binding,[currentPhoto],AbortSignal.timeout(30000));const currentPhotoUser=requests.at(-1)!.messages.findLast(m=>m.role==='user'&&m.content.some(block=>block.type==='text'&&block.text===currentPhoto.text))!;assert.equal(currentPhotoUser.role,'user');assert.ok(currentPhotoUser.content.some(b=>b.type==='image'),'current user attachment must deliver native image pixels');assert.deepEqual(currentPhotoUser.content.filter(b=>b.type==='text'),[{type:'text',text:currentPhoto.text}],'visible user text must contain no attachment metadata');assert.ok(currentPhotoUser.content.some(b=>b.type==='text'&&b.text===currentPhoto.text));assert.doesNotMatch(JSON.stringify(currentPhotoUser.content),/\[sourceId=/);
@@ -415,6 +419,7 @@ export async function apply(ctx:Context){
     await runtime.setModel(scope,{provider:'bot-fixture',model:'second'});await bridge.run(sessions.binding(scope),[msg('session-model','仅本会话模型覆盖')],AbortSignal.timeout(30000));assert.equal(requests.at(-1)!.model,'second');
     const newBinding=await runtime.newSession(scope);assert.notEqual(newBinding.sessionId,binding.sessionId);assert.equal(newBinding.personaId,'sakura');assert.equal(newBinding.modelOverride?.model,'second');
     await bridge.run(newBinding,[msg('override-new','新会话保留覆盖配置')],AbortSignal.timeout(30000));assert.equal(requests.at(-1)!.model,'second');assert.ok(!JSON.stringify(requests.at(-1)!.messages).includes('仅本会话模型覆盖'));assert.doesNotMatch(requestText(requests.at(-1)!),/\[sourceId=/);
+    const newSessionCwd=sessionWorkingDirectory(bots.bot('fixture'),newBinding.key,newBinding.sessionId,home);assert.notEqual(newSessionCwd,customCwd);assert.equal(ctx.workingDirectory.get(bridge.live.get(newBinding.sessionId)!.agent.session),await realpath(newSessionCwd));await assert.rejects(readFile(path.join(newSessionCwd,'workspace-proof.txt')),{code:'ENOENT'});assert.equal(await readFile(path.join(customCwd,'workspace-proof.txt'),'utf8'),'CUSTOM_WORKSPACE_PROOF');
     await runtime.setModel(scope,null);await bridge.run(sessions.binding(scope),[msg('model-reset','恢复机器人默认模型')],AbortSignal.timeout(30000));assert.equal(requests.at(-1)!.model,'first');assert.equal(personas.config('sakura').model?.model,'second');
     featureChecks.push('per-session persona changes preserve the independent bot model','new native session retains persona/model overrides and resets turn history','model reset uses the bot default instead of the persona model');
     updateSettings({model:{provider:'bot-fixture',model:'second'}});
@@ -432,8 +437,9 @@ export async function apply(ctx:Context){
     const pythonCommand=`& '${process.env.BOT_PYTHON!.replaceAll("'","''")}' '${path.join(v1Resources,'scripts','proof.py').replaceAll("'","''")}'`;
     // Deliberately omit -B: shell initialization itself must protect the immutable resource tree.
     const executedSkill=await ctx.tools.execute({name:'pwsh',arguments:{command:pythonCommand},callId:ToolCallId('dynamic-parent-python-import'),agent:active,signal:AbortSignal.timeout(15000)});assert.equal(executedSkill.isError,false,JSON.stringify(executedSkill));assert.ok(JSON.stringify(executedSkill).includes('DYNAMIC_V1'));assert.ok(JSON.stringify(executedSkill).includes('BYTECODE_ENV=1'));
-    assert.deepEqual((await readdir(path.join(v1Resources,'scripts'))).sort(),['helper.py','proof.py']);assert.equal(await readFile(path.join(customCwd,'DYNAMIC_V1.txt'),'utf8'),'DYNAMIC_V1');assert.doesNotThrow(()=>bridge.skillFiles.snapshot(v1));
+    assert.deepEqual((await readdir(path.join(v1Resources,'scripts'))).sort(),['helper.py','proof.py']);assert.equal(await readFile(path.join(newSessionCwd,'DYNAMIC_V1.txt'),'utf8'),'DYNAMIC_V1');await assert.rejects(readFile(path.join(customCwd,'DYNAMIC_V1.txt')),{code:'ENOENT'});assert.doesNotThrow(()=>bridge.skillFiles.snapshot(v1));
     const frozenChild=await ctx.agents.create({sessionId:('skills-'+newBinding.sessionId) as any,parentAgent:active,agentOptions:{provider:'bot-fixture',model:'second'}});
+    assert.equal(ctx.workingDirectory.get(frozenChild.agent.session),await realpath(newSessionCwd));
     // A child owns a distinct native shell and must not inherit the parent's initialization marker.
     mediaCall={name:'pwsh',args:{command:pythonCommand}};frozenChild.agent.followup({id:MessageId('dynamic-child-python-input'),role:'user',content:[{type:'text',text:'在当前工作目录运行固定版本技能脚本，验证同目录 helper 导入'}],source:{kind:'user'}});await frozenChild.agent.whenIdle();
     const childPythonTool=requests.filter(r=>r.sessionId===frozenChild.agent.id).at(-1)!.messages.filter(m=>m.role==='tool').at(-1)!;assert.equal(childPythonTool.role,'tool');assert.equal(childPythonTool.isError,false,JSON.stringify(childPythonTool));assert.ok(JSON.stringify(childPythonTool).includes('BYTECODE_ENV=1'));assert.ok(JSON.stringify(childPythonTool).includes('DYNAMIC_V1'));
@@ -534,10 +540,10 @@ export async function apply(ctx:Context){
     await bridge.run(singleDelete.binding,[singleDelete.input],AbortSignal.timeout(30000),{snapshot:singleDelete.snapshot});
     const singleRoot=bridge.live.get(singleDelete.binding.sessionId)!.agent;
     const singleAsset=await runtime.assets.save(singleDelete.binding.key,{kind:'file',name:'retained-attachment.txt',mime:'text/plain'},Buffer.from('RETAINED_ATTACHMENT'));
-    const singleExport=historyLocations.find(singleDelete.binding.sessionId)!.file;
-    const ownedChild=await singleRoot.ctx.agents.create({sessionId:('delete-child-'+singleRoot.id) as any,parentAgent:singleRoot,meta:{cwd:customCwd,parentSession:singleRoot.id,origin:'subagent'},agentOptions:{provider:'bot-fixture',model:'first'}});
+    const singleExport=await bridge.exportSessionHistory(singleDelete.binding.sessionId);
+    const ownedChild=await singleRoot.ctx.agents.create({sessionId:('delete-child-'+singleRoot.id) as any,parentAgent:singleRoot,meta:{cwd:ctx.workingDirectory.get(singleRoot.session),parentSession:singleRoot.id,origin:'subagent'},agentOptions:{provider:'bot-fixture',model:'first'}});
     await ctx.sessions.flush(ownedChild.agent.session);
-    const retainedFork=await ctx.agents.create({sessionId:('retained-fork-'+singleRoot.id) as any,meta:{cwd:customCwd,parentSession:singleRoot.id},agentOptions:{provider:'bot-fixture',model:'first'}});
+    const retainedFork=await ctx.agents.create({sessionId:('retained-fork-'+singleRoot.id) as any,meta:{cwd:customRoot,parentSession:singleRoot.id},agentOptions:{provider:'bot-fixture',model:'first'}});
     await ctx.sessions.flush(retainedFork.agent.session);await retainedFork.dispose();
     assert.ok((await ctx.sessionQuery.searchSessions({query:'SINGLE_SESSION_DELETE_BODY',limit:20})).items.some(item=>item.header.id===singleRoot.id));
     const singleResult=await runtime.deleteSession(singleDelete.binding.sessionId);
@@ -565,7 +571,7 @@ export async function apply(ctx:Context){
     await ctx.sessionController.selectModel({sessionId:foreignDelete.binding.sessionId as any,provider:'bot-fixture-deleting',model:'first'});
     const foreignResolved=await ctx.sessionController.resolveAgent(foreignDelete.binding.sessionId as any);assert.ok('agent' in foreignResolved,'the web controller must resolve the historical session');
     const foreignAgent=foreignResolved.agent;
-    const foreignExport=historyLocations.find(foreignDelete.binding.sessionId)!.file;
+    const foreignExport=await bridge.exportSessionHistory(foreignDelete.binding.sessionId);
     let managed:Awaited<ReturnType<typeof ctx.subagents.startActivation>>|undefined;
     try{
       foreignAgent.followup({id:MessageId('foreign-running-input'),role:'user',source:{kind:'user'},content:[{type:'text',text:'FOREIGN_RUNNING_SESSION'}]});
@@ -700,6 +706,7 @@ export async function apply(ctx:Context){
     const nativeBefore=await ctx.sessionPersistence.list();for(let changed=true;changed;){changed=false;for(const {header} of nativeBefore)if(header.origin==='subagent'&&header.parentSession&&deletedIds.has(header.parentSession)&&!deletedIds.has(header.id)){deletedIds.add(header.id);changed=true;}}
     const unrelatedIds=nativeBefore.filter(item=>!deletedIds.has(item.header.id)).map(item=>item.header.id);assert.ok(unrelatedIds.length>0);
     const indexedBefore=await ctx.sessionQuery.searchSessions({query:'FINAL_ONLY',limit:100});assert.ok(indexedBefore.items.some(item=>deletedIds.has(item.header.id)));
+    await bridge.exportSessionHistory(binding.sessionId);
     const locations=historyLocations.list().filter(item=>deletedIds.has(item.sessionId));assert.ok(locations.length>0);for(const location of locations){assert.match(await readFile(location.file,'utf8'),/user\/message/);assert.doesNotMatch(await readFile(location.file,'utf8'),/PRIVATE_REASONING/);}
     const storedAssets=assets.allAssets().filter(item=>item.sessionId&&sessions.findSession(item.sessionId)?.scope.botId===scope.botId);assert.ok(storedAssets.some(item=>item.path.includes(`${path.sep}images${path.sep}`)));for(const asset of storedAssets)assert.ok(asset.path.startsWith(asset.workspace+path.sep));
     await runtime.deleteBot(scope.botId);
@@ -708,7 +715,7 @@ export async function apply(ctx:Context){
     for(const id of unrelatedIds)assert.ok(nativeAfter.has(id),`unrelated log removed: ${id}`);
     const indexedAfter=await ctx.sessionQuery.searchSessions({query:'FINAL_ONLY',limit:100});assert.ok(!indexedAfter.items.some(item=>deletedIds.has(item.header.id)));
     assert.ok(!sessions.sessionsAll().some(item=>item.scope.botId===scope.botId));assert.ok(!inbox.allMessages().some(item=>item.scope.botId===scope.botId));
-    assert.equal(await readFile(path.join(customCwd,'workspace-proof.txt'),'utf8'),'CUSTOM_WORKSPACE_PROOF');
+    await assert.rejects(readFile(path.join(customCwd,'workspace-proof.txt')),{code:'ENOENT'});await assert.rejects(readFile(path.join(newSessionCwd,'DYNAMIC_V1.txt')),{code:'ENOENT'});assert.equal(await readFile(path.join(customRoot,'keep-user-file.txt'),'utf8'),'KEEP_USER_FILE');
     featureChecks.push('bot deletion removes native old/root/descendant logs and projection caches while preserving unrelated sessions and custom workspace files');
     await writeFile(resultPath,JSON.stringify({status:'PASS',requests:requests.length,compactions,checks:['global message language defaults to Chinese, persists through native settings, updates live without remount and rejects stale edits','progress generation uses frozen persona without tools or history mutation','progress usage includes failed requests','frozen snapshot initializes a new native session','native long tool exposes a safe progress stage','real native turn and business tool','final text excludes reasoning','snapshot holds across tool steps','next-turn persona/model switch preserves session/history','ordinary host tools hidden and denied','trusted PowerShell execution without per-call approval','frozen child persona/model after parent switches','revoked permission denied in child agent','private skill read denied','durable session resume','working directory switches next turn without losing session or history','native PowerShell and file delivery use custom directory','children and resumed sessions preserve configured working directory','native provider settings and credentials inherited without copying secrets','published media-analysis skill readable by ordinary user','native automatic long-context compaction','image bytes loaded into native chat model without vision service','scanned PDF rendered and passed to native chat model','image skill inherits environment with no WebUI media setup','reference edit auto-registers one image for delivery','failed image attempts can retry through dedicated tools','parallel image calls and further edits after success are allowed','image skill disable immediately denies calls','audio analysis selects same-session recent attachment and returns script result','analysis revocation denies dedicated tools and skill reads',...webChecks,...featureChecks]}));
   };

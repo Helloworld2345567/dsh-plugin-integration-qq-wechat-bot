@@ -43,6 +43,8 @@ export interface BotsPanelProps {
   onDefaultDirectory:(bot:any)=>void;
   onSaveWorkingDirectory:(bot:any)=>unknown;
   workspaceEdits?:Record<string,string>;
+  workspaceDirectories?:Array<{botId:string;sessionId:string;scopeDirectory:string;directory:string}>;
+  storagePanel?:any;
   onAddTrustedUser:(bot:any)=>unknown;
   onRemoveTrustedUser:(bot:any, user:string)=>unknown;
   credential?:any;
@@ -138,14 +140,17 @@ function botDetail(React:any, props:BotsPanelProps, bot:any){
   if(section==='workspace')content=h(React,'div',{className:'section-grid'},
     h(React, 'section', {className:'detail-section'},
       h(React, 'div', {className:'directory-field'},
-        ui.field(t('workingDirectory'), workingDirectory, value=>props.onWorkingDirectoryChange(bot,value), 'text', {placeholder:t('defaultDirectory')}),
+        ui.field(t('workspaceRootLabel'), workingDirectory, value=>props.onWorkingDirectoryChange(bot,value), 'text', {placeholder:t('defaultDirectory')}),
         ui.button(t('browseDirectory'),()=>props.onBrowseDirectory(bot)),
       ),
       h(React, 'div', {className:'actions'},
         ui.button(t('defaultDirectory'),()=>props.onDefaultDirectory(bot),{className:'quiet'}),
         ui.button(t('save'),()=>props.onSaveWorkingDirectory(bot),{className:'primary'}),
       ),
+      h(React,'p',{className:'muted'},t('workspaceRootHint')),
+      ...(props.workspaceDirectories??[]).filter(item=>item.botId===bot.id).map(item=>h(React,'div',{className:'workspace-paths',key:item.sessionId},h(React,'small',null,t('workspaceScopeDirectory')),h(React,'code',null,item.scopeDirectory),h(React,'small',null,t('workspaceSessionDirectory')),h(React,'code',null,item.directory))),
     ),
+    props.storagePanel??null,
     trustedUsers(React, props, bot),
   );
   return h(React, 'article', {className:'bot-detail', 'aria-label':bot.name},

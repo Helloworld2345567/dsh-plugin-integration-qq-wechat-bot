@@ -2,7 +2,8 @@ import {readdir, rm} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {scopeKey} from '../core/identity.js';
-import type {Asset, CallerScope} from '../core/types.js';
+import {sessionDirectory} from '../core/workspaces.js';
+import type {Asset, CallerScope,SessionRecord} from '../core/types.js';
 import type {BotRepository} from '../core/ports/bot.js';
 import type {DeliveryRepository} from '../core/ports/delivery.js';
 import type {InboxRepository} from '../core/ports/inbox.js';
@@ -32,9 +33,12 @@ export interface BotHistorySnapshot {
  */
 export class BotHistoryService {
   constructor(private readonly deps: BotHistoryDeps) {}
-  /** Remove only exports named for these sessions; workspace assets remain channel-owned. */
+  /** Remove session files and explicit exports; attachments remain channel-owned. */
   async deleteSessionFiles(scope: string, sessionIds: readonly string[]): Promise<void> {
     for (const id of sessionIds) {
+      const record=this.deps.database.records.get<SessionRecord>('session',id);
+      if(record&&record.scopeKey!==scope)throw Error('SESSION_OWNERSHIP_MISMATCH');
+      if(record?.workspace)await rm(sessionDirectory(record.workspace,id),{recursive:true,force:true});
       const location = this.deps.database.records.get<{scopeKey:string;file:string}>('history-location', id);
       if (!location) continue;
       const file = path.resolve(location.file);
@@ -113,6 +117,15 @@ export class BotHistoryService {
   }
   async deleteFiles(assetsRoot: string, snapshot: PortBotHistorySnapshot): Promise<void> {
     const history = snapshot as BotHistorySnapshot;
+    for(const row of history.records)if(row.kind==='session'){
+      const record=row.value as unknown as SessionRecord;
+      if(record.workspace)await rm(sessionDirectory(record.workspace,record.id),{recursive:true,force:true});
+    }
+    for(const row of history.records)if(row.kind==='job'&&typeof row.value.workspace==='string'&&typeof row.value.directory==='string'){
+      const root=path.resolve(row.value.workspace,'.bot','jobs'),directory=path.resolve(root,row.id);
+      if(path.dirname(directory)!==root||path.resolve(row.value.directory)!==directory)throw Error('BOT_HISTORY_PATH_INVALID');
+      await rm(directory,{recursive:true,force:true});
+    }
     for (const row of history.records) if (row.kind === 'asset') {
       const asset = row.value as unknown as Asset;
       if (asset.workspace) {
@@ -128,8 +141,8 @@ export class BotHistoryService {
     }
     for (const scope of history.scopes) {
       const workspace = await this.deps.workspace().scopeWorkspace(scope);
-      for (const folder of [path.join(workspace, 'history', scope), path.join(workspace, '.bot', 'jobs', scope)]) await rm(folder, {recursive:true, force:true});
-      // Remove scope partitions, keeping other scopes that share a custom workspace.
+      for (const folder of [path.join(workspace, 'history', scope),path.join(workspace, '.bot', 'jobs')]) await rm(folder, {recursive:true, force:true});
+      // Remove this identity's media partitions from its isolated workspace.
       for (const kind of Object.values(mediaFolders)) for (const origin of ['received', 'generated', 'sent']) {
         const root = path.join(workspace, kind, origin);
         let dates: string[];

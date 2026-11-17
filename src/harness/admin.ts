@@ -1,6 +1,7 @@
 import type {SystemLocale} from '../i18n/common.js';
 import {diagnostic} from '../i18n/diagnostics.js';
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { z } from 'zod';
 import QRCode from 'qrcode';
@@ -12,7 +13,8 @@ import {sanitizeRemoteMessage} from '../core/network.js';
 import type {} from '@deepseek-ai/dsh-session-query';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import {imageSkillEnabled} from '../core/image-skill.js';
-import {defaultWorkspaceRoot,workingDirectory} from '../core/workspaces.js';
+import {workingDirectory,sessionDirectory} from '../core/workspaces.js';
+import {WorkspaceStorageService} from '../core/storage-management.js';
 import {openDirectory} from './open-directory.js';
 import type {BotFeatures} from '../core/features.js';
 import {adminCommandRequestSchema,adminQueryRequestSchema,type AdminSummaryData,versioned,revisionFor,ADMIN_CONTRACT_VERSION} from './admin-contract.js';
@@ -71,6 +73,7 @@ export class Admin {
     const value=adminQueryRequestSchema.parse(request);
     if(value.name==='overview.summary')return versioned(await this.summary(),value.input.changedSince);
     const repos=this.runtime.repos;
+    if(value.name==='workspace.storage')return versioned(new WorkspaceStorageService(repos,scope=>this.runtime.busy(scope)).preview(value.input));
     if(value.name==='catalog.config'){const config=publicPersonaConfig(repos.personas.config(value.input.id));return versioned(config,value.input.changedSince);}
     if(value.name==='bots.list'){const bots=await Promise.all(repos.bots.bots().filter(bot=>!bot.archived).map(async bot=>({...bot,status:this.runtime.states.get(bot.id)??'stopped',activeSessions:this.runtime.activeSessions(bot.id),credentialConfigured:!!await this.runtime.credentials.read(bot.id)})));return versioned(bots,value.input.changedSince);}
     if(value.name==='catalog.profiles'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.profilesPage(value.input);}
@@ -104,7 +107,7 @@ export class Admin {
       case 'automation.proactive':{const value=z.object({scopeKey:z.string(),action:z.enum(['on','off','status','now','set']),args:z.string().default('')}).parse(input);const binding=repos.sessions.findBinding(value.scopeKey);if(!binding)throw localizedError('sessionMissing');return this.runtime.commandServices.automation!.proactive(binding,value.action,value.args);}
       case 'automation.schedule':{const value=z.object({scopeKey:z.string(),action:z.enum(['list','create','pause','resume','run','delete']),args:z.string().default('')}).parse(input);const binding=repos.sessions.findBinding(value.scopeKey);if(!binding)throw localizedError('sessionMissing');return this.runtime.commandServices.automation!.schedule(binding,value.action,value.args);}
       case 'models':{if(this.services){const catalog=(await this.services.models({})).data,providers=new Map<string,Array<{id:string;name:string;inputModalities:readonly string[];reasoning:{supported:boolean;efforts:readonly string[]}}>>();for(const item of catalog){const models=providers.get(item.provider)??[];models.push({id:item.model,name:item.model,inputModalities:item.inputModalities,reasoning:item.reasoning});providers.set(item.provider,models);}return[...providers].map(([id,models])=>({id,models}));}return Promise.all(this.ctx.llm.listProviders().map(async p=>({id:p.id,models:(await this.ctx.llm.listModels(p.id)).map(m=>({id:m.id,name:m.name}))})));}
-      case 'directories':return{workspaceRoot:defaultWorkspaceRoot(),configDirectory:repos.personas.personaRoot(),storageDirectory:repos.storage.home,personas:repos.personas.configs().map(c=>repos.personas.personaStatus(c.id)),sessions:repos.sessions.bindings().map(binding=>({sessionId:binding.sessionId,botId:binding.scope.botId,directory:workingDirectory(repos.bots.bot(binding.scope.botId),binding.key)}))};
+      case 'directories':return{workspaceRoot:path.resolve(process.env.BOT_WORKSPACE_ROOT||path.join(repos.storage.home,'workspaces')),configDirectory:repos.personas.personaRoot(),storageDirectory:repos.storage.home,personas:repos.personas.configs().map(c=>repos.personas.personaStatus(c.id)),sessions:repos.sessions.bindings().map(binding=>{const scopeDirectory=repos.sessions.findSession(binding.sessionId)?.workspace??workingDirectory(repos.bots.bot(binding.scope.botId),binding.key,repos.storage.home);return {sessionId:binding.sessionId,botId:binding.scope.botId,scopeKey:binding.key,scopeDirectory,directory:sessionDirectory(scopeDirectory,binding.sessionId)};})};
       case 'config.directory.open':{const value=z.object({botId:z.string().optional(),configId:z.string().optional()}).strict().parse(input);const configId=value.configId??(value.botId?repos.bots.bot(value.botId).configId:undefined);if(value.botId)repos.bots.bot(value.botId);if(configId)repos.personas.config(configId);const directory=repos.personas.personaDirectory(configId);await this.revealDirectory(directory);return{opened:true,directory};}
       case 'skill.image.status':return Object.fromEntries(this.statusConfigs(input).map(([id,config])=>{try{const endpoint=this.runtime.media.imageEndpoint(config);return [id,{enabled:imageSkillEnabled(config),model:endpoint.model,protocol:endpoint.protocol??'openai',keyEnv:endpoint.keyEnv,keyConfigured:endpoint.protocol==='comfyui'||!!(endpoint.keyEnv&&process.env[endpoint.keyEnv]),overridden:!!config.media.image?.protocol}];}catch(error){return [id,{enabled:false,error:error instanceof Error?error.message:'IMAGE_SKILL_CONFIGURATION_INVALID'}];}}));
       case 'skill.media.status':return Object.fromEntries(await Promise.all(this.statusConfigs(input).map(async ([id,config])=>[id,Object.fromEntries(await Promise.all((['asr','video'] as const).map(async role=>[role,await this.runtime.media.analysisStatus(config,role)])))])));
@@ -183,6 +186,9 @@ export class Admin {
       }
       case 'session.cancel':{const id=z.string().parse(input.id);const binding=repos.sessions.bindings().find(b=>b.sessionId===id);if(!binding)throw localizedError('sessionMissing');await this.runtime.stopSession(binding.scope);return{ok:true};}
       case 'session.delete':return {ok:true,...await this.runtime.deleteSession(z.string().min(1).max(200).parse(input.id))};
+      case 'session.export':{const id=z.string().min(1).max(200).parse(input.id);if(!this.runtime.harness.exportSessionHistory)throw Error('SESSION_EXPORT_UNAVAILABLE');return {ok:true,path:await this.runtime.harness.exportSessionHistory(id)};}
+      case 'workspace.cleanup':return new WorkspaceStorageService(repos,scope=>this.runtime.busy(scope)).cleanup(input);
+      case 'workspace.pin':return new WorkspaceStorageService(repos,scope=>this.runtime.busy(scope)).pin(input);
       case 'delivery.retry':{const id=z.string().parse(input.id);const delivery=repos.deliveries.find(id);if(!delivery)throw localizedError('deliveryMissing');if(!['unknown','failed'].includes(delivery.state))throw localizedError('deliveryNotRecoverable');await this.runtime.deliveryWorker.retry(id);return{deliveryId:id,state:repos.deliveries.find(id)?.state??'unknown'};}
       default:throw new Error('UNKNOWN_ADMIN_ACTION');
     }

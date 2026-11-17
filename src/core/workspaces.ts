@@ -1,6 +1,6 @@
 import {localizedError} from './errors.js';
 import { mkdirSync, realpathSync, statSync } from 'node:fs';
-import { cp, mkdir, realpath, stat,rename,rm } from 'node:fs/promises';
+import { mkdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import type { BotInstance } from './types.js';
 
@@ -9,26 +9,25 @@ export function defaultWorkspaceRoot():string {
 }
 export function workingDirectory(bot:BotInstance,key:string,home?:string):string {
   const root=process.env.BOT_WORKSPACE_ROOT||(home?path.join(home,'workspaces'):defaultWorkspaceRoot());
-  return bot.workingDirectory||path.join(root,bot.id,key);
+  return path.join(bot.workingDirectory||root,bot.id,key);
+}
+export function sessionWorkingDirectory(bot:BotInstance,key:string,sessionId:string,home?:string):string {
+  return sessionDirectory(workingDirectory(bot,key,home),sessionId);
+}
+export function sessionDirectory(workspace:string,sessionId:string):string {
+  if(!path.isAbsolute(workspace))throw Error('SESSION_WORKSPACE_PATH_INVALID');
+  const root=path.resolve(workspace,'sessions'),directory=path.resolve(root,sessionId);
+  if(path.dirname(directory)!==root)throw Error('SESSION_WORKSPACE_PATH_INVALID');
+  return directory;
 }
 export function validateWorkingDirectory(directory:string):void {
   mkdirSync(directory,{recursive:true});
   if(!statSync(directory).isDirectory())throw localizedError('workspaceNotDirectory');
   realpathSync(directory);
 }
-export async function prepareWorkingDirectory(bot:BotInstance,key:string,legacyHome:string):Promise<string> {
-  const directory=workingDirectory(bot,key,legacyHome);
-  if(!bot.workingDirectory){
-    const root=process.env.BOT_WORKSPACE_ROOT||path.join(legacyHome,'workspaces');
-    const candidates=[path.join(root,key),path.join(legacyHome,'workspaces',key)];
-    const legacy=candidates.find(candidate=>{try{return statSync(candidate).isDirectory();}catch{return false;}})??candidates[0];
-    let exists=true;try{await stat(directory);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;exists=false;}
-    if(!exists&&path.resolve(legacy)!==path.resolve(directory)){
-      let oldExists=false;try{oldExists=(await stat(legacy)).isDirectory();}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
-      if(oldExists){await mkdir(path.dirname(directory),{recursive:true});try{await rename(legacy,directory);}catch(error){if((error as NodeJS.ErrnoException).code!=='EXDEV')throw error;await cp(legacy,directory,{recursive:true,force:false,errorOnExist:true});await rm(legacy,{recursive:true});}}
-    }
-  }
+export async function prepareWorkingDirectory(bot:BotInstance,key:string,home:string):Promise<string> {
+  const directory=workingDirectory(bot,key,home);
   await mkdir(directory,{recursive:true});
-  await Promise.all(['history','images','videos','audio','files','outputs',path.join('.bot','tmp')].map(folder=>mkdir(path.join(directory,folder),{recursive:true})));
+  await Promise.all(['images','videos','audio','files',path.join('.bot','tmp')].map(folder=>mkdir(path.join(directory,folder),{recursive:true})));
   return realpath(directory);
 }

@@ -159,12 +159,12 @@ export interface MediaInput {kind:'image'|'audio'|'video'|'file';name:string;mim
 export interface ChannelReplyEnvelope { channelId:string; version:number; payload:Record<string,string> }
 export interface InboundMessage {id:string;scope:CallerScope;text:string;attachments:MediaInput[];quoted?:{id?:string;text?:string;attachments?:MediaInput[]};reply:Record<string,string>;replyEnvelope?:ChannelReplyEnvelope;timestamp:number}
 export interface SessionBinding { key:string;scope:CallerScope;sessionId:string;generation:number;persisted:boolean;personaId?:string;modelOverride?:z.infer<typeof modelSchema>;ttsOverride?:TtsOverride;stsOverride?:StsOverride;recentSince?:number }
-export interface SessionRecord { id:string;scopeKey:string;scope:CallerScope;generation:number;persisted:boolean;createdAt:number;updatedAt:number;personaId?:string;modelOverride?:z.infer<typeof modelSchema>;ttsOverride?:TtsOverride;stsOverride?:StsOverride;recentSince?:number }
+export interface SessionRecord { id:string;scopeKey:string;scope:CallerScope;generation:number;persisted:boolean;createdAt:number;updatedAt:number;personaId?:string;modelOverride?:z.infer<typeof modelSchema>;ttsOverride?:TtsOverride;stsOverride?:StsOverride;recentSince?:number;workspace?:string }
 export type ServiceProfileRole='voice'|'singing'|'music';
 export type TurnServiceState=ProfileState|'disabled';
 export interface TurnServiceSelection {role:ServiceProfileRole;enabled:boolean;profileRef?:ServiceProfileRef;state:TurnServiceState;snapshot?:TurnServiceSnapshot}
 export interface TurnSnapshot {systemLocale?:SystemLocale;config:Readonly<BotConfig>;imageServiceSettings?:Readonly<ImageServiceSettings>;personaId:string;personaRevision:number;services:Readonly<Partial<Record<ServiceProfileRole,Readonly<TurnServiceSelection>>>>;botId:string;trusted:boolean;sourceIds:string[];startedAt:number}
-export interface Asset { id:string;scopeKey:string;name:string;mime:string;path:string;size:number;kind:MediaInput['kind'];createdAt:number;jobId?:string;sessionId?:string;workspace?:string;origin?:'received'|'generated'|'sent' }
+export interface Asset { id:string;scopeKey:string;name:string;mime:string;path:string;size:number;kind:MediaInput['kind'];createdAt:number;jobId?:string;sessionId?:string;workspace?:string;origin?:'received'|'generated'|'sent';pinned?:boolean }
 export type DeliveryAttemptPhase='prepare'|'upload'|'commit';
 export interface DeliveryAttempt {number:number;phase:DeliveryAttemptPhase;assetId?:string;fileKey?:string;uploadQuery?:string;aesKey?:string;encryptedSize?:number;fileInfo?:string;fileInfoExpiresAt?:number;startedAt?:number;lastError?:string;causeCode?:string;causeMessage?:string;httpStatus?:number;platformCode?:string;platformMessage?:string;platformTraceId?:string;autoRetryCount?:number}
 export interface Output {type:'text'|'asset';text?:string;assetId?:string;resend?:boolean;asFile?:boolean}

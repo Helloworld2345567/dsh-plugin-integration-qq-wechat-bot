@@ -44,7 +44,7 @@ export function buildChatPrompt(input:ChatPromptInput):ChatPrompt {
       'For tools, call bot_tools in this turn. Loading does not execute them. Answer ordinary conversation directly.',
       'The host sends visible text and registered attachments. Do not repeat earlier text or narrate tool loading. Generated or queued does not mean delivered; only platformSent=true confirms a platform receipt.',
       'Do not add routine reports after successful tool calls, including output metadata, generation notices or delivery status, unless the user asks. Explain failures, incomplete results or required user action when relevant to the request.',
-      'Save outputs under images/, videos/, audio/, files/ or outputs/; use .bot/tmp for temporary files. The history/ directory is host-managed.',
+      'The working directory belongs to this session. Save files under outputs/ and temporary files under .bot/tmp. Media tools manage the channel attachment library; use attachment IDs to reuse its files.',
       ...(input.automaticVoice?['The host adds AI speech to the final text automatically; do not duplicate it with a tool.']:[]),
       ...(input.isSubtask?['This is a subtask of the channel request. Keep its frozen persona and permissions. Return results and requested management changes to the main task; only the main task delivers the final response.']:[]),
     ].join('\n'),

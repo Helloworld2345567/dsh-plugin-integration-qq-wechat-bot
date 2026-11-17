@@ -10,6 +10,7 @@ export interface SessionRepository {
   sessions(scope: CallerScope): SessionRecord[];
   sessionsAll(): SessionRecord[];
   findSession(id: string): SessionRecord | undefined;
+  setWorkspace(scopeKey: string, id: string, workspace: string): void;
   pageSessions(filter: SessionPageFilter, limit: number, cursor?: string): Page<SessionRecord>;
   sessionRecentSince(key: string): number;
   countSessions(): number;

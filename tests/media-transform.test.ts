@@ -74,7 +74,7 @@ test('same-scope transforms execute concurrently and queued failures release all
   permitted=false;waiting.release();await Promise.all([first,second,revoked]);assert.equal(peak,2);assert.equal(f.calls.length,2);
   f.worker.run=async()=>{throw Error('FAILED');};await assert.rejects(run(),/FAILED/);
   f.worker.run=async()=>({text:'ok'});assert.equal((await run()).text,'ok');assert.equal(f.media.active.size,0);
-  assert.deepEqual(await readdir(path.join(f.media.deps.storage.home,'.bot','jobs','same')),[]);
+  assert.deepEqual(await readdir(path.join(f.media.deps.storage.home,'.bot','jobs')),[]);
 });
 
 test('local transforms preserve ownership, isolate outputs and save attachments before cleanup',async t=>{
@@ -82,9 +82,10 @@ test('local transforms preserve ownership, isolate outputs and save attachments 
   const run=(input='image')=>f.media.run('same','image_convert',{} as any,[input],{processingSlots:100},new AbortController().signal);
   const result=await Promise.all([run(),run()]);assert.equal(result.length,2);assert.equal(f.saved.length,2);
   assert.notEqual(f.calls[0].output,f.calls[1].output);assert.ok(f.calls.every(job=>job.processingSlots===1));
+  assert.ok(f.calls.every(job=>path.dirname(job.output)===path.join(f.media.deps.storage.home,'.bot','jobs')));
   assert.equal(f.saved[0].scope,'same');assert.notEqual(f.saved[0].bytes.toString(),f.saved[1].bytes.toString());
   await assert.rejects(run('foreign'),/ASSET_NOT_OWNED/);assert.equal(f.saved.length,2);
-  assert.deepEqual(await readdir(path.join(f.media.deps.storage.home,'.bot','jobs','same')),[]);
+  assert.deepEqual(await readdir(path.join(f.media.deps.storage.home,'.bot','jobs')),[]);
 });
 
 test('cancelScope cancels running and queued transforms before delivering assets',async t=>{

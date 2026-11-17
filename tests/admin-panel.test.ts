@@ -294,7 +294,7 @@ test('bot tabs expose independent media drafts, authorization and workspace with
     tree.find(n=>n.type==='button'&&n.children.includes('凭据')).props.onClick();await settlePanel();
     tree=harness.render();assert.ok(tree.some(n=>n.type==='input'&&n.props.type==='password'));
     tree=await clickSection('workspace');
-    assert.ok(tree.some(n=>n.type==='label'&&n.children[0]==='工作目录'));
+    assert.ok(tree.some(n=>n.type==='label'&&n.children[0]==='工作区根目录'));
     assert.ok(tree.some(n=>n.type==='button'&&n.children.includes('添加')));
     assert.ok(!tree.some(n=>n.type==='input'&&n.props.type==='password'));
     tree=await clickSection('run');assert.ok(tree.some(n=>n.props?.role==='switch'&&n.props['aria-label']==='运行'));

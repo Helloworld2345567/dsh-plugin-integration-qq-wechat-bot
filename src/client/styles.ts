@@ -258,4 +258,12 @@ export const panelStyles = `
   .bot-admin button.toggle::after { content: ''; position: absolute; inset: -10px 0; }
   .bot-admin input, .bot-admin select, .bot-admin textarea { font-size: 16px; }
 }
+.bot-admin .workspace-paths { display: grid; gap: 6px; margin-top: 12px; }
+.bot-admin .workspace-paths code { overflow-wrap: anywhere; white-space: normal; }
+.bot-admin .storage-table-wrap { max-width: 100%; overflow-x: auto; }
+.bot-admin .workspace-storage table { width: 100%; text-align: left; border-collapse: collapse; }
+.bot-admin .workspace-storage th, .bot-admin .workspace-storage td { padding: 8px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.bot-admin .workspace-storage th, .bot-admin .workspace-storage td:not(:first-child) { white-space: nowrap; overflow-wrap: normal; }
+.bot-admin .workspace-storage td:first-child { min-width: 180px; max-width: 360px; }
+.bot-admin .workspace-storage .toggle-row > span { display: none; }
 `;

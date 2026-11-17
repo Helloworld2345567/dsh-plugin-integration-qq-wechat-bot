@@ -11,13 +11,12 @@ import {botSchema,type CallerScope} from '../src/core/types.js';
 
 async function fixture(t:any){const root=await mkdtemp(path.resolve('.codex/storage-'));const store=new SqlitePersistence(path.join(root,'data'));store.bots.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq'}));const scope:CallerScope={botId:'bot',platform:'qq',accountId:'bot',kind:'private',channelId:'a',senderId:'a'};store.sessions.binding(scope);t.after(async()=>{store.close();await rm(root,{recursive:true,force:true});});return{root,store,scope,key:scopeKey(scope),assets:new Assets(store.repositories())};}
 
-test('media is grouped by kind, origin, date and scope; old assets and workspace edits keep IDs readable',async t=>{
+test('media is grouped by kind, origin, date and scope; workspace edits retain asset IDs',async t=>{
   const f=await fixture(t),workspace=await f.store.workspaceFiles.scopeWorkspace(f.key);
   for(const kind of ['image','video','audio','file'] as const){const asset=await f.assets.save(f.key,{kind,name:'same.bin',mime:'application/octet-stream'},Buffer.from(kind));assert.equal(asset.path,path.join(workspace,{image:'images',video:'videos',audio:'audio',file:'files'}[kind],'received',new Date(asset.createdAt).toISOString().slice(0,10),f.key,asset.id,'same.bin'));}
-  const asset=await f.assets.save(f.key,{kind:'image',name:'old.png',mime:'image/png'},Buffer.from('original'));
-  const legacy=path.join(f.store.home,'assets',f.key,asset.id,'old.png');await mkdir(path.dirname(legacy),{recursive:true});await writeFile(legacy,'legacy pixels');await rm(asset.path);
-  f.store.assets.saveAsset({...asset,path:legacy,workspace:undefined,origin:undefined});await f.assets.migrate();assert.equal((await f.assets.read(f.key,asset.id)).toString(),'legacy pixels');await assert.rejects(stat(legacy),{code:'ENOENT'});
-  const custom=path.join(f.root,'custom');f.store.bots.saveBot({...f.store.bots.bot('bot'),workingDirectory:custom});await f.assets.migrate();assert.ok(f.store.assets.asset(f.key,asset.id).path.startsWith(custom+path.sep));assert.equal((await f.assets.read(f.key,asset.id)).toString(),'legacy pixels');
+  const asset=await f.assets.save(f.key,{kind:'image',name:'original.png',mime:'image/png'},Buffer.from('original'));
+  const custom=path.join(f.root,'custom');f.store.bots.saveBot({...f.store.bots.bot('bot'),workingDirectory:custom});await f.assets.migrate();
+  const moved=f.store.assets.asset(f.key,asset.id);assert.equal(moved.workspace,path.join(custom,'bot',f.key));assert.equal((await f.assets.read(f.key,asset.id)).toString(),'original');await assert.rejects(stat(asset.path),{code:'ENOENT'});
   await assert.rejects(f.assets.read('other-scope',asset.id),/不属于/);
 });
 

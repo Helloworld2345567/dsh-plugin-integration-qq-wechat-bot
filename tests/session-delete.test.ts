@@ -41,8 +41,11 @@ test('deleting historical session removes only its records and exports and retai
   f.store.deliveries.enqueue(current,'current','2',[{type:'asset',assetId:asset.id,resend:true}],input('current').reply);
   const other=f.store.sessions.binding({...owner,channelId:'other',senderId:'other'}),otherFile=await seedHistory(f.store,other,'other');
   const workspace=await f.store.workspaceFiles.scope(old.key),userFile=path.join(workspace,'keep-user-file.txt');await writeFile(userFile,'keep');
+  const oldDirectory=await f.store.workspaceFiles.session(old.key,old.sessionId),currentDirectory=await f.store.workspaceFiles.session(current.key,current.sessionId);
+  await writeFile(path.join(oldDirectory,'outputs','old.txt'),'old session output');await writeFile(path.join(currentDirectory,'outputs','current.txt'),'current session output');
   const scheduled=f.runtime.automation.createJob(owner,'keep schedule',{runAt:Date.now()+86400000});
   const child='owned-child';f.store.statsData.putSessionOwner({sessionId:child,rootSessionId:old.sessionId,botId:'bot',kind:'subagent'});f.store.statsSessions.saveOwnedStart(child,3);
+  f.runtime.saveBot({...f.store.bots.bot('bot'),workingDirectory:path.join(f.home,'new-root')});
   f.harness.deleteSessions=async ids=>{assert.deepEqual(ids,[old.sessionId]);return[old.sessionId,child];};
   assert.deepEqual(await f.runtime.deleteSession(old.sessionId),{current:false});
   assert.equal(f.store.sessions.findSession(old.sessionId),undefined);assert.equal(f.store.sessions.findBinding(old.key)?.sessionId,current.sessionId);
@@ -50,6 +53,7 @@ test('deleting historical session removes only its records and exports and retai
   assert.ok(f.store.inbox.source(current.key,'current'));assert.equal(f.store.statsData.getSessionOwner(child),undefined);
   assert.equal(f.store.memory.memories(old.key).length,1);assert.ok(f.store.automation.findJob(scheduled.id));
   await assert.rejects(stat(oldFile),{code:'ENOENT'});await stat(currentFile);await stat(otherFile);
+  await assert.rejects(stat(oldDirectory),{code:'ENOENT'});assert.equal(await readFile(path.join(currentDirectory,'outputs','current.txt'),'utf8'),'current session output');
   assert.equal(await readFile(asset.path,'utf8'),'shared content');assert.equal(await readFile(userFile,'utf8'),'keep');
   assert.ok(f.store.assets.findAsset(asset.id));assert.ok(f.store.deliveries.findByAsset(current.key,asset.id).length);
   const reopened=new SqlitePersistence(f.home);try{assert.equal(reopened.sessions.findSession(old.sessionId),undefined);assert.equal(reopened.sessions.findBinding(current.key)?.sessionId,current.sessionId);}finally{reopened.close();}

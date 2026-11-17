@@ -43,6 +43,7 @@ export interface HarnessPort {
   models?():Promise<ModelCatalogItem[]>;
   modelDiagnostics?():Promise<ModelCapabilityDiagnostics[]>;
   inspectSession?(sessionId:string):Promise<void>;
+  exportSessionHistory?(sessionId:string):Promise<string>;
   drain?():Promise<void>;
 }
 export interface Credentials {read(botId:string):Promise<Credential|undefined>;write(botId:string,value:Credential):Promise<void>;remove(botId:string):Promise<void>}

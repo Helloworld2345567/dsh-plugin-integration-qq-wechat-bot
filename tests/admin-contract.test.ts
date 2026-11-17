@@ -46,6 +46,25 @@ test('session deletion command reports replacement only when deleting the curren
   assert.deepEqual(await admin.command({version:1,kind:'command',name:'session.delete',input:{id:'history'}}),{ok:true,current:false});
 });
 
+test('workspace commands validate explicit asset selections and session export delegates to the host',async t=>{
+  assert.equal(adminQueryRequestSchema.parse({version:1,kind:'query',name:'workspace.storage',input:{botId:'bot',kind:'image'}}).name,'workspace.storage');
+  assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'workspace.cleanup',input:{botId:'bot',assetIds:[],path:'untrusted'}}));
+  assert.throws(()=>adminCommandRequestSchema.parse({version:1,kind:'command',name:'workspace.pin',input:{botId:'bot',assetId:'asset',pinned:'yes'}}));
+  const {admin}=await fixture(t);let requested='';
+  (admin.runtime as any).harness={exportSessionHistory:async(id:string)=>{requested=id;return '/fixture/history.jsonl';}};
+  assert.deepEqual(await admin.command({version:1,kind:'command',name:'session.export',input:{id:'session'}}),{ok:true,path:'/fixture/history.jsonl'});
+  assert.equal(requested,'session');
+});
+
+test('workspace directories show the persisted session location after the configured root changes',async t=>{
+  const {admin,store}=await fixture(t),binding=store.sessions.binding({botId:'bot',platform:'qq',accountId:'account',kind:'private',channelId:'user',senderId:'user'});
+  const actual=path.join(store.home,'existing-scope');store.sessions.setWorkspace(binding.key,binding.sessionId,actual);
+  store.bots.saveBot({...store.bots.bot('bot'),workingDirectory:path.join(store.home,'new-root')});
+  const result:any=await admin.invoke('directories',{});
+  assert.equal(result.sessions[0].scopeDirectory,actual);
+  assert.equal(result.sessions[0].directory,path.join(actual,'sessions',binding.sessionId));
+});
+
 test('model directory picker command returns the selected path without saving settings',async t=>{
   const selected=path.resolve('.codex/selected-models');let received:string|undefined;
   const {admin}=await fixture(t,undefined,async initial=>{received=initial;return selected;});

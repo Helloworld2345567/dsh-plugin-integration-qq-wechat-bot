@@ -5,6 +5,7 @@ import path from 'node:path';
 import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
 import {Assets} from '../src/core/media.js';
 import {botSchema,type CallerScope} from '../src/core/types.js';
+import {sessionWorkingDirectory} from '../src/core/workspaces.js';
 
 import {deleteNativeSessions} from '../src/harness/session-deletion.js';
 import {SessionQueryError} from '@deepseek-ai/dsh-session-query';
@@ -13,15 +14,16 @@ import {botHistorySentinelCounts,seedBotHistoryAggregate} from './sqlite-fixture
 test('history purge removes old sessions, memories, media, automation and stats only for its owner',async t=>{
   const home=await mkdtemp(path.resolve('.codex/history-'));const store=new SqlitePersistence(home),assets=new Assets(store.repositories());
   t.after(async()=>{store.close();await rm(home,{recursive:true,force:true});});
-  for(const id of ['one','two'])store.bots.saveBot(botSchema.parse({id,name:id,channel:'qq'}));
+  for(const id of ['one','two'])store.bots.saveBot(botSchema.parse({id,name:id,channel:'qq',workingDirectory:path.join(home,'custom')}));
   const scope=(botId:string):CallerScope=>({botId,platform:'qq',accountId:botId,kind:'private',channelId:'alice',senderId:'alice'});
   const old=store.sessions.binding(scope('one')),fresh=store.sessions.reset(scope('one')),other=store.sessions.binding(scope('two'));
   for(const b of [old,fresh,other]){
+    const directory=await store.workspaceFiles.session(b.key,b.sessionId);await writeFile(path.join(directory,'outputs','result.txt'),'session output');
     store.inbox.accept({id:b.sessionId,text:'private history',scope:b.scope,attachments:[],reply:{kind:'private',target:'alice',msgId:'source'},timestamp:Date.now()});
     await assets.save(b.key,{name:'test.txt',mime:'text/plain',kind:'file'},Buffer.from('attachment'));
     seedBotHistoryAggregate(store,b);
     store.deliveries.enqueue(b,'source','turn',[{type:'text',text:'private reply'}],{kind:'private',target:'alice',msgId:'source'});
-    store.jobs.saveJob(b.sessionId,{id:b.sessionId,scope:b.key});await mkdir(path.join(home,'jobs',b.sessionId),{recursive:true});await writeFile(path.join(home,'jobs',b.sessionId,'input.json'),'private input');
+    const workspace=await store.workspaceFiles.scope(b.key),jobDirectory=path.join(workspace,'.bot','jobs',b.sessionId);store.jobs.saveJob(b.sessionId,{id:b.sessionId,scope:b.key,workspace,directory:jobDirectory});await mkdir(jobDirectory,{recursive:true});await writeFile(path.join(jobDirectory,'input.json'),'private input');
   }
   const history=store.botHistory.snapshot('one');assert.deepEqual(history.sessions,new Set([old.sessionId,fresh.sessionId]));
   const ownedPaths=store.assets.allAssets().filter(item=>item.scopeKey===old.key).map(item=>item.path),otherPath=store.assets.allAssets().find(item=>item.scopeKey===other.key)!.path;
@@ -32,7 +34,9 @@ test('history purge removes old sessions, memories, media, automation and stats 
   assert.equal(store.automation.listJobs().length,1);assert.equal(store.automation.listRuns('scheduled').length,1);assert.equal(sentinels.native,1);assert.equal(sentinels.replySequence,1);
   assert.equal(store.deliveries.deliveries().length,1);assert.equal(store.assets.allAssets().length,1);assert.equal(store.jobs.jobs().length,1);
   for(const file of ownedPaths)await assert.rejects(stat(file),{code:'ENOENT'});await stat(otherPath);
-  await assert.rejects(stat(path.join(home,'jobs',old.sessionId)),{code:'ENOENT'});await stat(path.join(home,'jobs',other.sessionId));
+  for(const b of [old,fresh])await assert.rejects(stat(sessionWorkingDirectory(store.bots.bot(b.scope.botId),b.key,b.sessionId,home)),{code:'ENOENT'});
+  assert.equal(await readFile(path.join(sessionWorkingDirectory(store.bots.bot('two'),other.key,other.sessionId,home),'outputs','result.txt'),'utf8'),'session output');
+  await assert.rejects(stat(path.join(home,'custom','one',old.key,'.bot','jobs',old.sessionId)),{code:'ENOENT'});await stat(path.join(home,'custom','two',other.key,'.bot','jobs',other.sessionId));
   assert.equal(store.personas.config('sakura').id,'sakura');assert.equal(store.bots.bot('one').id,'one');
 });
 

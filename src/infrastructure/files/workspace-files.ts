@@ -1,6 +1,6 @@
-import {mkdir, rename, writeFile} from 'node:fs/promises';
+import {cp, mkdir, realpath, rename, rm, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {prepareWorkingDirectory} from '../../core/workspaces.js';
+import {prepareWorkingDirectory,sessionDirectory} from '../../core/workspaces.js';
 import {assetFolder, exists, mediaFolders, moveFile, type AssetOrigin} from '../../core/media-paths.js';
 import type {ChatHistoryEvent, HistoryLocationRepository, WorkspacePort} from '../../core/ports/workspace.js';
 import type {AutomationRepository} from '../../core/ports/automation.js';
@@ -26,6 +26,28 @@ export class WorkspaceFiles implements WorkspacePort {
   constructor(private readonly deps: WorkspaceFilesDeps) {}
   get home(): string {return this.deps.home;}
   async scope(scope: string): Promise<string> {return this.scopeWorkspace(scope);}
+  async session(scope:string,sessionId:string,beforeMove?:()=>Promise<void>):Promise<string> {
+    const record=this.deps.sessions().findSession(sessionId);if(!record||record.scopeKey!==scope)throw Error('SESSION_OWNERSHIP_MISMATCH');
+    const workspace=await this.scopeWorkspace(scope),directory=sessionDirectory(workspace,sessionId);
+    if(record.workspace&&path.resolve(record.workspace)!==workspace){
+      await beforeMove?.();
+      const previous=sessionDirectory(record.workspace,sessionId);
+      if(await exists(previous)){
+        if(await exists(directory))throw Error('SESSION_WORKSPACE_TARGET_EXISTS');
+        await mkdir(path.dirname(directory),{recursive:true});
+        try{await rename(previous,directory);}
+        catch(error){
+          if((error as NodeJS.ErrnoException).code!=='EXDEV')throw error;
+          try{await cp(previous,directory,{recursive:true,force:false,errorOnExist:true});}
+          catch(copyError){await rm(directory,{recursive:true,force:true});throw copyError;}
+          await rm(previous,{recursive:true});
+        }
+      }
+    }
+    await Promise.all(['outputs',path.join('.bot','tmp')].map(folder=>mkdir(path.join(directory,folder),{recursive:true})));
+    this.deps.sessions().setWorkspace(scope,sessionId,workspace);
+    return realpath(directory);
+  }
   async scopeWorkspace(scope: string): Promise<string> {
     const owner = this.deps.bindings().findBinding(scope)
       ?? this.deps.sessions().sessionsAll().find(item => item.scopeKey === scope)

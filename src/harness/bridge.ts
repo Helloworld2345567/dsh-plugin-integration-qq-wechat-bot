@@ -26,7 +26,6 @@ import { freezeTurn, allowedNow, permitted, mediaConfigNow, permissionsRevoked, 
 import type {RuntimeRepositories} from '../core/ports/application.js';
 import { Assets, MediaService, type MediaOperation } from '../core/media.js';
 import {analysisEnabled} from '../core/analysis.js';
-import {prepareWorkingDirectory} from '../core/workspaces.js';
 import { registerMode } from '../mode.js';
 import {DynamicSkills,packagedSkills,type FrozenSkill} from '../core/skills.js';
 import type {StatsService} from '../core/stats.js';
@@ -93,17 +92,21 @@ export class NativeHarness implements HarnessPort {
   private async syncPermissions(ctx:Context,agent:Agent,live:LiveSession):Promise<void>{
     const preset=live.snapshot.trusted&&live.snapshot.config.allowHostTools?'danger-full-access':'read-only';
     if(ctx.permissionPresets.current(agent.session)===preset)return;
+    if(!await this.releaseTerminals(agent,'bot permission mode changed'))throw new Error('BOT_TERMINALS_UNAVAILABLE');
+    live.shellDirectory=undefined;ctx.permissionPresets.set(agent.session,preset);
+  }
+  private async releaseTerminals(agent:Agent,reason:string):Promise<boolean>{
     const terminals=this.ctx.agentPresets.serviceFor(agent,'terminals');
-    if(!terminals)throw new Error('BOT_TERMINALS_UNAVAILABLE');
+    if(!terminals)return false;
     const closed=this.closedTerminals.get(agent)??new Set<string>();
-    this.closedTerminals.set(agent,closed);live.shellDirectory=undefined;
+    this.closedTerminals.set(agent,closed);const live=this.scoped.get(agent);if(live)live.shellDirectory=undefined;
     for(const terminal of terminals.list(agent)){
-      await terminals.kill(agent,terminal.sessionId,'bot permission mode changed');
+      await terminals.kill(agent,terminal.sessionId,reason);
       closed.add(terminal.sessionId);
     }
-    // An unpublished spawn or unfinished cleanup must still block a sandbox transition.
-    if(terminals.hasOwnerActivity(agent))throw new Error('BOT_TERMINAL_PERMISSION_TRANSITION_PENDING');
-    ctx.permissionPresets.set(agent.session,preset);
+    // An unpublished spawn or unfinished cleanup still owns its process/cwd.
+    if(terminals.hasOwnerActivity(agent))throw new Error('BOT_TERMINAL_TRANSITION_PENDING');
+    return true;
   }
   private async syncShellDirectory(ctx:Context,agent:Agent,live:LiveSession):Promise<void>{
     const shell=process.platform==='win32'?'pwsh':'bash';const bot=this.repos.bots.bot(live.binding.scope.botId);
@@ -199,17 +202,13 @@ export class NativeHarness implements HarnessPort {
     return this.catalogModels();
   }
   async inspectSession(sessionId:string):Promise<void> {await this.ctx.sessionQuery.readSession(SessionId(sessionId));}
-  async exportHistory():Promise<void>{
-    for(const record of this.repos.sessions.sessionsAll())if(record.persisted){
-      let log;
-      try{log=await this.ctx.sessionQuery.readSession(SessionId(record.id));}
-      catch(error){
-        // An interrupted deletion can leave an index row after the native log is gone.
-        if(typeof error==='object'&&error!==null&&'code' in error&&error.code==='SESSION_QUERY_SESSION_NOT_FOUND')continue;
-        throw error;
-      }
-      await this.repos.chatHistory.write(record.scopeKey,record.id,log.events);
-    }
+  async exportSessionHistory(sessionId:string):Promise<string>{
+    const record=this.repos.sessions.findSession(sessionId);if(!record)throw Error('SESSION_NOT_FOUND');
+    const live=this.live.get(sessionId);if(live)await this.ctx.sessions.flush(live.agent.session);
+    const log=await this.ctx.sessionQuery.readSession(SessionId(sessionId));
+    await this.repos.chatHistory.write(record.scopeKey,sessionId,log.events);
+    const location=this.repos.historyLocations.find(sessionId);if(!location)throw Error('HISTORY_EXPORT_FAILED');
+    return location.file;
   }
   async compact(binding:SessionBinding,signal:AbortSignal):Promise<string> {
     const live=await this.session(binding);signal.throwIfAborted();
@@ -245,12 +244,26 @@ export class NativeHarness implements HarnessPort {
     const current=this.repos.sessions.findBinding(record.scopeKey);if(current?.sessionId===id)return current;
     return {key:record.scopeKey,scope:record.scope,sessionId:record.id,generation:record.generation,persisted:record.persisted,personaId:record.personaId,modelOverride:record.modelOverride,ttsOverride:record.ttsOverride,stsOverride:record.stsOverride,recentSince:record.recentSince};
   }
+  private async prepareSessionDirectory(binding:SessionBinding,signal?:AbortSignal):Promise<string>{
+    const children=()=>this.ctx.agents.list().filter(agent=>agent.id!==binding.sessionId&&this.scoped.get(agent)?.binding.sessionId===binding.sessionId);
+    const cwd=await this.repos.workspace.session(binding.key,binding.sessionId,async()=>{
+      // A completed parent turn can still have children writing session files.
+      for(;;){const waiting=Promise.all(children().map(agent=>agent.whenIdle()));await(signal?abortable(waiting,signal):waiting);if(children().every(agent=>agent.status==='idle'))break;}
+      // Windows shells retain their cwd even while their Agent is idle.
+      for(const agent of this.ctx.agents.list().filter(agent=>agent.id===binding.sessionId||this.scoped.get(agent)?.binding.sessionId===binding.sessionId))await this.releaseTerminals(agent,'bot working directory changed');
+    });
+    for(const agent of children()){
+      const child=this.scoped.get(agent)!;if(child.cwd===cwd)continue;
+      await this.ctx.workingDirectory.set(agent,cwd);child.cwd=cwd;child.shellDirectory=undefined;
+    }
+    return cwd;
+  }
   private async session(binding:SessionBinding):Promise<LiveSession>{
     const id=binding.sessionId as Agent['id'];
     const existing=this.ctx.agents.get(id);if(existing){await this.sessionHandles.wait(id);const live=await this.initializeAgent(existing,binding);binding.persisted=true;return live;}
     const config=this.runOptions.get(id)?.snapshot?.config??this.repos.personas.effectiveConfig(binding);
     if(!config.model)throw new SystemMessageError('modelRequired');
-    const cwd=await prepareWorkingDirectory(this.repos.bots.bot(binding.scope.botId),binding.key,this.repos.storage.home);
+    const cwd=await this.prepareSessionDirectory(binding);
     const persisted=binding.persisted||this.repos.sessions.findSession(id)?.persisted;
     const handle=persisted?await this.ctx.agents.resume({resumeSessionId:id}):await this.ctx.agents.create({sessionId:id,meta:{cwd,agentPreset:'bot-unified-chat'},agentOptions:{provider:config.model.provider,model:config.model.model}});
     const live=await this.initializeAgent(handle.agent,binding);binding.persisted=true;return live;
@@ -265,9 +278,10 @@ export class NativeHarness implements HarnessPort {
     const live={} as LiveSession;
     live.agent=agent;live.binding=binding;live.sources=[];live.loadedTools=new Set<string>();live.toolSections=[];live.assets=[];live.images=new Map();live.voice={attempted:false};live.singing={attempted:false};live.snapshot=initialSnapshot??freezeTurn(config as BotConfig,bot,binding.scope,[],undefined,this.systemLocale(),this.media.imageSettings());live.skills=this.skillFiles.snapshot(config);live.selection={current:this.selection(config),assembled:undefined};
     this.statsAdapter.observe(binding.sessionId,binding.scope.botId,binding.sessionId,'agent');
-    const cwd=await prepareWorkingDirectory(bot,binding.key,this.repos.storage.home);live.cwd=cwd;
+    const cwd=await this.prepareSessionDirectory(binding);live.cwd=cwd;
     const contribution=agent.ctx.inject(['skills','tools','systemPrompt','permissionPresets','llm'],async agentCtx=>{
       await this.ctx.agentPresets.mount(agentCtx,'bot-unified-chat');
+      await this.ctx.workingDirectory.set(agent,cwd);
       this.scoped.set(agent,live);
       const selection=new Proxy(live.selection,{get:(_target,key)=>Reflect.get(this.turn(live,this.ctx.agents.currentInitiator()).selection,key),set:(_target,key,value)=>Reflect.set(this.turn(live,this.ctx.agents.currentInitiator()).selection,key,value)});
       installBotModelSelection(agentCtx,selection);
@@ -567,7 +581,7 @@ export class NativeHarness implements HarnessPort {
     return run.textDelivery;
   }
   private async runTurn(binding:SessionBinding,messages:InboundMessage[],signal:AbortSignal):Promise<HarnessResult>{
-    const live=await this.session(binding);const cwd=await prepareWorkingDirectory(this.repos.bots.bot(binding.scope.botId),binding.key,this.repos.storage.home);
+    const live=await this.session(binding);const cwd=await this.prepareSessionDirectory(binding,signal);
     if(live.cwd!==cwd)await this.assets.migrate(binding.key);
     const sourceIds=messages.map(message=>message.id);const metricIds=sourceIds.map(sourceId=>`inbox:${binding.key}:${sourceId}`);
     const markFirst=()=>{const at=Date.now();for(const id of metricIds){const metric=this.repos.telemetry.metrics.findTurnMetric(id);if(metric&&!metric.modelFirstFeedbackAt)this.repos.telemetry.metrics.updateTurnMetric(id,{modelFirstFeedbackAt:at});}};
@@ -605,7 +619,7 @@ export class NativeHarness implements HarnessPort {
         return value?[{type:'text' as const,text:value}]:[];
       });
       return{turnId:String(end.data.turn),outputs:[...text,...live.assets],snapshot:live.snapshot,voiceAttempted:live.voice.attempted,singingAttempted:live.singing.attempted};
-    }finally{signal.removeEventListener('abort',abort);await this.ctx.sessions.flush(live.agent.session);await this.repos.chatHistory.write(binding.key,binding.sessionId,live.agent.session.snapshotEvents());}
+    }finally{signal.removeEventListener('abort',abort);await this.ctx.sessions.flush(live.agent.session);}
   }
   cancel(sessionId:string):void{const root=this.live.get(sessionId)?.agent;if(!root)return;const pending=[root];const seen=new Set<Agent>();while(pending.length){const parent=pending.shift()!;if(seen.has(parent))continue;seen.add(parent);for(const child of this.ctx.agents.list())if(this.ctx.agents.isOwnedBy(child.id,parent))pending.push(child);parent.cancel({kind:'user'});}}
   async dispose(sessionId?:string):Promise<void>{for(const id of [...this.live.keys()])if(!sessionId||id===sessionId){await this.sessionHandles.dispose(id);this.live.delete(id);}}

@@ -3,6 +3,7 @@ import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {botSchema,configSchema} from '../core/types.js';
 import {voiceLibrarySettingsInputSchema} from '../core/voice-model-library.js';
+import {workspaceStorageFilterSchema,workspaceStorageCleanupSchema,workspaceStoragePinSchema} from '../core/storage-management.js';
 import {acceptanceQueryInputSchema,acceptanceRecordInputSchema,catalogModelsInputSchema,catalogProfileInputSchema,catalogProfilesInputSchema,serviceHealthInputSchema,serviceRefreshInputSchema,serviceStartInputSchema} from '../core/service-management.js';
 
 export const ADMIN_CONTRACT_VERSION=1 as const;
@@ -16,6 +17,7 @@ export const adminQueryRequestSchema=z.discriminatedUnion('name',[
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('overview.summary'),input:emptyInput}).strict(),
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('catalog.config'),input:z.object({id:z.string().min(1).max(80),changedSince:changedSinceSchema}).strict()}).strict(),
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('bots.list'),input:emptyInput}).strict(),
+  z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('workspace.storage'),input:workspaceStorageFilterSchema}).strict(),
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('overview.sessions'),input:pageInput}).strict(),
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('overview.deliveries'),input:z.object({...pageFields,scopeKey:z.string().min(1).max(128).optional()}).strict().default({limit:50})}).strict(),
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('automation.list'),input:emptyInput}).strict(),
@@ -51,6 +53,7 @@ export const adminCommandRequestSchema=z.discriminatedUnion('name',[
   commandRequest('bot.credentials',botCredentialsInput),commandRequest('login.begin',loginBeginInput),commandRequest('login.poll',loginPollInput),
   commandRequest('config.directory.open',z.object({botId:z.string().min(1).max(80).optional(),configId:z.string().min(1).max(80).optional()}).strict()),
   commandRequest('capability.record',capabilityInput),commandRequest('memory.forget',memoryForgetInput),commandRequest('memory.correct',memoryCorrectInput),commandRequest('session.cancel',sessionCancelInput),commandRequest('session.delete',sessionCancelInput),
+  commandRequest('session.export',sessionCancelInput),commandRequest('workspace.cleanup',workspaceStorageCleanupSchema),commandRequest('workspace.pin',workspaceStoragePinSchema),
   commandRequest('skill.singing.probe',z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive()}).strict()),
   commandRequest('skill.music.probe',z.object({configId:z.string().min(1).max(80),revision:z.number().int().positive()}).strict()),
   commandRequest('service.settings.save',voiceLibrarySettingsInputSchema),

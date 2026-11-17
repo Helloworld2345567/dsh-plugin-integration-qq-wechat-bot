@@ -82,6 +82,7 @@ export class BotRuntime {
     if(!this.serviceActive)this.automation.close();
     this.repos.lifecycle.claim(this.owner);this.claimed=true;this.repos.lifecycle.recover();
     for(const job of this.repos.media.jobs.jobs())if(job.state==='running'||job.state==='queued')this.repos.media.jobs.saveJob(job.id,{...job,state:'interrupted'});
+    await this.media.cleanupStaleJobs();
     for(const action of this.repos.telemetry.actions.sessionActions<SessionActionRecord>())if(action.state==='running')this.finishSessionAction(action,'interrupted',systemMessage(action.systemLocale??'zh','actionInterrupted'));
     if(this.serviceActive)for(const bot of this.repos.bots.bots())if(bot.enabled&&!bot.archived)void this.start(bot.id).catch(()=>this.states.set(bot.id,'error'));
     this.repos.lifecycle.retain();

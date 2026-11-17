@@ -22,4 +22,5 @@ export interface ChatHistoryEvent {
 export interface WorkspacePort {
   readonly home: string;
   scope(scopeKey: string): Promise<string>;
+  session(scopeKey: string, sessionId: string, beforeMove?:()=>Promise<void>): Promise<string>;
 }
