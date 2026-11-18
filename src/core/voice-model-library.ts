@@ -33,6 +33,9 @@ export const voiceLibrarySettingsSchema=z.object({
   openAiBaseUrl:imageServiceSettingsSchema.shape.openAiBaseUrl,
   openAiModel:imageServiceSettingsSchema.shape.openAiModel,
   openAiKeyEnv:imageServiceSettingsSchema.shape.openAiKeyEnv,
+  googleBaseUrl:imageServiceSettingsSchema.shape.googleBaseUrl,
+  googleModel:imageServiceSettingsSchema.shape.googleModel,
+  googleKeyEnv:imageServiceSettingsSchema.shape.googleKeyEnv,
   comfyUiBaseUrl:imageServiceSettingsSchema.shape.comfyUiBaseUrl,
   comfyUiWorkflowPath:imageServiceSettingsSchema.shape.comfyUiWorkflowPath,
 }).strict();

@@ -8,7 +8,9 @@ export function resolveImageSkill(config:BotConfig,settings:ImageServiceSettings
   const protocol=override?.protocol??settings.imageProtocol;
   return imageEndpointSchema.parse(protocol==='comfyui'
     ? {protocol,baseUrl:settings.comfyUiBaseUrl,model:'comfyui',workflowPath:settings.comfyUiWorkflowPath}
-    : {protocol,baseUrl:settings.openAiBaseUrl,model:settings.openAiModel,keyEnv:settings.openAiKeyEnv});
+    : protocol==='google'
+      ? {protocol,baseUrl:settings.googleBaseUrl,model:settings.googleModel,keyEnv:settings.googleKeyEnv}
+      : {protocol,baseUrl:settings.openAiBaseUrl,model:settings.openAiModel,keyEnv:settings.openAiKeyEnv});
 }
 export function imageSkillEnabled(config:Readonly<BotConfig>):boolean {
   return config.skills.includes('image-generation')&&config.tools.includes('bot_media')&&config.media.image?.enabled!==false;

@@ -44,6 +44,16 @@ test('image service settings validate endpoints and retain configurable credenti
   assert.equal(settings.openAiModel,'saved-model');assert.equal(settings.openAiKeyEnv,'OLD_KEY');
 });
 
+test('Google image service uses the Gemini defaults and resolves its configured endpoint',()=>{
+  const defaults=imageServiceSettingsSchema.parse({imageProtocol:'google'});
+  assert.equal(defaults.googleBaseUrl,'https://generativelanguage.googleapis.com/v1beta');
+  assert.equal(defaults.googleModel,'gemini-2.5-flash-image');
+  assert.equal(defaults.googleKeyEnv,'GEMINI_API_KEY');
+  const config=configSchema.parse({...persona(),media:{image:{protocol:'google'}}});
+  assert.deepEqual(resolveImageSkill(config,defaults),{protocol:'google',baseUrl:defaults.googleBaseUrl,model:defaults.googleModel,keyEnv:defaults.googleKeyEnv});
+  for(const googleBaseUrl of ['http://generativelanguage.googleapis.com/v1beta','https://user:password@generativelanguage.googleapis.com/v1beta','https://generativelanguage.googleapis.com/v1beta?key=value','https://generativelanguage.googleapis.com:8443/v1beta'])assert.equal(imageServiceSettingsSchema.safeParse({googleBaseUrl}).success,false,googleBaseUrl);
+});
+
 test('ComfyUI receives explicit workflow configuration and persona protocol selection',()=>{
   const settings=imageServiceSettingsSchema.parse({imageProtocol:'openai',comfyUiBaseUrl:'http://127.0.0.1:8188',comfyUiWorkflowPath:'E:\\COMFYUI\\workflows\\fixture.json'});
   const config=configSchema.parse({...persona(),media:{image:{protocol:'comfyui'}}});

@@ -37,9 +37,9 @@ python -m pip install -r requirements.txt
 
 ## 7. 图片服务配置失败
 
-在“服务”分别检查 OpenAI 生图的地址、模型、密钥变量名，以及 ComfyUI 的地址和 API 工作流；再检查“机器人 → 媒体 → 图片”所选协议。地址、模型、协议和工作流不读取旧环境变量回退，配置规则见[配置参考](configuration.md)。
+在“服务”分别检查 OpenAI 或 Google Gemini 生图的地址、模型、密钥变量名，以及 ComfyUI 的地址和 API 工作流；再检查“机器人 → 媒体 → 图片”所选协议。地址、模型、协议和工作流不读取旧环境变量回退，配置规则见[配置参考](configuration.md)。
 
-OpenAI 兼容地址要求 HTTPS，且不含凭据、查询或片段。后台进程必须读取到面板指定的密钥变量（默认 `OPENAI_API_KEY`）；更改变量后重启。确认服务支持所选模型，再做一次单张测试；默认 `gpt-image-2` 不代表第三方服务一定支持。
+OpenAI 和 Google 地址要求 HTTPS，且不含凭据、查询或片段。后台进程必须读取到面板指定的密钥变量（默认分别为 `OPENAI_API_KEY` 和 `GEMINI_API_KEY`）；更改变量后重启。确认服务支持所选模型，再做一次单张测试；Google 默认模型为 `gemini-2.5-flash-image`。
 
 ComfyUI 启动按钮从工作流目录向上查找同时包含 `scripts/start_comfyui.ps1` 和 `ComfyUI/main.py` 的项目；找不到时检查部署布局。面板使用 `--disable-dynamic-vram --disable-pinned-memory --cache-none` 启动，已有实例不会被替换。若发生 Windows 蓝屏，保留 BugCheck/Minidump 并检查内存和驱动，不要反复提交导致崩溃的工作流；这些参数不能保证消除系统故障。
 

@@ -37,9 +37,9 @@ Run `ffmpeg -version` and `ffprobe -version` in the same PowerShell used to star
 
 ## 7. Image service configuration fails
 
-Check the OpenAI image endpoint/model/key variable and ComfyUI endpoint/API workflow under **Services**, then the protocol under **Bots → Media → Images**. Address, model, protocol and workflow have no legacy environment fallback; see [configuration](configuration.md).
+Check the OpenAI or Google Gemini image endpoint/model/key variable and ComfyUI endpoint/API workflow under **Services**, then the protocol under **Bots → Media → Images**. Address, model, protocol and workflow have no legacy environment fallback; see [configuration](configuration.md).
 
-OpenAI-compatible endpoints require HTTPS without credentials, query or fragment. The backend process must receive the selected credential variable (default `OPENAI_API_KEY`); restart after changing it. Confirm provider support for the selected model before a single-image test. The `gpt-image-2` default does not guarantee third-party support.
+OpenAI and Google endpoints require HTTPS without credentials, query or fragment. The backend process must receive the selected credential variable (default `OPENAI_API_KEY` or `GEMINI_API_KEY`); restart after changing it. Confirm provider support for the selected model before a single-image test. The Google default is `gemini-2.5-flash-image`.
 
 The ComfyUI Start action searches upward from the workflow directory for a project containing both `scripts/start_comfyui.ps1` and `ComfyUI/main.py`; check the deployment layout if absent. Panel startup uses `--disable-dynamic-vram --disable-pinned-memory --cache-none` and does not replace existing instances. For a Windows blue screen, preserve BugCheck/Minidump evidence and inspect memory/drivers instead of repeatedly submitting the crashing workflow; these flags cannot guarantee protection from system faults.
 

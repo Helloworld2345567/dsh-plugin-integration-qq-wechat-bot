@@ -51,7 +51,7 @@ DSH 原生日志负责完整历史与恢复；插件 SQLite 保存绑定、历�
 | `media_download` | 从支持的分享链接下载实际媒体，返回附件 ID；默认不投递，不分析 |
 | `media_analysis` | 接收附件 ID 与问题，宿主按图片、文档、音频或视频分派分析 |
 | `media_transform` | 转换已有附件的格式、尺寸、质量或视频 GIF/MP4，不接收 URL |
-| `image_generation` | 使用已配置的 OpenAI 兼容服务或 ComfyUI 工作流生成、编辑图片 |
+| `image_generation` | 使用已配置的 OpenAI 兼容服务、Google Gemini 服务或 ComfyUI 工作流生成、编辑图片 |
 | `bot_voice`、`bot_music`、`bot_sing` | 分别处理语音、音乐获取和 RVC 转换；复用统一任务与附件投递 |
 | `bot_session` | 查询、新建、压缩或恢复会话；即时停止由宿主命令处理 |
 | `bot_model`、`bot_voice_control` | 修改当前会话覆盖，下一轮生效 |

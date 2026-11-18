@@ -14,11 +14,11 @@ export const skillNameSchema = z.string().max(64).regex(/^[a-z][a-z0-9]*(?:-[a-z
 export const endpointSchema = z.object({
   baseUrl: z.url().refine(value=>{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&!u.search&&!u.hash&&(!u.port||u.port==='443');},{message:'媒体 API 必须使用无凭据、查询、片段或非 443 端口的 HTTPS 地址',params:{message:systemDescriptor('mediaApiUrlInvalid')}}), model: z.string().min(1), keyEnv: z.string().regex(/^[A-Z_][A-Z0-9_]*$/),
 });
-const imageProtocol=z.enum(['openai','comfyui']);
+const imageProtocol=z.enum(['openai','google','comfyui']);
 const imageUrl=z.string().trim().min(1).max(2048).refine(value=>{try{const u=new URL(value);return ['http:','https:'].includes(u.protocol)&&!u.username&&!u.password&&!u.search&&!u.hash;}catch{return false;}},{message:'图片服务地址无效',params:{message:systemDescriptor('mediaApiUrlInvalid')}});
 export const imageEndpointSchema=z.object({protocol:imageProtocol.optional(),baseUrl:imageUrl,model:z.string().min(1).max(256),keyEnv:z.string().regex(/^[A-Z_][A-Z0-9_]*$/).optional(),workflowPath:z.string().trim().min(1).max(4096).refine(value=>path.isAbsolute(value)||path.win32.isAbsolute(value),'workflow path must be absolute').optional()}).strict().superRefine((value,ctx)=>{
   const protocol=value.protocol??'openai',url=new URL(value.baseUrl);
-  if(protocol==='openai'&&(url.protocol!=='https:'||url.port&&url.port!=='443'))ctx.addIssue({code:'custom',path:['baseUrl'],message:'OpenAI 图片服务须使用 HTTPS',params:{message:systemDescriptor('mediaApiUrlInvalid')}});
+  if((protocol==='openai'||protocol==='google')&&(url.protocol!=='https:'||url.port&&url.port!=='443'))ctx.addIssue({code:'custom',path:['baseUrl'],message:protocol==='google'?'Google 图片服务须使用 HTTPS':'OpenAI 图片服务须使用 HTTPS',params:{message:systemDescriptor('mediaApiUrlInvalid')}});
   if(protocol==='comfyui'&&url.protocol==='http:'&&!['localhost','127.0.0.1','::1'].includes(url.hostname.toLowerCase()))ctx.addIssue({code:'custom',path:['baseUrl'],message:'ComfyUI HTTP 服务须使用本机地址',params:{message:systemDescriptor('mediaApiUrlInvalid')}});
   if(protocol==='comfyui'&&value.keyEnv!==undefined)ctx.addIssue({code:'custom',path:['keyEnv'],message:'ComfyUI 不使用 OpenAI API Key'});
   if(protocol!=='comfyui'&&value.workflowPath!==undefined)ctx.addIssue({code:'custom',path:['workflowPath'],message:'工作流设置仅适用于 ComfyUI',params:{message:systemDescriptor('mediaApiUrlInvalid')}});

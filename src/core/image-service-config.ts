@@ -19,6 +19,12 @@ const openAiUrl = z.string().trim().min(1).max(2048).refine(value => {
     return url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash && (!url.port || url.port === '443');
   } catch { return false; }
 }, {message: 'OpenAI 图片服务地址必须是 HTTPS 地址'});
+const googleUrl = z.string().trim().min(1).max(2048).refine(value => {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash && (!url.port || url.port === '443');
+  } catch { return false; }
+}, {message: 'Google 图片服务地址必须是 HTTPS 地址'});
 const keyEnv = z.string().trim().regex(/^[A-Z_][A-Z0-9_]*$/, 'API Key 环境变量名必须为大写变量名');
 const defaultComfyWorkflowPath = (): string => {
   const separator = String.fromCharCode(92);
@@ -27,10 +33,13 @@ const defaultComfyWorkflowPath = (): string => {
 
 /** Operator-owned image service settings.  Credentials remain environment-backed. */
 export const imageServiceSettingsSchema = z.object({
-  imageProtocol: z.enum(['openai', 'comfyui']).default('openai'),
+  imageProtocol: z.enum(['openai', 'google', 'comfyui']).default('openai'),
   openAiBaseUrl: openAiUrl.default('https://api.openai.com/v1'),
   openAiModel: z.string().trim().min(1).max(256).default('gpt-image-2'),
   openAiKeyEnv: keyEnv.default('OPENAI_API_KEY'),
+  googleBaseUrl: googleUrl.default('https://generativelanguage.googleapis.com/v1beta'),
+  googleModel: z.string().trim().min(1).max(256).default('gemini-2.5-flash-image'),
+  googleKeyEnv: keyEnv.default('GEMINI_API_KEY'),
   comfyUiBaseUrl: localUrl.default('http://127.0.0.1:8188'),
   comfyUiWorkflowPath: absolutePath('ComfyUI workflow').default(defaultComfyWorkflowPath()),
 }).strict();
@@ -47,6 +56,9 @@ export function imageServiceSettingsFromRecord(raw: unknown): ImageServiceSettin
     openAiBaseUrl: record.openAiBaseUrl,
     openAiModel: record.openAiModel,
     openAiKeyEnv: record.openAiKeyEnv,
+    googleBaseUrl: record.googleBaseUrl,
+    googleModel: record.googleModel,
+    googleKeyEnv: record.googleKeyEnv,
     comfyUiBaseUrl: record.comfyUiBaseUrl,
     comfyUiWorkflowPath: record.comfyUiWorkflowPath,
   });

@@ -31,6 +31,16 @@ test('service actions use their own saved fields while refresh preserves unrelat
   assert.equal(serviceDraftDirty('gpt-sovits',props.draft,props.settings),false);
 });
 
+test('Google image service exposes its address, model and key fields',()=>{
+  const {props,tree}=fixture({selectedService:'google'});
+  props.draft.googleBaseUrl='https://generativelanguage.googleapis.com/v1beta';
+  props.draft.googleModel='gemini-2.5-flash-image';
+  props.draft.googleKeyEnv='GEMINI_API_KEY';
+  const ids=tree().filter(node=>node.type==='input').map(node=>node.props.id);
+  assert.deepEqual(ids,['service-field-googleBaseUrl','service-field-googleModel','service-field-googleKeyEnv']);
+  assert.equal(serviceDraftDirty('google',props.draft,props.settings),true);
+});
+
 test('directory pending is local and switching service details is only navigation',async()=>{
   const {props,calls,tree}=fixture({selectedService:'breeze-tts',picking:'breezeTtsProjectRoot'});
   const pending=tree().find(node=>node.type==='button'&&node.children.includes('正在选择…'));

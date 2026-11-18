@@ -51,7 +51,7 @@ Channel media storage is separate from session directories. SQLite records attac
 | `media_download` | Download actual media from supported share links and return attachment IDs; no analysis or delivery by default |
 | `media_analysis` | Accept attachment IDs and a question; host dispatches image/document/audio/video analysis |
 | `media_transform` | Convert existing attachment format, size, quality or video GIF/MP4; no URL input |
-| `image_generation` | Generate/edit through configured OpenAI-compatible services or ComfyUI workflows |
+| `image_generation` | Generate/edit through configured OpenAI-compatible services, Google Gemini, or ComfyUI workflows |
 | `bot_voice`, `bot_music`, `bot_sing` | Speech, music acquisition and RVC conversion using shared jobs and attachment delivery |
 | `bot_session` | Query, create, compact or resume sessions; host commands handle immediate stop |
 | `bot_model`, `bot_voice_control` | Change current-session overrides for the next turn |

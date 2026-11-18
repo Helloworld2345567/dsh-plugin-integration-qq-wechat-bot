@@ -81,13 +81,20 @@ def image(job):
     frame_duration_ms = params.get("frame_duration_ms")
     if frame_duration_ms is not None and (isinstance(frame_duration_ms, bool) or not isinstance(frame_duration_ms, int) or not 20 <= frame_duration_ms <= 2000):
         raise JobError("IMAGE_FRAME_DURATION_INVALID")
+    if protocol == "google":
+        if requested_count != 1:
+            raise JobError("IMAGE_BATCH_UNSUPPORTED")
+        if output_format not in {"png", "jpeg"}:
+            raise JobError("IMAGE_OUTPUT_FORMAT_UNSUPPORTED")
+        if complexity is not None or frame_count is not None or frame_duration_ms is not None:
+            raise JobError("IMAGE_OPTION_UNSUPPORTED")
     command = [sys.executable, "-B", str(RELEASE_ROOT / "python" / "image_api.py"), operation,
                "--prompt", str(params.get("prompt", "")), "--protocol", str(protocol), "--model", endpoint["model"],
                "--base-url", endpoint["baseUrl"],
                "--output-dir", job["output"], "--output-format", output_format, "--n", str(requested_count),
                "--timeout", str(job.get("timeoutMs", 0) / 1000), "--record", str(record)]
     if protocol != "comfyui":
-        command.extend(["--api-key-env", endpoint.get("keyEnv", "OPENAI_API_KEY")])
+        command.extend(["--api-key-env", endpoint.get("keyEnv", "GEMINI_API_KEY" if protocol == "google" else "OPENAI_API_KEY")])
     elif endpoint.get("workflowPath"):
         command.extend(["--workflow", str(endpoint["workflowPath"])])
     if protocol == "comfyui" and width is not None:
@@ -117,7 +124,11 @@ def image(job):
         raise JobError("IMAGE_OUTPUT_RECORD_INVALID")
     if not all(isinstance(p, str) and p.strip() for p in files):
         raise JobError("IMAGE_OUTPUT_RECORD_INVALID")
-    if not 1 <= len(files) <= requested_count:
+    # Some native Gemini image models return multiple inline images for one
+    # request. Keep the requested batch restriction on OpenAI/ComfyUI, while
+    # accepting provider-returned Google images up to the shared safety cap.
+    maximum_count = IMAGE_MAX_BATCH if protocol == "google" else requested_count
+    if not 1 <= len(files) <= maximum_count:
         raise JobError("IMAGE_OUTPUT_COUNT_INVALID")
     output_root = Path(job["output"]).resolve()
     assets = []
@@ -455,12 +466,19 @@ def _validate_protocol(job):
             workflow = endpoint.get("workflowPath")
             if workflow is not None and (not isinstance(workflow, str) or not workflow.strip() or len(workflow) > 4096):
                 raise JobError("MEDIA_WORKER_ENDPOINT_INVALID")
+        elif endpoint.get("protocol") == "google":
+            if (job["operation"] not in {"image_generate", "image_edit"}
+                    or not isinstance(endpoint.get("model"), str) or not endpoint["model"] or len(endpoint["model"]) > 256
+                    or not isinstance(endpoint.get("keyEnv"), str) or not endpoint["keyEnv"]
+                    or not endpoint["keyEnv"][0].isalpha() or not endpoint["keyEnv"].replace("_", "").isalnum()
+                    or not endpoint["keyEnv"].isupper()):
+                raise JobError("MEDIA_WORKER_ENDPOINT_INVALID")
         elif endpoint.get("protocol") == "edge_tts":
             voice = endpoint.get("voice")
             if job["operation"] != "voice_speak" or not isinstance(voice, str) or not voice.strip() or len(voice.encode("utf-8")) > 128:
                 raise JobError("MEDIA_WORKER_ENDPOINT_INVALID")
         elif job["operation"] in {"image_generate", "image_edit"}:
-            if (endpoint.get("protocol", "openai") != "openai"
+            if (endpoint.get("protocol", "openai") not in {"openai", "google"}
                     or not isinstance(endpoint.get("model"), str) or not endpoint["model"] or len(endpoint["model"]) > 256):
                 raise JobError("MEDIA_WORKER_ENDPOINT_INVALID")
         elif (not isinstance(endpoint.get("model"), str) or not endpoint["model"] or len(endpoint["model"]) > 256

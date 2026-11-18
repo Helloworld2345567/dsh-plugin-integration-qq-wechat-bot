@@ -24,7 +24,7 @@
 | `BOT_WORKSPACE_ROOT` | 默认是当前工作目录 `.runtime/workspaces`；首次独立安装后写入 `BOT_HOME/workspace.json`，后续启动复用。保存会话、附件、引擎缓存和 worker 工作区。 | 是 |
 | `BOT_PERSONAS_ROOT` | 已有 Harness/直接插件启动的人格文件根；未设置时从插件数据目录推导。独立产品始终使用 `BOT_HOME/personas`，不接受单独覆盖。 | 是 |
 | `BOT_PYTHON` | 媒体 worker 使用的 Python 解释器；未设置时已有 Harness 使用 `python`，独立产品使用 `BOT_HOME/media-venv` 中的解释器。需要 Python 3.12/3.13 和基础 requirements。 | 是 |
-| `OPENAI_API_KEY` 或服务面板指定的变量 | OpenAI 兼容图片服务的凭据来源；图片脚本读取服务面板 `openAiKeyEnv` 指定的变量，未配置变量名时默认 `OPENAI_API_KEY`。ComfyUI 不使用此密钥。 | 修改变量值后重启 |
+| `OPENAI_API_KEY`、`GEMINI_API_KEY` 或服务面板指定的变量 | 图片服务的凭据来源；OpenAI 读取 `openAiKeyEnv`，Google Gemini 读取 `googleKeyEnv`，默认分别为 `OPENAI_API_KEY` 和 `GEMINI_API_KEY`。ComfyUI 不使用此密钥。 | 修改变量值后重启 |
 | `BOT_VOICE_MODELS_ROOT` | 首次打开音色模型库时的模型根目录默认值；面板保存的库设置优先。模型、权重和参考音频仍是外部资源，不随主包安装。 | 是（或重新打开/刷新服务） |
 | `BREEZE_TTS_URL` | Breeze-TTS-2.cpp HTTP 服务地址默认值；面板保存的 Breeze 地址优先。 | 是（或重新打开/刷新服务） |
 | `GPT_SOVITS_ROOT` | GPT-SoVITS 外部项目目录默认值；面板保存的启动目录优先。仅用于用户点击“启动 GPT-SoVITS”，不会自动启动。 | 是 |
@@ -33,9 +33,9 @@
 
 `BOT_ANALYSIS_API_KEY` 由宿主按任务从 Harness credentials 注入；`BOT_LAUNCH_TOKEN` 由启动器生成；`BOT_OPEN_DIRECTORY` 由目录打开动作临时注入。这些运行时值不需手工设置，不能记录或提交。
 
-服务面板中的 OpenAI 兼容地址必须是无凭据、无查询和无片段的 HTTPS 地址；密钥字段只填写大写环境变量名，不保存密钥值。ComfyUI 使用服务面板保存的本机 `comfyUiBaseUrl` 和 API 工作流路径。独立调用图片脚本时使用 `--protocol`、`--base-url`、`--model` 和 `--workflow` 指定相应配置，使用 `--api-key-env` 选择密钥变量（默认 `OPENAI_API_KEY`）。若所选变量没有密钥则报错，不回退到其他变量。图片配置的详细行为见 [image-generation 技能](../skills/image-generation/SKILL.md)。
+服务面板中的 OpenAI 和 Google 地址必须是无凭据、无查询和无片段的 HTTPS 地址；密钥字段只填写大写环境变量名，不保存密钥值。Google 默认地址为 `https://generativelanguage.googleapis.com/v1beta`，默认模型为 `gemini-2.5-flash-image`，默认密钥变量为 `GEMINI_API_KEY`。ComfyUI 使用服务面板保存的本机 `comfyUiBaseUrl` 和 API 工作流路径。独立调用图片脚本时使用 `--protocol`、`--base-url`、`--model` 和 `--workflow` 指定相应配置，使用 `--api-key-env` 选择密钥变量。若所选变量没有密钥则报错，不回退到其他变量。图片配置的详细行为见 [image-generation 技能](../skills/image-generation/SKILL.md)。
 
-服务地址、模型、协议和工作流以显式参数传入，不读取同名环境配置。OpenAI 兼容请求可用 `image_generation.model` 按次指定模型，不修改默认值或失败后自动换模型；ComfyUI 模型由工作流决定。
+服务地址、模型、协议和工作流以显式参数传入，不读取同名环境配置。OpenAI 和 Google 请求都可用 `image_generation.model` 按次指定模型，不修改默认值或失败后自动换模型；ComfyUI 模型由工作流决定。
 
 ## 安装器、启动器和 Harness 管理变量
 

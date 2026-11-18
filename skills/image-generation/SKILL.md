@@ -9,7 +9,7 @@ Use `image_generation` for an explicit request to create or edit an image. The h
 
 - Use `operation="edit"` when the user selected reference images; otherwise use generation.
 - Pass `model`, `width`/`height`, `n` or `output_format` only when the user explicitly asks for them. Keep the configured service defaults otherwise.
-- Generate or edit multiple images as requested. Execute calls and retries sequentially by default. Only when the user explicitly requests parallel execution, use at most three concurrent media operations. Decide whether to retry a failed request, with at most three retries after the initial attempt (four attempts total). Correct known causes; do not change parameters merely to evade the retry limit.
+- Generate or edit the requested number of images when the selected service reports batch support. Execute calls and retries sequentially by default. Only when the user explicitly requests parallel execution, use at most three concurrent media operations. Decide whether to retry a failed request, with at most three retries after the initial attempt (four attempts total). Correct known causes; do not change parameters merely to evade the retry limit.
 - Apply the selected service's prompting guidance appended by the host. Preserve exact requested lettering. Keep selected references as uploaded inputs, give each a role, and state what must change or remain.
 - The host validates and registers returned images. Do not include image Markdown, paths or asset IDs.
 

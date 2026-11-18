@@ -53,6 +53,12 @@ def _adapter(protocol: str):
         else:
             from dsh_bot_runtime.skills.image_generation.comfyui import image_api as module
         return module
+    if protocol == "google":
+        if __package__:
+            from .google import image_api as module
+        else:
+            from dsh_bot_runtime.skills.image_generation.google import image_api as module
+        return module
     raise ValueError(f"unsupported image protocol: {protocol}")
 
 

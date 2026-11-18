@@ -25,7 +25,7 @@ Standalone scripts directly accept only `BOT_HOME`, `BOT_WORKSPACE_ROOT` and `BO
 | `BOT_WORKSPACE_ROOT` | Defaults to working-directory `.runtime/workspaces`; first standalone install writes `BOT_HOME/workspace.json`, reused at startup. Sessions, attachments, caches and worker workspaces | Yes |
 | `BOT_PERSONAS_ROOT` | Existing/direct-plugin persona root, otherwise derived from plugin data. Standalone fixes `BOT_HOME/personas` | Yes |
 | `BOT_PYTHON` | Media interpreter; existing Harness defaults to `python`, standalone to `BOT_HOME/media-venv`. Requires Python 3.12/3.13 and base requirements | Yes |
-| `OPENAI_API_KEY` or the variable selected in Services | Credential source for OpenAI-compatible image services; the image script reads the variable selected by `openAiKeyEnv`, defaulting to `OPENAI_API_KEY` when no name is configured. ComfyUI does not use this key | After changing the value |
+| `OPENAI_API_KEY`, `GEMINI_API_KEY`, or the variable selected in Services | Credential source for image services; OpenAI reads `openAiKeyEnv`, Google Gemini reads `googleKeyEnv`, defaulting to `OPENAI_API_KEY` and `GEMINI_API_KEY` respectively. ComfyUI does not use a key | After changing the value |
 | `BOT_VOICE_MODELS_ROOT` | Initial voice-library root; saved panel settings win. Models/weights/reference audio remain external | Yes, or reopen/refresh service |
 | `BREEZE_TTS_URL` | Default Breeze-TTS-2.cpp HTTP address; saved panel address wins | Yes, or reopen/refresh |
 | `GPT_SOVITS_ROOT` | Default external GPT-SoVITS startup directory; saved panel value wins. Used only by explicit Start, never automatic | Yes |
@@ -34,9 +34,9 @@ Standalone scripts directly accept only `BOT_HOME`, `BOT_WORKSPACE_ROOT` and `BO
 
 The host injects `BOT_ANALYSIS_API_KEY` from Harness credentials per task; the launcher generates `BOT_LAUNCH_TOKEN`; directory-opening actions temporarily inject `BOT_OPEN_DIRECTORY`. Do not set, record or commit these runtime values.
 
-The OpenAI-compatible address saved in the Services panel must be HTTPS without credentials, query or fragment. The key field stores only an uppercase environment-variable name, never its value. ComfyUI uses the saved local `comfyUiBaseUrl` and API workflow path. Direct script calls use `--protocol`, `--base-url`, `--model` and `--workflow` for the relevant settings; `--api-key-env` selects the credential variable and defaults to `OPENAI_API_KEY`. A missing selected credential fails without trying another variable. See the [image-generation skill](../../skills/image-generation/SKILL.md).
+The OpenAI and Google addresses saved in the Services panel must be HTTPS without credentials, query or fragment. The key field stores only an uppercase environment-variable name, never its value. Google defaults to `https://generativelanguage.googleapis.com/v1beta`, model `gemini-2.5-flash-image`, and key variable `GEMINI_API_KEY`. ComfyUI uses the saved local `comfyUiBaseUrl` and API workflow path. Direct script calls use `--protocol`, `--base-url`, `--model` and `--workflow` for the relevant settings; `--api-key-env` selects the credential variable. A missing selected credential fails without trying another variable. See the [image-generation skill](../../skills/image-generation/SKILL.md).
 
-Address, model, protocol and workflow are explicit arguments, without environment fallbacks. OpenAI-compatible requests can set `image_generation.model` for one operation without changing defaults or automatically switching models on failure; ComfyUI models come from the workflow.
+Address, model, protocol and workflow are explicit arguments, without environment fallbacks. OpenAI-compatible and Google requests can set `image_generation.model` for one operation without changing defaults or automatically switching models on failure; ComfyUI models come from the workflow.
 
 ## Installer, launcher and Harness variables
 

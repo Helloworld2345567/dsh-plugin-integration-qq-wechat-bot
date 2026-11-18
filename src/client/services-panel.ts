@@ -4,12 +4,13 @@ import {panelSaveBar,panelSplit} from './layout.js';
 import {pathPickerActions} from './ui.js';
 import {modelLibraryLabel,serviceHealthLabel} from './service-health.js';
 
-export type ServicePanelId='robot'|'gpt-sovits'|'breeze-tts'|'openai'|'comfyui'|'music'|'rvc';
+export type ServicePanelId='robot'|'gpt-sovits'|'breeze-tts'|'openai'|'google'|'comfyui'|'music'|'rvc';
 export type StartableServiceId='gpt-sovits'|'breeze-tts'|'comfyui';
 export const serviceSettingKeys={
   'gpt-sovits':['gptSovitsUrl','gptSovitsProjectRoot'],
   'breeze-tts':['breezeTtsUrl','breezeTtsProjectRoot','breezeTtsVoicesRoot'],
   openai:['openAiBaseUrl','openAiModel','openAiKeyEnv'],
+  google:['googleBaseUrl','googleModel','googleKeyEnv'],
   comfyui:['comfyUiBaseUrl','comfyUiWorkflowPath'],
   music:['musicHome','musicSources'],
   rvc:['modelsRoot'],
@@ -96,7 +97,7 @@ function orderedSources(props:ServicesPanelProps){
 
 export function ServicesPanel(props:ServicesPanelProps){
   const h=props.React.createElement,t=props.t,draft=props.draft,selected=props.selectedService??'robot';
-  const services:Array<{id:ServicePanelId;name:string}>=[{id:'robot',name:t('robotService')},{id:'gpt-sovits',name:'GPT-SoVITS'},{id:'breeze-tts',name:'Breeze TTS'},{id:'openai',name:t('openaiImageService')},{id:'comfyui',name:'ComfyUI'},{id:'music',name:t('musicService')},{id:'rvc',name:t('rvcModelLibrary')}];
+  const services:Array<{id:ServicePanelId;name:string}>=[{id:'robot',name:t('robotService')},{id:'gpt-sovits',name:'GPT-SoVITS'},{id:'breeze-tts',name:'Breeze TTS'},{id:'openai',name:t('openaiImageService')},{id:'google',name:t('googleImageService')},{id:'comfyui',name:'ComfyUI'},{id:'music',name:t('musicService')},{id:'rvc',name:t('rvcModelLibrary')}];
   const selectedLabel=services.find(service=>service.id===selected)!.name;
   const field=(key:string,label:string,type='text',extra:any={})=>props.ui.field(label,draft[key]??'',value=>props.onDraftChange({[key]:value}),type,{id:`service-field-${key}`,error:props.fieldErrors?.[key],disabled:false,...extra});
   let fields:any=null,actions:any=null;
@@ -115,6 +116,7 @@ export function ServicesPanel(props:ServicesPanelProps){
       fields=h('div',{className:'fields'},field(gpt?'gptSovitsUrl':'breezeTtsUrl',t(gpt?'gptSovitsAddress':'breezeTtsAddress'),'url'),directoryField(props,gpt?'gptSovitsProjectRoot':'breezeTtsProjectRoot',t(gpt?'gptSovitsProjectRoot':'breezeTtsProjectRoot')),gpt?null:directoryField(props,'breezeTtsVoicesRoot',t('breezeTtsVoicesRoot')));
       actions=startButton(props,selected);
     }else if(selected==='openai')fields=h('div',{className:'fields'},field('openAiBaseUrl',t('serviceAddress'),'url',{placeholder:t('inheritAddress')}),field('openAiModel',t('defaultImageModel'),'text',{placeholder:t('inheritModel')}),field('openAiKeyEnv',t('keyEnv'),'text',{placeholder:'OPENAI_API_KEY',autoComplete:'off',spellCheck:false}));
+    else if(selected==='google')fields=h('div',{className:'fields'},field('googleBaseUrl',t('serviceAddress'),'url',{placeholder:'https://generativelanguage.googleapis.com/v1beta'}),field('googleModel',t('defaultImageModel'),'text',{placeholder:'gemini-2.5-flash-image'}),field('googleKeyEnv',t('keyEnv'),'text',{placeholder:'GEMINI_API_KEY',autoComplete:'off',spellCheck:false}));
     else if(selected==='comfyui'){
       fields=h('div',{className:'fields'},field('comfyUiBaseUrl',t('comfyUiAddress'),'url'),directoryField(props,'comfyUiWorkflowPath',t('comfyUiWorkflow')));
       actions=startButton(props,'comfyui');
