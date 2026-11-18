@@ -407,7 +407,9 @@ export async function apply(ctx:Context){
     }finally{runtime.media.run=mediaRun;beforeFinal=undefined;runtime.saveBot({...bots.bot('fixture'),trustedUsers:[]});}
     runtime.media.run=async(_scope,operation,config,inputs)=>{assert.equal(config.media.image,undefined);assert.equal(operation,'image_edit');assert.deepEqual(inputs,[asset.id]);imageCalls++;if(imageCalls<=2)throw Error('IMAGE_PROVIDER_FAILED');imageEntered();await imageFinish;return{assetIds:[asset.id]};};
     try{
-      mediaCall={name:'image_generation',args:{operation:'edit',prompt:'Use the real reference on the moon',inputs:[asset.id]}};
+      // Any supplied reference image is an edit, even if the model omits or
+      // mislabels the optional operation field as generate.
+      mediaCall={name:'image_generation',args:{operation:'generate',prompt:'Use the real reference on the moon',inputs:[asset.id]}};
       const generated=await bridge.run(binding,[msg('image-skill','按参考图生成图片')],AbortSignal.timeout(30000));
       assert.equal(imageCalls,1);assert.deepEqual(generated.outputs,[{type:'text',text:'FINAL_ONLY'}]);
       const parent=bridge.live.get(binding.sessionId)!.agent;
