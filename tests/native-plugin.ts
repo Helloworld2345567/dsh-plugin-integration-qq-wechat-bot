@@ -1,6 +1,6 @@
 // Test-only bundle: real Harness loop and persistence, deterministic local model, no provider calls.
 import assert from 'node:assert/strict';
-import {writeFile,mkdir,realpath,readdir,readFile} from 'node:fs/promises';
+import {writeFile,mkdir,realpath,readdir,readFile,rm} from 'node:fs/promises';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import z from '@deepseek-ai/schemastery';
@@ -15,6 +15,7 @@ import type {NativeHarness} from '../src/harness/bridge.js';
 import {scopeKey} from '../src/core/identity.js';
 import {sessionWorkingDirectory} from '../src/core/workspaces.js';
 import {freezeTurn} from '../src/core/policy.js';
+import {imageServiceSettingsSchema} from '../src/core/image-service-config.js';
 import {botSchema,type BotSettings,type InboundMessage} from '../src/core/types.js';
 import type {SessionActionRecord} from '../src/core/session-actions.js';
 export const inject=['botIntegration','llm','settings','credentials','sessionQuery','agents','agentPresets','tools','skills','systemPrompt','attachments','permissionPresets','sessions','sessionPersistence','storageDomain','workingDirectory','sessionController','subagents'];
@@ -295,6 +296,40 @@ export async function apply(ctx:Context){
     const inherited=await runtime.media.analysisProvider!.resolve(personas.config('default'),'asr');assert.equal(inherited.endpoint.baseUrl,'https://fixture.invalid/v1');assert.equal(inherited.endpoint.model,'first');assert.equal(inherited.apiKey,'fixture-analysis-key');
     const skill=await ctx.tools.execute({name:'skill',arguments:{name:'media-analysis'},callId:ToolCallId('analysis-skill'),agent:bridge.live.get(binding.sessionId)!.agent,signal:AbortSignal.timeout(5000)});assert.equal(skill.isError,false);const skillText=JSON.stringify(skill.content);assert.ok(skillText.includes('media_analysis'));assert.doesNotMatch(skillText,/resourceBase|workingDirectory|asset:\/\//,'bundled skill reads must not expose local resource paths');
     const imageSkill=await ctx.tools.execute({name:'skill',arguments:{name:'image-generation'},callId:ToolCallId('image-skill-contract'),agent:bridge.live.get(binding.sessionId)!.agent,signal:AbortSignal.timeout(5000)});assert.equal(imageSkill.isError,false);const imageSkillText=JSON.stringify(imageSkill.content);assert.match(imageSkillText,/Selected image service contract/);assert.ok(imageSkillText.includes('protocol'),'image capability contract must report protocol');assert.ok(imageSkillText.includes('model'),'image capability contract must report model');assert.doesNotMatch(imageSkillText,/workflowPath|COMFYUI|[A-Za-z]:\\/,'image skill context must not expose service paths');
+    const frozenComfyInstructions=bridge.live.get(binding.sessionId)!.skills['image-generation'].serviceInstructions!.comfyui;
+    const openAiInstructions=imageSkill.content.flatMap(block=>block.type==='text'?[block.text]:[]).join('\n');
+    assert.ok(!openAiInstructions.includes(frozenComfyInstructions),'OpenAI image skill must not include ComfyUI instructions');
+    assert.doesNotMatch(openAiInstructions,/"workflowModel"/,'OpenAI image skill must not include ComfyUI model metadata');
+    const imageLive=bridge.live.get(binding.sessionId)!,originalImageSnapshot=imageLive.snapshot;
+    const comfyWorkflowPath=path.join(customCwd,'image-skill-workflow.json');
+    const comfyConfig={...originalImageSnapshot.config,media:{...originalImageSnapshot.config.media,image:{enabled:true,protocol:'comfyui' as const}}};
+    const comfySettings=imageServiceSettingsSchema.parse({...originalImageSnapshot.imageServiceSettings,imageProtocol:'comfyui',comfyUiWorkflowPath:comfyWorkflowPath});
+    const writeComfyWorkflow=(checkpoint:string)=>writeFile(comfyWorkflowPath,JSON.stringify({
+      '1':{class_type:'UNETLoader',inputs:{unet_name:checkpoint}},
+      '2':{class_type:'KSampler',inputs:{model:['1',0]}},
+      '3':{class_type:'VAEDecode',inputs:{samples:['2',0]}},
+      '4':{class_type:'SaveImage',inputs:{images:['3',0]}},
+    }));
+    const readComfyModel=async(callId:string)=>{
+      const comfySkill=await ctx.tools.execute({name:'skill',arguments:{name:'image-generation'},callId:ToolCallId(callId),agent:imageLive.agent,signal:AbortSignal.timeout(5000)});
+      assert.equal(comfySkill.isError,false);const comfySkillText=comfySkill.content.flatMap(block=>block.type==='text'?[block.text]:[]).join('\n');
+      assert.ok(comfySkillText.includes(frozenComfyInstructions),'ComfyUI skill reads must return the frozen service instructions to the model');
+      assert.doesNotMatch(comfySkillText,/workflowPath|[A-Za-z]:\\|models\//,'ComfyUI guidance must expose checkpoint basenames without service or model paths');
+      assert.ok(!comfySkillText.includes(comfyWorkflowPath),'ComfyUI model context must not expose the configured workflow path');
+      const contract=/Selected image service contract: (\{.*\})\. Use only these reported capabilities/.exec(comfySkillText);
+      assert.ok(contract,'image skill must include its structured service contract');
+      return JSON.parse(contract[1]).workflowModel;
+    };
+    try{
+      await writeComfyWorkflow('models/krea-2-turbo.safetensors');
+      imageLive.snapshot=freezeTurn(comfyConfig,bots.bot('fixture'),binding.scope,[],undefined,'zh',comfySettings);
+      const expectedKrea={family:'krea2',variant:'turbo',checkpoints:['krea-2-turbo.safetensors']};
+      assert.deepEqual(await readComfyModel('comfy-image-skill'),expectedKrea);
+      await writeComfyWorkflow('models/anima-aesthetic.safetensors');
+      assert.deepEqual(await readComfyModel('comfy-image-skill-frozen'),expectedKrea,'workflow changes must not alter current-turn skill metadata');
+      imageLive.snapshot=freezeTurn(comfyConfig,bots.bot('fixture'),binding.scope,[],undefined,'zh',comfySettings);
+      assert.deepEqual(await readComfyModel('comfy-image-skill-next'),{family:'anima',variant:'aesthetic',checkpoints:['anima-aesthetic.safetensors']});
+    }finally{imageLive.snapshot=originalImageSnapshot;await rm(comfyWorkflowPath,{force:true});}
     for(let i=0;i<12;i++)await bridge.run(binding,[msg(`long-${i}`,`合成历史第${i}轮：`+'The fixture contains repeated context material for deterministic compression. '.repeat(140))],AbortSignal.timeout(30000));
     assert.ok(compactions>0,'long context should trigger native automatic compaction');assert.ok(bridge.live.get(binding.sessionId)!.agent.session.snapshotEvents().some(e=>String(e.type)==='compaction/end'));
     const pixels=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP8z4AdMOEQH6QSAM1BAQ/oQeJvAAAAAElFTkSuQmCC','base64');

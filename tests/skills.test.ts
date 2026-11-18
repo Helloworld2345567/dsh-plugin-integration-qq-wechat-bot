@@ -12,6 +12,18 @@ import {StatsService} from '../src/core/stats.js';
 
 async function fixture(t:any){const root=await mkdtemp(path.resolve('.codex/skills-test-'));const store=new SqlitePersistence(root);t.after(async()=>{store.close();await rm(root,{recursive:true,force:true});});return{root,store,skills:new DynamicSkills(store.personas,store.home)};}
 const files=(value:string)=>[{path:'SKILL.md',content:`---\nname: weather-helper\ndescription: 查询用户指定城市天气\n---\n${value}`},{path:'scripts/weather.py',content:`print(${JSON.stringify(value)})`}];
+test('bundled image service instructions stay frozen and affect the next skill version',async t=>{
+  const {root,store}=await fixture(t);const bundled=path.join(root,'bundled'),folder=path.join(bundled,'image-generation');
+  await mkdir(path.join(folder,'comfyui'),{recursive:true});
+  await writeFile(path.join(folder,'SKILL.md'),'---\nname: image-generation\ndescription: Image dispatch\n---\nShared instructions');
+  const serviceFile=path.join(folder,'comfyui','SKILL.md');await writeFile(serviceFile,'FIRST_SERVICE_INSTRUCTIONS');
+  const skills=new DynamicSkills(store.personas,store.home,bundled),config={...store.personas.config('sakura'),skills:['image-generation']};
+  const old=skills.snapshot(config)['image-generation'];assert.equal(old.serviceInstructions?.comfyui,'FIRST_SERVICE_INSTRUCTIONS');assert.ok(Object.isFrozen(old.serviceInstructions));
+  await writeFile(serviceFile,'SECOND_SERVICE_INSTRUCTIONS');
+  const next=skills.snapshot(config)['image-generation'];assert.equal(old.serviceInstructions?.comfyui,'FIRST_SERVICE_INSTRUCTIONS');assert.equal(next.serviceInstructions?.comfyui,'SECOND_SERVICE_INSTRUCTIONS');
+  assert.equal(old.content,next.content);assert.notEqual(old.version,next.version);
+  assert.ok(!Object.hasOwn(skills.list(config)[0],'serviceInstructions'),'skill listings must keep instructions out of metadata');
+});
 test('published skill instructions and script resources remain frozen across revisions',async t=>{
   const {skills,store}=await fixture(t);let config=store.personas.config('sakura');config=store.personas.saveConfig(skills.stageFiles(config,'weather-helper',files('FIRST')),config.revision);
   const old=skills.snapshot(config)['weather-helper'];assert.match(old.content,/FIRST/);assert.match(await readFile(path.join(old.resourceBase.path,'scripts/weather.py'),'utf8'),/FIRST/);

@@ -1,6 +1,7 @@
 import {systemDescriptor} from '../i18n/system.js';
 import type {SystemLocale} from '../i18n/common.js';
 import type {ImageServiceSettings} from './image-service-config.js';
+import type {ComfyWorkflowModel} from './comfyui-workflow-model.js';
 import { z } from 'zod';
 import path from 'node:path';
 import {edgeTtsVoiceIds,normalizeGptSovitsBaseUrl,normalizeVoiceServiceBaseUrl} from './voice-config.js';
@@ -163,7 +164,7 @@ export interface SessionRecord { id:string;scopeKey:string;scope:CallerScope;gen
 export type ServiceProfileRole='voice'|'singing'|'music';
 export type TurnServiceState=ProfileState|'disabled';
 export interface TurnServiceSelection {role:ServiceProfileRole;enabled:boolean;profileRef?:ServiceProfileRef;state:TurnServiceState;snapshot?:TurnServiceSnapshot}
-export interface TurnSnapshot {systemLocale?:SystemLocale;config:Readonly<BotConfig>;imageServiceSettings?:Readonly<ImageServiceSettings>;personaId:string;personaRevision:number;services:Readonly<Partial<Record<ServiceProfileRole,Readonly<TurnServiceSelection>>>>;botId:string;trusted:boolean;sourceIds:string[];startedAt:number}
+export interface TurnSnapshot {systemLocale?:SystemLocale;config:Readonly<BotConfig>;imageServiceSettings?:Readonly<ImageServiceSettings>;comfyWorkflowModel?:Readonly<ComfyWorkflowModel>;personaId:string;personaRevision:number;services:Readonly<Partial<Record<ServiceProfileRole,Readonly<TurnServiceSelection>>>>;botId:string;trusted:boolean;sourceIds:string[];startedAt:number}
 export interface Asset { id:string;scopeKey:string;name:string;mime:string;path:string;size:number;kind:MediaInput['kind'];createdAt:number;jobId?:string;sessionId?:string;workspace?:string;origin?:'received'|'generated'|'sent';pinned?:boolean }
 export type DeliveryAttemptPhase='prepare'|'upload'|'commit';
 export interface DeliveryAttempt {number:number;phase:DeliveryAttemptPhase;assetId?:string;fileKey?:string;uploadQuery?:string;aesKey?:string;encryptedSize?:number;fileInfo?:string;fileInfoExpiresAt?:number;startedAt?:number;lastError?:string;causeCode?:string;causeMessage?:string;httpStatus?:number;platformCode?:string;platformMessage?:string;platformTraceId?:string;autoRetryCount?:number}

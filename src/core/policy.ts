@@ -3,6 +3,7 @@ import {skillToolManifests} from './skill-operations.js';
 import type { BotConfig, BotInstance, CallerScope, ServiceProfileRole, TurnServiceSelection, TurnSnapshot } from './types.js';
 import {imageSkillEnabled} from './image-skill.js';
 import {imageServiceSettingsSchema,type ImageServiceSettings} from './image-service-config.js';
+import {readComfyWorkflowModel} from './comfyui-workflow-model.js';
 import {analysisEnabled} from './analysis.js';
 import type {ProfileStore} from './profile-store.js';
 export const BUSINESS_TOOLS = new Set([...skillToolManifests.map(manifest=>manifest.tool.name),'bot_tools','image_generation','bot_media','bot_voice','bot_voice_control','bot_send_file','bot_remember','bot_forget_memory','bot_read_social','skill','bot_stats','bot_evolve','bot_model','bot_session','bot_persona','bot_skills','bot_schedule','bot_proactive']);
@@ -51,6 +52,7 @@ function freezeService(role:ServiceProfileRole,config:BotConfig,profiles?:Profil
 }
 export function freezeTurn(config:BotConfig,bot:BotInstance,scope:CallerScope,sourceIds:string[],profiles?:ProfileStore,systemLocale:SystemLocale='zh',imageSettings:ImageServiceSettings=imageServiceSettingsSchema.parse({})):TurnSnapshot {
   const frozenConfig=deepFreeze(structuredClone(config));const services=Object.freeze(Object.fromEntries((['voice','singing','music'] as const).map(role=>[role,freezeService(role,config,profiles)]).filter(([,value])=>value!==undefined)));
-  return Object.freeze({systemLocale,config:frozenConfig,imageServiceSettings:Object.freeze({...imageSettings}),personaId:config.id,personaRevision:config.revision,services,botId:bot.id,trusted:trusted(bot,scope),sourceIds:Object.freeze([...sourceIds]) as string[],startedAt:Date.now()});
+  const comfyWorkflowModel=imageSkillEnabled(config)&&(config.media.image?.protocol??imageSettings.imageProtocol)==='comfyui'?readComfyWorkflowModel(imageSettings.comfyUiWorkflowPath):undefined;
+  return Object.freeze({systemLocale,config:frozenConfig,imageServiceSettings:Object.freeze({...imageSettings}),...(comfyWorkflowModel?{comfyWorkflowModel}:{}),personaId:config.id,personaRevision:config.revision,services,botId:bot.id,trusted:trusted(bot,scope),sourceIds:Object.freeze([...sourceIds]) as string[],startedAt:Date.now()});
 }
 function deepFreeze<T>(value:T):Readonly<T> { if(value && typeof value==='object') {Object.freeze(value); for(const child of Object.values(value)) deepFreeze(child);} return value; }

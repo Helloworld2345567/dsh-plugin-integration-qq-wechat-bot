@@ -14,7 +14,7 @@ export const packagedSkills:Readonly<Record<string,string>>=PUBLISHED_SKILL_DESC
 const nameSchema=z.string().min(1).max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 const reserved=/^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i;
 export interface SkillFile {path:string;content:string}
-export interface FrozenSkill {name:string;description:string;content:string;path:string;resourceBase:{kind:'directory';path:string};version:string}
+export interface FrozenSkill {name:string;description:string;content:string;path:string;resourceBase:{kind:'directory';path:string};version:string;serviceInstructions?:Readonly<{comfyui:string}>}
 type Tree=Map<string,Buffer>;
 const fingerprint=(tree:Tree)=>{const hash=createHash('sha256');for(const [name,data] of [...tree].sort(([a],[b])=>a.localeCompare(b,'en'))){hash.update(name);hash.update('\0');hash.update(String(data.length));hash.update('\0');hash.update(data);}return hash.digest('hex');};
 function segment(value:string):void {if(!value||value==='.'||value==='..'||reserved.test(value)||/[<>:"|?*\x00-\x1f]/.test(value)||/[. ]$/.test(value))throw new Error('SKILL_PATH_INVALID');}
@@ -62,11 +62,14 @@ export class DynamicSkills {
   snapshot(config:BotConfig):Readonly<Record<string,FrozenSkill>> {
     const result:Record<string,FrozenSkill>={};
     for(const name of config.skills){nameSchema.parse(name);if(Object.hasOwn(packagedSkills,name)){
-      const root=path.join(this.bundledRoot,name);const content=readFileSync(path.join(root,'SKILL.md'),'utf8');result[name]=Object.freeze({name,description:packagedSkills[name],content,path:path.join(root,'SKILL.md'),resourceBase:{kind:'directory' as const,path:root},version:createHash('sha256').update(content).digest('hex')});
+      const root=path.join(this.bundledRoot,name);const content=readFileSync(path.join(root,'SKILL.md'),'utf8');
+      const serviceInstructions=name==='image-generation'?Object.freeze({comfyui:readFileSync(path.join(root,'comfyui','SKILL.md'),'utf8')}):undefined;
+      const hash=createHash('sha256').update(content);if(serviceInstructions)hash.update('\0comfyui\0').update(serviceInstructions.comfyui);
+      result[name]=Object.freeze({name,description:packagedSkills[name],content,path:path.join(root,'SKILL.md'),resourceBase:{kind:'directory' as const,path:root},version:hash.digest('hex'),...(serviceInstructions?{serviceInstructions}:{})});
     }else{const version=config.skillVersions?.[name];if(!version)throw new Error(`SKILL_NOT_PUBLISHED: ${name}`);const root=this.publishedRoot(config.id,name,version);const tree=readTree(root);if(fingerprint(tree)!==version)throw new Error('SKILL_RELEASE_CHANGED');result[name]=definition(name,tree,root,version);}}
     return Object.freeze(result);
   }
-  list(config:BotConfig){return Object.values(this.snapshot(config)).map(({content,...skill})=>skill);}
+  list(config:BotConfig){return Object.values(this.snapshot(config)).map(({content,serviceInstructions,...skill})=>skill);}
   stageDrafts(config:BotConfig):BotConfig {
     const versions={...config.skillVersions};const names=[...config.skills];
     for(const name of readdirSync(this.draftRoot(config.id)).sort()){nameSchema.parse(name);const tree=readTree(this.draft(config.id,name));if(!versions[name]&&!names.includes(name))names.push(name);versions[name]=this.stage(config.id,name,tree);}

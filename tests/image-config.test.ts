@@ -50,6 +50,20 @@ test('ComfyUI receives explicit workflow configuration and persona protocol sele
   assert.deepEqual(resolveImageSkill(config,settings),{protocol:'comfyui',baseUrl:'http://127.0.0.1:8188',model:'comfyui',workflowPath:'E:\\COMFYUI\\workflows\\fixture.json'});
 });
 
+test('unavailable ComfyUI model metadata does not block a turn or leak into other image services',async t=>{
+  const {root}=await fixture(t);
+  const settings=imageServiceSettingsSchema.parse({imageProtocol:'comfyui',comfyUiWorkflowPath:path.join(root,'missing.json')});
+  const config=configSchema.parse({...persona(),media:{image:{protocol:'comfyui'}}});
+  const bot=botSchema.parse({id:'image',name:'Image',channel:'qq',configId:config.id,enabled:true});
+  const scope={botId:bot.id,platform:'qq' as const,accountId:bot.id,kind:'private' as const,channelId:'room',senderId:'person'};
+  const snapshot=freezeTurn(config,bot,scope,[],undefined,'zh',settings);
+  assert.deepEqual(snapshot.comfyWorkflowModel,{family:'unknown',variant:'unknown',checkpoints:[]});
+  for(const overrides of [{media:{image:{protocol:'openai'}}},{media:{image:{enabled:false}}},{skills:[]}]){
+    const other=configSchema.parse({...config,...overrides});
+    assert.equal(freezeTurn(other,bot,scope,[],undefined,'zh',settings).comfyWorkflowModel,undefined);
+  }
+});
+
 test('saved image service settings preserve their chosen credential variable',async t=>{
   const {store,root}=await fixture(t);
   store.voiceLibrarySettings.write({modelsRoot:'',gptSovitsUrl:'http://127.0.0.1:9880',openAiModel:'saved-model',openAiKeyEnv:'OLD_KEY'});
