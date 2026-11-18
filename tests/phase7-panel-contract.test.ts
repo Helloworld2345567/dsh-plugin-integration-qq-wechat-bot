@@ -21,11 +21,11 @@ const profiles:PublicServiceProfile[]=[
   {serviceId:'rvc',profileId:'ready',revision:1,contentHash:'d'.repeat(64),state:'ready',capabilities:['rvc.convert'],displayName:'Ready Voice',modelLabel:'Catalog Ready',updatedAt:1},
 ];
 
-test('media cards hide unavailable selections without exposing internal status or verification controls',()=>{const ui=createUI(React,false,()=>{});
+test('media cards preserve unavailable selections without exposing internal status or verification controls',()=>{const ui=createUI(React,false,()=>{});
   const music=nodes(musicCard(React.createElement,ui,config,profiles,()=>{}));
   const picker=voiceModelPicker(React.createElement,ui,{role:'singing',config,profiles,busy:false,dirty:false,existing:true,apply:async()=>{}});
   const singing=nodes(singingCard(React.createElement,ui,config,()=>{},picker));
-  for(const [rows,value,label] of [[music,'music/blocked','音乐来源'],[singing,'rvc/missing','唱歌']] as const){assert.ok(rows.some(node=>node.type==='label'&&node.children[0]===label));assert.equal(rows.some(node=>node.type==='option'&&node.props.value===value),false);assert.ok(!rows.some(node=>node.type==='label'&&/endpoint|地址|端口|path|路径|weight|权重|credential|凭据|locator/i.test(String(node.children[0]))));assert.ok(!rows.some(node=>node.type==='button'&&/检查|验收|测试/.test(String(node.children[0]))));}
+  for(const [rows,value,label] of [[music,'music/blocked','音乐来源'],[singing,'rvc/missing','唱歌']] as const){assert.ok(rows.some(node=>node.type==='label'&&node.children[0]===label));const selected=rows.find(node=>node.type==='option'&&node.props.value===value);assert.equal(selected.props.disabled,true);assert.match(selected.children[0],/不可用/);assert.ok(rows.some(node=>node.type==='select'&&node.props.value===value));assert.ok(!rows.some(node=>node.type==='label'&&/endpoint|地址|端口|path|路径|weight|权重|credential|凭据|locator/i.test(String(node.children[0]))));assert.ok(!rows.some(node=>node.type==='button'&&/检查|验收|测试/.test(String(node.children[0]))));}
   assert.equal(music.find(node=>node.type==='option'&&node.props.value==='music/ready').props.disabled,false);
   assert.equal(singing.find(node=>node.type==='option'&&node.props.value==='rvc/ready').props.disabled,false);
   assert.equal(music.some(node=>node.type==='option'&&node.props.value==='music/old'),false);

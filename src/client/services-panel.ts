@@ -1,6 +1,23 @@
 import {diagnosticText,reportDiagnostics,type Translate} from './locale.js';
 import type {PanelUI} from './bots-panel.js';
+import {panelSaveBar,panelSplit} from './layout.js';
+import {pathPickerActions} from './ui.js';
 import {modelLibraryLabel,serviceHealthLabel} from './service-health.js';
+
+export type ServicePanelId='robot'|'gpt-sovits'|'breeze-tts'|'openai'|'comfyui'|'music'|'rvc';
+export type StartableServiceId='gpt-sovits'|'breeze-tts'|'comfyui';
+export const serviceSettingKeys={
+  'gpt-sovits':['gptSovitsUrl','gptSovitsProjectRoot'],
+  'breeze-tts':['breezeTtsUrl','breezeTtsProjectRoot','breezeTtsVoicesRoot'],
+  openai:['openAiBaseUrl','openAiModel','openAiKeyEnv'],
+  comfyui:['comfyUiBaseUrl','comfyUiWorkflowPath'],
+  music:['musicHome','musicSources'],
+  rvc:['modelsRoot'],
+} as const;
+
+export function serviceDraftDirty(serviceId:Exclude<ServicePanelId,'robot'>,draft:any,settings:any):boolean{
+  return !!draft&&!!settings&&serviceSettingKeys[serviceId].some(key=>JSON.stringify(draft[key])!==JSON.stringify(settings[key]));
+}
 
 export interface ServicesPanelProps {
   React:any;
@@ -11,120 +28,109 @@ export interface ServicesPanelProps {
   draft?:any;
   dirty:boolean;
   busy:boolean;
+  robotPending?:boolean;
   saving?:boolean;
   refreshing?:boolean;
+  starting?:string[];
+  selectedService?:ServicePanelId;
+  onSelectService?:(id:ServicePanelId)=>unknown;
   picking?:string;
+  pickError?:{key:string;message:string};
+  fieldErrors?:Record<string,string>;
   onCancelPick?:()=>unknown;
   health?:Record<string,any>;
   locale?:'zh'|'en';
   messageLocale?:'zh'|'en';
+  messageLocaleDraft?:'zh'|'en';
   languageWritable?:boolean;
   languageSaving?:boolean;
-  onMessageLocaleChange?:(value:string)=>unknown;
+  onMessageLocaleDraftChange?:(value:string)=>unknown;
+  onSaveMessageLocale?:()=>unknown;
   onDraftChange:(patch:any)=>void;
   onSave:()=>unknown;
+  onRevert?:()=>unknown;
   onRefresh:()=>unknown;
-  onStart:(serviceId:'gpt-sovits'|'breeze-tts'|'comfyui')=>unknown;
+  onStart:(serviceId:StartableServiceId,saveFirst:boolean)=>unknown;
   onPickDirectory:(key:'modelsRoot'|'gptSovitsProjectRoot'|'breezeTtsProjectRoot'|'breezeTtsVoicesRoot')=>unknown;
   onPickFile?:(key:'comfyUiWorkflowPath')=>unknown;
   onToggleRobotService:()=>unknown;
 }
 
-const h=(React:any,type:any,props:any,...children:any[])=>React.createElement(type,props,...children);
+function stateBadge(h:any,props:ServicesPanelProps,serviceId:ServicePanelId){
+  if(serviceId==='robot')return h('span',{key:'status',className:'badge',role:'status'},props.summary?.health?(props.summary.health.serviceRunning?props.t('online'):props.t('stopped')):props.t('unknown'));
+  if(serviceId==='rvc')return h('span',{key:'status',className:'badge',role:'status',title:reportDiagnostics(props.settings?.reports?.rvc,props.locale)},modelLibraryLabel(props.settings?.reports?.rvc,props.t));
+  const value=props.health?.[serviceId];
+  return h('span',{key:'status',className:`badge${['degraded','unavailable','blocked'].includes(value?.state)?' warning':''}`,role:'status',title:diagnosticText(value,props.locale)},serviceHealthLabel(value,props.t));
+}
 
-function pickerButton(props:ServicesPanelProps,key:string,action:()=>unknown,file=false){
-  const active=props.picking===key;
-  return h(props.React,'span',{className:'actions'},
-    props.ui.button(props.t(active?'selectingPath':file?'browseFile':'browseDirectory'),action,{disabled:props.busy||!!props.picking,'aria-busy':active}),
-    active&&props.onCancelPick?props.ui.button(props.t('cancel'),props.onCancelPick,{disabled:false}):null,
+function directoryField(props:ServicesPanelProps,key:'modelsRoot'|'gptSovitsProjectRoot'|'breezeTtsProjectRoot'|'breezeTtsVoicesRoot'|'comfyUiWorkflowPath',label:string){
+  const h=props.React.createElement,file=key==='comfyUiWorkflowPath';
+  return h('div',{className:'directory-field'},
+    props.ui.field(label,props.draft[key],value=>props.onDraftChange({[key]:value}),'text',{id:`service-field-${key}`,error:props.fieldErrors?.[key]??(props.pickError?.key===key?props.pickError.message:undefined),disabled:false}),
+    pathPickerActions(h,props.ui,props.t,{pending:props.picking===key,file,onPick:()=>file?props.onPickFile?.(key):props.onPickDirectory(key),onCancel:props.onCancelPick}),
   );
 }
 
-function stateBadge(React:any, t:Translate, value:any,locale:'zh'|'en'='zh'){
-  const warning=['degraded','unavailable','blocked'].includes(value?.state);
-  return h(React,'span',{className:`badge${warning?' warning':''}`,role:'status',title:diagnosticText(value,locale)},serviceHealthLabel(value,t));
+function startButton(props:ServicesPanelProps,serviceId:StartableServiceId){
+  const dirty=serviceDraftDirty(serviceId,props.draft,props.settings),starting=props.starting?.includes(serviceId)===true;
+  const root=serviceId==='gpt-sovits'?'gptSovitsProjectRoot':serviceId==='breeze-tts'?'breezeTtsProjectRoot':undefined;
+  return props.ui.button(props.t(starting?'starting':dirty?'saveAndStart':'start'),()=>props.onStart(serviceId,dirty),{disabled:starting||(dirty&&props.saving===true)||!!(root&&!props.draft[root]),'aria-busy':starting});
 }
 
-function serviceCard(React:any, props:ServicesPanelProps, serviceId:'gpt-sovits'|'breeze-tts', label:string, urlKey:'gptSovitsUrl'|'breezeTtsUrl', rootKey:'gptSovitsProjectRoot'|'breezeTtsProjectRoot', addressLabel:string, startLabel:string){
-  const draft=props.draft;
-  if(!draft)return null;
-  const health=props.health?.[serviceId];
-  return h(React,'section',{className:'card service-card',key:serviceId},
-    h(React,'div',{className:'section-heading'},h(React,'h3',null,label),stateBadge(React,props.t,health,props.locale)),
-    h(React,'div',{className:'fields'},
-      props.ui.field(addressLabel,draft[urlKey],value=>props.onDraftChange({[urlKey]:value}),'url'),
-      h(React,'div',{className:'directory-field'},props.ui.field(rootKey==='gptSovitsProjectRoot'?props.t('gptSovitsProjectRoot'):props.t('breezeTtsProjectRoot'),draft[rootKey],value=>props.onDraftChange({[rootKey]:value})),pickerButton(props,rootKey,()=>props.onPickDirectory(rootKey))),
-      serviceId==='breeze-tts'?h(React,'div',{className:'directory-field'},props.ui.field(props.t('breezeTtsVoicesRoot'),draft.breezeTtsVoicesRoot,value=>props.onDraftChange({breezeTtsVoicesRoot:value})),pickerButton(props,'breezeTtsVoicesRoot',()=>props.onPickDirectory('breezeTtsVoicesRoot'))):null,
-    ),
-    h(React,'div',{className:'actions'},props.ui.button(startLabel,()=>props.onStart(serviceId),{className:'primary',disabled:props.busy||props.dirty||props.saving===true||!draft[rootKey]})),
-  );
-}
-
-function orderedSources(React:any, props:ServicesPanelProps, draft:any){
-  const sources=Array.isArray(draft.musicSources)?draft.musicSources:[];
-  if(!sources.length)return null;
+function orderedSources(props:ServicesPanelProps){
+  const h=props.React.createElement,sources=Array.isArray(props.draft.musicSources)?props.draft.musicSources:[];
   const sourceIds=['MiguMusicClient','KuwoMusicClient','QQMusicClient','NeteaseMusicClient'];
   const labels:Record<string,string>={MiguMusicClient:props.t('musicMigu'),KuwoMusicClient:props.t('musicKuwo'),QQMusicClient:props.t('musicQq'),NeteaseMusicClient:props.t('musicNetease')};
   const move=(index:number,delta:number)=>{const next=[...sources],target=index+delta;if(target<0||target>=next.length)return;[next[index],next[target]]=[next[target],next[index]];props.onDraftChange({musicSources:next});};
-  const remove=(source:string)=>{if(sources.length<=1)return;props.onDraftChange({musicSources:sources.filter((item:string)=>item!==source)});};
-  const add=(source:string)=>props.onDraftChange({musicSources:[...sources,source]});
-  return h(React,'div',{className:'service-priority-wrap'},
-    h(React,'div',{className:'service-priority-list','role':'list','aria-label':props.t('musicSourcePriority')},...sources.map((source:string,index:number)=>
-    h(React,'div',{key:source,className:'service-priority-item','role':'listitem'},
-      h(React,'span',null,labels[source]??source),
-      h(React,'span',{className:'actions'},
-        props.ui.button('←',()=>move(index,-1),{disabled:index===0||props.busy,'aria-label':`${props.t('moveUp')} ${labels[source]??source}`}),
-        props.ui.button('→',()=>move(index,1),{disabled:index===sources.length-1||props.busy,'aria-label':`${props.t('moveDown')} ${labels[source]??source}`}),
-        props.ui.button('×',()=>remove(source),{disabled:sources.length<=1||props.busy,'aria-label':`${props.t('delete')} ${labels[source]??source}`}),
+  return h('div',{className:'service-priority-wrap'},
+    h('div',{className:'service-priority-list',role:'list','aria-label':props.t('musicSourcePriority')},...sources.map((source:string,index:number)=>h('div',{key:source,className:'service-priority-item',role:'listitem'},
+      h('span',null,labels[source]??source),h('span',{className:'actions'},
+        props.ui.button('↑',()=>move(index,-1),{disabled:index===0,'aria-label':`${props.t('moveUp')} ${labels[source]??source}`}),
+        props.ui.button('↓',()=>move(index,1),{disabled:index===sources.length-1,'aria-label':`${props.t('moveDown')} ${labels[source]??source}`}),
+        props.ui.button('×',()=>props.onDraftChange({musicSources:sources.filter((item:string)=>item!==source)}),{disabled:sources.length<=1,'aria-label':`${props.t('delete')} ${labels[source]??source}`}),
       ),
-    ),
-  )),
-    sourceIds.some(source=>!sources.includes(source))?h(React,'div',{className:'service-priority-add'},...sourceIds.filter(source=>!sources.includes(source)).map(source=>props.ui.button(`${props.t('add')} ${labels[source]}`,()=>add(source),{disabled:props.busy,key:source}))):null,
+    ))),
+    h('div',{className:'service-priority-add'},...sourceIds.filter(source=>!sources.includes(source)).map(source=>props.ui.button(`${props.t('add')} ${labels[source]}`,()=>props.onDraftChange({musicSources:[...sources,source]}),{disabled:false,key:source}))),
   );
 }
 
 export function ServicesPanel(props:ServicesPanelProps){
-  const React=props.React;
-  const draft=props.draft;
-  const running=props.summary?.health?.serviceRunning===true;
-  return h(React,'section',{className:'panel-page services-page','aria-label':props.t('services')},
-    h(React,'div',{className:'page-toolbar'},h(React,'div',null,h(React,'h3',null,props.t('services')),h(React,'span',{className:'muted'},props.t('serviceDescription')))),
-    h(React,'section',{className:'card service-card'},
-      h(React,'div',{className:'section-heading'},h(React,'h3',null,props.t('robotService')),h(React,'span',{className:'badge',role:'status'},props.summary?.health?(running?props.t('online'):props.t('stopped')):props.t('unknown'))),
-      h(React,'div',{className:'actions'},props.ui.button(running?props.t('stopBotService'):props.t('startBotService'),props.onToggleRobotService,{className:'primary',disabled:props.busy||!props.summary?.health,'aria-label':running?props.t('stopBotService'):props.t('startBotService')})),
-      h(React,'div',{className:'fields'},props.ui.select(props.t('messageLocale'),props.messageLocale??'zh',[{id:'zh',name:props.t('chineseLanguage')},{id:'en',name:props.t('englishLanguage')}],value=>props.onMessageLocaleChange?.(value),{disabled:props.busy||props.languageSaving||!props.languageWritable})),
-      h(React,'p',{className:'muted'},props.t('messageLocaleHint')),
-    ),
-    serviceCard(React,props,'gpt-sovits','GPT-SoVITS','gptSovitsUrl','gptSovitsProjectRoot',props.t('gptSovitsAddress'),props.t('startGptSovits')),
-    serviceCard(React,props,'breeze-tts','Breeze TTS','breezeTtsUrl','breezeTtsProjectRoot',props.t('breezeTtsAddress'),props.t('startBreezeTts')),
-    draft?h(React,'section',{className:'card service-card',key:'openai-image-service'},
-      h(React,'div',{className:'section-heading'},h(React,'h3',null,props.t('openaiImageService'))),
-      h(React,'div',{className:'fields'},
-        props.ui.field(props.t('serviceAddress'),draft.openAiBaseUrl??'',value=>props.onDraftChange({openAiBaseUrl:value.trim()||undefined}),'url',{placeholder:props.t('inheritAddress')}),
-        props.ui.field(props.t('defaultImageModel'),draft.openAiModel??'',value=>props.onDraftChange({openAiModel:value.trim()||undefined}),'text',{placeholder:props.t('inheritModel')}),
-        props.ui.field(props.t('keyEnv'),draft.openAiKeyEnv??'OPENAI_API_KEY',value=>props.onDraftChange({openAiKeyEnv:value.trim()||undefined}),'text',{placeholder:'OPENAI_API_KEY',autoComplete:'off',spellCheck:false}),
-      ),
-      h(React,'p',{className:'muted'},props.t('defaultImageModelHint')),
-    ):null,
-    draft?h(React,'section',{className:'card service-card',key:'comfyui-service'},
-      h(React,'div',{className:'section-heading'},h(React,'h3',null,'ComfyUI')),
-      h(React,'div',{className:'fields'},
-        props.ui.field(props.t('comfyUiAddress'),draft.comfyUiBaseUrl??'http://127.0.0.1:8188',value=>props.onDraftChange({comfyUiBaseUrl:value.trim()}),'url'),
-        h(React,'div',{className:'directory-field'},props.ui.field(props.t('comfyUiWorkflow'),draft.comfyUiWorkflowPath??'',value=>props.onDraftChange({comfyUiWorkflowPath:value}),'text'),props.onPickFile?pickerButton(props,'comfyUiWorkflowPath',()=>props.onPickFile?.('comfyUiWorkflowPath'),true):null),
-      ),
-      h(React,'div',{className:'actions'},props.ui.button(props.t('startComfyUi'),()=>props.onStart('comfyui'),{className:'primary',disabled:props.busy||props.dirty||props.saving===true})),
-    ):null,
-    draft?h(React,'section',{className:'card service-card',key:'music-service'},
-      h(React,'div',{className:'section-heading'},h(React,'h3',null,props.t('musicService'))),
-      h(React,'div',{className:'fields'},
-        h(React,'p',{className:'muted full'},props.t('musicSourcePriority')),
-        h(React,'div',{className:'full'},orderedSources(React,props,draft)),
-      ),
-    ):null,
-    draft?h(React,'section',{className:'card service-card'},
-      h(React,'div',{className:'section-heading'},h(React,'h3',null,props.t('stsModelDirectory')),h(React,'span',{className:'badge',role:'status',title:reportDiagnostics(props.settings?.reports?.rvc,props.locale)},modelLibraryLabel(props.settings?.reports?.rvc,props.t))),
-      h(React,'div',{className:'directory-field'},props.ui.field(props.t('stsModelDirectory'),draft.modelsRoot,value=>props.onDraftChange({modelsRoot:value})),pickerButton(props,'modelsRoot',()=>props.onPickDirectory('modelsRoot'))),
-      h(React,'div',{className:'save-bar'},h(React,'span',{className:'save-state'},props.dirty?props.t('unsaved'):props.t('savedState')),props.ui.button(props.t(props.saving?'saving':'save'),props.onSave,{className:'primary',disabled:props.busy||props.saving===true||!props.dirty}),props.ui.button(props.t(props.refreshing?'refreshing':'refresh'),props.onRefresh,{disabled:props.busy||props.saving===true||props.refreshing===true||props.dirty})),
-    ):h(React,'p',{role:'status'},props.t('loading')),
+  const h=props.React.createElement,t=props.t,draft=props.draft,selected=props.selectedService??'robot';
+  const services:Array<{id:ServicePanelId;name:string}>=[{id:'robot',name:t('robotService')},{id:'gpt-sovits',name:'GPT-SoVITS'},{id:'breeze-tts',name:'Breeze TTS'},{id:'openai',name:t('openaiImageService')},{id:'comfyui',name:'ComfyUI'},{id:'music',name:t('musicService')},{id:'rvc',name:t('rvcModelLibrary')}];
+  const selectedLabel=services.find(service=>service.id===selected)!.name;
+  const field=(key:string,label:string,type='text',extra:any={})=>props.ui.field(label,draft[key]??'',value=>props.onDraftChange({[key]:value}),type,{id:`service-field-${key}`,error:props.fieldErrors?.[key],disabled:false,...extra});
+  let fields:any=null,actions:any=null;
+  if(selected==='robot'){
+    const language=props.messageLocaleDraft??props.messageLocale??'zh',languageDirty=language!==(props.messageLocale??'zh');
+    const saveAction=props.ui.button('',()=>props.onSaveMessageLocale?.()).props.onClick;
+    const save=props.ui.button(t(props.languageSaving?'saving':'save'),()=>{}, {type:'submit',onClick:undefined,className:'primary',disabled:props.languageSaving||!props.languageWritable||!languageDirty});
+    fields=h('form',{onSubmit:(event:any)=>{event.preventDefault();if(!save.props.disabled)saveAction();}},
+      h('div',{className:'fields'},props.ui.select(t('messageLocale'),language,[{id:'zh',name:t('chineseLanguage')},{id:'en',name:t('englishLanguage')}],value=>props.onMessageLocaleDraftChange?.(value),{disabled:props.languageSaving||!props.languageWritable})),
+      panelSaveBar(h,{status:languageDirty?t('unsaved'):t('savedState'),cancel:props.ui.button(t('revert'),()=>props.onMessageLocaleDraftChange?.(props.messageLocale??'zh'),{disabled:props.languageSaving||!languageDirty}),save}),
+    );
+    actions=props.ui.button(props.summary?.health?.serviceRunning?t('stopBotService'):t('startBotService'),props.onToggleRobotService,{disabled:props.busy||props.robotPending||!props.summary?.health});
+  }else if(draft){
+    if(selected==='gpt-sovits'||selected==='breeze-tts'){
+      const gpt=selected==='gpt-sovits';
+      fields=h('div',{className:'fields'},field(gpt?'gptSovitsUrl':'breezeTtsUrl',t(gpt?'gptSovitsAddress':'breezeTtsAddress'),'url'),directoryField(props,gpt?'gptSovitsProjectRoot':'breezeTtsProjectRoot',t(gpt?'gptSovitsProjectRoot':'breezeTtsProjectRoot')),gpt?null:directoryField(props,'breezeTtsVoicesRoot',t('breezeTtsVoicesRoot')));
+      actions=startButton(props,selected);
+    }else if(selected==='openai')fields=h('div',{className:'fields'},field('openAiBaseUrl',t('serviceAddress'),'url',{placeholder:t('inheritAddress')}),field('openAiModel',t('defaultImageModel'),'text',{placeholder:t('inheritModel')}),field('openAiKeyEnv',t('keyEnv'),'text',{placeholder:'OPENAI_API_KEY',autoComplete:'off',spellCheck:false}));
+    else if(selected==='comfyui'){
+      fields=h('div',{className:'fields'},field('comfyUiBaseUrl',t('comfyUiAddress'),'url'),directoryField(props,'comfyUiWorkflowPath',t('comfyUiWorkflow')));
+      actions=startButton(props,'comfyui');
+    }else if(selected==='music')fields=h('div',{className:'fields'},h('div',{className:'full'},h('h4',null,t('musicSourcePriority')),orderedSources(props)));
+    else fields=directoryField(props,'modelsRoot',t('stsModelDirectory'));
+  }else fields=h('p',{role:'status'},t('loading'));
+  const list=h('nav',{className:'service-list entity-list','aria-label':t('services')},...services.map(service=>props.ui.button([
+    h('strong',{key:'name'},service.name),stateBadge(h,props,service.id),
+    service.id!=='robot'&&serviceDraftDirty(service.id,draft,props.settings)?h('span',{key:'dirty',className:'draft-indicator','aria-label':t('unsaved')},'•'):null,
+  ] as any,()=>props.onSelectService?.(service.id),{key:service.id,className:`entity-row${service.id===selected?' selected':''}`,'aria-label':service.name,'aria-current':service.id===selected?'page':undefined,disabled:false})));
+  const detail=h('section',{className:'card service-card',key:selected},h('div',{className:'section-heading'},h('h3',null,selectedLabel),stateBadge(h,props,selected)),fields,actions?h('div',{className:'actions'},actions):null);
+  const saveAction=props.ui.button('',props.onSave).props.onClick;
+  const save=props.ui.button(t(props.saving?'saving':'save'),()=>{}, {type:'submit',onClick:undefined,className:'primary',disabled:props.saving||!props.dirty});
+  const serviceEditor=selected==='robot'?detail:h('form',{onSubmit:(event:any)=>{event.preventDefault();if(!save.props.disabled)saveAction();}},detail,draft?panelSaveBar(h,{status:props.dirty?t('unsaved'):t('savedState'),cancel:props.ui.button(t('revert'),()=>props.onRevert?.(),{disabled:props.saving||!props.dirty}),save}):null);
+  return h('section',{className:'panel-page services-page','aria-label':t('services')},
+    h('div',{className:'page-toolbar'},props.ui.button(t(props.refreshing?'refreshing':'refresh'),props.onRefresh,{disabled:props.refreshing===true})),
+    panelSplit(h,list,serviceEditor),
   );
 }

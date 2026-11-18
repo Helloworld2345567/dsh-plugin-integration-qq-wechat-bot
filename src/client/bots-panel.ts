@@ -1,4 +1,5 @@
-import {botStatus, list} from './ui.js';
+import {botStatus, list, pathPickerActions} from './ui.js';
+import {panelSaveBar} from './layout.js';
 import type {Translate} from './locale.js';
 
 export type BotEditorSection='run'|'media'|'persona'|'auth'|'workspace';
@@ -20,6 +21,7 @@ export interface BotsPanelProps {
   channels:any[];
   summary?:any;
   busy:boolean;
+  commandPending?:boolean;
   selectedBotId?:string;
   section?:BotEditorSection;
   onSectionChange?:(section:BotEditorSection)=>unknown;
@@ -42,6 +44,11 @@ export interface BotsPanelProps {
   onBrowseDirectory:(bot:any)=>unknown;
   onDefaultDirectory:(bot:any)=>void;
   onSaveWorkingDirectory:(bot:any)=>unknown;
+  onRevertWorkingDirectory?:(bot:any)=>unknown;
+  workspaceSaving?:boolean;
+  workspacePicking?:boolean;
+  workspacePickError?:string;
+  onCancelPick?:()=>unknown;
   workspaceEdits?:Record<string,string>;
   workspaceDirectories?:Array<{botId:string;sessionId:string;scopeDirectory:string;directory:string}>;
   storagePanel?:any;
@@ -64,7 +71,7 @@ function botIdentity(React:any, bot:any, channelName:string){
     h(React, 'span', {className:'avatar', 'aria-hidden':true}, initial),
     h(React, 'div', {className:'identity-copy'},
       h(React, 'strong', null, bot.name),
-      h(React, 'span', {className:'muted'}, channelName),
+      h(React, 'span', {className:'muted'}, `${channelName} · ${bot.id}`),
     ),
   );
 }
@@ -76,6 +83,7 @@ function listRow(React:any, props:BotsPanelProps, bot:any, selected:boolean, cha
       className:'bot-list-select',
       'aria-pressed':selected,
       'aria-label':bot.name,
+      title:`${bot.name} · ${channelName} · ${bot.id}`,
       disabled:props.busy||props.configLoading,
       onClick:props.ui.button('',()=>props.onSelect(bot.id)).props.onClick,
     },
@@ -109,6 +117,8 @@ function botDetail(React:any, props:BotsPanelProps, bot:any){
   const serviceRunning = props.summary?.health?.serviceRunning !== false;
   const running = bot.enabled && serviceRunning && bot.status !== 'stopped';
   const workingDirectory = props.workspaceEdits?.[bot.id] ?? bot.workingDirectory ?? '';
+  const workspaceDirty=workingDirectory!==(bot.workingDirectory??'');
+  const workspaceSaving=props.workspaceSaving??props.busy;
   const canCredentials = channel?.capabilities?.login?.includes('credentials');
   const personaOptions = props.configs.map((config:any)=>({id:config.id,name:config.name ?? config.id}));
   const sections:[BotEditorSection,string][]=[['run',t('run')],['media',t('media')],['persona',t('persona')],['auth',t('authorization')],['workspace',t('workspace')]];
@@ -116,9 +126,9 @@ function botDetail(React:any, props:BotsPanelProps, bot:any){
   let content:any;
   if(section==='run')content=h(React,'div',{className:'section-grid'},
     h(React, 'section', {className:'detail-section'},
-      ui.toggle(t('run'), running, ()=>props.onBotToggle(bot,running)),
+      ui.toggle(t('run'), running, ()=>props.onBotToggle(bot,running),{disabled:props.busy||props.commandPending}),
       h(React, 'div', {className:'actions'},
-        ui.button(t('reconnect'),()=>props.onReconnect(bot),{disabled:props.busy||!bot.credentialConfigured}),
+        ui.button(t('reconnect'),()=>props.onReconnect(bot),{disabled:props.busy||props.commandPending||!bot.credentialConfigured}),
       ),
     ),
     props.configLoading?h(React,'p',{role:'status'},t('loadingConfig')):props.configSections?.run??h(React,'p',{className:'empty'},t('selectBotPersona')),
@@ -132,36 +142,35 @@ function botDetail(React:any, props:BotsPanelProps, bot:any){
   if(section==='auth')content=h(React,'section',{className:'detail-section'},
     h(React,'span',{className:'badge'},bot.credentialConfigured?t('configured'):t('pendingConfig')),
     h(React,'div',{className:'actions'},
-      ui.button(t('authorize'),()=>props.onAuthorize(bot),{className:'primary',disabled:props.busy||bot.enabled}),
-      canCredentials?ui.button(t('credentials'),()=>props.onCredentials(bot),{disabled:props.busy||bot.enabled}):null,
+      ui.button(t('authorize'),()=>props.onAuthorize(bot),{className:'primary',disabled:props.busy||props.commandPending||bot.enabled}),
+      canCredentials?ui.button(t('credentials'),()=>props.onCredentials(bot),{disabled:props.busy||props.commandPending||bot.enabled}):null,
     ),
     props.credential?.id===bot.id?props.credentialForm??null:null,
   );
   if(section==='workspace')content=h(React,'div',{className:'section-grid'},
-    h(React, 'section', {className:'detail-section'},
+    h(React, 'form', {className:'detail-section',onSubmit:(event:any)=>{event.preventDefault();if(workspaceDirty&&!workspaceSaving&&!props.commandPending)ui.button('',()=>props.onSaveWorkingDirectory(bot)).props.onClick();}},
       h(React, 'div', {className:'directory-field'},
-        ui.field(t('workspaceRootLabel'), workingDirectory, value=>props.onWorkingDirectoryChange(bot,value), 'text', {placeholder:t('defaultDirectory')}),
-        ui.button(t('browseDirectory'),()=>props.onBrowseDirectory(bot)),
+        ui.field(t('workspaceRootLabel'), workingDirectory, value=>props.onWorkingDirectoryChange(bot,value), 'text', {id:`workspace-root-${bot.id}`,placeholder:t('defaultDirectory'),error:props.workspacePickError,disabled:workspaceSaving}),
+        pathPickerActions(React.createElement,ui,t,{pending:props.workspacePicking===true,onPick:()=>props.onBrowseDirectory(bot),onCancel:props.onCancelPick,disabled:workspaceSaving}),
       ),
       h(React, 'div', {className:'actions'},
         ui.button(t('defaultDirectory'),()=>props.onDefaultDirectory(bot),{className:'quiet'}),
-        ui.button(t('save'),()=>props.onSaveWorkingDirectory(bot),{className:'primary'}),
       ),
-      h(React,'p',{className:'muted'},t('workspaceRootHint')),
       ...(props.workspaceDirectories??[]).filter(item=>item.botId===bot.id).map(item=>h(React,'div',{className:'workspace-paths',key:item.sessionId},h(React,'small',null,t('workspaceScopeDirectory')),h(React,'code',null,item.scopeDirectory),h(React,'small',null,t('workspaceSessionDirectory')),h(React,'code',null,item.directory))),
+      panelSaveBar(React.createElement,{status:workspaceDirty?t('unsaved'):t('savedState'),cancel:ui.button(t('revert'),()=>props.onRevertWorkingDirectory?.(bot),{disabled:!workspaceDirty||workspaceSaving||!props.onRevertWorkingDirectory}),save:ui.button(t(workspaceSaving?'saving':'saveWorkspace'),()=>props.onSaveWorkingDirectory(bot),{className:'primary',type:'submit',onClick:undefined,disabled:!workspaceDirty||workspaceSaving||props.commandPending})}),
     ),
     props.storagePanel??null,
     trustedUsers(React, props, bot),
   );
   return h(React, 'article', {className:'bot-detail', 'aria-label':bot.name},
     h(React, 'header', {className:'detail-header'},
-      h(React, 'div', null, botIdentity(React, bot, channelName), h(React, 'span', {className:'muted'}, bot.id)),
+      h(React, 'div', null, botIdentity(React, bot, channelName)),
       statusBadge(React,t,bot),
     ),
     h(React,'nav',{className:'bot-section-nav','aria-label':t('botSections')},...sections.map(([id,label])=>ui.button(label,()=>props.onSectionChange?.(id),{key:id,id:`${contentId}-${id}`,className:section===id?'selected':'','aria-current':section===id?'page':undefined,'aria-controls':contentId,disabled:props.busy||props.configLoading}))),
-    h(React,'div',{className:'bot-section-content',id:contentId,role:'region','aria-labelledby':`${contentId}-${section}`},content),
+    h(React,['run','media','persona'].includes(section)?'form':'div',{className:'bot-section-content',id:contentId,role:'region','aria-labelledby':`${contentId}-${section}`,onSubmit:(event:any)=>{event.preventDefault();if(props.configDirty&&!props.busy)ui.button('',()=>props.onSaveConfig?.()).props.onClick();}},content),
     h(React,'div',{className:'bot-danger-zone'},ui.button(t('delete'),()=>props.onDelete(bot),{className:'quiet danger','aria-label':t('deleteBotLabel',{name:bot.name,id:bot.id}),disabled:props.busy||props.configLoading})),
-    props.configDirty?h(React,'div',{className:'save-bar sticky'},h(React,'span',null,t('unsaved')),h(React,'div',{className:'actions'},ui.button(t('cancel'),()=>props.onDiscardConfig?.(),{disabled:props.busy||props.configLoading||!props.onDiscardConfig}),ui.button(t('save'),()=>props.onSaveConfig?.(),{className:'primary',disabled:props.busy||props.configLoading||!props.onSaveConfig}))):null,
+    ['run','media','persona'].includes(section)?panelSaveBar(React.createElement,{status:props.configDirty?t('unsaved'):t('savedState'),cancel:ui.button(t('revert'),()=>props.onDiscardConfig?.(),{disabled:props.busy||props.configLoading||!props.configDirty||!props.onDiscardConfig}),save:ui.button(t('save'),()=>props.onSaveConfig?.(),{className:'primary',type:'submit',form:contentId,onClick:undefined,disabled:props.busy||props.commandPending||props.configLoading||!props.configDirty||!props.onSaveConfig})}):null,
   );
 }
 
@@ -171,18 +180,18 @@ export function BotsPanel(props:BotsPanelProps){
   const selectedId = selected?.id;
   return h(React, 'section', {className:'panel-page bots-page', 'aria-label':props.t('bots')},
     h(React, 'div', {className:'page-toolbar'},
-      h(React, 'div', null, h(React, 'h3', null, props.t('bots')), h(React, 'span', {className:'muted'}, props.t('botCount',{count:props.bots.length}))),
+      h(React, 'span', {className:'muted'}, props.t('botCount',{count:props.bots.length})),
       h(React, 'div', {className:'actions'},
-        props.onServiceToggle ? props.ui.button(props.summary?.health?.serviceRunning===true ? props.t('stopBotService') : props.t('startBotService'), props.onServiceToggle, {className:'quiet',disabled:props.busy||!props.summary?.health,'aria-label':props.summary?.health?.serviceRunning===true ? props.t('stopBotService') : props.t('startBotService')}) : null,
+        props.onCreate ? props.ui.button(props.t('newBot'),props.onCreate,{className:'primary','aria-label':props.t('newBot'),'aria-expanded':!!props.createForm,disabled:props.busy||props.configLoading}) : null,
       ),
     ),
     h(React, 'div', {className:'entity-workspace'},
       h(React, 'nav', {className:'entity-list entity-strip', 'aria-label':props.t('bots')},
         ...props.bots.map(bot=>listRow(React,props,bot,bot.id===selectedId,props.channels.find((item:any)=>item.id===bot.channel)?.displayName ?? bot.channel)),
-        props.onCreate ? props.ui.button('＋',props.onCreate,{className:'entity-create','aria-label':props.t('newBot'),title:props.t('newBot'),'aria-expanded':!!props.createForm,disabled:props.busy||props.configLoading}) : null,
       ),
       props.createForm ?? null,
       selected ? botDetail(React,props,selected) : h(React, 'section', {className:'card empty-state'}, h(React, 'p', null, props.t('noBots'))),
     ),
   );
 }
+

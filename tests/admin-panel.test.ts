@@ -64,18 +64,23 @@ test('an enabled bot in a stopped service shows an off switch that starts the bo
 
 
 const flattenPanel=(node:any):any[]=>Array.isArray(node)?node.flatMap(flattenPanel):node&&typeof node==='object'?[node,...(node.children??[]).flatMap(flattenPanel)]:[];
+const submitButton=(tree:any[],label:string)=>{
+  const button=tree.find(n=>n.type==='button'&&n.props?.className==='primary'&&n.children.includes(label));
+  const form=tree.find(n=>n.type==='form'&&(button.props.form?n.props.id===button.props.form:flattenPanel(n).includes(button)));
+  assert.ok(form,`Form for ${label}`);form.props.onSubmit({preventDefault:()=>{}});
+};
 const settlePanel=()=>new Promise(resolve=>setImmediate(resolve));
 
 function panelHarness(states:any[],respond:(body:any)=>any,options:{locale?:'zh'|'en';settingsForm?:any}={}){
-  let app:any,cursor=0,active=options.locale??'zh';
-  const React={Fragment:'fragment',createElement:(type:any,props:any,...children:any[])=>({type,props,children}),useState:(initial:any)=>{const i=cursor++;if(!(i in states))states[i]=initial;return[states[i],(value:any)=>{states[i]=typeof value==='function'?value(states[i]):value;}];},useRef:()=>({current:null}),useEffect:()=>{},useSyncExternalStore:(_subscribe:any,snapshot:any)=>snapshot()};
+  let app:any,cursor=0,refCursor=0,active=options.locale??'zh';const refs:any[]=[];
+  const React={Fragment:'fragment',createElement:(type:any,props:any,...children:any[])=>({type,props,children}),useState:(initial:any)=>{const i=cursor++;if(!(i in states))states[i]=initial;return[states[i],(value:any)=>{states[i]=typeof value==='function'?value(states[i]):value;}];},useRef:(initial:any)=>{const i=refCursor++;return refs[i]??(refs[i]={current:initial});},useEffect:()=>{},useSyncExternalStore:(_subscribe:any,snapshot:any)=>snapshot()};
   const previousWindow=(globalThis as any).window,previousFetch=globalThis.fetch;
   const locale={getSnapshot:()=>({revision:1,active}),subscribe:()=>()=>{},register:()=>()=>{},bind:()=>(key:LocaleKey,params?:Record<string,unknown>)=>(active==='en'?english:chinese)(key,params)};
   (globalThis as any).window={__BOT_INTEGRATION__:{endpoint:'http://fixture.invalid',token:'fixture'},__ModuleLoader__:{load:({factory}:any)=>factory(()=>React).apply({locale,configForms:options.settingsForm?{get:()=>options.settingsForm}:undefined,effect:(callback:any)=>callback(),slots:{inject:(_slot:any,register:any)=>register(),register:(_meta:any,component:any)=>{app=component;}}})}};
   globalThis.fetch=async(_url,init)=>Response.json({result:await respond(JSON.parse(String(init?.body)))});
   return{
     start:async(name:string)=>{await import(new URL('../src/client/index.ts?'+name,import.meta.url).href);},
-    render:()=>{cursor=0;return flattenPanel(app());},
+    render:()=>{cursor=0;refCursor=0;return flattenPanel(app());},
     setLocale:(value:'zh'|'en')=>{active=value;},
     restore:()=>{(globalThis as any).window=previousWindow;globalThis.fetch=previousFetch;},
   };
@@ -95,7 +100,7 @@ test('language switching redraws notices and dialogs without rewriting persona d
     harness.setLocale('zh');tree=harness.render();
     assert.equal(tree.find(n=>n.props?.role==='dialog').props['aria-label'],chinese('unsavedChanges'));
     assert.equal(states[7].personaPrompt,'User-authored prompt');assert.equal(states[8],true);
-    flattenPanel(tree.find(n=>n.props?.role==='dialog')).find(n=>n.type==='button'&&n.children.includes('取消')&&!n.props.disabled).props.onClick();await settlePanel();
+    flattenPanel(tree.find(n=>n.props?.role==='dialog')).find(n=>n.type==='button'&&n.children.includes('继续编辑')&&!n.props.disabled).props.onClick();await settlePanel();
     assert.equal(states[0],'catalog');assert.equal(states[7].personaPrompt,'User-authored prompt');
   }finally{harness.restore();}
 });
@@ -109,9 +114,11 @@ test('global bot message language uses the Host form, stays independent of UI an
   try{
     await harness.start('global-message-locale');assert.equal(select().props.value,'zh');assert.equal(select().props.disabled,false);
     select().props.onChange({target:{value:'en'}});await settlePanel();
-    assert.deepEqual(writes,[{field:'messageLocale',value:'en'}]);assert.equal(select().props.value,'zh');
+    assert.deepEqual(writes,[],'selection only changes the language draft');assert.equal(select().props.value,'en');
+    const save=async()=>{harness.render().find(n=>n.type==='form').props.onSubmit({preventDefault:()=>{}});await settlePanel();};
+    await save();assert.deepEqual(writes,[{field:'messageLocale',value:'en'}]);assert.equal(select().props.value,'en','failure keeps the draft');
     assert.ok(harness.render().some(n=>n.props?.role==='alert'&&n.children[0]===english('messageLocaleSaveFailed')));
-    accepted=true;select().props.onChange({target:{value:'en'}});await settlePanel();assert.equal(select().props.value,'en');
+    accepted=true;await save();assert.equal(select().props.value,'en');
     assert.ok(harness.render().some(n=>n.props?.className==='notice'&&n.children[0]==='Saved'));
     harness.setLocale('zh');let tree=harness.render();assert.ok(tree.some(n=>n.props?.className==='notice'&&n.children[0]==='已保存'));
     assert.equal(tree.find(n=>n.type==='label'&&n.children[0]===chinese('messageLocale')).children[1].props.value,'en');
@@ -127,7 +134,7 @@ test('bot page renders creation before data arrives and with no bots, then edits
     await harness.start('empty-bots');let tree=harness.render();
     assert.ok(createButton(tree));assert.equal(createButton(tree).props.disabled,false);
     createButton(tree).props.onClick();await settlePanel();
-    tree=harness.render();assert.ok(tree.some(n=>n.props?.className==='card create-form'));
+    tree=harness.render();assert.ok(tree.some(n=>n.type==='dialog'&&n.props?.['aria-label']==='新建机器人'));
     createButton(tree).props.onClick();await settlePanel();
     states[1]={bots:[],configs:[],counts:{pendingDeliveries:0},health:{activeTasks:0}};states[6]=[];
     tree=harness.render();assert.ok(createButton(tree));assert.ok(!tree.some(n=>n.props?.className==='bot-detail'));
@@ -164,13 +171,13 @@ test('creating QQ and WeChat bots opens authorization and leaves settings defaul
     await harness.start('new-bot-authorization');
     for(const channel of ['qq','weixin']){
       harness.render().find(node=>node.props?.['aria-label']==='新建机器人').props.onClick();await settlePanel();
-      const form=flattenPanel(harness.render().find(node=>node.props?.className==='card create-form'));
+      const form=flattenPanel(harness.render().find(node=>node.type==='dialog'&&node.props?.['aria-label']==='新建机器人'));
       assert.deepEqual(form.filter(node=>node.type==='label').map(node=>node.children[0]),['ID','名称','渠道','人格']);
       field('ID').props.onChange({target:{value:channel}});
       field('名称').props.onChange({target:{value:channel}});
       field('渠道').props.onChange({target:{value:channel}});
       await settlePanel();
-      harness.render().find(node=>node.type==='button'&&node.children.includes('创建')).props.onClick();
+      harness.render().find(node=>node.type==='form'&&flattenPanel(node).some(child=>child.type==='button'&&child.children.includes('创建'))).props.onSubmit({preventDefault:()=>{}});
       await settlePanel();await settlePanel();
       const created=calls.filter(body=>body.action==='bot.save').at(-1).input;
       assert.equal('settings' in created,false);
@@ -209,7 +216,7 @@ test('creation failures keep the form, authorization retries keep the bot, and c
     await harness.start('new-bot-authorization-failure');
     harness.render().find(node=>node.props?.['aria-label']==='新建机器人').props.onClick();await settlePanel();
     for(const label of ['ID','名称'])harness.render().find(node=>node.type==='label'&&node.children[0]===label).children[1].props.onChange({target:{value:'new'}});
-    const create=async()=>{harness.render().find(node=>node.type==='button'&&node.children.includes('创建')).props.onClick();await settlePanel();await settlePanel();};
+    const create=async()=>{harness.render().find(node=>node.type==='form'&&flattenPanel(node).some(child=>child.type==='button'&&child.children.includes('创建'))).props.onSubmit({preventDefault:()=>{}});await settlePanel();await settlePanel();};
     await create();assert.equal(states[3],'Save failed');assert.equal(states[15],true);assert.equal(states[19],null);
     assert.ok(!calls.some(body=>body.action==='login.begin'));
     failSave=false;await create();assert.equal(saved.length,1);assert.equal(states[15],false);
@@ -251,7 +258,7 @@ test('persona editing keeps only identity, prompt and files while preserving the
     tree=harness.render();tree.find(n=>n.type==='button'&&n.children.includes('文件')).props.onClick();await settlePanel();
     tree=harness.render();assert.ok(tree.some(n=>n.type==='h3'&&n.children.includes('配置文件')));
     assert.equal(states[7].name,'改名人格');assert.equal(states[7].personaPrompt,'新的独立人设');assert.equal(states[8],true);
-    tree.find(n=>n.type==='button'&&n.props.className==='primary'&&n.children.includes('保存')).props.onClick();await settlePanel();await settlePanel();
+    submitButton(tree,'保存');await settlePanel();await settlePanel();
     assert.equal(calls.filter(body=>body.action==='config.save').length,1);
     assert.equal(saved.name,'改名人格');assert.equal(saved.personaPrompt,'新的独立人设');
     assert.deepEqual(saved.model,initial.model);assert.deepEqual(saved.media,initial.media);assert.equal(states[8],false);
@@ -314,7 +321,7 @@ test('bot tabs expose independent media drafts, authorization and workspace with
     assert.deepEqual(states[29].settings.media.image,expectedImage);
     assert.ok(!imageSection().some(n=>n.type==='label'&&['模型','服务地址','密钥环境变量名'].includes(n.children[0])));
     assert.ok(imageSection().some(n=>n.type==='p'&&n.children[0]==='未保存'));
-    tree=harness.render();tree.find(n=>n.type==='button'&&n.props.className==='primary'&&n.children.includes('保存')).props.onClick();await settlePanel();await settlePanel();
+    tree=harness.render();submitButton(tree,'保存');await settlePanel();await settlePanel();
     assert.equal(calls.filter(body=>body.action==='bot.save').length,1);assert.ok(!calls.some(body=>body.action==='config.save'));
     assert.deepEqual(bot.settings.media.image,expectedImage);assert.equal(states[29],null);
     assert.equal(states[13].bot.keyConfigured,false);assert.ok(imageSection().some(n=>n.type==='p'&&n.children[0]==='待配置'));
@@ -337,10 +344,10 @@ test('bot deletion still confirms, cancels and clears only matching authorizatio
     await harness.start('bot-delete');let tree=harness.render();
     assert.equal(tree.filter(n=>n.type==='button'&&n.children.includes('删除')).length,2);
     tree.find(n=>n.props?.['aria-label']==='删除机器人 sakura（1）').props.onClick();await settlePanel();
-    tree=harness.render();assert.match(tree.find(n=>n.type==='form'&&n.props?.role==='dialog').props['aria-label'],/ID：1/);assert.match(tree.find(n=>n.type==='form'&&n.props?.role==='dialog').props['aria-label'],/永久删除.*聊天记录/);
-    flattenPanel(tree.find(n=>n.type==='form'&&n.props?.role==='dialog')).find(n=>n.type==='button'&&n.children.includes('取消')).props.onClick();await settlePanel();assert.deepEqual(deleted,[]);
+    tree=harness.render();assert.match(tree.find(n=>n.type==='dialog'&&String(n.props?.['aria-label']).startsWith('删除机器人')).props['aria-label'],/ID：1/);assert.match(tree.find(n=>n.type==='dialog'&&String(n.props?.['aria-label']).startsWith('删除机器人')).props['aria-label'],/永久删除.*聊天记录/);
+    flattenPanel(tree.find(n=>n.type==='dialog'&&String(n.props?.['aria-label']).startsWith('删除机器人'))).find(n=>n.type==='button'&&n.children.includes('取消')).props.onClick();await settlePanel();assert.deepEqual(deleted,[]);
     tree=harness.render();tree.find(n=>n.props?.['aria-label']==='删除机器人 sakura（1）').props.onClick();await settlePanel();
-    tree=harness.render();tree.find(n=>n.type==='form'&&n.props?.role==='dialog').props.onSubmit({preventDefault:()=>{}});await settlePanel();await settlePanel();
+    tree=harness.render();flattenPanel(tree.find(n=>n.type==='dialog'&&String(n.props?.['aria-label']).startsWith('删除机器人'))).find(n=>n.type==='form').props.onSubmit({preventDefault:()=>{}});await settlePanel();await settlePanel();
     tree=harness.render();assert.deepEqual(deleted,['1']);assert.equal(states[18],null);assert.equal(states[19],null);
     assert.ok(!tree.some(n=>n.props?.['aria-label']==='删除机器人 sakura（1）'));assert.ok(tree.some(n=>n.props?.['aria-label']==='删除机器人 sakura（2）'));
     states[5]=true;tree=harness.render();assert.equal(tree.find(n=>n.props?.['aria-label']==='删除机器人 sakura（2）').props.disabled,true);
@@ -369,7 +376,7 @@ test('overview session deletion confirms the exact session, cancels and refreshe
     assert.equal(button(tree,'session-2').props.disabled,true);
     flattenPanel(dialog).find(n=>n.type==='button'&&n.children.includes('取消')).props.onClick();await settlePanel();assert.deepEqual(commands,[]);
     button(harness.render(),'session-1').props.onClick();await settlePanel();
-    harness.render().find(n=>n.props?.role==='dialog').props.onSubmit({preventDefault:()=>{}});await settlePanel();
+    flattenPanel(harness.render().find(n=>n.props?.role==='dialog')).find(n=>n.type==='form').props.onSubmit({preventDefault:()=>{}});await settlePanel();
     assert.equal(button(harness.render(),'session-2').props.disabled,true);
     finishDelete!();await settlePanel();await settlePanel();tree=harness.render();
     assert.deepEqual(commands,[{version:1,kind:'command',name:'session.delete',input:{id:'session-1'}}]);
@@ -384,8 +391,95 @@ test('failed session deletion keeps the session visible and reports the failure'
   try{
     await harness.start('session-delete-failure');
     harness.render().find(n=>n.props?.['aria-label']==='Delete session owned-elsewhere').props.onClick();await settlePanel();
-    harness.render().find(n=>n.props?.role==='dialog').props.onSubmit({preventDefault:()=>{}});await settlePanel();await settlePanel();
+    flattenPanel(harness.render().find(n=>n.props?.role==='dialog')).find(n=>n.type==='form').props.onSubmit({preventDefault:()=>{}});await settlePanel();await settlePanel();
     const tree=harness.render();assert.ok(tree.some(n=>n.props?.['aria-label']==='Delete session owned-elsewhere'&&!n.props.disabled));
     assert.equal(states[3],'Session is in use');assert.equal(states[4],'');
+  }finally{harness.restore();}
+});
+
+
+test('persona revert restores its baseline without fetching and changing back clears dirty',async()=>{
+  const persona=configSchema.parse({id:'default',name:'Original',personaPrompt:'Prompt'});
+  const states:any[]=['catalog',{bots:[],configs:[persona],counts:{pendingDeliveries:0},health:{}},'','','',false,[],persona];
+  const calls:any[]=[];const harness=panelHarness(states,body=>{calls.push(body);throw Error('Revert must not fetch');});
+  const rename=(value:string)=>harness.render().find(n=>n.type==='label'&&n.children[0]==='名称').children[1].props.onChange({target:{value}});
+  try{
+    await harness.start('persona-local-baseline');harness.render();rename('Edited');assert.equal(states[8],true);
+    rename('Original');assert.equal(states[8],false);
+    rename('Edited');harness.render().find(n=>n.type==='button'&&n.children.includes('撤销')).props.onClick();await settlePanel();
+    assert.equal(states[7].name,'Original');assert.equal(states[8],false);assert.deepEqual(calls,[]);
+  }finally{harness.restore();}
+});
+
+test('bot persona selection is a reversible draft and submits with settings once',async()=>{
+  const persona=configSchema.parse({id:'default',name:'Default',personaPrompt:'Prompt'});
+  let bot:any={id:'bot',name:'Bot',channel:'qq',configId:'default',settings:botSettingsFromConfig(persona)};
+  const summary=()=>({bots:[bot],configs:[persona,{id:'second',name:'Second'}],counts:{pendingDeliveries:0},health:{}});
+  const states:any[]=['bots',summary(),'','','',false,[bot]];states[28]='persona';const calls:any[]=[];
+  const harness=panelHarness(states,body=>{calls.push(body);if(body.action==='bot.save'){bot={...bot,...body.input};return bot;}return{data:body.name==='bots.list'?[bot]:summary()};});
+  const choose=async(value:string)=>{harness.render().find(n=>n.type==='label'&&n.children[0]==='人格').children[1].props.onChange({target:{value}});await settlePanel();};
+  try{
+    await harness.start('bot-persona-draft');await choose('second');assert.equal(states[29].configId,'second');assert.deepEqual(calls,[]);
+    await choose('default');assert.equal(states[29],null);
+    await choose('second');submitButton(harness.render(),'保存');await settlePanel();await settlePanel();
+    assert.equal(calls.filter((body:any)=>body.action==='bot.save').length,1);assert.equal(bot.configId,'second');assert.deepEqual(bot.settings,botSettingsFromConfig(persona));assert.equal(states[29],null);
+  }finally{harness.restore();}
+});
+
+test('workspace picker ignores cancelled and switched-object responses without losing other fields',async()=>{
+  const bots=['first','second'].map(id=>({id,name:id,channel:'qq',configId:'default',workingDirectory:`C:/${id}`}));
+  const states:any[]=['bots',{bots,configs:[],counts:{pendingDeliveries:0},health:{}},'','','',false,bots];states[28]='workspace';
+  let finish:(value:any)=>void=()=>{};const calls:any[]=[];
+  const harness=panelHarness(states,body=>{calls.push(body);if(body.name==='service.settings.pick-directory')return new Promise(resolve=>{finish=resolve;});throw Error('Only picker queries are expected');});
+  const pick=async()=>{harness.render().find(n=>n.type==='button'&&n.children.includes('选择目录')).props.onClick();await settlePanel();};
+  try{
+    await harness.start('workspace-picker-identity');await pick();
+    harness.render().find(n=>n.type==='button'&&n.props?.['aria-label']==='second').props.onClick();await settlePanel();
+    finish({path:'C:/late'});await settlePanel();assert.deepEqual(states[17],{});assert.equal(states[27],'second');
+    await pick();harness.render().find(n=>n.type==='button'&&n.children.includes('取消')).props.onClick();await settlePanel();
+    finish({path:'C:/cancelled'});await settlePanel();assert.deepEqual(states[17],{});
+    await pick();harness.render().find(n=>n.type==='label'&&n.children[0]==='工作区根目录').children[1].props.onChange({target:{value:'C:/typed'}});
+    finish({path:'C:/late-again'});await settlePanel();assert.deepEqual(states[17],{second:'C:/typed'});
+    assert.equal(calls.some(body=>body.action==='bot.save'),false);
+  }finally{harness.restore();}
+});
+
+
+test('workspace and trust writes do not submit a persona draft or revert a saved persona',async()=>{
+  const persona=configSchema.parse({id:'default',name:'Default',personaPrompt:'Prompt'});
+  let bot:any={id:'bot',name:'Bot',channel:'qq',configId:'default',workingDirectory:'C:/old',trustedUsers:['owner'],settings:botSettingsFromConfig(persona)};
+  const summary=()=>({bots:[{id:bot.id,name:bot.name,channel:bot.channel,configId:bot.configId,status:'stopped'}],configs:[persona,{id:'second',name:'Second'}],counts:{pendingDeliveries:0},health:{}});
+  const states:any[]=['bots',summary(),'','','',false,[bot]];states[28]='persona';const writes:any[]=[];
+  const harness=panelHarness(states,body=>{if(body.action==='bot.save'){writes.push(body.input);bot={...bot,...body.input};return bot;}if(body.action==='directories')return{personas:[],sessions:[]};return{data:body.name==='bots.list'?[bot]:summary()};});
+  const section=async(name:string)=>{harness.render().find(n=>n.props?.id==='bot-detail-bot-'+name).props.onClick();await settlePanel();};
+  const path=(value:string)=>harness.render().find(n=>n.type==='label'&&n.children[0]==='工作区根目录').children[1].props.onChange({target:{value}});
+  try{
+    await harness.start('bot-save-scope');harness.render().find(n=>n.type==='label'&&n.children[0]==='人格').children[1].props.onChange({target:{value:'second'}});await settlePanel();
+    await section('workspace');path('C:/first');submitButton(harness.render(),'保存工作区');await settlePanel();await settlePanel();
+    assert.equal(writes[0].workingDirectory,'C:/first');assert.equal(writes[0].configId,'default');assert.equal('settings' in writes[0],false);assert.equal(bot.configId,'default');assert.equal(states[29].configId,'second');
+    const trustedRow=harness.render().find(n=>n.props?.className==='trusted-user');flattenPanel(trustedRow).find(n=>n.type==='button').props.onClick();await settlePanel();await settlePanel();
+    assert.deepEqual(writes[1].trustedUsers,[]);assert.equal(writes[1].configId,'default');assert.equal(bot.configId,'default');
+    path('C:/second');harness.render().find(n=>n.props?.className==='sidebar-item'&&n.children.includes('人格')).props.onClick();await settlePanel();
+    harness.render().find(n=>n.type==='button'&&n.children.includes('保存并继续')).props.onClick();await settlePanel();await settlePanel();await settlePanel();
+    assert.equal(bot.configId,'second');assert.equal(bot.workingDirectory,'C:/second');assert.equal(states[0],'catalog');
+    assert.equal(writes[2].configId,'second');assert.equal(writes[3].configId,'second');assert.equal(writes[3].workingDirectory,'C:/second');assert.equal('settings' in writes[3],false);
+  }finally{harness.restore();}
+});
+
+test('successful bot saves keep their returned baseline when the summary refresh fails',async()=>{
+  const persona=configSchema.parse({id:'default',name:'Default',personaPrompt:'Prompt'});
+  let bot:any={id:'bot',name:'Bot',channel:'qq',configId:'default',workingDirectory:'C:/old',settings:botSettingsFromConfig(persona)};
+  const summary={bots:[{id:'bot',name:'Bot',channel:'qq',configId:'default',status:'stopped'}],configs:[persona,{id:'second',name:'Second'}],counts:{pendingDeliveries:0},health:{}};
+  const states:any[]=['bots',summary,'','','',false,[bot]];states[28]='persona';
+  const harness=panelHarness(states,body=>{if(body.action==='bot.save'){bot={...bot,...body.input};return bot;}if(body.action==='directories')return{personas:[],sessions:[]};if(body.name==='bots.list')return{data:[bot]};throw Error('Refresh failed');});
+  try{
+    await harness.start('bot-saved-refresh-failure');harness.render().find(n=>n.type==='label'&&n.children[0]==='人格').children[1].props.onChange({target:{value:'second'}});await settlePanel();
+    submitButton(harness.render(),'保存');await settlePanel();await settlePanel();
+    assert.equal(states[29],null);assert.equal(harness.render().find(n=>n.type==='label'&&n.children[0]==='人格').children[1].props.value,'second');
+    harness.render().find(n=>n.props?.id==='bot-detail-bot-workspace').props.onClick();await settlePanel();
+    harness.render().find(n=>n.type==='label'&&n.children[0]==='工作区根目录').children[1].props.onChange({target:{value:'C:/saved'}});
+    submitButton(harness.render(),'保存工作区');await settlePanel();await settlePanel();
+    assert.deepEqual(states[17],{});assert.equal(harness.render().find(n=>n.type==='label'&&n.children[0]==='工作区根目录').children[1].props.value,'C:/saved');
+    assert.ok(harness.render().some(n=>n.props?.role==='alert'&&n.children[0].includes('状态刷新失败')));
   }finally{harness.restore();}
 });

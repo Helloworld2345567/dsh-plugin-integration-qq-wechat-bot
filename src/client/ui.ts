@@ -6,21 +6,38 @@ export type Mutation = (action:string,input?:any,message?:DisplayText)=>Promise<
 export const botStatus=(status:string,t:Translate=chinese)=>({connected:t('online'),connecting:t('connecting'),stopped:t('stopped'),error:t('error'),disconnected:t('offline'),reconnecting:t('reconnecting')}[status]??t('notConnected'));
 export const list=(value:unknown):string[]=>Array.isArray(value)?value:[];
 
-export function createUI(React:any,busy:boolean,onError:(message:any)=>void){
+let fieldSequence=0;
+
+export function createUI(React:any,busy:boolean,onError:(message:any)=>void,t:Translate=chinese){
   const h=React.createElement;
   const run=(action:()=>unknown)=>{Promise.resolve().then(action).catch((error:Error)=>onError(errorText(error)));};
   const button=(label:string|any[],action:()=>unknown,props:any={})=>h('button',{type:'button',disabled:busy,onClick:()=>run(action),...props},label);
   const toggle=(label:string,checked:boolean,action:()=>unknown,props:any={})=>h('div',{className:'toggle-row'},
     h('span',null,label),h('button',{type:'button',role:'switch','aria-label':label,'aria-checked':checked,
       className:'toggle',disabled:busy,onClick:()=>run(action),...props},h('span',{className:'toggle-thumb','aria-hidden':true})));
-  const field=(label:string,value:any,change:(value:string)=>void,type='text',props:any={})=>h('label',null,label,
-    h('input',{type,disabled:busy,value:value??'',onChange:(event:any)=>change(event.target.value),...props}));
-  const select=(label:string,value:string,options:any[],change:(value:string)=>unknown,props:any={})=>h('label',null,label,
-    h('select',{value,disabled:busy,onChange:(event:any)=>{const next=event.target.value;run(()=>change(next));},...props},...[...(value&&!options.some(o=>o.id===value)?[{id:value,name:value}]:[]),...options].map(o=>h('option',{key:o.id,value:o.id,disabled:o.disabled},o.name??o.id))));
-  const textarea=(label:string,value:string,change:(value:string)=>void,props:any={})=>h('label',{className:'full'},label,
-    h('textarea',{value:value??'',disabled:busy,rows:4,onChange:(event:any)=>change(event.target.value),...props}));
+  const control=(tag:string,label:string,props:any,children:any[]=[],full=false)=>{
+    const {error,...inputProps}=props;
+    const id=inputProps.id??(error?`bot-field-${++fieldSequence}`:undefined);
+    const errorId=error?`${id}-error`:undefined;
+    return h('label',{className:full?'full':undefined,htmlFor:id},label,
+      h(tag,{...inputProps,id,'aria-invalid':error?true:inputProps['aria-invalid'],'aria-describedby':[inputProps['aria-describedby'],errorId].filter(Boolean).join(' ')||undefined},...children),
+      error?h('span',{id:errorId,className:'field-error',role:'alert'},error):null);
+  };
+  const field=(label:string,value:any,change:(value:string)=>void,type='text',props:any={})=>control('input',label,
+    {type,disabled:busy,value:value??'',onChange:(event:any)=>change(event.target.value),...props});
+  const select=(label:string,value:string,options:any[],change:(value:string)=>unknown,props:any={})=>control('select',label,
+    {value,disabled:busy,onChange:(event:any)=>{const next=event.target.value;run(()=>change(next));},...props},
+    [...(value&&!options.some(o=>o.id===value)?[{id:value,name:t('unavailableSelection',{value}),disabled:true}]:[]),...options].map(o=>h('option',{key:o.id,value:o.id,disabled:o.disabled},o.name??o.id)));
+  const textarea=(label:string,value:string,change:(value:string)=>void,props:any={})=>control('textarea',label,
+    {value:value??'',disabled:busy,rows:4,onChange:(event:any)=>change(event.target.value),...props},[],true);
   const details=(label:string,...children:any[])=>h('details',null,h('summary',null,label),h('div',{className:'detail-body'},...children));
   return {button,toggle,field,select,textarea,details};
+}
+
+export function pathPickerActions(h:any,ui:{button:(label:string,action:()=>unknown,props?:any)=>any},t:Translate,options:{pending:boolean;onPick:()=>unknown;onCancel?:()=>unknown;file?:boolean;disabled?:boolean}){
+  return h('span',{className:'actions picker-actions'},
+    ui.button(t(options.pending?'selectingPath':options.file?'browseFile':'browseDirectory'),options.onPick,{disabled:options.disabled||options.pending,'aria-busy':options.pending}),
+    options.pending&&options.onCancel?ui.button(t('cancel'),options.onCancel,{disabled:false}):null);
 }
 
 export function dateInput(timestamp:number,timezone:string):string{

@@ -4,6 +4,8 @@
 
 本页用于源码开发；部署见[快速开始](getting-started.md)。双语维护规则见[贡献指南](../CONTRIBUTING.md#双语维护规范)。
 
+面板 UI 重构和扩展遵循 [UI 设计与扩展指导](ui-design-guidelines.md)。
+
 ## 初始化
 
 准备 Node.js 24+、Python 3.12 或 3.13、`ffmpeg` 和 `ffprobe`。Harness 固定为 `0.2.1-rc.5`，由 npm 安装；Windows 使用 PowerShell 7。基础开发不需要平台凭据、CUDA、模型权重或外部媒体服务。

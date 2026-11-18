@@ -44,7 +44,6 @@ export function panelSidebar(h: any, options: PanelSidebarOptions): any {
   return h(
     'aside',
     {className: 'panel-sidebar'},
-    h('div', {className: 'sidebar-brand'}, h('span', {className: 'sidebar-mark', 'aria-hidden': true}, 'D'), h('span', null, options.title ?? 'Bots')),
     h('nav', {className: 'sidebar-nav', 'aria-label': options.label ?? 'Panel navigation'}, ...items),
   );
 }

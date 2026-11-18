@@ -1,6 +1,7 @@
 # Repository guidance
 
 - Use PowerShell 7 and `rg` on Windows.
+- For panel UI changes, follow [UI design and extension guidance](docs/ui-design-guidelines.md): preserve existing configuration scope, keep copy concise, and use consistent interaction contracts.
 - Keep implementation in `src/`, media workers in `python/`, shared image operations in `skills/image-generation/`, and tests in `tests/`.
 - Bot configurations are personas. Switching a persona preserves session history and applies from the next turn; freeze in-flight configuration and recheck revoked permissions at execution time.
 - Channel identity owns sessions, attachments, memories and outputs. Do not trust model-supplied identity or paths.

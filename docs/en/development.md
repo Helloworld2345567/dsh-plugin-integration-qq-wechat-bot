@@ -4,6 +4,8 @@
 
 This page covers source development; use [getting started](getting-started.md) for deployment. See [contributing](../../CONTRIBUTING.en.md#bilingual-maintenance) for bilingual maintenance.
 
+For panel refactoring and extensions, follow the [UI design guidelines](ui-design-guidelines.md).
+
 ## Setup
 
 Prepare Node.js 24+, Python 3.12 or 3.13, `ffmpeg` and `ffprobe`. npm installs the pinned Harness `0.2.1-rc.5`; use PowerShell 7 on Windows. Basic development needs no platform credentials, CUDA, weights or external media services.

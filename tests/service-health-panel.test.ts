@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 import {loadPanelServiceHealth,modelLibraryLabel,serviceHealthLabel} from '../src/client/service-health.js';
 import {chinese} from '../src/client/locale.js';
 
+const nodes=(node:any):any[]=>Array.isArray(node)?node.flatMap(nodes):node&&typeof node==='object'?[node,...(node.children??[]).flatMap(nodes)]:[];
+function submitSave(tree:any[]){
+  const form=tree.find(node=>node.type==='form'&&nodes(node).some(child=>child.type==='button'&&child.props.type==='submit'&&child.children.includes('保存')));
+  assert.ok(form,'the save action belongs to a native form');
+  form.props.onSubmit({preventDefault:()=>{}});
+}
+
 const profile=(serviceId:string,profileId:string,state='ready')=>({serviceId,profileId,state,capabilities:[serviceId==='rvc'?'rvc.convert':`${serviceId}.speak`]});
 
 test('service health probes one usable profile per speech service and does not probe the RVC directory',async()=>{
@@ -54,14 +61,16 @@ test('overview and services load real health, and service actions refresh profil
       await settle();await settle();tree=render();
       assert.equal(calls.filter(call=>call.name==='service.health').length,2);assert.ok(tree.some(n=>n.children.includes('连接正常')));assert.ok(tree.some(n=>n.children.includes('已配置')));
       if(page==='services'){
-        assert.ok(tree.some(n=>n.type==='button'&&n.children.includes('启动 ComfyUI')));assert.ok(!tree.some(n=>n.type==='p'&&n.children.includes('选择 ComfyUI 后将提交 API 格式工作流')));
+        tree.find(n=>n.type==='button'&&n.props['aria-label']==='ComfyUI').props.onClick();await settle();tree=render();
+        assert.ok(tree.some(n=>n.type==='button'&&n.children.includes('启动')));assert.ok(!tree.some(n=>n.type==='p'&&n.children.includes('选择 ComfyUI 后将提交 API 格式工作流')));
         assert.ok(tree.some(n=>n.props?.role==='status'&&n.children.includes('已停止')));
+        tree.find(n=>n.type==='button'&&n.props['aria-label']==='GPT-SoVITS').props.onClick();await settle();
         for(const action of ['refresh','save','start']){
           const previousHealthCalls=calls.filter(call=>call.name==='service.health').length,previousProfileCalls=calls.filter(call=>call.name==='catalog.profiles').length;
           healthState=action==='start'?'ready':'unavailable';tree=render();
           if(action==='save'){tree.find(n=>n.type==='label'&&n.children[0]==='GPT-SoVITS 服务地址').children[1].props.onChange({target:{value:'http://127.0.0.1:9881'}});tree=render();}
-          const label=action==='refresh'?'刷新':action==='save'?'保存':'启动 GPT-SoVITS';
-          const button=tree.find(n=>n.type==='button'&&n.children.includes(label));assert.equal(button.props.disabled,false);button.props.onClick();await settle();await settle();
+          const label=action==='refresh'?'刷新':action==='save'?'保存':'启动';
+          const button=tree.find(n=>n.type==='button'&&n.children.includes(label));assert.equal(button.props.disabled,false);if(action==='save')submitSave(tree);else button.props.onClick();await settle();await settle();
           tree=render();assert.equal(calls.filter(call=>call.name==='service.health').length,previousHealthCalls+2);assert.equal(calls.filter(call=>call.name==='catalog.profiles').length,previousProfileCalls+1);
           assert.ok(tree.some(n=>n.children.includes(action==='start'?'连接正常':'连接失败')));
           if(action==='refresh')assert.deepEqual(calls.filter(call=>call.name==='service.refresh').map(call=>call.input.serviceId),['rvc','music']);
@@ -72,7 +81,7 @@ test('overview and services load real health, and service actions refresh profil
 });
 
 test('image settings stay independent and slow picking or background refresh never locks the service form',async()=>{
-  const flatten=(node:any):any[]=>Array.isArray(node)?node.flatMap(flatten):node&&typeof node==='object'?[node,...(node.children??[]).flatMap(flatten)]:[];
+  const flatten=(node:any):any[]=>Array.isArray(node)?node.flatMap(flatten):node&&typeof node==='object'?typeof node.type==='function'?flatten(node.type({...node.props,children:node.children})):[node,...(node.children??[]).flatMap(flatten)]:[];
   const settle=()=>new Promise(resolve=>setImmediate(resolve));
   const previousWindow=(globalThis as any).window,previousFetch=globalThis.fetch;
   const summary={bots:[],configs:[],counts:{pendingDeliveries:0},health:{activeTasks:0,serviceRunning:false}};
@@ -100,53 +109,57 @@ test('image settings stay independent and slow picking or background refresh nev
   const render=()=>{cursor=0;refCursor=0;return flatten(app());};
   const field=(label:string)=>render().find(node=>node.type==='label'&&node.children[0]===label).children[1];
   const button=(label:string)=>render().find(node=>node.type==='button'&&node.children.includes(label));
+  const selectService=async(label:string)=>{render().find(node=>node.type==='button'&&node.props['aria-label']===label).props.onClick();await settle();};
+  const save=()=>submitSave(render());
   try{
     await import(new URL('../src/client/index.ts?responsive-services',import.meta.url).href);
     render();mounted=true;for(const effect of effects){const cleanup=effect();if(typeof cleanup==='function')cleanups.push(cleanup as ()=>void);}await settle();await settle();
     assert.ok(!render().some(node=>node.type==='label'&&node.children[0]==='默认生图服务'));
     assert.ok(!render().some(node=>node.type==='label'&&node.children[0]==='生图协议'));
-    assert.ok(render().some(node=>node.type==='h3'&&node.children.includes('OpenAI 生图')));
-    assert.ok(render().some(node=>node.type==='h3'&&node.children.includes('ComfyUI')));
-    assert.equal(field('默认模型').props.value,'original');assert.ok(field('ComfyUI 工作流文件'));
+    assert.ok(render().some(node=>node.type==='button'&&node.props['aria-label']==='OpenAI 生图'));
+    assert.ok(render().some(node=>node.type==='button'&&node.props['aria-label']==='ComfyUI'));
+    await selectService('OpenAI 生图');assert.equal(field('默认模型').props.value,'original');
+    await selectService('ComfyUI');assert.ok(field('ComfyUI 工作流文件'));
     button('选择文件').props.onClick();await settle();
-    assert.equal(button('正在选择…').props.disabled,true);assert.equal(field('默认模型').props.disabled,false);
-    field('默认模型').props.onChange({target:{value:'edited-during-picker'}});
+    assert.equal(button('正在选择…').props.disabled,true);assert.equal(field('ComfyUI 服务地址').props.disabled,false);
+    field('ComfyUI 服务地址').props.onChange({target:{value:'http://127.0.0.1:8189'}});
     const listing={directory:'E:\\COMFYUI\\workflows',parent:'E:\\COMFYUI',entries:[{name:'sub',path:'E:\\COMFYUI\\workflows\\sub',directory:true},{name:'selected.json',path:'E:\\COMFYUI\\workflows\\selected.json',directory:false}]};
     pickerResolve(Response.json({result:listing}));await settle();
-    assert.ok(render().some(node=>node.props?.role==='dialog'&&node.props?.['aria-label']==='选择工作流文件'));
+    assert.ok(render().some(node=>node.type==='dialog'&&node.props?.['aria-label']==='选择工作流文件'));
     button('📁 sub').props.onClick();await settle();
     assert.equal(calls.at(-1).input.current,'E:\\COMFYUI\\workflows\\sub');
     pickerResolve(Response.json({error:'Cannot read directory',message:{namespace:'bot-integration',key:'diagnostic.workflowDirectoryInaccessible'}},{status:400}));await settle();
     assert.ok(render().some(node=>node.props?.role==='alert'&&typeof node.children[0]==='string'));
     assert.equal(field('工作流目录').props.disabled,false);
-    field('工作流目录').props.onChange({target:{value:'E:\\COMFYUI\\workflows'}});button('打开目录').props.onClick();await settle();
+    field('工作流目录').props.onChange({target:{value:'E:\\COMFYUI\\workflows'}});button('进入目录').props.onClick();await settle();
     pickerResolve(Response.json({result:listing}));await settle();
     button('selected.json').props.onClick();await settle();
-    assert.equal(field('默认模型').props.value,'edited-during-picker');assert.equal(field('ComfyUI 工作流文件').props.value,'E:\\COMFYUI\\workflows\\selected.json');
+    assert.equal(field('ComfyUI 服务地址').props.value,'http://127.0.0.1:8189');assert.equal(field('ComfyUI 工作流文件').props.value,'E:\\COMFYUI\\workflows\\selected.json');
     button('选择文件').props.onClick();await settle();button('取消').props.onClick();await settle();
     assert.equal(pickerSignal?.aborted,true);assert.equal(button('选择文件').props.disabled,false);
     assert.equal(field('ComfyUI 工作流文件').props.value,'E:\\COMFYUI\\workflows\\selected.json');
-    deferSave=true;deferRefresh=true;button('保存').props.onClick();await settle();
+    await selectService('OpenAI 生图');
+    deferSave=true;deferRefresh=true;save();await settle();
     assert.equal(button('正在保存…').props.disabled,true);assert.equal(field('默认模型').props.disabled,false);
     field('默认模型').props.onChange({target:{value:'edited-during-save'}});saveResolve();await settle();await settle();
     assert.equal(field('默认模型').props.value,'edited-during-save');assert.equal(button('保存').props.disabled,false);
     assert.ok(button('正在刷新…'));assert.ok(render().some(node=>node.props?.role==='status'&&node.children.includes('已保存')));
     // A second save replaces the scan while its first HTTP waiter is still pending.
-    deferSave=false;field('GPT-SoVITS 服务地址').props.onChange({target:{value:'http://127.0.0.1:9881'}});
-    button('保存').props.onClick();await settle();await settle();refreshReject(Error('superseded scan'));await settle();await settle();
+    await selectService('GPT-SoVITS');deferSave=false;field('GPT-SoVITS 服务地址').props.onChange({target:{value:'http://127.0.0.1:9881'}});
+    save();await settle();await settle();refreshReject(Error('superseded scan'));await settle();await settle();
     assert.equal(calls.filter(call=>call.name==='service.refresh').length,2);assert.ok(button('正在刷新…'));
     assert.equal(render().some(node=>node.props?.role==='alert'),false);
     // A superseded scan can also resolve normally. Its response must still lead to the latest scan.
     field('GPT-SoVITS 服务地址').props.onChange({target:{value:'http://127.0.0.1:9882'}});
-    button('保存').props.onClick();await settle();await settle();
+    save();await settle();await settle();await selectService('OpenAI 生图');
     field('默认模型').props.onChange({target:{value:'edited-during-latest-scan'}});
     refreshResolve();await settle();await settle();
     assert.equal(calls.filter(call=>call.name==='service.refresh').length,3);assert.ok(button('正在刷新…'));
     refreshResolve();await settle();await settle();
     assert.equal(field('默认模型').props.value,'edited-during-latest-scan');assert.equal(button('保存').props.disabled,false);
-    assert.equal(field('GPT-SoVITS 服务地址').props.value,'http://127.0.0.1:9882');assert.ok(button('刷新'));
+    await selectService('GPT-SoVITS');assert.equal(field('GPT-SoVITS 服务地址').props.value,'http://127.0.0.1:9882');assert.ok(button('刷新'));await selectService('OpenAI 生图');
     deferSave=false;deferRefresh=false;const queriesBefore=calls.filter(call=>call.name==='service.settings').length;
-    button('保存').props.onClick();await settle();await settle();
+    save();await settle();await settle();
     assert.equal(button('保存').props.disabled,true);assert.equal(calls.filter(call=>call.name==='service.settings').length,queriesBefore);
     assert.equal(settings.openAiModel,'edited-during-latest-scan');assert.equal(settings.comfyUiWorkflowPath,'E:\\COMFYUI\\workflows\\selected.json');
     // Re-entering the tab reads settings again while retaining the current form until it returns.
@@ -154,7 +167,7 @@ test('image settings stay independent and slow picking or background refresh nev
       const loadTab=()=>{for(const effect of tabEffects){const cleanup=effect();if(typeof cleanup==='function')cleanups.push(cleanup as ()=>void);}};
       deferSettings=true;deferSave=true;
       if(timing==='before-save'){loadTab();await settle();}
-      field('默认模型').props.onChange({target:{value:timing}});button('保存').props.onClick();await settle();
+      field('默认模型').props.onChange({target:{value:timing}});save();await settle();
       if(timing==='during-save'){loadTab();await settle();}
       saveResolve();await settle();await settle();settingsResolve();await settle();await settle();
       assert.equal(field('默认模型').props.value,timing);assert.equal(button('保存').props.disabled,true);

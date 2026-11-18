@@ -4,9 +4,9 @@ import {useVoiceModel,voiceModelPicker,type VoiceModelRole} from './voice-models
 import type {createUI} from './ui.js';
 import type {Translate} from './locale.js';
 
-export function botSettingsSections({h,ui,t,editor,models,profiles,busy,dirty,imageStatus,mediaStatus,update,refreshServices}:{
+export function botSettingsSections({h,ui,t,editor,models,profiles,busy,dirty,imageStatus,mediaStatus,update,refreshServices,fieldErrors={}}:{
   h:any;ui:ReturnType<typeof createUI>;t:Translate;editor:any;models:any[];profiles:any[];busy:boolean;dirty:boolean;
-  imageStatus?:any;mediaStatus?:any;update:(patch:any)=>void;refreshServices:(services:string[])=>Promise<unknown>;
+  imageStatus?:any;mediaStatus?:any;fieldErrors?:Record<string,string>;update:(patch:any)=>void;refreshServices:(services:string[])=>Promise<unknown>;
 }){
   const progressReply=editor.progressReply??{enabled:true,intervalSeconds:60};
   const setProgressReply=(patch:any)=>update({progressReply:{...progressReply,...patch}});
@@ -21,10 +21,10 @@ export function botSettingsSections({h,ui,t,editor,models,profiles,busy,dirty,im
         h('section',{className:'section-card'},
           h('h3',null,t('model')),
           h('div',{className:'fields'},
-            ui.select(t('provider'),editor.model?.provider??'',[{id:'',name:t('select')},...models],v=>update({model:v?{provider:v,model:''}:null})),
-            ui.select(t('model'),editor.model?.model??'',[{id:'',name:t('select')},...(models.find((p:any)=>p.id===editor.model?.provider)?.models??[])],v=>update({model:{...editor.model,model:v,reasoningEffort:undefined}})),
+            ui.select(t('provider'),editor.model?.provider??'',[{id:'',name:t('select')},...models],v=>update({model:v?{provider:v,model:''}:null}),{id:'bot-model-provider',error:fieldErrors['model.provider']}),
+            ui.select(t('model'),editor.model?.model??'',[{id:'',name:t('select')},...(models.find((p:any)=>p.id===editor.model?.provider)?.models??[])],v=>update({model:{...editor.model,model:v,reasoningEffort:undefined}}),{id:'bot-model-name',error:fieldErrors['model.model']}),
           ),
-           ui.details(t('advanced'),ui.select(t('reasoningEffort'),editor.model?.reasoningEffort??'', [{id:'',name:t('select')},...reasoningEfforts.map((effort:string)=>({id:effort,name:effort}))],v=>update({model:editor.model?{...editor.model,reasoningEffort:v||undefined}:null}),{disabled:!editor.model||reasoningEfforts.length===0})),
+           reasoningEfforts.length?ui.select(t('reasoningEffort'),editor.model?.reasoningEffort??'', [{id:'',name:t('select')},...reasoningEfforts.map((effort:string)=>({id:effort,name:effort}))],v=>update({model:editor.model?{...editor.model,reasoningEffort:v||undefined}:null})):null,
         ),
       );
        const behaviorSection=h('div',{className:'section-grid'},h('section',{className:'section-card'},h('h3',null,t('behavior')),ui.toggle(t('processingReply'),progressReply.enabled,()=>setProgressReply({enabled:!progressReply.enabled})),progressReply.enabled?ui.field(t('processingReplyInterval'),String(progressReply.intervalSeconds),v=>setProgressReply({intervalSeconds:Number(v)}),'number',{min:10,max:3600,step:1}):null));

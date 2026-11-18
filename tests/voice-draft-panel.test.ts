@@ -33,8 +33,8 @@ test('bot voice drafts refresh, save independently and confirm before switching 
   const clickBot=async(name:string)=>{render().find(n=>n.type==='button'&&n.props?.['aria-label']===name).props.onClick();await settle();};
   const showMedia=async(id:string)=>{render().find(n=>n.props?.id==='bot-detail-'+id+'-media').props.onClick();await settle();};
   const dialog=()=>render().find(n=>n.props?.role==='dialog');
-  const cancel=async()=>{flatten(dialog()).find(n=>n.type==='button'&&n.children.includes('取消')).props.onClick();await settle();};
-  const confirm=async()=>{dialog().props.onSubmit({preventDefault:()=>{}});await settle();await settle();};
+  const cancel=async()=>{flatten(dialog()).find(n=>n.type==='button'&&n.children.includes('继续编辑')).props.onClick();await settle();};
+  const confirm=async()=>{flatten(dialog()).find(n=>n.type==='button'&&n.children.includes('放弃修改')).props.onClick();await settle();await settle();};
   const openPersonas=async()=>{render().find(n=>n.type==='button'&&n.props?.className?.includes('sidebar-item')&&n.children.includes('人格')).props.onClick();await settle();};
   try{
     await import(new URL('../src/client/index.ts?bot-voice-draft',import.meta.url).href);render();
@@ -53,7 +53,7 @@ test('bot voice drafts refresh, save independently and confirm before switching 
     assert.equal(states[29].settings.media.voice.profileRef.profileId,'second');assert.equal(states[29].settings.media.singing.profileRef.profileId,'second');
     assert.equal(bots[0].settings.media.voice.enabled,false);assert.equal(bots[1].settings.media.voice.enabled,false);assert.equal(persona.media.voice?.enabled,false);
     for(const role of ['asr','video']){const controls=section(role);assert.ok(!controls.some(n=>n.type==='label'&&['提供商','模型'].includes(n.children[0])));}
-    render().find(n=>n.type==='button'&&n.props.className==='primary'&&n.children.includes('保存')).props.onClick();await settle();await settle();
+    render().find(n=>n.type==='form'&&n.props.id==='bot-detail-first').props.onSubmit({preventDefault:()=>{}});await settle();await settle();
     assert.equal(calls.filter(c=>c.action==='bot.save').length,1);assert.equal(states[29],null);
     const savedFirst=botSettingsSchema.parse(bots[0].settings);
     assert.equal(savedFirst.media.voice?.profileRef?.profileId,'second');assert.equal(savedFirst.media.singing?.profileRef?.profileId,'second');
@@ -83,3 +83,4 @@ test('bot voice drafts refresh, save independently and confirm before switching 
     assert.equal(persona.media.voice?.enabled,false);assert.equal(calls.filter(c=>c.action==='bot.save').length,1);
   }finally{(globalThis as any).window=previous;globalThis.fetch=previousFetch;}
 });
+

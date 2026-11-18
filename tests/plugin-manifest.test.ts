@@ -43,9 +43,9 @@ test('plugin manifests export localized metadata and bounded original SVG icons'
   }
 });
 
-test('client copy is centralized and styles use only live Harness theme tokens',async()=>{
+test('client copy is centralized and theme fallbacks stay scoped to the plugin palette',async()=>{
   const files=(await readdir(path.resolve('src/client'))).filter(file=>file.endsWith('.ts'));
   for(const file of files){const source=await readFile(path.resolve('src/client',file),'utf8');assert.doesNotMatch(source,/\p{Script=Han}/u,`${file} contains non-localized Chinese copy`);}
   const index=await readFile(path.resolve('src/client/index.ts'),'utf8');assert.match(index,/inject:\['slots','locale','configForms'\]/);assert.match(index,/ctx\.locale\.register/);assert.match(index,/ctx\.locale\.bind/);
-  const styles=await readFile(path.resolve('src/client/styles.ts'),'utf8');assert.doesNotMatch(styles,/(?:#[0-9a-f]{3,8}|rgba?\()/i);for(const token of ['--dsw-alias-bg-base','--dsw-alias-bg-layer-1','--dsw-alias-label-primary','--dsw-alias-label-secondary','--dsw-alias-border-l1','--dsw-alias-brand-primary','--dsw-alias-state-error-primary'])assert.match(styles,new RegExp(token));
+  const styles=await readFile(path.resolve('src/client/styles.ts'),'utf8');assert.doesNotMatch(styles.replace(/\.bot-admin \{[\s\S]*?\}/,''),/(?:#[0-9a-f]{3,8}|rgba?\()/i);assert.match(styles,/--accent: light-dark\(/);for(const token of ['--dsw-alias-bg-base','--dsw-alias-bg-layer-1','--dsw-alias-label-primary','--dsw-alias-label-secondary','--dsw-alias-border-l1','--dsw-alias-state-error-primary'])assert.match(styles,new RegExp(token));
 });

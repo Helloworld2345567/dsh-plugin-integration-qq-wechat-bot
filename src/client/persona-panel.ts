@@ -1,5 +1,6 @@
 import type {createUI} from './ui.js';
 import type {Translate} from './locale.js';
+import {panelSaveBar} from './layout.js';
 
 export type PersonaEditorSection='basic'|'files';
 
@@ -33,28 +34,26 @@ export function personaPanel({h,ui,t,configs,selected,existing,busy,configLoadin
   ],()=>selectPersona(config.id),{key:config.id,className:`persona-list-row${selected?.id===config.id?' selected':''}`,disabled:busy||configLoading,'aria-label':config.name,'aria-pressed':selected?.id===config.id}));
   const editorSections:[PersonaEditorSection,string][]=[['basic',t('personaPrompt')],['files',t('files')]];
   const toolbar=h('div',{className:'page-toolbar row spread'},
-    h('div',null,h('h2',null,t('personas'))),
     h('div',{className:'actions'},
+      ui.button(t('newPersona'),createPersona,{className:'primary','aria-label':t('newPersona'),disabled:busy||configLoading}),
       ui.button(t('copy'),copyPersona,{disabled:busy||configLoading||!existing}),
       ui.button(t('import'),importPersona),
     ),
   );
   const list=h('nav',{className:'persona-list entity-strip','aria-label':t('personas')},
     ...listRows,
-    ui.button('＋',createPersona,{className:'entity-create','aria-label':t('newPersona'),title:t('newPersona'),disabled:busy||configLoading}),
   );
-  const editor=selected?h('section',{className:'persona-editor card'},
+  const editor=selected?h('form',{className:'persona-editor card',onSubmit:(event:any)=>{event.preventDefault();if(dirty&&!busy&&!configLoading)ui.button('',save).props.onClick();}},
     h('div',{className:'persona-editor-header row spread'},
       h('div',null,h('h3',null,selected.name||t('newPersona')),
         h('div',{className:'persona-meta'},
-          h('span',{className:`badge${dirty?' warning':''}`},dirty?t('unsaved'):t('savedState')),
           h('span',{className:'muted'},t('relatedBots',{count:relatedBots})),
         ),
       ),
     ),
     h('nav',{className:'persona-section-nav','aria-label':t('personaSections')},...editorSections.map(([id,label])=>ui.button(label,()=>setSection(id),{key:id,id:`persona-section-${id}`,className:section===id?'selected':'','aria-current':section===id?'page':undefined,'aria-controls':'persona-section-content',disabled:busy||configLoading}))),
     h('div',{className:'persona-section-content',id:'persona-section-content',role:'region','aria-labelledby':`persona-section-${section}`},configLoading?h('p',{role:'status'},t('loadingConfig')):sections[section]??null),
-    dirty?h('div',{className:'save-bar sticky'},h('span',null,t('unsaved')),h('div',{className:'actions'},ui.button(t('cancel'),discard),ui.button(t('save'),save,{className:'primary'}))):null,
+    panelSaveBar(h,{status:dirty?t('unsaved'):t('savedState'),cancel:ui.button(t('revert'),discard,{disabled:busy||configLoading||!dirty}),save:ui.button(t('save'),save,{className:'primary',type:'submit',onClick:undefined,disabled:busy||configLoading||!dirty})}),
   ):h('div',{className:'persona-editor card empty'},t('selectPersona'));
   return h('section',{className:'persona-page','aria-label':t('personas')},toolbar,h('div',{className:'persona-workspace'},list,editor));
 }

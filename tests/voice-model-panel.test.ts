@@ -43,11 +43,11 @@ test('native voice selector filters service types and only offers ready models',
   assert.equal(nodes(voiceModelPicker(React.createElement,ui,{...options,busy:true})).find(node=>node.type==='select').props.disabled,true);
 });
 
-test('native voice selector hides missing selections and labels built-in voices and model variants',()=>{
+test('native voice selector preserves missing selections and labels built-in voices and model variants',()=>{
   const ui=createUI(React,false,()=>{}),selectedProfile={...profile(),modelLabel:'可莉 · v4-zh'},config=useVoiceModel(persona(),'voice',selectedProfile);
   const render=(value:typeof config,profiles:PublicServiceProfile[])=>nodes(voiceModelPicker(React.createElement,ui,{role:'voice',config:value,profiles,busy:false,dirty:false,existing:true,apply:async()=>{throw Error('must not automatically apply');}}));
   const existing=render(config,[selectedProfile]);assert.equal(existing.find(node=>node.type==='option'&&node.props.value==='gpt-sovits/klee').children[0],'可莉 · v4-zh');
-  const missing=render(config,[]);assert.equal(missing.find(node=>node.type==='select').props.value,'');assert.equal(missing.some(node=>node.type==='option'&&node.props.value==='gpt-sovits/klee'),false);
+  const missing=render(config,[]);assert.equal(missing.find(node=>node.type==='select').props.value,'gpt-sovits/klee');const missingOption=missing.find(node=>node.type==='option'&&node.props.value==='gpt-sovits/klee');assert.equal(missingOption.props.disabled,true);assert.match(missingOption.children[0],/klee.*不可用/);
   const builtIn=render(persona(),[selectedProfile]);assert.equal(builtIn.find(node=>node.type==='option'&&node.props.value==='').children[0],'内置语音');assert.equal(builtIn.find(node=>node.type==='select').props.disabled,false);
 });
 
