@@ -5,6 +5,8 @@ const knownDeferred = new Set([
   '@deepseek-ai/dsh',
   '@modelcontextprotocol/client',
   'fflate',
+  // picomatch is nested under @deepseek-ai/dsh-hmr; npm has no fixed release yet.
+  'picomatch',
   '@deepseek-ai/libreoffice-kit',
   'undici',
   'zod',
