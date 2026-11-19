@@ -1,6 +1,9 @@
 import path from 'node:path';
 import {z} from 'zod';
 
+export const imageProtocolSchema = z.enum(['openai', 'google', 'comfyui']);
+export type ImageProtocol = z.infer<typeof imageProtocolSchema>;
+
 const absolutePath = (label: string) => z.string().trim().min(1).max(4096)
   .refine(value => !/[\x00-\x1f]/.test(value), {message: `${label} contains control characters`})
   .refine(value => path.isAbsolute(value) || path.win32.isAbsolute(value), {message: `${label} must be an absolute path`})
@@ -33,7 +36,7 @@ const defaultComfyWorkflowPath = (): string => {
 
 /** Operator-owned image service settings.  Credentials remain environment-backed. */
 export const imageServiceSettingsSchema = z.object({
-  imageProtocol: z.enum(['openai', 'google', 'comfyui']).default('openai'),
+  imageProtocol: imageProtocolSchema.default('openai'),
   openAiBaseUrl: openAiUrl.default('https://api.openai.com/v1'),
   openAiModel: z.string().trim().min(1).max(256).default('gpt-image-2'),
   openAiKeyEnv: keyEnv.default('OPENAI_API_KEY'),

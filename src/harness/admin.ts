@@ -65,7 +65,7 @@ export class Admin {
     const sessionRevision=revisionFor(repos.sessions.sessionsAll().sort((a,b)=>a.id.localeCompare(b.id)).map(session=>{
       let personaId=session.personaId;try{if(!personaId)personaId=repos.bots.bot(session.scope.botId).configId;}catch{}
       let model:BotConfig['model']=null;try{model=repos.bots.bot(session.scope.botId).settings?.model??null;}catch{}
-      return{id:session.id,generation:session.generation,personaId,model,modelOverride:session.modelOverride,ttsOverride:session.ttsOverride,stsOverride:session.stsOverride};
+      return{id:session.id,generation:session.generation,personaId,model,modelOverride:session.modelOverride,imageProtocolOverride:session.imageProtocolOverride,ttsOverride:session.ttsOverride,stsOverride:session.stsOverride};
     }));
     return{channels,bots,configs,sessionRevision,counts:{bots:bots.filter(bot=>!bot.archived).length,configs:configs.filter(config=>!config.archived).length,sessions:repos.sessions.countBindings(),jobs:repos.media.jobs.countJobs(),failures:repos.telemetry.failures.countFailures(),pendingDeliveries:health.pendingDeliveries,pendingSessionActions:health.pendingSessionActions},health,evolution:evolution?{id:evolution.id,phase:evolution.phase,updatedAt:evolution.updatedAt}:null};
   }
@@ -89,7 +89,7 @@ export class Admin {
         let baseModel:BotConfig['model']|null=null,personaId=row.personaId??botConfigId,personaRevision:number|undefined;
        try{if(personaId){const persona=repos.personas.config(personaId),model=repos.bots.bot(row.scope.botId).settings?.model;baseModel=model?{provider:model.provider,model:model.model}:null;personaRevision=persona.revision;}}catch{/* A deleted persona remains visible as a historical session. */}
         const modelOverride=row.modelOverride?{provider:row.modelOverride.provider,model:row.modelOverride.model}:null;
-        return{id:row.id,scopeKey:row.scopeKey,botId:row.scope.botId,platform:row.scope.platform,kind:row.scope.kind,channelId:row.scope.channelId,senderId:row.scope.senderId,generation:row.generation,persisted:row.persisted,createdAt:row.createdAt,updatedAt:row.updatedAt,personaId,personaRevision,model:baseModel,modelOverride,effectiveModel:modelOverride??baseModel,ttsOverride:row.ttsOverride??null,stsOverride:row.stsOverride??null};
+        return{id:row.id,scopeKey:row.scopeKey,botId:row.scope.botId,platform:row.scope.platform,kind:row.scope.kind,channelId:row.scope.channelId,senderId:row.scope.senderId,generation:row.generation,persisted:row.persisted,createdAt:row.createdAt,updatedAt:row.updatedAt,personaId,personaRevision,model:baseModel,modelOverride,effectiveModel:modelOverride??baseModel,imageProtocolOverride:row.imageProtocolOverride??null,ttsOverride:row.ttsOverride??null,stsOverride:row.stsOverride??null};
       });
       return{...page,contractVersion:ADMIN_CONTRACT_VERSION,items,hasMore:page.nextCursor!==null};
     }

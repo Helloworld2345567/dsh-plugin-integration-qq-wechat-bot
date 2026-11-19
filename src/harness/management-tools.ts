@@ -1,6 +1,7 @@
 import {defineTool,type ToolRunContext} from '@deepseek-ai/dsh-tools';
 import {botSessionArgumentsSchema,botPersonaArgumentsSchema,botSkillsArgumentsSchema,type BotSessionArguments,type BotPersonaArguments,type BotSkillsArguments} from '../core/management.js';
-import {botVoiceArgumentsSchema,type BotVoiceArguments,type BotVoiceResult} from '../core/features.js';
+import {botVoiceArgumentsSchema,botImageArgumentsSchema,type BotVoiceArguments,type BotVoiceResult,type BotImageArguments,type BotImageResult} from '../core/features.js';
+import {imageProtocolSchema} from '../core/image-service-config.js';
 
 export function defineBotSessionTool(execute:(args:BotSessionArguments,exec:ToolRunContext)=>Promise<unknown>){
   return defineTool({
@@ -44,5 +45,17 @@ export function defineBotVoiceControlTool(execute:(args:BotVoiceArguments,exec:T
     output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
     isConcurrencySafe:args=>args.action==='list',
     execute:async(args,exec)=>{const {sessionId,...result}=await execute(botVoiceArgumentsSchema.parse(args),exec) as BotVoiceResult;return JSON.stringify(result);},
+  });
+}
+
+/** The host supplies the session and connection settings; the caller selects only a protocol. */
+export function defineBotImageControlTool(execute:(args:BotImageArguments,exec:ToolRunContext)=>Promise<unknown>){
+  return defineTool({
+    name:'bot_image_control',
+    description:'List or switch the image service for this trusted private session. set requires a protocol; reset restores bot/global defaults. Changes apply from the next turn; image generation in this turn keeps its frozen service.',
+    parameters:{action:{type:'string',required:true,enum:['list','set','reset']},protocol:{type:'string',description:`Image protocol (case-insensitive): ${imageProtocolSchema.options.join(', ')}`}},
+    output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
+    isConcurrencySafe:args=>args.action==='list',
+    execute:async(args,exec)=>{const {sessionId,...result}=await execute(botImageArgumentsSchema.parse(args),exec) as BotImageResult;return JSON.stringify(result);},
   });
 }

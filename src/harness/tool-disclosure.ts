@@ -8,7 +8,7 @@ const summaries:Readonly<Record<string,string>>={
   glob:'Find files by path',grep:'Search file contents',pwsh:'Run PowerShell commands',bash:'Run shell commands',
   web_search:'Search the web',web_fetch:'Read a web page',skill:'Read skill instructions',
   bot_session:'Manage this chat and its history',bot_persona:'List or switch personas',bot_skills:'List or change skills on the shared persona',
-  bot_model:'List or switch this session model',bot_voice_control:'List or switch this session voice',bot_stats:'Query bot usage statistics',
+  bot_model:'List or switch this session model',bot_voice_control:'List or switch this session voice',bot_image_control:'List or switch this session image service',bot_stats:'Query bot usage statistics',
   bot_evolve:'Update persona, skills or plugin code',bot_schedule:'Manage scheduled tasks',bot_proactive:'Manage proactive messages',
   bot_send_file:'Register a file for delivery',
   bot_remember:'Save a stated user preference',bot_forget_memory:'Forget a saved preference',bot_read_social:'Read a public social post',

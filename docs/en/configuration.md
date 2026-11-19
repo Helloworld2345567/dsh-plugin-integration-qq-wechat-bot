@@ -38,6 +38,14 @@ The OpenAI and Google addresses saved in the Services panel must be HTTPS withou
 
 Address, model, protocol and workflow are explicit arguments, without environment fallbacks. OpenAI-compatible and Google requests can set `image_generation.model` for one operation without changing defaults or automatically switching models on failure; ComfyUI models come from the workflow.
 
+### Session image service selection
+
+In trusted private chats, `/image` or `/image list` shows the current-turn and next-turn image services and session override state. Switch with `/image openai`, `/image comfyui`, or `/image google`; protocol names are case-insensitive. Natural requests such as “switch the image service to Google” use `bot_image_control` with the same behavior.
+
+Selection precedence is session override → bot image settings → global Services default. `/image reset` clears the session override. Changes apply next turn; running generation keeps its original service. Switching and requesting an image in the same message still uses the original service for that turn.
+
+Overrides survive restarts, new or cleared sessions, and persona switches. Restoring history uses that session's saved selection. Disabled image capabilities prevent setting a service, but queries and clearing overrides remain available. Commands only select existing service configuration: they do not change addresses, keys, models or workflows, probe service health, or automatically switch services after generation failures.
+
 ## Installer, launcher and Harness variables
 
 `BOT_INSTALL_LAYERS` defaults to required `core,basic-media`, with optional `voice-generation`, `music`, `singing-rvc`; CLI `--layers=` takes priority. `BOT_SOURCE_ROOT` is for source installation, testing and rollback validation only.
@@ -66,7 +74,7 @@ A bot's custom Workspace path is a root. Both default and custom roots append `<
 
 Workspace provides registered-byte statistics, kind/origin/cutoff filters, a cleanup preview and keep markers. Cleanup only removes selected registered attachments, protecting current sessions, active tasks, pending or retryable deliveries and kept items. Session deletion removes its session directory; channel attachments require separate cleanup. Overview exports readable JSONL on request instead of rewriting it after every turn.
 
-Deleting the current session stops its tasks and creates a blank session retaining model/voice overrides; deleting an older session leaves the current one unaffected. User files outside session directories, channel attachments and long-term memories remain. Bot deletion stops tasks, removes authorization and permanently clears its sessions, messages, memories, attachments, media jobs and automation records, retaining personas and other user files. The old bot ID stays reserved; use a new ID for a new bot.
+Deleting the current session stops its tasks and creates a blank session retaining model/voice/image-service overrides; deleting an older session leaves the current one unaffected. User files outside session directories, channel attachments and long-term memories remain. Bot deletion stops tasks, removes authorization and permanently clears its sessions, messages, memories, attachments, media jobs and automation records, retaining personas and other user files. The old bot ID stays reserved; use a new ID for a new bot.
 
 ### Language scopes
 

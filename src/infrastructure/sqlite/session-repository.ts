@@ -32,7 +32,7 @@ export class SqliteSessionRepository implements SessionRepository, BindingReposi
     const previous = this.records.get<SessionRecord>('session', binding.sessionId);
     if (previous && previous.scopeKey !== binding.key) throw new Error('SESSION_OWNERSHIP_MISMATCH');
     const now = Date.now();
-    this.records.put('session', binding.sessionId, {id:binding.sessionId, scopeKey:binding.key, scope:binding.scope, generation:binding.generation, persisted:binding.persisted, createdAt:previous?.createdAt ?? now, updatedAt:now, personaId:binding.personaId, modelOverride:binding.modelOverride, ttsOverride:binding.ttsOverride, stsOverride:binding.stsOverride, recentSince:binding.recentSince,workspace:previous?.workspace} satisfies SessionRecord);
+    this.records.put('session', binding.sessionId, {id:binding.sessionId, scopeKey:binding.key, scope:binding.scope, generation:binding.generation, persisted:binding.persisted, createdAt:previous?.createdAt ?? now, updatedAt:now, personaId:binding.personaId, modelOverride:binding.modelOverride, imageProtocolOverride:binding.imageProtocolOverride, ttsOverride:binding.ttsOverride, stsOverride:binding.stsOverride, recentSince:binding.recentSince,workspace:previous?.workspace} satisfies SessionRecord);
   }
   updateSession(binding: SessionBinding): SessionBinding {
     if (binding.key !== scopeKey(binding.scope)) throw new Error('SESSION_OWNERSHIP_MISMATCH');
@@ -76,7 +76,7 @@ export class SqliteSessionRepository implements SessionRepository, BindingReposi
   }
   activateSession(scope: CallerScope, id: string): SessionBinding {
     const old = this.binding(scope), record = this.session(scope, id);
-    return this.updateSession({key:old.key, scope, sessionId:id, generation:old.generation + 1, persisted:record.persisted, personaId:record.personaId, modelOverride:record.modelOverride, ttsOverride:record.ttsOverride, stsOverride:record.stsOverride, recentSince:record.recentSince});
+    return this.updateSession({key:old.key, scope, sessionId:id, generation:old.generation + 1, persisted:record.persisted, personaId:record.personaId, modelOverride:record.modelOverride, imageProtocolOverride:record.imageProtocolOverride, ttsOverride:record.ttsOverride, stsOverride:record.stsOverride, recentSince:record.recentSince});
   }
   countSessions(): number {return this.records.count('session');}
   countBindings(): number {return this.records.count('binding');}

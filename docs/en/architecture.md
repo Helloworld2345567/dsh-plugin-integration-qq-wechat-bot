@@ -27,7 +27,7 @@ flowchart LR
 
 Channel identity owns sessions, attachments, memories and outputs. Models cannot supply trusted identity or local paths. Bots may share personas while channel ownership remains isolated. Each turn freezes persona, model, skill, tool and media configuration; edits apply next turn. Execution also checks current permissions, so revocation blocks subsequent calls.
 
-Personas are edited through `config.json` and `persona.md`. Only `schemaVersion: 4` is supported; V3 is not read, migrated or used as fallback. SQLite revisions are the active snapshots; applying files validates schema, revision and file state. Bots keep independent runtime settings; persona switching retains history and session model/voice overrides. Harness credentials owns authorization secrets with a consistent mapping for valid bot IDs.
+Personas are edited through `config.json` and `persona.md`. Only `schemaVersion: 4` is supported; V3 is not read, migrated or used as fallback. SQLite revisions are the active snapshots; applying files validates schema, revision and file state. Bots keep independent runtime settings; persona switching retains history and session model/voice/image-service overrides. Harness credentials owns authorization secrets with a consistent mapping for valid bot IDs.
 
 Ordinary and queued messages retain original text, current quotes and attachments. Attachment metadata/transcripts use internal context; time and working directory come from runtime context. Tools are disclosed on demand; raw tool JSON and reasoning are not sent to platforms.
 
@@ -39,7 +39,7 @@ DSH native logs own full history and recovery. Plugin SQLite holds bindings, his
 
 Channel media storage is separate from session directories. SQLite records attachment IDs, source sessions, channel ownership and actual paths. Recent selection stays within the current session; explicit IDs can reuse older attachments from the same channel. Long-term memories also belong to the channel.
 
-- **Delete session:** `session.delete {id}` stops the target and its owned child Agents, releases instances held by other interfaces, waits for writers and prevents reload during cleanup. It removes logs, projections, readable exports, the session directory and related records. Deleting the current session creates a blank replacement retaining persona/model/voice overrides; deleting history does not stop current work. Independent forks, channel attachments, memories, schedules and user files outside session directories remain.
+- **Delete session:** `session.delete {id}` stops the target and its owned child Agents, releases instances held by other interfaces, waits for writers and prevents reload during cleanup. It removes logs, projections, readable exports, the session directory and related records. Deleting the current session creates a blank replacement retaining persona/model/voice/image-service overrides; deleting history does not stop current work. Independent forks, channel attachments, memories, schedules and user files outside session directories remain.
 - **Clean attachments:** Workspace filters registered attachments by kind, origin and cutoff, with usage statistics, preview and keep markers. Execution rechecks bot ownership and protects current sessions, busy scopes, queued/running jobs, pending or retryable deliveries and kept items. It does not delete unregistered files. Counts exclude native DSH attachments, logs and caches; deleting a session does not reclaim channel media capacity.
 - **Delete bot:** Stop connections, tasks and automations, wait for writers, then remove authorization, owned sessions, attachments, memories and business records. Keep an identity tombstone against stale operations, shared personas and other user files. Failed cleanup can be retried.
 - **Reclaim job directories:** Worker cwd/home/temp stay inside a per-job directory cleaned after execution. After exclusive runtime ownership, startup retries completed/interrupted job cleanup. Paths must match persisted workspace, scope and job ID; active jobs or live child processes defer cleanup until a later startup.
@@ -54,7 +54,7 @@ Channel media storage is separate from session directories. SQLite records attac
 | `image_generation` | Generate/edit through configured OpenAI-compatible services, Google Gemini, or ComfyUI workflows |
 | `bot_voice`, `bot_music`, `bot_sing` | Speech, music acquisition and RVC conversion using shared jobs and attachment delivery |
 | `bot_session` | Query, create, compact or resume sessions; host commands handle immediate stop |
-| `bot_model`, `bot_voice_control` | Change current-session overrides for the next turn |
+| `bot_model`, `bot_voice_control`, `bot_image_control` | Change current-session overrides for the next turn |
 | `bot_skills` | Enable/disable skills on the shared persona, affecting sessions that use it |
 
 `skills/catalog.json` and each skill's `operations.json` declare fixed entries, routes, parameters, model roles and delivery. Builds generate Host/Python registries. The host dispatches operation IDs; Python imports fixed `dsh_bot_runtime` entries from a trusted package root. Personas, workspaces and model responses never discover executable code; skills cannot send platform messages directly.

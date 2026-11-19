@@ -6,12 +6,14 @@ import {skillNameSchema,type BotConfig,type BotInstance,type CallerScope,type Se
 import {trusted} from './policy.js';
 import type {DeferredSessionAction} from './session-actions.js';
 import type {ModelCatalogItem} from './runtime-ports.js';
+import {imageProtocolSchema,type ImageProtocol} from './image-service-config.js';
 
 export type CommandSource='slash'|'natural'|'tool'|'admin';
 export type ManagementCommand=
   | {kind:'session';action:'help'|'stop'|'new'|'reset'|'status'|'sessions'|'resume'|'compact';args:string}
   | {kind:'persona';action:'list'|'set';personaId?:string}
   | {kind:'model';action:'list'|'set'|'reset';provider?:string;model?:string}
+  | {kind:'image';action:'list'|'set'|'reset';protocol?:string}
   | {kind:'voice';role:'tts'|'sts';action:'list'|'set'|'reset';ref?:string}
   | {kind:'skills';action:'list'|'toggle';name?:string;enabled?:boolean}
   | {kind:'reload'}
@@ -52,11 +54,19 @@ export interface CommandHost {
   queueSessionAction(binding:SessionBinding,snapshot:TurnSnapshot,input:DeferredSessionAction,signal:AbortSignal):QueuedCommandResult;
   switchPersona(scope:CallerScope,id:string,authorize?:()=>void):Promise<SessionBinding>;
   setModel(scope:CallerScope,model:BotConfig['model'],authorize?:()=>void):Promise<SessionBinding>;
+  imageSelection(binding:SessionBinding,snapshot?:TurnSnapshot):ImageSelection;
+  setImage(scope:CallerScope,protocol:ImageProtocol|null,authorize?:()=>void):Promise<SessionBinding>;
   voiceCatalog(role:'tts'|'sts',binding?:SessionBinding):VoiceCatalog;
   setVoice(scope:CallerScope,role:'tts'|'sts',ref:string|null,authorize?:()=>void):Promise<SessionBinding>;
   applyPersonaFiles(id:string):Promise<BotConfig>;
   models():Promise<ModelCatalogItem[]>;
   commandServices:CommandServices;
+}
+export interface ImageSelection {
+  currentTurnProtocol:ImageProtocol;
+  nextTurnProtocol:ImageProtocol;
+  override:boolean;
+  protocols:readonly ImageProtocol[];
 }
 export interface VoiceCatalogEntry {
   id:string;
@@ -79,6 +89,12 @@ export function managementCommand(parsed:ParsedCommand):ManagementCommand|undefi
   const args=parsed.args;
   if(SESSION_ACTIONS.has(parsed.name))return{kind:'session',action:parsed.name as Extract<ManagementCommand,{kind:'session'}>['action'],args};
   if(parsed.name==='persona')return args?{kind:'persona',action:'set',personaId:args}:{kind:'persona',action:'list'};
+  if(parsed.name==='image'){
+    const value=args.trim().toLowerCase();
+    if(!value||value==='list')return{kind:'image',action:'list'};
+    if(value==='reset')return{kind:'image',action:'reset'};
+    return{kind:'image',action:'set',protocol:value};
+  }
   if(parsed.name==='model'){
     if(!args)return{kind:'model',action:'list'};
     if(args.toLowerCase()==='reset')return{kind:'model',action:'reset'};
@@ -135,6 +151,15 @@ export class CommandBus {
         break;
       case 'persona':this.authorize(context);if(!command.personaId)return{kind:'reply',text:t('currentPersona',{id:config.id})+this.host.configs().filter(item=>!item.archived).map(item=>`${item.id} — ${item.name}`).join('\n')};if(context.source==='tool')return this.queue(context,{action:'persona',personaId:command.personaId});await this.host.switchPersona(binding.scope,command.personaId,()=>this.authorize(context));return{kind:'reply',text:t('personaSwitched',{id:command.personaId})};
       case 'model':this.authorize(context);if(command.action==='list'){const models=await this.host.models();this.authorize(context);return{kind:'reply',text:t('currentModel',{model:config.model?`${config.model.provider} / ${config.model.model}`:t('notConfigured'),override:binding.modelOverride?t('sessionOverride'):''})+(models.length?t('availableModels')+models.map(model=>`${model.provider} ${model.model}`).join('\n'):''),data:{action:'list',sessionId:binding.sessionId,personaId:config.id,currentTurnModel:context.snapshot?.config.model??config.model,nextTurnModel:this.host.effectiveConfig(this.host.binding(binding.scope)).model,override:!!binding.modelOverride,effective:'current',models}};}if(command.action==='reset'){await this.host.setModel(binding.scope,null,()=>this.authorize(context));const current=this.host.binding(binding.scope);return{kind:'reply',text:t('modelReset'),data:{action:'reset',sessionId:current.sessionId,personaId:this.host.effectiveConfig(current).id,currentTurnModel:context.snapshot?.config.model??config.model,nextTurnModel:this.host.effectiveConfig(current).model,override:!!current.modelOverride,effective:'next_turn'}};}if(!command.provider||!command.model)throw new SystemMessageError('modelUsage');await this.host.setModel(binding.scope,{provider:command.provider,model:command.model},()=>this.authorize(context));{const current=this.host.binding(binding.scope);return{kind:'reply',text:t('modelSwitched',{provider:command.provider,model:command.model}),data:{action:'set',sessionId:current.sessionId,personaId:this.host.effectiveConfig(current).id,currentTurnModel:context.snapshot?.config.model??config.model,nextTurnModel:this.host.effectiveConfig(current).model,override:true,effective:'next_turn'}};}
+      case 'image':{
+        const current=this.authorize(context),before=this.host.imageSelection(current,context.snapshot);
+        if(command.action==='list')return{kind:'reply',text:t('imageSelection',{current:before.currentTurnProtocol,next:before.nextTurnProtocol,source:before.override?t('sessionOverride'):t('imageDefault'),protocols:before.protocols.join(', ')}),data:{action:'list',sessionId:current.sessionId,...before,effective:'current'}};
+        const parsed=imageProtocolSchema.safeParse(command.protocol?.trim().toLowerCase());
+        if(command.action==='set'&&!parsed.success)throw new SystemMessageError('imageUsage');
+        const updated=await this.host.setImage(current.scope,command.action==='reset'?null:parsed.data!,()=>this.authorize(context));
+        const after=this.host.imageSelection(updated,context.snapshot);
+        return{kind:'reply',text:t(command.action==='reset'?'imageReset':'imageSwitched',{protocol:after.nextTurnProtocol}),data:{action:command.action,sessionId:updated.sessionId,...after,currentTurnProtocol:before.currentTurnProtocol,effective:'next_turn'}};
+      }
       case 'voice':{
         this.authorize(context);
         const roleLabel=command.role==='tts'?'TTS':'STS';

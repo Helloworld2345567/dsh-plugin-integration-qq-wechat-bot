@@ -14,7 +14,9 @@ import {botSchema,modelSchema,skillNameSchema} from './types.js';
 import {validateWorkingDirectory} from './workspaces.js';
 import {parseCommand,unescapeChat,commandHelp,type ParsedCommand} from './commands.js';
 import {parseNaturalControl} from './natural-commands.js';
-import {CommandBus,managementCommand,type CommandServices,type VoiceCatalog,type VoiceCatalogEntry} from './command-bus.js';
+import {CommandBus,managementCommand,type CommandServices,type ImageSelection,type VoiceCatalog,type VoiceCatalogEntry} from './command-bus.js';
+import {imageProtocolSchema,type ImageProtocol} from './image-service-config.js';
+import {imageSkillEnabled} from './image-skill.js';
 import type {ChannelRegistry} from './channel-registry.js';
 import {deferredSessionActionSchema,sameSessionAction,sameSources,type DeferredSessionAction,type SessionActionRecord} from './session-actions.js';
 import {validateBatch,INPUT_LIMITS} from './limits.js';
@@ -202,7 +204,7 @@ export class BotRuntime {
     const target=this.repos.sessions.session(scope,id);if(target.id===binding.sessionId)return binding;
     if(!target.persisted)throw new SystemMessageError('noRestorableHistory');
     if(!this.harness.inspectSession)throw new SystemMessageError('sessionInspectionUnsupported');
-    await this.harness.inspectSession(id);const next={...binding,sessionId:id,personaId:target.personaId,modelOverride:target.modelOverride,ttsOverride:target.ttsOverride,stsOverride:target.stsOverride};await this.harness.validateModel(this.effectiveConfig(next));
+    await this.harness.inspectSession(id);const next={...binding,sessionId:id,personaId:target.personaId,modelOverride:target.modelOverride,imageProtocolOverride:target.imageProtocolOverride,ttsOverride:target.ttsOverride,stsOverride:target.stsOverride};await this.harness.validateModel(this.effectiveConfig(next));
     if(this.busy(binding.key)||this.repos.sessions.binding(scope).sessionId!==binding.sessionId)throw new SystemMessageError('sessionChanged');
     authorize?.();await this.harness.dispose(binding.sessionId);authorize?.();clearSingingCandidates(this.repos.media.singing,binding.key);clearMusicState(this.repos.media.music,binding.key);return this.repos.sessions.activateSession(scope,id);
   }
@@ -213,6 +215,18 @@ export class BotRuntime {
   async setModel(scope:CallerScope,model:BotConfig['model'],authorize?:()=>void):Promise<SessionBinding>{
     const binding=this.repos.sessions.binding(scope);const next={...binding,modelOverride:model?modelSchema.parse(model):undefined};await this.harness.validateModel(this.effectiveConfig(next));
     const current=this.repos.sessions.binding(scope);if(current.sessionId!==binding.sessionId||current.generation!==binding.generation||current.personaId!==binding.personaId)throw new SystemMessageError('sessionConfigChanged');authorize?.();return this.repos.sessions.updateSession({...current,modelOverride:next.modelOverride});
+  }
+  imageSelection(binding:SessionBinding,snapshot?:TurnSnapshot):ImageSelection {
+    const settings=this.media.imageSettings(),config=this.effectiveConfig(binding);
+    const active=snapshot??(this.busy(binding)?this.repos.telemetry.snapshots.findTurnSnapshot(binding.sessionId):undefined);
+    const nextTurnProtocol=config.media.image?.protocol??settings.imageProtocol;
+    return{currentTurnProtocol:active?(active.config.media.image?.protocol??active.imageServiceSettings?.imageProtocol??settings.imageProtocol):nextTurnProtocol,nextTurnProtocol,override:binding.imageProtocolOverride!==undefined,protocols:imageProtocolSchema.options};
+  }
+  async setImage(scope:CallerScope,protocol:ImageProtocol|null,authorize?:()=>void):Promise<SessionBinding>{
+    authorize?.();const binding=this.repos.sessions.binding(scope);
+    const override=protocol===null?undefined:imageProtocolSchema.parse(protocol);
+    if(override!==undefined&&!imageSkillEnabled(this.effectiveConfig(binding)))throw new SystemMessageError('imageDisabled');
+    return this.repos.sessions.updateSession({...binding,imageProtocolOverride:override});
   }
   private voiceCatalogItems(role:'tts'|'sts'):VoiceCatalogEntry[] {
     const items:VoiceCatalogEntry[]=[];

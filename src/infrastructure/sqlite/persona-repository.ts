@@ -36,6 +36,9 @@ export class SqlitePersonaConfigRepository implements PersonaConfigRepository {
     const persona=this.config(binding.personaId??bot.configId);
     const config=configWithBotSettings(persona,bot.settings??botSettingsFromConfig(this.config(bot.configId)));
     let effective: BotConfig = binding.modelOverride ? {...config, model:{...binding.modelOverride}} : config;
+    if (binding.imageProtocolOverride) {
+      effective = {...effective, media:{...effective.media, image:{enabled:true, ...effective.media.image, protocol:binding.imageProtocolOverride}}};
+    }
     const voice = effective.media.voice;
     if (voice && binding.ttsOverride) {
       effective = {
