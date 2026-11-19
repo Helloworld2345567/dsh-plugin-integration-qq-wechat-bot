@@ -291,6 +291,7 @@ test('bot tabs expose independent media drafts, authorization and workspace with
   try{
     await harness.start('bot-tabs');let tree=harness.render();
     assert.ok(tree.some(n=>n.props?.role==='switch'&&n.props['aria-label']==='运行'));
+    assert.ok(tree.some(n=>n.type==='button'&&n.children.includes('添加')));
     assert.ok(!tree.some(n=>n.props?.id==='bot-detail-bot-model'||n.props?.id==='bot-detail-bot-behavior'));
     tree=await clickSection('persona');
     assert.ok(tree.some(n=>n.type==='label'&&n.children[0]==='人格'));
@@ -302,7 +303,7 @@ test('bot tabs expose independent media drafts, authorization and workspace with
     tree=harness.render();assert.ok(tree.some(n=>n.type==='input'&&n.props.type==='password'));
     tree=await clickSection('workspace');
     assert.ok(tree.some(n=>n.type==='label'&&n.children[0]==='工作区根目录'));
-    assert.ok(tree.some(n=>n.type==='button'&&n.children.includes('添加')));
+    assert.ok(!tree.some(n=>n.type==='button'&&n.children.includes('添加')));
     assert.ok(!tree.some(n=>n.type==='input'&&n.props.type==='password'));
     tree=await clickSection('run');assert.ok(tree.some(n=>n.props?.role==='switch'&&n.props['aria-label']==='运行'));
     assert.ok(tree.some(n=>n.type==='label'&&n.children[0]==='提供商'));
@@ -506,10 +507,11 @@ test('workspace and trust writes do not submit a persona draft or revert a saved
   const path=(value:string)=>harness.render().find(n=>n.type==='label'&&n.children[0]==='工作区根目录').children[1].props.onChange({target:{value}});
   try{
     await harness.start('bot-save-scope');harness.render().find(n=>n.type==='label'&&n.children[0]==='人格').children[1].props.onChange({target:{value:'second'}});await settlePanel();
-    await section('workspace');path('C:/first');submitButton(harness.render(),'保存工作区');await settlePanel();await settlePanel();
-    assert.equal(writes[0].workingDirectory,'C:/first');assert.equal(writes[0].configId,'default');assert.equal('settings' in writes[0],false);assert.equal(bot.configId,'default');assert.equal(states[29].configId,'second');
+    await section('run');
     const trustedRow=harness.render().find(n=>n.props?.className==='trusted-user');flattenPanel(trustedRow).find(n=>n.type==='button').props.onClick();await settlePanel();await settlePanel();
-    assert.deepEqual(writes[1].trustedUsers,[]);assert.equal(writes[1].configId,'default');assert.equal(bot.configId,'default');
+    assert.deepEqual(writes[0].trustedUsers,[]);assert.equal(writes[0].configId,'default');assert.equal(bot.configId,'default');
+    await section('workspace');path('C:/first');submitButton(harness.render(),'保存工作区');await settlePanel();await settlePanel();
+    assert.equal(writes[1].workingDirectory,'C:/first');assert.equal(writes[1].configId,'default');assert.equal('settings' in writes[1],false);assert.equal(bot.configId,'default');assert.equal(states[29].configId,'second');
     path('C:/second');harness.render().find(n=>n.props?.className==='sidebar-item'&&n.children.includes('人格')).props.onClick();await settlePanel();
     harness.render().find(n=>n.type==='button'&&n.children.includes('保存并继续')).props.onClick();await settlePanel();await settlePanel();await settlePanel();
     assert.equal(bot.configId,'second');assert.equal(bot.workingDirectory,'C:/second');assert.equal(states[0],'catalog');

@@ -132,6 +132,7 @@ function botDetail(React:any, props:BotsPanelProps, bot:any){
       ),
     ),
     props.configLoading?h(React,'p',{role:'status'},t('loadingConfig')):props.configSections?.run??h(React,'p',{className:'empty'},t('selectBotPersona')),
+    trustedUsers(React, props, bot),
   );
   if(section==='media')content=h(React,'div',{className:'section-grid'},
     props.configLoading?h(React,'p',{role:'status'},t('loadingConfig')):props.configSections?.media??h(React,'p',{className:'empty'},t('selectBotPersona')),
@@ -157,7 +158,6 @@ function botDetail(React:any, props:BotsPanelProps, bot:any){
       panelSaveBar(React.createElement,{status:workspaceDirty?t('unsaved'):t('savedState'),cancel:ui.button(t('revert'),()=>props.onRevertWorkingDirectory?.(bot),{disabled:!workspaceDirty||workspaceSaving||!props.onRevertWorkingDirectory}),save:ui.button(t(workspaceSaving?'saving':'saveWorkspace'),()=>props.onSaveWorkingDirectory(bot),{className:'primary',type:'submit',onClick:undefined,disabled:!workspaceDirty||workspaceSaving||props.commandPending})}),
     ),
     props.storagePanel??null,
-    trustedUsers(React, props, bot),
   );
   return h(React, 'article', {className:'bot-detail', 'aria-label':bot.name},
     h(React, 'header', {className:'detail-header'},
