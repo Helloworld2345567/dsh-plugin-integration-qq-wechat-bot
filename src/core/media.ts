@@ -104,7 +104,7 @@ export class MediaService {
     const useService=!!serviceRole&&operation!=='music_delivery'&&!(serviceRole==='voice'&&config.media.voice?.protocol==='edge_tts');
     if(useService&&(!this.serviceRuntime||!snapshot?.services[serviceRole!]?.snapshot))throw Error('PROFILE_ADAPTER_REQUIRED');
     const sessionBound=operation==='singing_convert'||operation.startsWith('music_');
-    const expectedBinding=sessionBound?this.deps.sessions.findBinding(scope):undefined;
+    const binding=this.deps.sessions.findBinding(scope),expectedBinding=sessionBound?binding:undefined;
     if(useService&&operation==='music_acquire')parameters={...parameters,includeLyrics:snapshot!.config.media.music?.includeLyrics===true};
     const singingSession=expectedBinding?.sessionId;
     const assertSession=()=>{if(!sessionBound)return;const current=this.deps.sessions.findBinding(scope);if(!expectedBinding||current?.sessionId!==expectedBinding.sessionId||current.generation!==expectedBinding.generation)throw Error(operation==='singing_convert'?'SINGING_SESSION_CHANGED':'MUSIC_SESSION_CHANGED');};
@@ -124,7 +124,7 @@ export class MediaService {
     const persist=(value:Record<string,unknown>)=>this.deps.media.jobs.patchJob(id,value);
     let lease:Awaited<ReturnType<TransformSlots['acquire']>>|undefined;
     const captureUsage=async()=>{try{const raw=JSON.parse(await readFile(path.join(directory,'model-usage.json'),'utf8'));if(!Array.isArray(raw))return;const modelCalls:MediaUsageCall[]=raw.filter(c=>c?.attempted===true&&typeof c.id==='string'&&Number.isSafeInteger(c.at)).map(c=>({id:c.id,attempted:true,at:c.at,provider,model:typeof c.model==='string'?c.model:requestedModel,usage:normalizeProviderUsage(c.usage)}));persist({modelCalls});const binding=this.deps.sessions.findBinding(scope);if(binding)this.deps.stats.projection.upsertMediaCalls(id,binding.scope.botId,modelCalls);}catch{/* No dispatched model call is claimed without a journal entry. */}};
-    persist({id,scope,operation,directory,workspace,state:descriptor.localTransform?'queued':'running',startedAt});
+    persist({id,scope,sessionId:binding?.sessionId,inputAssetIds:[...inputs],operation,directory,workspace,state:descriptor.localTransform?'queued':'running',startedAt});
     try{
     combined.throwIfAborted();
     if(descriptor.localTransform){lease=await this.slots.acquire(operation==='convert_gif'?2:1,combined);combined.throwIfAborted();authorize?.();persist({state:'running'});}

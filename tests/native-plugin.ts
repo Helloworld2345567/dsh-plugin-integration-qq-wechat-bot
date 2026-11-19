@@ -603,7 +603,7 @@ export async function apply(ctx:Context){
     const singleDelete=stagedFixture('single-session-delete');singleDelete.script.steps.push({text:'SINGLE_SESSION_DELETE_BODY'});
     await bridge.run(singleDelete.binding,[singleDelete.input],AbortSignal.timeout(30000),{snapshot:singleDelete.snapshot});
     const singleRoot=bridge.live.get(singleDelete.binding.sessionId)!.agent;
-    const singleAsset=await runtime.assets.save(singleDelete.binding.key,{kind:'file',name:'retained-attachment.txt',mime:'text/plain'},Buffer.from('RETAINED_ATTACHMENT'));
+    const singleAsset=await runtime.assets.save(singleDelete.binding.key,{kind:'file',name:'deleted-attachment.txt',mime:'text/plain'},Buffer.from('DELETED_ATTACHMENT'));
     const singleExport=await bridge.exportSessionHistory(singleDelete.binding.sessionId);
     const ownedChild=await singleRoot.ctx.agents.create({sessionId:('delete-child-'+singleRoot.id) as any,parentAgent:singleRoot,meta:{cwd:ctx.workingDirectory.get(singleRoot.session),parentSession:singleRoot.id,origin:'subagent'},agentOptions:{provider:'bot-fixture',model:'first'}});
     await ctx.sessions.flush(ownedChild.agent.session);
@@ -615,7 +615,7 @@ export async function apply(ctx:Context){
     assert.equal(sessions.findSession(singleDelete.binding.sessionId),undefined);assert.equal(ctx.agents.get(singleRoot.id),undefined);assert.equal(ctx.agents.get(ownedChild.agent.id),undefined);
     const singleRemaining=new Set((await ctx.sessionPersistence.list()).map(item=>item.header.id));
     assert.ok(!singleRemaining.has(singleRoot.id));assert.ok(!singleRemaining.has(ownedChild.agent.id));assert.ok(singleRemaining.has(retainedFork.agent.id),'an independent fork must survive deleting its source session');
-    await assert.rejects(readFile(singleExport),{code:'ENOENT'});assert.equal(await readFile(singleAsset.path,'utf8'),'RETAINED_ATTACHMENT');assert.ok(assets.findAsset(singleAsset.id));
+    await assert.rejects(readFile(singleExport),{code:'ENOENT'});await assert.rejects(readFile(singleAsset.path),{code:'ENOENT'});assert.equal(assets.findAsset(singleAsset.id),undefined);
     assert.ok(!(await ctx.sessionQuery.searchSessions({query:'SINGLE_SESSION_DELETE_BODY',limit:20})).items.some(item=>item.header.id===singleRoot.id));
     const foreignDelete=stagedFixture('foreign-session-delete');foreignDelete.script.steps.push({text:'FOREIGN_SESSION_DELETE_BODY'});
     await bridge.run(foreignDelete.binding,[foreignDelete.input],AbortSignal.timeout(30000),{snapshot:foreignDelete.snapshot});await bridge.dispose(foreignDelete.binding.sessionId);

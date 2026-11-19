@@ -31,7 +31,7 @@ test('unconfigured, unknown and failed probes are not presented as a failed conn
   assert.equal(modelLibraryLabel({state:'ready',checkedAt:123},chinese),'已配置');assert.equal(modelLibraryLabel({state:'ready',checkedAt:0},chinese),'未知');assert.equal(modelLibraryLabel({state:'blocked',checkedAt:123},chinese),'异常');
 });
 
-test('overview and services load real health, and service actions refresh profiles, reports and health',async()=>{
+test('overview omits service details and probes, while service actions refresh profiles, reports and health',async()=>{
   const flatten=(node:any):any[]=>Array.isArray(node)?node.flatMap(flatten):node&&typeof node==='object'?[node,...(node.children??[]).flatMap(flatten)]:[];
   const settle=()=>new Promise(resolve=>setImmediate(resolve));
   for(const page of ['overview','services']){
@@ -59,8 +59,14 @@ test('overview and services load real health, and service actions refresh profil
       let tree=render();assert.ok(!tree.some(n=>n.props?.className==='badge'&&n.children.includes('连接失败')));
       mounted=true;for(const effect of effects){const cleanup=effect();if(typeof cleanup==='function')cleanups.push(cleanup as ()=>void);}
       await settle();await settle();tree=render();
-      assert.equal(calls.filter(call=>call.name==='service.health').length,2);assert.ok(tree.some(n=>n.children.includes('连接正常')));assert.ok(tree.some(n=>n.children.includes('已配置')));
+      if(page==='overview'){
+        assert.equal(calls.some(call=>['service.health','service.settings','catalog.profiles'].includes(call.name)),false);
+        assert.equal(tree.some(n=>n.type==='h3'&&['服务','快捷操作'].some(label=>n.children.includes(label))),false);
+        assert.equal(tree.some(n=>n.type==='button'&&['新建机器人','创建人格','打开服务设置'].some(label=>n.children.includes(label))),false);
+        assert.ok(tree.some(n=>n.type==='h3'&&n.children.includes('Token 用量')));
+      }
       if(page==='services'){
+        assert.equal(calls.filter(call=>call.name==='service.health').length,2);assert.ok(tree.some(n=>n.children.includes('连接正常')));assert.ok(tree.some(n=>n.children.includes('已配置')));
         tree.find(n=>n.type==='button'&&n.props['aria-label']==='ComfyUI').props.onClick();await settle();tree=render();
         assert.ok(tree.some(n=>n.type==='button'&&n.children.includes('启动')));assert.ok(!tree.some(n=>n.type==='p'&&n.children.includes('选择 ComfyUI 后将提交 API 格式工作流')));
         assert.ok(tree.some(n=>n.props?.role==='status'&&n.children.includes('已停止')));

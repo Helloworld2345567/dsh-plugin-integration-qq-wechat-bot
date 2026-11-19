@@ -19,6 +19,8 @@ export type MediaJobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'can
 export interface MediaJobRecord {
   readonly id: string;
   readonly scope?: string;
+  readonly sessionId?: string;
+  readonly inputAssetIds?: readonly string[];
   readonly botId?: string;
   readonly state?: MediaJobState | string;
   readonly provider?: string;

@@ -31,7 +31,7 @@ The local review prototype lives in `.codex/panel-ui-demo/` and is not a release
 - Use the host's React instance, settings entry point, and system fonts. Do not create a second application shell, branding area, or independent theme switch.
 - Follow DSH control sizing: navigation about 188px wide, navigation items 40px high, and content spacing 24px. Main headings use 20px/28px at weight 500; body text uses 14px/22px, with necessary supporting text at 12px/18px.
 - Buttons are about 36px high. Use 12px corner radii for buttons and inputs, 16px for content containers, and 28px for dialogs. Increase touch targets where appropriate; do not compress information with tiny text.
-- Keep clear entry points for Overview, Bots, Personas, Services, and Automation. Overview shows only real states, counts, items needing attention, and recent activity. Remove promotional banners.
+- Keep clear entry points for Overview, Bots, Personas, Services, and Automation. Overview shows only real states, counts, items needing attention, and recent activity, without a service summary or quick actions. Manage service configuration in Services.
 - Use compact lists and details for bots and personas. Keep creation actions in the toolbar. Names, channels, and IDs must distinguish entities with the same name.
 - Use a list and details for services, keeping configuration, runtime state, and actions in the same context. Distinguish unknown, unconfigured, available, and failed states.
 - Switch to a single column or horizontal section navigation in narrow containers. Respond to the plugin container's width, avoiding three simultaneous fixed sidebars for host navigation, plugin navigation, and the entity list.
@@ -43,6 +43,7 @@ The local review prototype lives in `.codex/panel-ui-demo/` and is not a release
 - Keep short hints only when they affect a user decision: input range or format, why an action is disabled, the next step after an error, or deletion scope. Explain when saved changes take effect once in a central location.
 - Use consistent action verbs: Save, Undo, Create, Select directory, Select file, Open directory, Refresh, Start, Stop, and Delete.
 - Keep success feedback short; do not stack several messages for the same event. Show errors near the relevant action and associate field errors with their inputs. Do not expose raw exceptions or internal identifiers as ordinary user copy.
+- Confirm session deletion in a compact, centered window with a short title and separate description. Wrap long session IDs without filling the screen. Include attachments in the deletion scope and explain that attachments still used by other sessions remain.
 - Maintain Chinese and English together. The UI follows the host language without changing bot message language or drafts.
 
 ## 4. Shared operation contracts

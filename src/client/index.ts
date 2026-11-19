@@ -5,12 +5,12 @@ import {panelStyles} from './styles.js';
 import {botStatus,createUI,list} from './ui.js';
 import {botSettingsSections} from './bot-settings-panel.js';
 import {loadServiceProfiles} from './voice-models.js';
-import {LOCALE_NS,chinese,zh,en,message,renderText,errorText,uiError,PanelError,displayLocale,diagnosticText,reportDiagnostics,type DisplayText,type Translate} from './locale.js';
+import {LOCALE_NS,chinese,zh,en,message,renderText,errorText,uiError,PanelError,displayLocale,type DisplayText,type Translate} from './locale.js';
 import {panelHeader,panelSidebar,statusPill} from './layout.js';
 import {BotsPanel,type BotEditorSection} from './bots-panel.js';
 import {WorkspaceStoragePanel} from './workspace-storage-panel.js';
 import {ServicesPanel,serviceSettingKeys,type ServiceDirectoryKey} from './services-panel.js';
-import {loadPanelServiceHealth,modelLibraryLabel,serviceHealthLabel} from './service-health.js';
+import {loadPanelServiceHealth} from './service-health.js';
 import {personaPanel,type PersonaEditorSection} from './persona-panel.js';
 import {installHostLeaveGuard} from './host-leave-guard.js';
 
@@ -134,7 +134,7 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
       finally{pending.delete(key);setCommands([...pending]);}
     };
     const ask=(title:DisplayText,value=''):Promise<string|null>=>new Promise(resolve=>setQuestion({title,value,resolve,confirm:false}));
-    const confirm=(title:DisplayText):Promise<boolean>=>new Promise(resolve=>setQuestion({title,value:'',resolve,confirm:true}));
+    const confirm=(title:DisplayText,description?:DisplayText):Promise<boolean>=>new Promise(resolve=>setQuestion({title,description,value:'',resolve,confirm:true}));
     const answer=(value:any)=>{question?.resolve(value);setQuestion(null);};
     const resolveDraft=async(save:()=>Promise<unknown>,discard:()=>void):Promise<boolean>=>{
       if(busy||serviceSaving||languageSaving)throw uiError('operationBusy',t);
@@ -176,12 +176,12 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
     React.useEffect(()=>{let stopped=false,running=false;const poll=async()=>{if(running)return;running=true;try{await refresh();}catch(e){if(!stopped)setSummaryError(errorText(e));}finally{running=false;}};
       void poll();const timer=setInterval(()=>{if(!stopped)void poll();},4000);return()=>{stopped=true;clearInterval(timer);clientRef.current?.cancel('overview.summary');};},[]);
     React.useEffect(()=>{if(tab!=='bots')return;const abort=new AbortController();void query('bots.list',{},abort.signal).then((next:any)=>{if(next&&!abort.signal.aborted)setBots(next);}).catch((e:Error)=>{if(!abort.signal.aborted)setError(errorText(e));});void api('directories',{},abort.signal).then(setDirectories).catch(()=>{});return()=>abort.abort();},[tab]);
-    React.useEffect(()=>{if(!['catalog','bots','services','overview'].includes(tab))return;const abort=new AbortController();if(tab==='catalog'||tab==='bots')for(const [action,set] of [['directories',setDirectories],['skill.image.status',setImageSkills],['skill.media.status',setMediaSkills]] as const){void api(action,action.startsWith('skill.')?{scope:'bots'}:{},abort.signal).then((next:any)=>{if(abort.signal.aborted)return;if(action==='skill.media.status')setMediaSkills((old:any)=>Object.fromEntries(Object.entries(next).map(([id,status])=>[id,{...(old[id]??{}),...(status as any)}])));else set(next);}).catch((e:Error)=>{if(!abort.signal.aborted)setError(errorText(e));});}
+    React.useEffect(()=>{if(!['catalog','bots','services'].includes(tab))return;const abort=new AbortController();if(tab==='catalog'||tab==='bots')for(const [action,set] of [['directories',setDirectories],['skill.image.status',setImageSkills],['skill.media.status',setMediaSkills]] as const){void api(action,action.startsWith('skill.')?{scope:'bots'}:{},abort.signal).then((next:any)=>{if(abort.signal.aborted)return;if(action==='skill.media.status')setMediaSkills((old:any)=>Object.fromEntries(Object.entries(next).map(([id,status])=>[id,{...(old[id]??{}),...(status as any)}])));else set(next);}).catch((e:Error)=>{if(!abort.signal.aborted)setError(errorText(e));});}
       if(tab==='bots'){
         void query('catalog.models',{},abort.signal).then((next:any)=>{if(!next||abort.signal.aborted)return;const groups=new Map();for(const model of next.data??next){const rows=groups.get(model.provider)??[];rows.push({id:model.model,name:model.model,inputModalities:model.inputModalities,reasoning:model.reasoning});groups.set(model.provider,rows);}setModels([...groups].map(([id,models])=>({id,models})));}).catch((e:Error)=>{if(!abort.signal.aborted)setError(errorText(e));});
         void refreshProfiles(abort.signal).catch((e:Error)=>{if(!abort.signal.aborted)setError(errorText(e));});
       }
-      void (tab==='overview'||tab==='services'?refreshServiceStatus(abort.signal):refreshLibrary(abort.signal)).catch((e:Error)=>{if(!abort.signal.aborted)setError(errorText(e));});
+      void (tab==='services'?refreshServiceStatus(abort.signal):refreshLibrary(abort.signal)).catch((e:Error)=>{if(!abort.signal.aborted)setError(errorText(e));});
       return()=>abort.abort();},[tab]);
     const configs=(summary?.configs??[]).filter((c:any)=>!c.archived);
     React.useEffect(()=>{if(tab==='catalog'&&!edit&&configs[0])void loadConfig(configs[0].id).catch((e:Error)=>setError(errorText(e)));},[tab,configs[0]?.id]);
@@ -223,15 +223,6 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
       finally{if(pickerRef.current===controller){pickerRef.current=null;setPickingPath('');}}
     };
     const tabs=[['overview',t('overview')],['bots',t('bots')],['services',t('services')],['catalog',t('personas')],['automation',t('automation')]];
-    const overviewServices=h('section',{className:'card overview-services'},
-      h('div',{className:'row spread'},h('h3',null,t('services')),ui.button(t('manage'),()=>navigate('services'),{className:'quiet'})),
-      h('div',{className:'overview-service-grid'},
-        h('div',{className:'overview-service-item'},h('strong',null,t('robotService')),h('span',{className:'badge'},summary?.health?(summary.health.serviceRunning?t('online'):t('stopped')):t('unknown'))),
-        h('div',{className:'overview-service-item'},h('strong',null,'GPT-SoVITS'),h('span',{className:'badge',title:diagnosticText(serviceHealth['gpt-sovits'],activeLocale)},serviceHealthLabel(serviceHealth['gpt-sovits'],t))),
-        h('div',{className:'overview-service-item'},h('strong',null,'Breeze TTS'),h('span',{className:'badge',title:diagnosticText(serviceHealth['breeze-tts'],activeLocale)},serviceHealthLabel(serviceHealth['breeze-tts'],t))),
-        h('div',{className:'overview-service-item'},h('strong',null,t('stsModelDirectory')),h('span',{className:'badge',title:reportDiagnostics(voiceLibrary?.reports?.rvc,activeLocale)},modelLibraryLabel(voiceLibrary?.reports?.rvc,t))),
-      ),
-    );
     let body:any;
     if(tab==='overview')body=h('section',{'aria-label':t('overview')},
       summary?h('div',{className:'stats-cards'},...[
@@ -244,11 +235,9 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
         const created=session.createdAt?new Date(session.createdAt).toLocaleString(activeLocale==='en'?'en-US':'zh-CN'):'';
         return h('div',{className:'item row spread',key:session.id},
           h('div',null,h('span',null,t('sessionModel',{channel:session.channelId??session.platform??t('unknown'),model:model?`${model.provider} / ${model.model}`:t('none')})),h('div',null,h('small',{className:'muted',title:session.id},[session.personaId,session.id.slice(0,12),created].filter(Boolean).join(' · ')))),
-          h('div',{className:'actions'},ui.button(t('exportSession'),async()=>{const result=await mutate('session.export',{id:session.id});setNotice(message('sessionExported',{path:result.path}));},{className:'quiet',disabled:busy||!!question||!session.persisted}),ui.button(t('delete'),async()=>{if(await confirm(message('deleteSessionConfirm',{id:session.id})))await mutate('session.delete',{id:session.id},message('sessionDeleted'));},{className:'danger quiet','aria-label':t('deleteSessionLabel',{id:session.id}),disabled:busy||!!question})),
+          h('div',{className:'actions'},ui.button(t('exportSession'),async()=>{const result=await mutate('session.export',{id:session.id});setNotice(message('sessionExported',{path:result.path}));},{className:'quiet',disabled:busy||!!question||!session.persisted}),ui.button(t('delete'),async()=>{if(await confirm(message('deleteSessionTitle'),message('deleteSessionConfirm',{id:session.id})))await mutate('session.delete',{id:session.id},message('sessionDeleted'));},{className:'danger quiet','aria-label':t('deleteSessionLabel',{id:session.id}),disabled:busy||!!question})),
         );
       })):null,
-      overviewServices,
-      h('section',{className:'card'},h('h3',null,t('quickActions')),h('div',{className:'actions'},ui.button(t('newBot'),()=>navigate('bots'),{className:'primary'}),ui.button(t('createPersona'),()=>navigate('catalog')),ui.button(t('openServiceSettings'),()=>navigate('services')))),
     );
     if(tab==='bots'){
       const savedSettings=activeBot?.settings;
@@ -431,8 +420,8 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
         ['error','expired','denied'].includes(qr.status)?ui.button(t('authorize'),()=>login({id:qr.botId,name:qr.botName}),{className:'primary'}):null,
       ):null,
       automationVisited?h('div',{hidden:tab!=='automation'},h(AutomationPanel,{React,query,mutate:(action:string,input:any,noticeMessage:DisplayText)=>mutate(action,input,noticeMessage,true),configs,bots:summaryBots,confirm,onError:setError,busy,t,locale:activeLocale,active:tab==='automation',resolveDraft,onDraftState:(state:any)=>{automationDraftRef.current=state;setAutomationDirty(state.dirty);}})):null,
-      question?h('dialog',{ref:dialogRef,className:'card dialog',role:'dialog','aria-modal':true,'aria-label':text(question.title),onKeyDown:(event:any)=>{if(event.key==='Escape')event.stopPropagation();},onCancel:(event:any)=>{event.preventDefault();event.stopPropagation();answer(question.mode==='leave'?'cancel':question.confirm?false:null);}},
-        h('form',{onSubmit:(event:any)=>{event.preventDefault();answer(question.confirm?true:question.value);}},h('h3',null,text(question.title)),
+      question?h('dialog',{ref:dialogRef,className:question.confirm?'card dialog confirm-dialog':'card dialog',role:'dialog','aria-modal':true,'aria-label':text(question.title),'aria-describedby':question.description?'bot-confirm-description':undefined,onKeyDown:(event:any)=>{if(event.key==='Escape')event.stopPropagation();},onCancel:(event:any)=>{event.preventDefault();event.stopPropagation();answer(question.mode==='leave'?'cancel':question.confirm?false:null);}},
+        h('form',{onSubmit:(event:any)=>{event.preventDefault();answer(question.confirm?true:question.value);}},h('h3',null,text(question.title)),question.description?h('p',{id:'bot-confirm-description'},text(question.description)):null,
           question.confirm||question.mode==='leave'?null:ui.textarea(t('content'),question.value,v=>setQuestion({...question,value:v}),{autoFocus:true}),
           question.mode==='leave'?h('div',{className:'actions'},ui.button(t('continueEditing'),()=>answer('cancel'),{disabled:false,autoFocus:true}),ui.button(t('discardChanges'),()=>answer('discard'),{disabled:false}),ui.button(t('saveAndContinue'),()=>answer('save'),{className:'primary',disabled:false})):
             h('div',{className:'actions'},ui.button(t('cancel'),()=>answer(question.confirm?false:null),{disabled:false,autoFocus:question.confirm}),h('button',{type:'submit',className:'primary'},t('confirm'))))):null);

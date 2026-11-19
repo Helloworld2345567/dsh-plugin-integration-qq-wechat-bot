@@ -3,10 +3,12 @@ import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {scopeKey} from '../core/identity.js';
 import {sessionDirectory} from '../core/workspaces.js';
-import type {Asset, CallerScope,SessionRecord} from '../core/types.js';
+import type {Asset, CallerScope,SessionRecord,TurnMetric,TurnSnapshot} from '../core/types.js';
 import type {BotRepository} from '../core/ports/bot.js';
 import type {DeliveryRepository} from '../core/ports/delivery.js';
 import type {InboxRepository} from '../core/ports/inbox.js';
+import type {FailureRecord} from '../core/ports/telemetry.js';
+import type {MediaJobRecord} from '../core/ports/media.js';
 import type {SqliteDatabase} from './sqlite/database.js';
 import {assetFolder, mediaFolders, type WorkspaceFiles} from './files/workspace-files.js';
 import type {BotHistorySnapshot as PortBotHistorySnapshot} from '../core/ports/bot-history.js';
@@ -33,7 +35,7 @@ export interface BotHistorySnapshot {
  */
 export class BotHistoryService {
   constructor(private readonly deps: BotHistoryDeps) {}
-  /** Remove session files and explicit exports; attachments remain channel-owned. */
+  /** Remove exact-session files and attachments; preserve media reused by another session. */
   async deleteSessionFiles(scope: string, sessionIds: readonly string[]): Promise<void> {
     for (const id of sessionIds) {
       const record=this.deps.database.records.get<SessionRecord>('session',id);
@@ -46,8 +48,33 @@ export class BotHistoryService {
       await rm(file, {force:true});
       await rm(`${file}.tmp`, {force:true});
     }
+    const ids=new Set(sessionIds),database=this.deps.database,deliveries=this.deps.deliveries().deliveries().filter(delivery=>delivery.scopeKey===scope);
+    const metrics=database.records.list<TurnMetric>('turn-metric').filter(metric=>metric.scopeKey===scope);
+    const owners=[...metrics,...deliveries].filter(row=>row.sessionId).map(row=>({sessionId:row.sessionId!,sourceIds:[row.sourceId] as readonly string[]}));
+    for(const failure of database.records.list<FailureRecord>('failure'))if(failure.scope===scope&&failure.sessionId)owners.push({sessionId:failure.sessionId,sourceIds:failure.sourceIds??[]});
+    for(const row of database.records.entries())if(row.kind==='turn-snapshot'&&database.records.get<SessionRecord>('session',row.id)?.scopeKey===scope)owners.push({sessionId:row.id,sourceIds:(JSON.parse(row.json) as TurnSnapshot).sourceIds});
+    const sources=new Set(owners.filter(row=>ids.has(row.sessionId)).flatMap(row=>row.sourceIds));
+    const otherSources=new Set(owners.filter(row=>!ids.has(row.sessionId)).flatMap(row=>row.sourceIds));
+    for(const id of otherSources)sources.delete(id);
+    const shared=new Set<string>(),referenced=new Set<string>();
+    for(const delivery of deliveries)for(const id of [delivery.output.assetId,delivery.attempt?.assetId])if(id)(ids.has(delivery.sessionId)?referenced:shared).add(id);
+    for(const job of database.records.list<MediaJobRecord>('job'))if(job.scope===scope&&job.sessionId&&(ids.has(job.sessionId)||database.records.get<SessionRecord>('session',job.sessionId)?.scopeKey===scope))for(const id of job.inputAssetIds??[])(ids.has(job.sessionId)?referenced:shared).add(id);
+    const cancelled=new Set(this.deps.inbox().allMessages(['cancelled']).filter(message=>scopeKey(message.scope)===scope).map(message=>message.id));
+    // Preserve pending inputs, but unassigned inputs cancelled by deletion no longer use their handles.
+    for(const message of this.deps.inbox().allMessages())if(scopeKey(message.scope)===scope)for(const input of [...message.attachments,...message.quoted?.attachments??[]])if(input.handle){if(sources.has(message.id))referenced.add(input.handle);else if(otherSources.has(message.id)||!cancelled.has(message.id))shared.add(input.handle);}
+    for(const asset of database.records.list<Asset>('asset').filter(asset=>asset.scopeKey===scope&&asset.sessionId&&!shared.has(asset.id)&&(ids.has(asset.sessionId)||referenced.has(asset.id)&&!database.records.get<SessionRecord>('session',asset.sessionId)))){
+      if(!asset.workspace)throw Error('ASSET_CLEANUP_WORKSPACE_REQUIRED');
+      const folder=path.resolve(assetFolder(asset.workspace,asset)),relative=path.relative(path.resolve(asset.workspace),folder);
+      if(!relative||relative.startsWith('..')||path.isAbsolute(relative)||path.resolve(asset.path)!==path.join(folder,asset.name))throw Error('ASSET_CLEANUP_PATH_INVALID');
+      await rm(folder,{recursive:true,force:true});
+      database.savepoint('delete_session_asset',()=>{
+        database.db.prepare('DELETE FROM asset_index WHERE id=? AND scope=?').run(asset.id,scope);
+        database.records.delete('asset',asset.id);
+        database.bump('assets');
+      });
+    }
   }
-  /** Purge exact-session evidence without deleting channel memories, attachments or schedules. */
+  /** Purge exact-session evidence without deleting channel memories or schedules. */
   deleteSessionRecords(scope: string, sessionIds: readonly string[]): void {
     const ids = new Set(sessionIds), database = this.deps.database;
     database.savepoint('delete_session_history', () => {

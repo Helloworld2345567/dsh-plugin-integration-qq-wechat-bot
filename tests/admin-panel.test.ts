@@ -373,9 +373,12 @@ test('overview session deletion confirms the exact session, cancels and refreshe
     const button=(nodes:any[],id:string)=>nodes.find(n=>n.props?.['aria-label']===`删除会话 ${id}`);
     assert.ok(tree.some(n=>n.type==='h3'&&n.children.includes('聊天会话')));
     button(tree,'session-1').props.onClick();await settlePanel();tree=harness.render();
-    const dialog=tree.find(n=>n.props?.role==='dialog');assert.match(dialog.props['aria-label'],/session-1/);assert.match(dialog.props['aria-label'],/渠道附件和长期记忆会保留/);
+    const dialog=tree.find(n=>n.props?.role==='dialog');assert.equal(dialog.props['aria-label'],'删除会话？');assert.ok(dialog.props.className.includes('confirm-dialog'));
+    const description=flattenPanel(dialog).find(n=>n.props?.id===dialog.props['aria-describedby']);assert.match(description.children[0],/session-1/);assert.match(description.children[0],/聊天记录、附件/);assert.match(description.children[0],/其他会话仍使用的附件会保留/);
     assert.equal(button(tree,'session-2').props.disabled,true);
     flattenPanel(dialog).find(n=>n.type==='button'&&n.children.includes('取消')).props.onClick();await settlePanel();assert.deepEqual(commands,[]);
+    button(harness.render(),'session-1').props.onClick();await settlePanel();
+    harness.render().find(n=>n.props?.role==='dialog').props.onCancel({preventDefault:()=>{},stopPropagation:()=>{}});await settlePanel();assert.deepEqual(commands,[]);
     button(harness.render(),'session-1').props.onClick();await settlePanel();
     flattenPanel(harness.render().find(n=>n.props?.role==='dialog')).find(n=>n.type==='form').props.onSubmit({preventDefault:()=>{}});await settlePanel();
     assert.equal(button(harness.render(),'session-2').props.disabled,true);

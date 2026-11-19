@@ -129,9 +129,6 @@ export const panelStyles = `
 .bot-admin .service-priority-item .actions button { min-height: 30px; padding: 3px 8px; border-radius: 999px; }
 .bot-admin .service-priority-add { display: inline-flex; gap: 6px; flex-wrap: wrap; }
 .bot-admin .service-priority-add button { min-height: 36px; padding: 5px 10px; border-radius: 999px; }
-.bot-admin .overview-service-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
-.bot-admin .overview-service-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 9px; }
-.bot-admin .overview-service-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bot-admin .services-page .save-bar { margin-top: 2px; }
 .bot-admin .split-pane { display: grid; grid-template-columns: 208px minmax(0, 1fr); gap: 24px; align-items: start; }
 .bot-admin .list-panel, .bot-admin .editor-panel { min-width: 0; }
@@ -208,6 +205,10 @@ export const panelStyles = `
 .bot-admin dialog::backdrop { background: var(--overlay); }
 .bot-admin .dialog form { margin: 0; }
 .bot-admin .dialog label { margin: 16px 0; }
+.bot-admin dialog.card.confirm-dialog { position: fixed; inset: 0; width: min(400px, calc(100vw - 32px)); min-width: 0; max-width: calc(100vw - 32px); height: fit-content; min-height: 0; max-height: calc(100dvh - 32px); margin: auto; padding: 20px; }
+.bot-admin .confirm-dialog form { display: grid; gap: 16px; min-width: 0; }
+.bot-admin .confirm-dialog :is(h3, p) { margin: 0; overflow-wrap: anywhere; }
+.bot-admin .confirm-dialog .actions { justify-content: flex-end; }
 .bot-admin dialog.auth-dialog.card { margin: auto; color: var(--ink); width: min(440px, calc(100vw - 40px)); }
 .bot-admin .auth-dialog img { display: block; margin: 16px auto 0; max-width: 100%; height: auto; }
 .bot-admin :is(button, input, select, textarea, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
@@ -238,7 +239,6 @@ export const panelStyles = `
   .bot-admin .service-list .entity-row { flex: 0 0 172px; width: 172px; }
   .bot-admin .list-panel { position: static; }
   .bot-admin .list-item { min-width: 180px; }
-  .bot-admin .overview-service-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @container (max-width: 460px) {
   .bot-admin .app-content { padding: 16px 12px 24px; }
@@ -247,7 +247,6 @@ export const panelStyles = `
   .bot-admin .stats-cards { gap: 7px; }
   .bot-admin .stats-card { padding: 10px; }
   .bot-admin .stats-card strong { font-size: 22px; }
-  .bot-admin .overview-service-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bot-admin .card, .bot-admin .section-card { padding: 14px; }
   .bot-admin .directory-field { grid-template-columns: 1fr; }
 }
