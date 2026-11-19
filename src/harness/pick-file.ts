@@ -1,35 +1,31 @@
-import {localizedError,LocalizedError} from '../core/errors.js';
-import {readdir,realpath,stat} from 'node:fs/promises';
+import {realpath,stat} from 'node:fs/promises';
 import path from 'node:path';
+import type {SystemLocale} from '../i18n/common.js';
+import {localizedError,LocalizedError} from '../core/errors.js';
+import {pickWindowsFile} from './windows-file-picker.js';
 
-export interface WorkflowFileEntry {name:string;path:string;directory:boolean}
-export interface WorkflowFileList {directory:string;parent?:string;entries:WorkflowFileEntry[]}
-
-/** Browse local workflows in the authenticated panel, without a desktop subprocess. */
-export async function listWorkflowFiles(current:string|undefined,signal:AbortSignal=new AbortController().signal):Promise<WorkflowFileList>{
-  signal.throwIfAborted();
-  const requested=current?.trim()||process.cwd();
-  if(!path.isAbsolute(requested)||/[\x00-\x1f]/.test(requested))throw localizedError('filePickerPath');
+export async function pickFile(initial:string|undefined,locale:SystemLocale,signal:AbortSignal=new AbortController().signal,platform:NodeJS.Platform=process.platform,pick:typeof pickWindowsFile=pickWindowsFile):Promise<string|undefined>{
+  const combined=AbortSignal.any([signal,AbortSignal.timeout(300000)]);
+  let selected:unknown;
   try{
-    let directory=requested;
-    try{if(!(await stat(requested)).isDirectory())directory=path.dirname(requested);}
-    catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT'&&path.extname(requested).toLowerCase()==='.json')directory=path.dirname(requested);else throw error;}
-    directory=await realpath(directory);
-    const rows=await readdir(directory,{withFileTypes:true});
-    const entries:WorkflowFileEntry[]=[];
-    for(const row of rows){
-      signal.throwIfAborted();
-      const file=path.join(directory,row.name);
-      const info=row.isSymbolicLink()?await stat(file).catch(()=>undefined):row;
-      if(info?.isDirectory()||info?.isFile()&&path.extname(row.name).toLowerCase()==='.json')entries.push({name:row.name,path:file,directory:info.isDirectory()});
-    }
-    signal.throwIfAborted();
-    entries.sort((a,b)=>Number(b.directory)-Number(a.directory)||a.name.localeCompare(b.name));
-    const parent=path.dirname(directory);
-    return{directory,...parent!==directory?{parent}:{},entries};
+    combined.throwIfAborted();
+    if(platform!=='win32')throw localizedError('filePickerUnsupported');
+    selected=await pick(initial,locale,combined);
+    combined.throwIfAborted();
   }catch(error){
-    signal.throwIfAborted();
     if(error instanceof LocalizedError)throw error;
-    throw localizedError('workflowDirectoryInaccessible');
+    const detail=signal.aborted?'FILE_PICKER_CANCELLED':combined.aborted?'FILE_PICKER_TIMEOUT':'FILE_PICKER_FAILED';
+    throw localizedError('filePickerFailed',{detail});
+  }
+  if(selected===null)return undefined;
+  if(typeof selected!=='string'||!path.isAbsolute(selected)||path.extname(selected).toLowerCase()!=='.json')throw localizedError('filePickerPath');
+  try{
+    const resolved=await realpath(selected);
+    if(!(await stat(resolved)).isFile())throw localizedError('fileNotFile');
+    if(combined.aborted)throw localizedError('filePickerFailed',{detail:signal.aborted?'FILE_PICKER_CANCELLED':'FILE_PICKER_TIMEOUT'});
+    return resolved;
+  }catch(error){
+    if(error instanceof LocalizedError)throw error;
+    throw localizedError('fileInaccessible');
   }
 }

@@ -210,9 +210,6 @@ export const panelStyles = `
 .bot-admin .dialog label { margin: 16px 0; }
 .bot-admin dialog.auth-dialog.card { margin: auto; color: var(--ink); width: min(440px, calc(100vw - 40px)); }
 .bot-admin .auth-dialog img { display: block; margin: 16px auto 0; max-width: 100%; height: auto; }
-.bot-admin .workflow-file-browser { width: min(760px, calc(100vw - 32px)); }
-.bot-admin .workflow-file-list { max-height: 48vh; overflow: auto; margin-top: 16px; }
-.bot-admin .workflow-file-entry { width: 100%; text-align: left; overflow-wrap: anywhere; margin-bottom: 6px; }
 .bot-admin :is(button, input, select, textarea, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @container (max-width: 1180px) {
   .bot-admin .media-fields { grid-template-columns: minmax(0, 1fr); }

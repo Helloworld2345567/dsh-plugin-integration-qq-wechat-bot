@@ -10,7 +10,6 @@ import {panelHeader,panelSidebar,statusPill} from './layout.js';
 import {BotsPanel,type BotEditorSection} from './bots-panel.js';
 import {WorkspaceStoragePanel} from './workspace-storage-panel.js';
 import {ServicesPanel,serviceSettingKeys,type ServiceDirectoryKey} from './services-panel.js';
-import {workflowFileBrowser} from './workflow-file-browser.js';
 import {loadPanelServiceHealth,modelLibraryLabel,serviceHealthLabel} from './service-health.js';
 import {personaPanel,type PersonaEditorSection} from './persona-panel.js';
 import {installHostLeaveGuard} from './host-leave-guard.js';
@@ -66,7 +65,6 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
     const [botDraft,setBotDraft]=React.useState(null as any);
     const [languageSaving,setLanguageSaving]=React.useState(false);
     const [serviceSaving,setServiceSaving]=React.useState(false);const [serviceRefreshing,setServiceRefreshing]=React.useState(false);const [pickingPath,setPickingPath]=React.useState('');
-    const [fileBrowser,setFileBrowser]=React.useState(null as any);
     const [personaBaseline,setPersonaBaseline]=React.useState(edit as any);
     const [selectedService,setSelectedService]=React.useState('robot');
     const [languageDraft,setLanguageDraft]=React.useState(null as string|null);
@@ -161,7 +159,7 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
     const hasUnsaved=dirty||!!botDraft||Object.keys(workspaceEdits).length>0||serviceSettingsDirty||languageDirty||newBotDirty||credentialDirty||automationDirty;
     const discardDrafts=()=>{++loadSequence.current;setConfigLoading(false);setEdit(personaBaseline);setDirty(false);setBotDraft(null);setWorkspaceEdits({});if(savedServiceDraft)setVoiceLibraryDraft(savedServiceDraft);setLanguageDraft(null);setNewOpen(false);setNewBot(emptyBot());setCredential(null);automationDraftRef.current?.discard();};
     const saveDrafts=async()=>{for(const scope of Object.values(draftActionsRef.current) as {save:()=>Promise<unknown>}[])await scope.save();if(automationDraftRef.current?.dirty)await automationDraftRef.current.save();};
-    leaveGuardRef.current={hasUnsaved,dialogOpen:!!question||newOpen||!!credential||!!qr||!!fileBrowser,confirmLeave:()=>resolveDraft(saveDrafts,discardDrafts)};
+    leaveGuardRef.current={hasUnsaved,dialogOpen:!!question||newOpen||!!credential||!!qr,confirmLeave:()=>resolveDraft(saveDrafts,discardDrafts)};
     draftActionsRef.current={};
     const navigate=async(next:string)=>{
       if(next===tab)return;
@@ -208,29 +206,21 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
       try{const next=await runCommand(bot.id,'login.begin',{id:bot.id},message('scanToAuthorize'));setQr((current:any)=>current?.botId===bot.id?{...next,botId:bot.id,botName:bot.name}:current);}
       catch(error){setQr((current:any)=>current?.botId===bot.id?{...current,status:'error',error:errorText(error)}:current);}
     };
-    const pickDirectory=async(current:string|undefined,locale=activeLocale,signal?:AbortSignal)=>{const result=await api('service.settings.pick-directory',{current:current||undefined,locale},signal);return typeof result?.path==='string'?result.path:undefined;};
-    const cancelPathPick=()=>{pickerRef.current?.abort();pickerRef.current=null;setPickingPath('');setFileBrowser(null);setPickError(null);};
+    const cancelPathPick=()=>{pickerRef.current?.abort();pickerRef.current=null;setPickingPath('');setPickError(null);};
     const beginPathPick=(key:string)=>{
       pickerRef.current?.abort();
       const controller=new AbortController();pickerRef.current=controller;setPickingPath(key);setPickError(null);
       return controller;
     };
     const clearPathErrors=(...keys:string[])=>setFieldErrors((errors:Record<string,DisplayText>)=>Object.fromEntries(Object.entries(errors).filter(([key])=>!keys.includes(key))));
-    const chooseDirectory=async(key:string,current:string|undefined,apply:(path:string)=>void)=>{
-      setFileBrowser(null);
+    const choosePath=async(kind:'directory'|'file',key:string,current:string|undefined,apply:(path:string)=>void)=>{
       const controller=beginPathPick(key);
-      try{const path=await pickDirectory(current,activeLocale,controller.signal);if(path&&!controller.signal.aborted)apply(path);}
-      catch(error){if(!controller.signal.aborted)setPickError({key,message:errorText(error)});}
-      finally{if(pickerRef.current===controller){pickerRef.current=null;setPickingPath('');}}
-    };
-    const browseWorkflowFiles=async(current:string)=>{
-      const controller=beginPathPick('comfyUiWorkflowPath');
-      setFileBrowser((previous:any)=>({...previous,location:current,loading:true,error:'',entries:[]}));
       try{
-        const result=await api('service.settings.pick-file',{current,locale:activeLocale},AbortSignal.any([controller.signal,AbortSignal.timeout(10000)]));
-        if(!controller.signal.aborted)setFileBrowser({...result,location:result.directory,loading:false,error:''});
-      }catch(error){if(!controller.signal.aborted)setFileBrowser((previous:any)=>({...previous,loading:false,error:text(errorText(error))}));}
-      finally{if(pickerRef.current===controller)pickerRef.current=null;}
+        const result=await api(`service.settings.pick-${kind}`,{current:current||undefined,locale:activeLocale},controller.signal);
+        const path=typeof result?.path==='string'?result.path:undefined;
+        if(path&&!controller.signal.aborted){clearPathErrors(key);apply(path);}
+      }catch(error){if(!controller.signal.aborted)setPickError({key,message:errorText(error)});}
+      finally{if(pickerRef.current===controller){pickerRef.current=null;setPickingPath('');}}
     };
     const tabs=[['overview',t('overview')],['bots',t('bots')],['services',t('services')],['catalog',t('personas')],['automation',t('automation')]];
     const overviewServices=h('section',{className:'card overview-services'},
@@ -318,7 +308,7 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
         h('form',{onSubmit:(event:any)=>{event.preventDefault();void saveCredentials().catch(validationError);}},h('h3',null,t('qqCredentials')),
           h('div',{className:'fields'},ui.field('AppID',credential.accountId,v=>setCredential({...credential,accountId:v}),'text',{required:true,autoFocus:true}),ui.field('AppSecret',credential.appSecret,v=>setCredential({...credential,appSecret:v}),'password',{required:true,autoComplete:'new-password'})),
           h('div',{className:'actions'},ui.button(t('cancel'),closeCredentials),h('button',{type:'submit',className:'primary',disabled:busy},t('save'))))):null;
-      body=BotsPanel({React,ui,t,bots:displayBots.map((bot:any)=>botDraft?.id===bot.id?{...bot,configId:botDraft.configId??bot.configId}:bot),configs,channels,summary,busy,commandPending:commands.includes(activeBot?.id),selectedBotId,section:botSection,onSectionChange:(next:any)=>{cancelPathPick();setBotSection(next);},configSections,configLoading:false,configDirty:botDraft?.id===activeBot?.id&&!!botDraft,onSaveConfig:saveBotSettings,onDiscardConfig:()=>setBotDraft(null),onSelect:selectBot,onCreate:async()=>{if((botDraft||Object.keys(workspaceEdits).length)&&!await resolveDraft(saveDrafts,discardDrafts))return;setFieldErrors({});setNewOpen(true);},createForm,onServiceToggle:()=>mutate(summary?.health?.serviceRunning===true?'bot.service.stop':'bot.service.start',{},summary?.health?.serviceRunning===true?message('botServiceStopped'):message('botServiceStarted')),onBotToggle:(bot:any,running:boolean)=>runCommand(bot.id,running?'bot.stop':'bot.start',{id:bot.id},running?message('stopped'):message('connectionStarted')),onPersonaChange:(_bot:any,configId:string)=>updateBotDraft({configId}),onReconnect:(bot:any)=>runCommand(bot.id,'bot.reconnect',{id:bot.id},message('reconnected')),onAuthorize:login,onCredentials:(bot:any)=>setCredential({id:bot.id,accountId:bot.accountId??'',baselineAccountId:bot.accountId??'',appSecret:''}),onDelete:async(bot:any)=>{if(!await confirm(message('deleteBotConfirm',{name:bot.name,id:bot.id})))return;if(pickingPath===`workspace:${bot.id}`)cancelPathPick();setQr((current:any)=>current?.botId===bot.id?null:current);setCredential((current:any)=>current?.id===bot.id?null:current);await mutate('bot.delete',{id:bot.id},message('botDeleted'));setBots((current:any[]) => (current??displayBots).filter(item=>item.id!==bot.id));if(activeBot?.id===bot.id){setSelectedBotId('');setBotDraft(null);}setWorkspaceEdits((current:any)=>{const next={...current};delete next[bot.id];return next;});},onWorkingDirectoryChange:(bot:any,value:string)=>{if(pickingPath===`workspace:${bot.id}`||pickError?.key===`workspace:${bot.id}`)cancelPathPick();updateWorkspace(bot,value);},onBrowseDirectory:(bot:any)=>chooseDirectory(`workspace:${bot.id}`,workspaceEdits[bot.id]??bot.workingDirectory,value=>updateWorkspace(bot,value)),onDefaultDirectory:(bot:any)=>{cancelPathPick();updateWorkspace(bot,'');},onSaveWorkingDirectory:saveWorkspace,onRevertWorkingDirectory:(bot:any)=>{cancelPathPick();updateWorkspace(bot,bot.workingDirectory??'');},workspacePicking:pickingPath===`workspace:${activeBot?.id}`,onCancelPick:cancelPathPick,workspacePickError:pickError?.key===`workspace:${activeBot?.id}`?text(pickError?.message):undefined,workspaceEdits,workspaceDirectories:directories.sessions??[],storagePanel:activeBot&&botSection==='workspace'?h(WorkspaceStoragePanel,{key:activeBot.id,React,t,botId:activeBot.id,query,api,confirm,onError:setError,onNotice:setNotice}):null,onAddTrustedUser:async(bot:any)=>{const users=list(bot.trustedUsers);const value=await ask(message('userId'));const next=value?.trim();if(next&&!users.includes(next))await saveBotPatch(bot,{trustedUsers:[...users,next]},message('saved'));},onRemoveTrustedUser:(bot:any,user:string)=>{const users=list(bot.trustedUsers).filter(item=>item!==user);return saveBotPatch(bot,{trustedUsers:users},message('saved'));},credential,credentialForm});
+      body=BotsPanel({React,ui,t,bots:displayBots.map((bot:any)=>botDraft?.id===bot.id?{...bot,configId:botDraft.configId??bot.configId}:bot),configs,channels,summary,busy,commandPending:commands.includes(activeBot?.id),selectedBotId,section:botSection,onSectionChange:(next:any)=>{cancelPathPick();setBotSection(next);},configSections,configLoading:false,configDirty:botDraft?.id===activeBot?.id&&!!botDraft,onSaveConfig:saveBotSettings,onDiscardConfig:()=>setBotDraft(null),onSelect:selectBot,onCreate:async()=>{if((botDraft||Object.keys(workspaceEdits).length)&&!await resolveDraft(saveDrafts,discardDrafts))return;setFieldErrors({});setNewOpen(true);},createForm,onServiceToggle:()=>mutate(summary?.health?.serviceRunning===true?'bot.service.stop':'bot.service.start',{},summary?.health?.serviceRunning===true?message('botServiceStopped'):message('botServiceStarted')),onBotToggle:(bot:any,running:boolean)=>runCommand(bot.id,running?'bot.stop':'bot.start',{id:bot.id},running?message('stopped'):message('connectionStarted')),onPersonaChange:(_bot:any,configId:string)=>updateBotDraft({configId}),onReconnect:(bot:any)=>runCommand(bot.id,'bot.reconnect',{id:bot.id},message('reconnected')),onAuthorize:login,onCredentials:(bot:any)=>setCredential({id:bot.id,accountId:bot.accountId??'',baselineAccountId:bot.accountId??'',appSecret:''}),onDelete:async(bot:any)=>{if(!await confirm(message('deleteBotConfirm',{name:bot.name,id:bot.id})))return;if(pickingPath===`workspace:${bot.id}`)cancelPathPick();setQr((current:any)=>current?.botId===bot.id?null:current);setCredential((current:any)=>current?.id===bot.id?null:current);await mutate('bot.delete',{id:bot.id},message('botDeleted'));setBots((current:any[]) => (current??displayBots).filter(item=>item.id!==bot.id));if(activeBot?.id===bot.id){setSelectedBotId('');setBotDraft(null);}setWorkspaceEdits((current:any)=>{const next={...current};delete next[bot.id];return next;});},onWorkingDirectoryChange:(bot:any,value:string)=>{if(pickingPath===`workspace:${bot.id}`||pickError?.key===`workspace:${bot.id}`)cancelPathPick();updateWorkspace(bot,value);},onBrowseDirectory:(bot:any)=>choosePath('directory',`workspace:${bot.id}`,workspaceEdits[bot.id]??bot.workingDirectory,value=>updateWorkspace(bot,value)),onDefaultDirectory:(bot:any)=>{cancelPathPick();updateWorkspace(bot,'');},onSaveWorkingDirectory:saveWorkspace,onRevertWorkingDirectory:(bot:any)=>{cancelPathPick();updateWorkspace(bot,bot.workingDirectory??'');},workspacePicking:pickingPath===`workspace:${activeBot?.id}`,onCancelPick:cancelPathPick,workspacePickError:pickError?.key===`workspace:${activeBot?.id}`?text(pickError?.message):undefined,workspaceEdits,workspaceDirectories:directories.sessions??[],storagePanel:activeBot&&botSection==='workspace'?h(WorkspaceStoragePanel,{key:activeBot.id,React,t,botId:activeBot.id,query,api,confirm,onError:setError,onNotice:setNotice}):null,onAddTrustedUser:async(bot:any)=>{const users=list(bot.trustedUsers);const value=await ask(message('userId'));const next=value?.trim();if(next&&!users.includes(next))await saveBotPatch(bot,{trustedUsers:[...users,next]},message('saved'));},onRemoveTrustedUser:(bot:any,user:string)=>{const users=list(bot.trustedUsers).filter(item=>item!==user);return saveBotPatch(bot,{trustedUsers:users},message('saved'));},credential,credentialForm});
     }
     if(tab==='catalog'){
       const selected=edit;
@@ -363,8 +353,7 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
       const cancelPick=cancelPathPick;
       const choose=async(key:ServiceDirectoryKey|'comfyUiWorkflowPath')=>{
         if(!voiceLibraryDraft)return;
-        if(key==='comfyUiWorkflowPath'){await browseWorkflowFiles(voiceLibraryDraft[key]??'');return;}
-        await chooseDirectory(key,voiceLibraryDraft[key],path=>{
+        await choosePath(key==='comfyUiWorkflowPath'?'file':'directory',key,voiceLibraryDraft[key],path=>{
           clearPathErrors(key,...key==='breezeTtsProjectRoot'&&!voiceLibraryDraft.breezeTtsVoicesRoot?['breezeTtsVoicesRoot']:[]);
           setVoiceLibraryDraft((current:any)=>{
             if(!current)return current;
@@ -441,7 +430,6 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
         qr.status==='pending'?h('img',{src:qr.qrImage,width:240,height:240,alt:t('qrAlt')}):null,
         ['error','expired','denied'].includes(qr.status)?ui.button(t('authorize'),()=>login({id:qr.botId,name:qr.botName}),{className:'primary'}):null,
       ):null,
-      workflowFileBrowser({React,ui,t,state:fileBrowser,onBrowse:browseWorkflowFiles,onLocation:(location:string)=>setFileBrowser((previous:any)=>({...previous,location})),onSelect:(file:string)=>{clearPathErrors('comfyUiWorkflowPath');setVoiceLibraryDraft((current:any)=>({...current,comfyUiWorkflowPath:file}));cancelPathPick();},onCancel:cancelPathPick}),
       automationVisited?h('div',{hidden:tab!=='automation'},h(AutomationPanel,{React,query,mutate:(action:string,input:any,noticeMessage:DisplayText)=>mutate(action,input,noticeMessage,true),configs,bots:summaryBots,confirm,onError:setError,busy,t,locale:activeLocale,active:tab==='automation',resolveDraft,onDraftState:(state:any)=>{automationDraftRef.current=state;setAutomationDirty(state.dirty);}})):null,
       question?h('dialog',{ref:dialogRef,className:'card dialog',role:'dialog','aria-modal':true,'aria-label':text(question.title),onKeyDown:(event:any)=>{if(event.key==='Escape')event.stopPropagation();},onCancel:(event:any)=>{event.preventDefault();event.stopPropagation();answer(question.mode==='leave'?'cancel':question.confirm?false:null);}},
         h('form',{onSubmit:(event:any)=>{event.preventDefault();answer(question.confirm?true:question.value);}},h('h3',null,text(question.title)),

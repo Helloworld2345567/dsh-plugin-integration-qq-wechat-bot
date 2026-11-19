@@ -125,7 +125,6 @@ export const diagnostics={
   filePickerUnsupported:{zh:'当前平台不支持选择工作流文件',en:'The file picker is not supported on this platform.'},
   fileNotFile:{zh:'选择的工作流路径不是文件',en:'The selected workflow path is not a file.'},
   fileInaccessible:{zh:'选择的工作流文件不存在或无法访问',en:'The selected workflow file is missing or inaccessible.'},
-  workflowDirectoryInaccessible:{zh:'无法读取工作流目录，请检查目录路径和访问权限。',en:'Cannot read the workflow directory. Check its path and access permissions.'},
   openDirectoryFailed:{zh:'打开配置目录失败：{detail}',en:'Could not open the configuration directory: {detail}'},
   configurationDirectoryMissing:{zh:'配置目录不存在',en:'The configuration directory does not exist.'},
   directoryWindowUnconfirmed:{zh:'未确认配置目录窗口已打开，请手动打开面板显示的路径',en:'The directory window could not be confirmed open. Open the path shown in the panel manually.'},

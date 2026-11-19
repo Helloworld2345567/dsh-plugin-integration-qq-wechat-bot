@@ -97,7 +97,8 @@ test('image settings stay independent and slow picking or background refresh nev
     if(body.name==='service.settings'){const snapshot=structuredClone(settings);if(deferSettings)await new Promise<void>(resolve=>{settingsResolve=resolve;});return Response.json({result:{data:snapshot}});}
     if(body.name==='service.settings.pick-file'){
       pickerSignal=init?.signal as AbortSignal;
-      return new Promise<Response>((resolve,reject)=>{pickerResolve=resolve;pickerSignal?.addEventListener('abort',()=>reject(pickerSignal?.reason),{once:true});});
+      // A late transport response must be ignored even if abort does not reject it.
+      return new Promise<Response>(resolve=>{pickerResolve=resolve;});
     }
     if(body.name==='service.settings.save'){
       if(deferSave)await new Promise<void>(resolve=>{saveResolve=resolve;});
@@ -123,25 +124,29 @@ test('image settings stay independent and slow picking or background refresh nev
     button('选择文件').props.onClick();await settle();
     assert.equal(button('正在选择…').props.disabled,true);assert.equal(field('ComfyUI 服务地址').props.disabled,false);
     field('ComfyUI 服务地址').props.onChange({target:{value:'http://127.0.0.1:8189'}});
-    const listing={directory:'E:\\COMFYUI\\workflows',parent:'E:\\COMFYUI',entries:[{name:'sub',path:'E:\\COMFYUI\\workflows\\sub',directory:true},{name:'selected.json',path:'E:\\COMFYUI\\workflows\\selected.json',directory:false}]};
-    pickerResolve(Response.json({result:listing}));await settle();
-    assert.ok(render().some(node=>node.type==='dialog'&&node.props?.['aria-label']==='选择工作流文件'));
-    button('📁 sub').props.onClick();await settle();
-    assert.equal(calls.at(-1).input.current,'E:\\COMFYUI\\workflows\\sub');
-    pickerResolve(Response.json({error:'Cannot read directory',message:{namespace:'bot-integration',key:'diagnostic.workflowDirectoryInaccessible'}},{status:400}));await settle();
-    assert.ok(render().some(node=>node.props?.role==='alert'&&typeof node.children[0]==='string'));
-    assert.equal(field('工作流目录').props.disabled,false);
-    field('工作流目录').props.onChange({target:{value:'E:\\COMFYUI\\workflows'}});button('进入目录').props.onClick();await settle();
-    pickerResolve(Response.json({result:listing}));await settle();
-    states[40]={comfyUiWorkflowPath:'Use an absolute path'};
+    pickerResolve(Response.json({result:{path:'E:\\COMFYUI\\workflows\\selected.json'}}));await settle();
+    assert.equal(render().some(node=>node.type==='dialog'&&node.props?.['aria-label']==='选择工作流文件'),false);
+    states[39]={comfyUiWorkflowPath:'Use an absolute path'};
     assert.equal(field('ComfyUI 工作流文件').props['aria-invalid'],true);
-    button('selected.json').props.onClick();await settle();
+    button('选择文件').props.onClick();await settle();
+    pickerResolve(Response.json({result:{path:'E:\\COMFYUI\\workflows\\selected.json'}}));await settle();
     assert.equal(field('ComfyUI 工作流文件').props['aria-invalid'],undefined);
     assert.equal(field('ComfyUI 服务地址').props.value,'http://127.0.0.1:8189');assert.equal(field('ComfyUI 工作流文件').props.value,'E:\\COMFYUI\\workflows\\selected.json');
+    // Cancelling the system dialog returns an empty path envelope without an error or write.
+    button('选择文件').props.onClick();await settle();pickerResolve(Response.json({result:{}}));await settle();
+    assert.equal(button('选择文件').props.disabled,false);assert.equal(render().some(node=>node.props?.role==='alert'),false);
+    assert.equal(calls.some(call=>call.name==='service.settings.save'),false);
     button('选择文件').props.onClick();await settle();button('取消').props.onClick();await settle();
     assert.equal(pickerSignal?.aborted,true);assert.equal(button('选择文件').props.disabled,false);
+    pickerResolve(Response.json({result:{path:'E:\\late.json'}}));await settle();
+    assert.equal(render().some(node=>node.props?.role==='alert'&&String(node.children?.[0]??'').includes('不支持')),false);
     assert.equal(field('ComfyUI 工作流文件').props.value,'E:\\COMFYUI\\workflows\\selected.json');
+    button('选择文件').props.onClick();await settle();
+    pickerResolve(Response.json({error:'Picker failed',message:{namespace:'bot-integration',key:'diagnostic.fileInaccessible'}},{status:400}));await settle();
+    assert.equal(field('ComfyUI 工作流文件').props['aria-invalid'],true);
+    button('选择文件').props.onClick();await settle();
     await selectService('OpenAI 生图');
+    assert.equal(pickerSignal?.aborted,true);pickerResolve(Response.json({result:{path:'E:\\late-after-switch.json'}}));await settle();
     deferSave=true;deferRefresh=true;save();await settle();
     assert.equal(button('正在保存…').props.disabled,true);assert.equal(field('默认模型').props.disabled,false);
     field('默认模型').props.onChange({target:{value:'edited-during-save'}});saveResolve();await settle();await settle();

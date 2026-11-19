@@ -72,13 +72,13 @@ test('Windows chooser sends paths as data and uses a cancellable PowerShell 7 ST
   const selected=await pickWindowsDirectory(initial,'en',signal,async(command,args,request,options)=>{
     calls++;assert.equal(path.win32.basename(command),'pwsh.exe');assert.ok(args.includes('-STA'));
     assert.equal(args.some(value=>value.includes(initial)),false);
-    assert.deepEqual(request,{initial,title:'Choose directory'});assert.equal(options.signal,signal);
+    assert.deepEqual(request,{kind:'directory',initial,title:'Choose directory'});assert.equal(options.signal,signal);
     assert.equal(options.maxOutputBytes,64*1024);
     return{path:initial};
   });
   assert.equal(selected,initial);assert.equal(calls,1);
   assert.equal(await pickWindowsDirectory(undefined,'zh',signal,async(_command,_args,request)=>{
-    assert.deepEqual(request,{initial:undefined,title:'选择目录'});return{path:null};
+    assert.deepEqual(request,{kind:'directory',initial:undefined,title:'选择目录'});return{path:null};
   }),null);
 });
 

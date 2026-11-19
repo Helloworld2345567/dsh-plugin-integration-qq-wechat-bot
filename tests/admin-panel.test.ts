@@ -467,7 +467,7 @@ test('workspace path edits, defaults and revert clear a previous picker error',a
 test('music directory uses the shared draft picker and saving discards its late response',async()=>{
   const summary={bots:[],configs:[],counts:{pendingDeliveries:0},health:{}};
   const settings={revision:'fixture',modelsRoot:'',gptSovitsUrl:'http://127.0.0.1:9880',musicHome:'C:/music',musicSources:['MiguMusicClient'],reports:{}};
-  const states:any[]=['services',summary];states[24]=settings;states[25]={...settings};states[36]='music';states[40]={musicHome:'Use an absolute path',gptSovitsUrl:'Use an HTTP address'};
+  const states:any[]=['services',summary];states[24]=settings;states[25]={...settings};states[35]='music';states[39]={musicHome:'Use an absolute path',gptSovitsUrl:'Use an HTTP address'};
   const calls:any[]=[];let finish:(result:any)=>void=()=>{},fail=false;
   const harness=panelHarness(states,body=>{
     calls.push(body);
@@ -484,9 +484,9 @@ test('music directory uses the shared draft picker and saving discards its late 
     await harness.start('music-shared-picker');await pick();
     assert.equal(calls.at(-1).input.current,'C:/music');
     finish({path:'C:/chosen'});await settlePanel();assert.equal(field().props.value,'C:/chosen');
-    assert.equal(field().props['aria-invalid'],undefined);assert.equal(states[40].gptSovitsUrl,'Use an HTTP address');
+    assert.equal(field().props['aria-invalid'],undefined);assert.equal(states[39].gptSovitsUrl,'Use an HTTP address');
     assert.equal(calls.some(body=>body.name==='service.settings.save'),false);
-    fail=true;await pick();assert.equal(field().props['aria-invalid'],true);
+    fail=true;await pick();assert.ok(field().props['aria-invalid']);
     field().props.onChange({target:{value:'C:/typed'}});assert.equal(field().props['aria-invalid'],undefined);
     fail=false;await pick();submitButton(harness.render(),'保存');await settlePanel();
     finish({path:'C:/late'});await settlePanel();

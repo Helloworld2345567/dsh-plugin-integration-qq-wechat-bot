@@ -21,7 +21,7 @@ Primary sources:
 | Service configuration | [Services panel](../../src/client/services-panel.ts), [image configuration](../../src/core/image-service-config.ts) |
 | Personas and files | [Persona panel](../../src/client/persona-panel.ts), [panel entry point](../../src/client/index.ts) |
 | Automation | [Automation panel](../../src/client/automation.ts), [automation core](../../src/core/automation.ts) |
-| Directories, files, and workspaces | [Directory picker](../../src/harness/pick-directory.ts), [file browser](../../src/client/workflow-file-browser.ts), [storage panel](../../src/client/workspace-storage-panel.ts) |
+| Directories, files, and workspaces | [Directory picker](../../src/harness/pick-directory.ts), [file picker](../../src/harness/pick-file.ts), [storage panel](../../src/client/workspace-storage-panel.ts) |
 
 The local review prototype lives in `.codex/panel-ui-demo/` and is not a release dependency. Where the prototype conflicts with these guidelines, follow these guidelines and the actual configuration.
 
@@ -52,7 +52,7 @@ Consistency applies to action meaning, submission timing, and loading, cancellat
 | Operation | Result of clicking | Submission and cancellation |
 | --- | --- | --- |
 | Select directory | All directory fields call the same native directory-picker entry point and fill the corresponding field on success | Update only the draft. Cancellation preserves the original value. Do not open File Explorer, save, or start a service |
-| Select file | Open the existing workflow file picker and accept only currently supported files | Fill the draft after selection. Cancellation makes no change. Do not alternate between text prompts or simulated directories at different entry points |
+| Select file | Open the system file picker and accept only JSON workflow files | Share loading, cancellation, errors, and field updates with directory selection; update only the draft |
 | Open directory | Use the existing host capability to open the actual directory | Immediate action; do not change fields or mark the draft dirty |
 | Select provider/model/service/voice | Use consistent controls for similar selectors. Prefer native select controls for finite options; use selection dialogs only for complex catalogs | Change only the corresponding draft. Do not automatically save, start, authorize, probe, or preview audio |
 | Refresh list | Reload existing model, Service Profile, or library-scan results | Preserve drafts and do not require unrelated changes to be saved first. Clearly show an invalid selection without automatically choosing another |
@@ -65,13 +65,13 @@ Consistency applies to action meaning, submission timing, and loading, cancellat
 ### Directory and file selection
 
 - Use the current path only as an initial location supported by the existing capability. Do not introduce new configuration or compatibility layers because a native picker cannot open a specific location.
-- On Windows, use a topmost owner window so the directory picker opens above other windows; release both on close or cancellation. Other platforms retain the host picker.
+- On Windows, directory and file selection share a topmost owner window and cancellation mechanism; release both on close or cancellation. Directory selection on other platforms retains the host capability. If native file selection is unavailable, report that it is unsupported and keep manual path entry available.
 - Show “Selecting…” and a cancellation action while selecting, locking only that selection action. Unrelated fields remain editable.
 - After page or object changes, cancellation, or unmounting, late selection results must not populate a different object.
 - Show a short failure reason and retry action near the field. User cancellation is not an error.
 - Clear the field's previous picker error when editing its path, restoring its default, or undoing changes. Saving a scope ends its pending selection and ignores late results.
 - Follow the same flow for workspace directories, model libraries, and service roots. File selection and opening a directory retain their distinct meanings.
-- Use “Enter directory” and “Parent directory” inside the file browser, and “Open directory” for opening the system file manager. Do not add directory creation, uploads, or general file management.
+- Use the system file picker for workflow files and limit it to supported JSON files; use “Open directory” for opening the system file manager. Do not add directory creation, uploads, or general file management.
 
 ### Service and model selection
 
@@ -111,7 +111,7 @@ This table limits additions; it is not a list of existing settings to remove. Be
 
 - Keep host integration, page switching, and necessary coordination in `src/client/index.ts`. Group queries, drafts, and actions by page. Reuse existing `ui.ts` and `layout.ts`, extracting shared components only when real duplication appears.
 - Prioritize consistent form fields, selectors, save bars, status feedback, native dialogs, and asynchronous selection actions. Do not build a general workflow framework or a second state model.
-- Use `<dialog>.showModal()` for confirmation, form, file-selection, and other modal dialogs. Preserve Escape, cancellation, focus restoration, and unsaved-change protection. Do not add a handwritten focus trap.
+- Use `<dialog>.showModal()` for confirmation, form, and other in-page modal dialogs. Preserve Escape, cancellation, focus restoration, and unsaved-change protection. Do not add a handwritten focus trap.
 - Use native form/label/input/select elements and support Enter to submit. On submission failure, focus the first error. Do not show fields as invalid on initial display.
 - Scope styles to the plugin root. Continue using container queries, visible focus, and reduced-motion preferences. Centralize host adaptation rather than spreading selectors that depend on the host DOM hierarchy.
 - New entry points must identify their existing schema/catalog/API basis and reuse the corresponding operation contract. New backend capabilities require a separate, explicit request; they must not be incidental additions to a visual refresh.
