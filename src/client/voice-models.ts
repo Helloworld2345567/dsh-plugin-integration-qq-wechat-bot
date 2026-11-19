@@ -13,7 +13,7 @@ export function useVoiceModel(config:BotConfig,role:VoiceModelRole,profile:Pick<
     next.media.voice={...next.media.voice,enabled:true,engine:profile.serviceId as 'gpt-sovits'|'breeze-tts',profileRef,protocol:undefined,voice:undefined,replyMode:next.media.voice?.replyMode??'on_demand',format:'wav'};
     next.tools=[...new Set([...next.tools,'bot_voice'])];next.skills=[...new Set([...next.skills,'voice-generation'])];
   }else{
-    next.media.singing={speakerId:0,pitchShift:0,indexRate:0,defaultOutput:'mp3',separation:{enabled:false,instrumentalMix:false,volume:1,status:'unconfigured'},...next.media.singing,enabled:true,profileRef};
+    next.media.singing={defaultOutput:'mp3',...next.media.singing,enabled:true,profileRef};
     next.tools=[...new Set([...next.tools,'bot_sing'])];next.skills=[...new Set([...next.skills,'singing-conversion'])];
   }
   return next;

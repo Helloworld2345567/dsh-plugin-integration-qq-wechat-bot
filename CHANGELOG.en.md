@@ -6,6 +6,11 @@ This document records verifiable changes for users and maintainers. A third-part
 
 ## [Unreleased]
 
+- Added `/draw`, `/edit` and Chinese command prefixes for direct image jobs. Edits can use an attached or deferred image, or a delivered image identified by its platform receipt. Concurrent ComfyUI edits upload their references under distinct names.
+- Process inbound messages in arrival order within each conversation and schedule a full batch of eight immediately. Image edits can use a single reference from the current turn. Both RVC backends honor per-turn tuning.
+- Overview now provides filterable, paginated delivery records with manual retry, delivery stages, acceptance times and platform receipts. Timing distinguishes the first model content chunk from the first and last platform acceptance.
+- Removed retired media settings, duplicate writes to old cursor keys and the full-state administration endpoint. See the [configuration reference](docs/en/configuration.md) before reusing development data.
+
 - Share each native session instance between the Web UI and QQ/WeChat, fixing duplicate restoration and writer-held errors after restart. Initialize persona, model, permissions and tools once per instance while preserving conversation history.
 - Normalize absolute image-service paths using the current platform first, preserving ComfyUI workflow paths on Linux.
 - Add the English management UI, plugin metadata and formal documentation, retaining Chinese entry points and reciprocal language navigation.

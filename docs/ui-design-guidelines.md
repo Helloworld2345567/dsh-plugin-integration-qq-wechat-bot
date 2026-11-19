@@ -16,12 +16,12 @@
 
 | 范围 | 实际来源 |
 | --- | --- |
-| 字段与语义 | [配置参考](configuration.md)、[类型与 schema](../src/core/types.ts) |
-| 机器人模型、行为与媒体 | [机器人设置](../src/client/bot-settings-panel.ts)、[音色选择](../src/client/voice-models.ts) |
-| 服务配置 | [服务面板](../src/client/services-panel.ts)、[图片配置](../src/core/image-service-config.ts) |
-| 人格与文件 | [人格面板](../src/client/persona-panel.ts)、[面板入口](../src/client/index.ts) |
-| 自动化 | [自动化面板](../src/client/automation.ts)、[自动化核心](../src/core/automation.ts) |
-| 目录、文件与工作区 | [目录选择](../src/harness/pick-directory.ts)、[文件选择](../src/harness/pick-file.ts)、[存储面板](../src/client/workspace-storage-panel.ts) |
+| 字段与语义 | [配置参考](configuration.md)、[类型与 schema](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/core/types.ts) |
+| 机器人模型、行为与媒体 | [机器人设置](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/client/bot-settings-panel.ts)、[音色选择](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/client/voice-models.ts) |
+| 服务配置 | [服务面板](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/client/services-panel.ts)、[图片配置](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/core/image-service-config.ts) |
+| 人格与文件 | [人格面板](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/client/persona-panel.ts)、[面板入口](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/client/index.ts) |
+| 自动化 | [自动化面板](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/client/automation.ts)、[自动化核心](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/core/automation.ts) |
+| 目录、文件与工作区 | [目录选择](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/harness/pick-directory.ts)、[文件选择](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/harness/pick-file.ts)、[存储面板](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/client/workspace-storage-panel.ts) |
 
 本地评审原型位于 `.codex/panel-ui-demo/`，不作为发布依赖。规范与原型冲突时按本规范和真实配置实现。
 

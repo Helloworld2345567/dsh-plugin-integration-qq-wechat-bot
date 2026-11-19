@@ -61,7 +61,8 @@ export interface ServicesPanelProps {
 function stateBadge(h:any,props:ServicesPanelProps,serviceId:ServicePanelId){
   if(serviceId==='robot')return h('span',{key:'status',className:'badge',role:'status'},props.summary?.health?(props.summary.health.serviceRunning?props.t('online'):props.t('stopped')):props.t('unknown'));
   if(serviceId==='rvc')return h('span',{key:'status',className:'badge',role:'status',title:reportDiagnostics(props.settings?.reports?.rvc,props.locale)},modelLibraryLabel(props.settings?.reports?.rvc,props.t));
-  const value=props.health?.[serviceId];
+  const missingPath=(serviceId==='comfyui'&&props.settings?.comfyUiWorkflowPath==='')||(serviceId==='music'&&props.settings?.musicHome==='');
+  const value=missingPath?{state:'missing'}:props.health?.[serviceId];
   return h('span',{key:'status',className:`badge${['degraded','unavailable','blocked'].includes(value?.state)?' warning':''}`,role:'status',title:diagnosticText(value,props.locale)},serviceHealthLabel(value,props.t));
 }
 

@@ -22,7 +22,7 @@ class WorkflowInspectorTests(unittest.TestCase):
                 "class_type": "SizePicker",
                 "inputs": {"width_override": 640, "height_override": 768, "batch_size": 1},
             },
-            "30": {"class_type": "SaveImage", "inputs": {}},
+            "30": {"class_type": "SaveImage", "inputs": {"images": ["10", 0]}},
         }})
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["nodeCount"], 4)
@@ -43,6 +43,41 @@ class WorkflowInspectorTests(unittest.TestCase):
         self.assertFalse(result["capabilities"]["prompt"])
         with self.assertRaises(WorkflowInspectionError):
             inspect_workflow([])
+
+    def test_reports_resolution_preset_and_chinese_batch_control(self):
+        result = inspect_workflow({"76": {
+            "class_type": "ResolutionPreset",
+            "inputs": {"resolution_json": '{"version":1,"width":1024,"height":1600}'},
+        }, "207": {
+            "class_type": "PrimitiveInt",
+            "_meta": {"title": "批量大小"},
+            "inputs": {"value": 1},
+        }})
+        self.assertEqual(result["capabilities"]["resolution"], {"width": True, "height": True, "paired": True})
+        self.assertTrue(result["capabilities"]["batch"])
+
+    def test_reference_must_reach_the_pixels_of_an_image_output(self):
+        graph = {
+            "ref": {"class_type": "LoadImage", "inputs": {"image": "reference.png"}},
+            "unused": {"class_type": "ComfySwitchNode", "inputs": {"on_false": ["ref", 0]}},
+            "gen": {"class_type": "EmptyImage", "inputs": {}},
+            "save": {"class_type": "ConditionalSaveImage", "inputs": {"images": ["gen", 0], "metadata": ["ref", 0]}},
+            "show": {"class_type": "PreviewImage", "inputs": {"images": ["save", 0]}},
+        }
+        self.assertFalse(inspect_workflow(graph)["capabilities"]["referenceEdit"])
+        for name in ("SaveImage", "PreviewImage", "Image Saver Simple", "ConditionalSaveImage"):
+            with self.subTest(output=name):
+                graph["save"] = {"class_type": name, "inputs": {"images": ["unused", 0]}}
+                self.assertTrue(inspect_workflow(graph)["capabilities"]["referenceEdit"])
+
+    def test_two_distinct_connected_reference_slots_are_ambiguous(self):
+        graph = {
+            "a": {"class_type": "LoadImage", "inputs": {"image": "one.png"}},
+            "b": {"class_type": "LoadImage", "inputs": {"image": "two.png"}},
+            "mix": {"class_type": "ImageBlend", "inputs": {"image1": ["a", 0], "image2": ["b", 0]}},
+            "save": {"class_type": "SaveImage", "inputs": {"images": ["mix", 0]}},
+        }
+        self.assertFalse(inspect_workflow(graph)["capabilities"]["referenceEdit"])
 
 
 if __name__ == "__main__":

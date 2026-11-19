@@ -14,7 +14,7 @@ import {gptSovitsSchema} from './types.js';
 import {normalizeGptSovitsBaseUrl,normalizeVoiceServiceBaseUrl} from './voice-config.js';
 import {sanitizePublicServiceText,sanitizeMessageDescriptor} from './service-errors.js';
 import {ExternalServiceLauncher,type LaunchableService,type ServiceStartResult, type ServiceLauncher} from './service-launcher.js';
-import {defaultMusicHome,musicHomeSchema,musicSourcesSchema,DEFAULT_MUSIC_SOURCES} from './music-config.js';
+import {musicHomeSchema,musicSourcesSchema,DEFAULT_MUSIC_SOURCES} from './music-config.js';
 import {imageServiceSettingsSchema} from './image-service-config.js';
 
 const SERVICES=['rvc','gpt-sovits','breeze-tts'] as const;
@@ -27,7 +27,7 @@ export const voiceLibrarySettingsSchema=z.object({
   gptSovitsProjectRoot:z.string().trim().max(4096).refine(value=>!value||path.isAbsolute(value)&&!/[\x00-\x1f]/.test(value),{message:'GPT-SoVITS 项目目录须为绝对路径',params:{message:diagnostic('absolutePathRequired')}}).transform(value=>value?path.resolve(value):'').default(''),
   breezeTtsProjectRoot:z.string().trim().max(4096).refine(value=>!value||path.isAbsolute(value)&&!/[\x00-\x1f]/.test(value),{message:'Breeze TTS 项目目录须为绝对路径',params:{message:diagnostic('absolutePathRequired')}}).transform(value=>value?path.resolve(value):'').default(''),
   breezeTtsVoicesRoot:z.string().trim().max(4096).refine(value=>!value||path.isAbsolute(value)&&!/[\x00-\x1f]/.test(value),{message:'Breeze TTS 音色目录须为绝对路径',params:{message:diagnostic('absolutePathRequired')}}).transform(value=>value?path.resolve(value):'').default(''),
-  musicHome:musicHomeSchema.default(defaultMusicHome()),
+  musicHome:musicHomeSchema,
   musicSources:musicSourcesSchema.default([...DEFAULT_MUSIC_SOURCES]),
   imageProtocol:imageServiceSettingsSchema.shape.imageProtocol,
   openAiBaseUrl:imageServiceSettingsSchema.shape.openAiBaseUrl,
@@ -108,7 +108,8 @@ export class VoiceModelLibrary {
   }
   async start(serviceId:LaunchableService,signal:AbortSignal):Promise<ServiceStartResult>{
     const settings=this.settings();
-    const projectRoot=serviceId==='comfyui'?path.dirname(settings.comfyUiWorkflowPath):serviceId==='breeze-tts'?settings.breezeTtsProjectRoot:settings.gptSovitsProjectRoot||path.dirname(settings.modelsRoot);
+    if(serviceId==='comfyui'&&!settings.comfyUiWorkflowPath)throw Error('COMFYUI_WORKFLOW_REQUIRED');
+    const projectRoot=serviceId==='comfyui'?path.dirname(settings.comfyUiWorkflowPath):serviceId==='breeze-tts'?settings.breezeTtsProjectRoot:settings.gptSovitsProjectRoot||(settings.modelsRoot&&path.dirname(settings.modelsRoot));
     if(!projectRoot)throw Error(serviceId==='breeze-tts'?'BREEZE_TTS_PROJECT_ROOT_REQUIRED':'GPT_SOVITS_PROJECT_ROOT_REQUIRED');
     return this.launcher.start({serviceId,baseUrl:serviceId==='breeze-tts'?settings.breezeTtsUrl:serviceId==='comfyui'?settings.comfyUiBaseUrl:settings.gptSovitsUrl,projectRoot},signal);
   }

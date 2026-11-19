@@ -34,7 +34,7 @@
 - channel identity 拥有会话、附件、记忆与输出；模型不能指定可信 identity、scope、文件路径或平台目标。
 - 运行任务冻结配置与 Profile revision；排队、执行、结果登记和投递继续检查取消、当前权限与 session generation。
 - 私有 Profile、凭据、端点和模型路径不能进入人格公共投影或跨层错误。错误只保留稳定类别及脱敏诊断。
-- 只支持 V4 人格，不读取、迁移或回退 V3；未登记能力显示 `missing`/`blocked`，不静默换服务。
+- 未登记能力显示 `missing`/`blocked`，不静默换服务。
 - 提交后结果未知不自动重放；恢复复用原 job、Asset 与投递身份。
 - Service Adapter 只接收冻结作业、受控输入和分配目录，不持有 Store、Session、渠道身份、delivery 或 Harness Context。内部接口不是第三方 ABI 承诺。
 

@@ -55,14 +55,6 @@ export class BotManagement {
     const {id,kind,botId,scopeKey,scope,createdAt,updatedAt,...settings}=config;
     return{action,configured:true,...settings,nextAt:config.nextAt?new Date(config.nextAt).toISOString():null};
   }
-  private async busSession(binding:SessionBinding,snapshot:TurnSnapshot,input:BotSessionArguments,signal:AbortSignal){
-    if(!['status','new','compact','resume'].includes(input.action))return;
-    const args=input.action==='resume'?input.sessionId??'':'';const command=managementCommand({name:input.action,args});if(!command)throw Error('UNKNOWN_MANAGEMENT_COMMAND');const result=await this.runtime.commandBus.execute({source:'tool',binding,snapshot,signal},command);
-    if(result.kind==='queued')return result.value;
-    if(result.kind!=='reply')return result;
-    const data=result.data as Record<string,unknown>|undefined;return{action:input.action,text:result.text,...data};
-  }
-
   private current(binding:SessionBinding,snapshot:TurnSnapshot,signal:AbortSignal,privileged=false):SessionBinding {
     signal.throwIfAborted();const current=this.runtime.repos.sessions.findBinding(binding.key);
     if(!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation||scopeKey(binding.scope)!==binding.key||scopeKey(current.scope)!==binding.key||snapshot.botId!==current.scope.botId)throw Error('MANAGEMENT_SESSION_CHANGED');
@@ -73,17 +65,23 @@ export class BotManagement {
   }
 
   async session(binding:SessionBinding,snapshot:TurnSnapshot,input:unknown,signal:AbortSignal){
-    const current=this.current(binding,snapshot,signal);const args=botSessionArgumentsSchema.parse(input);const busResult=await this.busSession(current,snapshot,args,signal);if(busResult)return busResult;const config=this.runtime.effectiveConfig(current);
-    switch(args.action){
-      case 'help':return{action:args.action,text:commandHelp(snapshot.trusted&&trusted(this.runtime.repos.bots.bot(current.scope.botId),current.scope),snapshot.config.allowHostTools&&config.allowHostTools,snapshot.systemLocale)};
-      case 'status':return{action:args.action,sessionId:current.sessionId,persona:{id:config.id,name:config.name},model:config.model,modelOverride:!!current.modelOverride,currentTurnPersonaId:snapshot.config.id,currentTurnModel:snapshot.config.model,state:this.runtime.sessionStatus(current.scope)};
-      case 'list':{
-        const page=args.page??1;const all=this.runtime.repos.sessions.sessions(current.scope);const sessions=all.slice((page-1)*10,page*10).map(record=>({sessionId:record.id,current:record.id===current.sessionId,persisted:record.persisted,createdAt:record.createdAt,updatedAt:record.updatedAt,...record.personaId?{personaId:record.personaId}:{}}));
-        return{action:args.action,page,pages:Math.max(1,Math.ceil(all.length/10)),sessions};
-      }
-      case 'resume':this.runtime.repos.sessions.session(current.scope,args.sessionId!);return this.runtime.queueSessionAction(current,snapshot,{action:'resume',sessionId:args.sessionId!},signal);
-      default:return this.runtime.queueSessionAction(current,snapshot,{action:args.action},signal);
+    const current=this.current(binding,snapshot,signal);
+    const args=botSessionArgumentsSchema.parse(input);
+    if(args.action==='help'){
+      const config=this.runtime.effectiveConfig(current);
+      return {action:args.action,text:commandHelp(snapshot.trusted&&trusted(this.runtime.repos.bots.bot(current.scope.botId),current.scope),snapshot.config.allowHostTools&&config.allowHostTools,snapshot.systemLocale)};
     }
+    if(args.action==='list'){
+      const page=args.page??1,all=this.runtime.repos.sessions.sessions(current.scope);
+      const sessions=all.slice((page-1)*10,page*10).map(record=>({sessionId:record.id,current:record.id===current.sessionId,persisted:record.persisted,createdAt:record.createdAt,updatedAt:record.updatedAt,...record.personaId?{personaId:record.personaId}:{}}));
+      return {action:args.action,page,pages:Math.max(1,Math.ceil(all.length/10)),sessions};
+    }
+    const command=managementCommand({name:args.action,args:args.sessionId??''});
+    if(!command)throw Error('UNKNOWN_MANAGEMENT_COMMAND');
+    const result=await this.runtime.commandBus.execute({source:'tool',binding:current,snapshot,signal},command);
+    if(result.kind==='queued')return result.value;
+    if(result.kind!=='reply')return result;
+    return {action:args.action,text:result.text,...result.data as Record<string,unknown>|undefined};
   }
 
   async persona(binding:SessionBinding,snapshot:TurnSnapshot,input:unknown,signal:AbortSignal){

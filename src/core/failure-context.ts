@@ -3,7 +3,7 @@ import type {FailureRepository} from './ports/telemetry.js';
 import type {DeliveryRepository} from './ports/delivery.js';
 import type {InboxRepository} from './ports/inbox.js';
 
-export interface ProcessingFailure {sessionId:string;scope:string;code:string;state:'failed'|'cancelled';stage:'attachments'|'model'|'delivery';sourceIds:string[];at:number}
+export interface ProcessingFailure {sessionId:string;scope:string;code:string;state:'failed'|'cancelled';stage:'attachments'|'media'|'model'|'delivery';sourceIds:string[];at:number}
 interface FailureContextRow {sourceId:string;request:string;at:string;status:string;assetId?:string}
 
 export interface FailureContextPorts {
@@ -23,7 +23,7 @@ export function recentFailureContext(ports:FailureContextPorts,binding:SessionBi
     if(f.stage==='delivery'&&outputs.length&&outputs.every(d=>d.state==='sent'))return[];
     return f.sourceIds.filter(id=>!currentSources.has(id)).flatMap(id=>{
       const source=ports.inbox.source(binding.key,id);if(!source)return[];
-      return[{sourceId:id,request:source.text.slice(0,500),at:new Date(f.at).toISOString(),status:f.stage==='attachments'?'Attachment preparation failed; the request did not reach the model and no new image was generated':'Result persistence or delivery did not complete; delivery status is unconfirmed'}];
+      return[{sourceId:id,request:source.text.slice(0,500),at:new Date(f.at).toISOString(),status:f.stage==='media'?'The direct image request failed before any image was queued for delivery':f.stage==='attachments'?'Attachment preparation failed; the request did not reach the model and no new image was generated':'Result persistence or delivery did not complete; delivery status is unconfirmed'}];
     });
   });
   const represented=new Set(rows.map(row=>row.sourceId));

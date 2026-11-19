@@ -1,11 +1,14 @@
 import { imageEndpointSchema, type BotConfig } from './types.js';
 import {imageServiceSettingsSchema,type ImageServiceSettings} from './image-service-config.js';
 
+export function imagePromptWithStyle(prompt:string,style:string):string {return `${prompt}\n${style}`;}
+
 /** Resolve the selected protocol against operator-owned service settings. */
 export function resolveImageSkill(config:BotConfig,settings:ImageServiceSettings=imageServiceSettingsSchema.parse({})){
   const override=config.media.image;
   if(override?.enabled===false)throw new Error('IMAGE_SKILL_DISABLED');
   const protocol=override?.protocol??settings.imageProtocol;
+  if(protocol==='comfyui'&&!settings.comfyUiWorkflowPath)throw new Error('COMFYUI_WORKFLOW_REQUIRED');
   return imageEndpointSchema.parse(protocol==='comfyui'
     ? {protocol,baseUrl:settings.comfyUiBaseUrl,model:'comfyui',workflowPath:settings.comfyUiWorkflowPath}
     : protocol==='google'

@@ -8,7 +8,6 @@ import {createChannelRegistry} from '../src/core/channel-registry.js';
 import type {ChannelAdapter} from '../src/core/types.js';
 import {QQAdapter} from '../src/channels/qq.js';
 import {WeixinAdapter} from '../src/channels/weixin.js';
-import {clearReplySequences,mutateLegacyDelivery} from './sqlite-fixtures.js';
 
 const settle=()=>new Promise<void>(resolve=>setImmediate(resolve));
 async function fixture(t:any,send:ChannelAdapter['send']=async()=> 'receipt'){
@@ -36,11 +35,10 @@ test('progress batches and final output are independent, idempotent and share pe
   const reopened=new SqlitePersistence(f.home);try{reopened.deliveries.enqueue(f.binding,'new-source','new-turn',[{type:'text',text:'next'}],f.reply);assert.equal(reopened.deliveries.deliveries().at(-1)!.replySequence,5);}finally{reopened.close();}
 });
 
-test('legacy QQ rows seed new reply sequences without rewriting their retry identity',async t=>{
-  const f=await fixture(t);f.final();const old=f.store.deliveries.deliveries()[0];delete old.replySequence;old.index=6;
-  mutateLegacyDelivery(f.store,old.id,old,6);
-  clearReplySequences(f.store);
-  f.progress(1);assert.equal(f.store.deliveries.deliveries().at(-1)!.replySequence,8);assert.equal(f.store.deliveries.deliveries()[0].replySequence,undefined);
+test('rolled back QQ replies do not consume sequence numbers, even on the first reply',async t=>{
+  const f=await fixture(t);
+  assert.throws(()=>f.store.repositories().unitOfWork.transaction(()=>{f.final();throw Error('rollback');}),/rollback/);
+  f.progress(1);f.final();assert.deepEqual(f.store.deliveries.deliveries().map(d=>d.replySequence),[1,2]);
 });
 
 test('interim messages preserve the final text and attachment and isolate reply identities',async t=>{

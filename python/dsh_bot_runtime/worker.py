@@ -114,7 +114,14 @@ def image(job):
             command.extend(["--image", source["path"]])
     result = subprocess.run(command, capture_output=True, timeout=(job.get("timeoutMs", 0) / 1000 or None), check=False)
     if result.returncode:
-        raise JobError("IMAGE_PROVIDER_FAILED")
+        from dsh_bot_runtime.errors import validated_error_code
+        try:
+            failure = json.loads(record.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            failure = None
+        detail = failure.get("error") if isinstance(failure, dict) and failure.get("verdict") == "FAIL" else None
+        code = detail.get("code") if isinstance(detail, dict) else None
+        raise JobError(validated_error_code(code, "IMAGE_PROVIDER_FAILED"))
     value = json.loads(record.read_text(encoding="utf-8"))
     # The canonical client records paths; never take a path from a model response.
     if "outputs" not in value:

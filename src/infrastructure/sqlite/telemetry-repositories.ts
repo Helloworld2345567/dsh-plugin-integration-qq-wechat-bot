@@ -1,5 +1,5 @@
 import type {TurnMetric, TurnSnapshot} from '../../core/types.js';
-import type {FailureRecord, MetricPercentiles, SessionActionRecord, SessionActionRepository, TurnMetricRepository, TurnSnapshotRepository, FailureRepository, TurnStageField} from '../../core/ports/telemetry.js';
+import type {FailureRecord, InboxLatency, MetricPercentiles, SessionActionRecord, SessionActionRepository, TurnMetricRepository, TurnSnapshotRepository, FailureRepository, TurnStageField} from '../../core/ports/telemetry.js';
 import type {SqliteDatabase} from './database.js';
 
 /** Per-turn timing metrics; ownership fields never change after creation. */
@@ -19,8 +19,13 @@ export class SqliteTurnMetricRepository implements TurnMetricRepository {
       if (this.findTurnMetric(id)) this.updateTurnMetric(id, patch);
     }
   }
-  updateTurnMetricsByTurn(scope: string, turnId: string, patch: Partial<Omit<TurnMetric, 'id'>>): void {
-    for (const metric of this.turnMetrics()) if (metric.scopeKey === scope && metric.turnId === turnId) this.updateTurnMetric(metric.id, patch);
+  recordDeliveryStage(scope: string, sessionId: string, turnId: string, stage: 'sending' | 'sent', at: number): void {
+    const update = stage === 'sending'
+      ? "json_insert(json,'$.deliveryStartedAt',?)"
+      : "json_set(json_insert(json,'$.firstSentAt',?),'$.sentAt',?)";
+    this.database.db.prepare(`UPDATE records SET json=${update}
+      WHERE kind='turn-metric' AND json_extract(json,'$.scopeKey')=? AND json_extract(json,'$.sessionId')=? AND json_extract(json,'$.turnId')=?`)
+      .run(...(stage === 'sending' ? [at] : [at, at]), scope, sessionId, turnId);
   }
   markTurnStage(scope: string, ids: readonly string[], field: TurnStageField, at = Date.now()): void {
     for (const sourceId of ids) {
@@ -28,13 +33,23 @@ export class SqliteTurnMetricRepository implements TurnMetricRepository {
       if (this.findTurnMetric(id)) this.updateTurnMetric(id, {[field]:at});
     }
   }
-  metricPercentiles(field: TurnStageField, from = 0, to = Date.now()): MetricPercentiles {
-    const values = this.turnMetrics().map(metric => {
-      const start = metric.receivedAt, end = metric[field];
-      return typeof end === 'number' && start >= from && end <= to ? end - start : undefined;
-    }).filter((value): value is number => value !== undefined).sort((a, b) => a - b);
-    const percentile = (rank: number) => values.length ? values[Math.min(values.length - 1, Math.ceil(values.length * rank) - 1)] : null;
-    return {count:values.length, p50:percentile(.5), p95:percentile(.95), max:values.at(-1) ?? null};
+  inboxLatency(): InboxLatency {
+    const rows = this.database.db.prepare(`SELECT json_extract(json,'$.receivedAt') receivedAt,
+      json_extract(json,'$.modelStartedAt') modelStartedAt, json_extract(json,'$.modelFirstChunkAt') modelFirstChunkAt,
+      json_extract(json,'$.modelFirstTextAt') modelFirstTextAt, json_extract(json,'$.firstSentAt') firstSentAt, json_extract(json,'$.sentAt') sentAt
+      FROM records WHERE kind='turn-metric'`).all();
+    const now = Date.now();
+    const summarize = (field: TurnStageField): MetricPercentiles => {
+      const values: number[] = [];
+      for (const row of rows) {
+        const start=row.receivedAt, end=row[field];
+        if (typeof start==='number' && typeof end==='number' && start>=0 && end>=start && end<=now) values.push(end-start);
+      }
+      values.sort((a,b)=>a-b);
+      const percentile=(rank:number)=>values[Math.ceil(values.length*rank)-1]??null;
+      return {count:values.length,p50:percentile(.5),p95:percentile(.95),max:values.at(-1)??null};
+    };
+    return {inboxToModel:summarize('modelStartedAt'),inboxToFirstModelChunk:summarize('modelFirstChunkAt'),inboxToFirstModelText:summarize('modelFirstTextAt'),inboxToFirstSent:summarize('firstSentAt'),inboxToSent:summarize('sentAt')};
   }
   deleteMetric(id: string): number {return Number(this.database.db.prepare("DELETE FROM records WHERE kind='turn-metric' AND id=?").run(id).changes);}
 }

@@ -39,7 +39,7 @@ The 2026-11-03 audit recorded these deferred families. The current script still 
 | Scope | Reason |
 | --- | --- |
 | `@deepseek-ai/dsh*` and `@deepseek-ai/libreoffice-kit` | The plugin binds Harness `0.2.1-rc.5`; changes require a compatible version and native acceptance |
-| `undici`, nested `zod`, `@modelcontextprotocol/client`, `fflate` | Introduced by Harness's dependency tree and handled with compatible upstream releases |
+| `undici`, nested `zod`, `@modelcontextprotocol/client`, `fflate`, `picomatch` | Introduced by Harness's dependency tree and handled with compatible upstream releases |
 
 This is not a zero-vulnerability claim. Vulnerabilities in top-level direct business dependencies still fail, and new risks under a known package name still require review. The package-name set is maintained in `scripts/audit-dependencies.mjs`.
 

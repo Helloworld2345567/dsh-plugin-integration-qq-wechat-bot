@@ -39,7 +39,7 @@ pip-licenses --from=mixed --format=table
 | 范围 | 暂缓原因 |
 | --- | --- |
 | `@deepseek-ai/dsh*` 与 `@deepseek-ai/libreoffice-kit` | 插件绑定 Harness `0.2.1-rc.5`，需要兼容版本及原生验收 |
-| `undici`、嵌套 `zod`、`@modelcontextprotocol/client`、`fflate` | Harness 依赖树引入，需随兼容上游版本处理 |
+| `undici`、嵌套 `zod`、`@modelcontextprotocol/client`、`fflate`、`picomatch` | Harness 依赖树引入，需随兼容上游版本处理 |
 
 这不是零漏洞声明。顶层直接业务依赖的漏洞仍会失败；同一包名下的新风险仍需评估。已知包名集合以 `scripts/audit-dependencies.mjs` 为准。
 

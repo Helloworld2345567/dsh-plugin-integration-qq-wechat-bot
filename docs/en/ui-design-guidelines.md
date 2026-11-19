@@ -16,12 +16,12 @@ Primary sources:
 
 | Area | Actual source |
 | --- | --- |
-| Fields and semantics | [Configuration reference](configuration.md), [types and schemas](../../src/core/types.ts) |
-| Bot models, behavior, and media | [Bot settings](../../src/client/bot-settings-panel.ts), [voice selection](../../src/client/voice-models.ts) |
-| Service configuration | [Services panel](../../src/client/services-panel.ts), [image configuration](../../src/core/image-service-config.ts) |
-| Personas and files | [Persona panel](../../src/client/persona-panel.ts), [panel entry point](../../src/client/index.ts) |
-| Automation | [Automation panel](../../src/client/automation.ts), [automation core](../../src/core/automation.ts) |
-| Directories, files, and workspaces | [Directory picker](../../src/harness/pick-directory.ts), [file picker](../../src/harness/pick-file.ts), [storage panel](../../src/client/workspace-storage-panel.ts) |
+| Fields and semantics | [Configuration reference](configuration.md), [types and schemas](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/core/types.ts) |
+| Bot models, behavior, and media | [Bot settings](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/client/bot-settings-panel.ts), [voice selection](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/client/voice-models.ts) |
+| Service configuration | [Services panel](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/client/services-panel.ts), [image configuration](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/core/image-service-config.ts) |
+| Personas and files | [Persona panel](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/client/persona-panel.ts), [panel entry point](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/client/index.ts) |
+| Automation | [Automation panel](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/client/automation.ts), [automation core](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/core/automation.ts) |
+| Directories, files, and workspaces | [Directory picker](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/harness/pick-directory.ts), [file picker](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/harness/pick-file.ts), [storage panel](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/client/workspace-storage-panel.ts) |
 
 The local review prototype lives in `.codex/panel-ui-demo/` and is not a release dependency. Where the prototype conflicts with these guidelines, follow these guidelines and the actual configuration.
 

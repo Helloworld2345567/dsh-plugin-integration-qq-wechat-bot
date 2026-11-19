@@ -274,6 +274,33 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(result['assets'][0]['mime'], 'image/svg+xml')
         self.assertEqual(result['assets'][0]['name'], 'generated.svg')
 
+    def test_comfyui_edit_worker_preserves_the_disconnected_reference_error(self):
+        from PIL import Image
+        source = self.root / "source.png"
+        Image.new("RGB", (2, 2)).save(source)
+        job = self.job("image_edit", source, prompt="edit")
+        job["inputs"][0].update(kind="image", mime="image/png")
+        job["endpoint"] = {"protocol":"comfyui", "baseUrl":"http://127.0.0.1:8188", "model":"comfyui",
+                           "workflowPath":str(self.root / "workflow.json")}
+        failure = {"verdict":"FAIL", "error":{"code":"COMFYUI_REFERENCE_SLOT_UNAVAILABLE"}}
+        (self.root / "image-result.json").write_text(json.dumps(failure), encoding="utf-8")
+        with patch.object(worker.subprocess, "run", return_value=Mock(returncode=2)):
+            with self.assertRaisesRegex(worker.JobError, "^COMFYUI_REFERENCE_SLOT_UNAVAILABLE$"):
+                worker.execute(job)
+
+    def test_image_worker_reports_only_registered_codes_from_fail_records(self):
+        job = self.job("image_generate", prompt="test")
+        record = self.root / "image-result.json"
+        with patch.object(worker.subprocess, "run", return_value=Mock(returncode=1)):
+            for value, expected in ((None, "IMAGE_PROVIDER_FAILED"), ({"verdict":"FAIL", "error":3}, "IMAGE_PROVIDER_FAILED"),
+                                    ({"verdict":"FAIL", "error":{"code":"private upstream text"}}, "IMAGE_PROVIDER_FAILED"),
+                                    ({"verdict":"FAIL", "error":{"code":"MEDIA_DEPENDENCY_MISSING"}}, "MEDIA_DEPENDENCY_MISSING")):
+                with self.subTest(value=value):
+                    if value is not None:
+                        record.write_text(json.dumps(value), encoding="utf-8")
+                    with self.assertRaisesRegex(worker.JobError, "^"+expected+"$"):
+                        worker.execute(job)
+
     def test_comfyui_image_worker_routes_without_provider_key(self):
         job = self.job('image_generate', prompt='local workflow')
         job['endpoint'] = {

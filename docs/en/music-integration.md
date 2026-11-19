@@ -6,11 +6,11 @@ The plugin calls a separately deployed Music project through the `musicdl_json_v
 
 ## Configure and use
 
-1. Register the project root in the managed Music Profile's private `home`; set source order in Services. Supported sources are `MiguMusicClient`, `KuwoMusicClient`, `QQMusicClient` and `NeteaseMusicClient`, with Migu and Kuwo enabled by default.
+1. Under **Services → Music download service**, choose the Music project directory, set the source order and save. `BOT_MUSIC_HOME` can provide an initial directory. A saved setting takes precedence, and an empty directory shows as unconfigured. Supported sources are `MiguMusicClient`, `KuwoMusicClient`, `QQMusicClient` and `NeteaseMusicClient`, with Migu and Kuwo enabled by default.
 2. Enable **Bots → Media → Music search and download** and select the Profile. This also enables `bot_music` and `music-download`. Bot settings retain only the Profile reference, enabled state and lyrics preference; lyrics are off by default.
 3. Download the best match by song/artist, or search and select a candidate. Candidates and original tracks belong to the current channel session; resetting the session invalidates old candidates.
 
-The Services panel does not separately select the project directory. The chat model cannot choose interpreters, output paths or media URLs. When a source needs authorization, the host injects `MUSIC_QQ_COOKIES` or `MUSIC_NETEASE_COOKIES` into the controlled subprocess as Cookie JSON or a semicolon-separated string; proxy configuration uses `MUSIC_HTTP_PROXY`. Harness manages credentials; bot settings, candidates and model context do not contain them.
+The host selects the interpreter from the saved project directory and controls output paths and media URLs. When a source needs authorization, the host injects `MUSIC_QQ_COOKIES` or `MUSIC_NETEASE_COOKIES` into the subprocess as cookie JSON or a semicolon-separated string. Proxy configuration uses `MUSIC_HTTP_PROXY`. Harness manages the credentials and provides them to the controlled subprocess at execution time.
 
 ## Conversion and delivery
 

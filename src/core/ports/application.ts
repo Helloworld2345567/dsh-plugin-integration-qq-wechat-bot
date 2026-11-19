@@ -54,7 +54,7 @@ export interface MediaRepositories {
 export type AutomationRepositories = Pick<RuntimeRepositories,'automation'|'sessions'|'bots'|'inbox'|'deliveries'|'telemetry'>;
 
 /** Dependencies of the durable outbox worker. */
-export type DeliveryWorkerRepositories = Pick<RuntimeRepositories,'deliveries'|'sessions'|'bots'|'personas'|'media'|'telemetry'>;
+export type DeliveryWorkerRepositories = Pick<RuntimeRepositories,'deliveries'|'sessions'|'bots'|'media'>;
 
 export interface TelemetryRepositories {
   metrics: TurnMetricRepository;

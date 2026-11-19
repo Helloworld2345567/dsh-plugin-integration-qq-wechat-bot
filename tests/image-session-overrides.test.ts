@@ -23,7 +23,7 @@ test('image selection uses session, bot, then global defaults and survives reope
   const original=store.personas.config('default');
   const configured=configSchema.parse({...original,media:{...original.media,image:{protocol:'openai'}}});
   store.bots.saveBot({...store.bots.bot('one'),settings:botSettingsFromConfig(configured)});
-  const global=imageServiceSettingsSchema.parse({imageProtocol:'google'});
+  const global=imageServiceSettingsSchema.parse({imageProtocol:'google',comfyUiWorkflowPath:path.join(store.home,'workflow.json')});
   let binding=store.sessions.binding(scope());
   assert.equal(resolveImageSkill(store.personas.effectiveConfig(binding),global).protocol,'openai');
   for(const protocol of imageProtocolSchema.options){

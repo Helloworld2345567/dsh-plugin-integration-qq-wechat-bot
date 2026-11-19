@@ -120,7 +120,6 @@ export class DurableDeliveryWorker implements DeliveryWorker {
           const envelope=definition.normalizeReply?.(delivery.replyEnvelope??delivery.reply);
           let sending:Delivery={...delivery,...(envelope?{replyEnvelope:envelope,reply:envelope.payload}: {}),...(delivery.attempt?{attempt:{...delivery.attempt,autoRetryCount:undefined}}:{})};
           const resultDelivery=delivery.purpose!=='progress';
-          const metricId=`inbox:${delivery.scopeKey}:${delivery.sourceId}`;if(resultDelivery&&this.repos.telemetry.metrics.findTurnMetric(metricId))this.repos.telemetry.metrics.updateTurnMetric(metricId,{deliveryStartedAt:Date.now()});
           while(true){
             if(this.closed||!this.accepting())return;
             const attempt:NonNullable<Delivery['attempt']>={...sending.attempt,number:(sending.attempt?.number??0)+1,phase:'prepare',assetId:asset?.id,startedAt:Date.now()};
@@ -133,7 +132,7 @@ export class DurableDeliveryWorker implements DeliveryWorker {
               if(this.closed||!this.accepting())return;
               const send=definition.adapter.send(bot,credential,sending,asset,sendSignal);
               const receipt=await (resultDelivery?send:abortable(send,sendSignal));
-              this.repos.deliveries.deliveryState(sending,'sent',receipt);if(resultDelivery){if(this.repos.telemetry.metrics.findTurnMetric(metricId))this.repos.telemetry.metrics.updateTurnMetric(metricId,{sentAt:Date.now()});this.repos.telemetry.metrics.updateTurnMetricsByTurn(delivery.scopeKey,delivery.turnId,{sentAt:Date.now()});}break;
+              this.repos.deliveries.deliveryState(sending,'sent',receipt);break;
             }catch(error){
               const {message,...detail}=failure(error);attempt.lastError=message;Object.assign(attempt,detail);
               const retryCount=attempt.autoRetryCount??0;

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
 import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
-import {botSchema,botSettingsSchema,configSchema,publicPersonaConfig,v4ConfigSchema} from '../src/core/types.js';
+import {botSchema,botSettingsSchema,configSchema,v4ConfigSchema} from '../src/core/types.js';
 import {resolveImageSkill} from '../src/core/image-skill.js';
 import {imageServiceSettingsFromRecord,imageServiceSettingsSchema} from '../src/core/image-service-config.js';
 import {Assets,MediaService} from '../src/core/media.js';
@@ -12,8 +12,7 @@ import {VoiceModelLibrary} from '../src/core/voice-model-library.js';
 import {ProfileStore} from '../src/core/profile-store.js';
 import {validateMediaParameters} from '../src/core/limits.js';
 
-const legacyImage={enabled:true,protocol:'openai',baseUrl:'https://images.example.invalid/v1',model:'fixture-image',keyEnv:'FIXTURE_IMAGE_KEY',workflowEnv:'OLD_WORKFLOW'};
-const persona=()=>({schemaVersion:4,id:'image-config',name:'Image configuration',personaPrompt:'Test persona',media:{image:legacyImage}});
+const persona=()=>({schemaVersion:4,id:'image-config',name:'Image configuration',personaPrompt:'Test persona',media:{image:{enabled:true,protocol:'openai'}}});
 
 async function fixture(t:any){
   await mkdir(path.resolve('.codex'),{recursive:true});
@@ -22,14 +21,14 @@ async function fixture(t:any){
   return {store,root};
 }
 
-test('retired image connection fields are removed from persona files and bot settings',async t=>{
-  const {store}=await fixture(t),saved=store.personas.saveConfig(persona()),current={enabled:true,protocol:'openai'};
-  assert.deepEqual(saved.media.image,current);
-  assert.deepEqual(store.personas.config(saved.id).media.image,current);
-  assert.deepEqual(store.personas.readPersonaDraft(saved.id).config.media.image,current);
-  assert.deepEqual(publicPersonaConfig(saved).media.image,current);
-  assert.deepEqual(botSettingsSchema.parse({media:{image:legacyImage}}).media.image,current);
-  assert.deepEqual(resolveImageSkill(saved),{protocol:'openai',baseUrl:'https://api.openai.com/v1',model:'gpt-image-2',keyEnv:'OPENAI_API_KEY'});
+test('personas and bot settings reject retired media fields',()=>{
+  for(const media of [
+    ...['baseUrl','model','keyEnv','workflowEnv'].map(key=>({image:{[key]:'obsolete'}})),
+    {video:{protocol:'transcriptions'}},{voice:{edgeTts:{enabled:true,voice:'unused'}}},{singing:{separation:{enabled:false}}},
+  ]){
+    assert.equal(configSchema.safeParse({...persona(),media}).success,false);
+    assert.equal(botSettingsSchema.safeParse({media}).success,false);
+  }
 });
 
 test('image service settings validate endpoints and retain configurable credential variable names',()=>{
@@ -57,6 +56,7 @@ test('Google image service uses the Gemini defaults and resolves its configured 
 test('ComfyUI receives explicit workflow configuration and persona protocol selection',()=>{
   const settings=imageServiceSettingsSchema.parse({imageProtocol:'openai',comfyUiBaseUrl:'http://127.0.0.1:8188',comfyUiWorkflowPath:'E:\\COMFYUI\\workflows\\fixture.json'});
   const config=configSchema.parse({...persona(),media:{image:{protocol:'comfyui'}}});
+  assert.throws(()=>resolveImageSkill(config,imageServiceSettingsSchema.parse({})),/COMFYUI_WORKFLOW_REQUIRED/);
   assert.deepEqual(resolveImageSkill(config,settings),{protocol:'comfyui',baseUrl:'http://127.0.0.1:8188',model:'comfyui',workflowPath:'E:\\COMFYUI\\workflows\\fixture.json'});
 });
 

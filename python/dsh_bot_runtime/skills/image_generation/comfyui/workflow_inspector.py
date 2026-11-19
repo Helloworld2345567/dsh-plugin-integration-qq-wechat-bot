@@ -13,6 +13,7 @@ from typing import Any
 
 
 _PROMPT_FIELDS = ("text", "prompt", "positive_prompt", "wildcard_text", "populated_text", "string_a")
+REFERENCE_SLOT_UNAVAILABLE = "COMFYUI_REFERENCE_SLOT_UNAVAILABLE"
 
 
 class WorkflowInspectionError(ValueError):
@@ -33,11 +34,61 @@ def _title(node: dict[str, Any]) -> str:
     return str(meta.get("title", "")).lower() if isinstance(meta, dict) else ""
 
 
+def _is_batch_title(title: str) -> bool:
+    return (("batch" in title and "size" in title)
+            or ("批量" in title and "大小" in title)
+            or ("批次" in title and "大小" in title)
+            or title.strip() in {"batch", "batch_size", "批量", "批量大小", "批次", "批次大小"})
+
+
+def _image_output(node: dict) -> bool:
+    name = "".join(char for char in str(node.get("class_type", "")).lower() if char.isalnum())
+    inputs = node.get("inputs")
+    if not isinstance(inputs, dict):
+        return False
+    if name.startswith("save") or name == "previewimage":
+        return True
+    # Image Saver Simple and ConditionalSaveImage have real pixel inputs;
+    # Image Saver Metadata from the same extension has none.
+    return ("image" in inputs or "images" in inputs) and (
+        name.startswith(("imagesaver", "previewimage")) or "saveimage" in name or name.endswith("imagesave")
+    )
+
+
+def reference_slot(nodes: dict[str, dict[str, Any]]) -> dict | None:
+    """Find the unique LoadImage upstream of a saved or previewed pixel input."""
+    def linked(value):
+        return (isinstance(value, list) and len(value) == 2 and type(value[1]) is int
+                and value[1] >= 0 and isinstance(value[0], (str, int)) and str(value[0]) in nodes)
+
+    pending = [str(value[0]) for node in nodes.values() if _image_output(node)
+               for field, value in node["inputs"].items() if field in ("image", "images") and linked(value)]
+    visited = set()
+    slot = None
+    while pending:
+        key = pending.pop()
+        if key in visited:
+            continue
+        visited.add(key)
+        node = nodes[key]
+        inputs = node.get("inputs")
+        if not isinstance(inputs, dict):
+            continue
+        if str(node.get("class_type", "")).lower() == "loadimage" and isinstance(inputs.get("image"), str):
+            if slot is not None:
+                return None
+            slot = inputs
+        output = _image_output(node)
+        for field, value in inputs.items():
+            if linked(value) and (not output or field in ("image", "images")):
+                pending.append(str(value[0]))
+    return slot
+
+
 def inspect_workflow(workflow: object) -> dict[str, Any]:
     """Return a stable, path-free capability summary for *workflow*."""
     nodes = _nodes(workflow)
     prompt_fields: set[str] = set()
-    reference = False
     width = height = batch = False
     output_nodes = 0
 
@@ -55,19 +106,24 @@ def inspect_workflow(workflow: object) -> dict[str, Any]:
             if isinstance(inputs.get("value"), str) and ("primitive" in class_type or "prompt" in title or "提示词" in title):
                 prompt_fields.add("value")
 
-        if class_type == "loadimage" and isinstance(inputs.get("image"), str):
-            reference = True
         if class_type == "sizepicker":
             width = width or "width_override" in inputs
             height = height or "height_override" in inputs
             batch = batch or "batch_size" in inputs
+        if class_type == "resolutionpreset":
+            raw_resolution = inputs.get("resolution_json")
+            try: resolution = json.loads(raw_resolution) if isinstance(raw_resolution, str) else None
+            except json.JSONDecodeError: resolution = None
+            if isinstance(resolution, dict) and resolution.get("version") == 1:
+                width = width or "width" in resolution
+                height = height or "height" in resolution
 
         value_key = "value" if "value" in inputs else "size" if "size" in inputs else None
         scalar_value = value_key is not None and not isinstance(inputs.get(value_key), (list, tuple, dict))
         if scalar_value:
             width = width or "width" in title
             height = height or "height" in title
-            batch = batch or ("batch" in title and "size" in title) or title.strip() in {"batch", "batch_size"}
+            batch = batch or _is_batch_title(title)
 
         if class_type.startswith("empty") and "latent" in class_type:
             width = width or isinstance(inputs.get("width"), (int, float)) and not isinstance(inputs.get("width"), bool)
@@ -76,7 +132,7 @@ def inspect_workflow(workflow: object) -> dict[str, Any]:
 
         if "batch_size" in inputs:
             batch = True
-        if class_type.startswith("save") or class_type in {"previewimage", "saveanimatedwebp", "saveanimated"}:
+        if _image_output(node):
             output_nodes += 1
 
     return {
@@ -86,7 +142,7 @@ def inspect_workflow(workflow: object) -> dict[str, Any]:
         "capabilities": {
             "prompt": bool(prompt_fields),
             "promptFields": sorted(prompt_fields),
-            "referenceEdit": reference,
+            "referenceEdit": reference_slot(nodes) is not None,
             "resolution": {"width": width, "height": height, "paired": width and height},
             "batch": batch,
             # ComfyUI output is materialized by the host; these are the final

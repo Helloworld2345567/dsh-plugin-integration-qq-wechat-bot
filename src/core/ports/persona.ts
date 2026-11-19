@@ -24,7 +24,6 @@ export interface PersonaConfigRepository {
   configs(): BotConfig[];
   config(id: string): BotConfig;
   findConfig(id: string): BotConfig | undefined;
-  configVersions(): readonly BotConfig[];
   configVersion(personaId: string, revision: number): BotConfig | undefined;
   saveConfig(input: unknown, expectedRevision?: number, fileDigest?: string): BotConfig;
   effectiveConfig(binding: SessionBinding): BotConfig;

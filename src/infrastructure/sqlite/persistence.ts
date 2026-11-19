@@ -1,4 +1,4 @@
-import {configForWrite, type BotConfig} from '../../core/types.js';
+import {configForWrite} from '../../core/types.js';
 import {defaultPersonasRoot,sameConfig} from '../../core/personas.js';
 import {PersonaFiles} from '../files/persona-files.js';
 import {WorkspaceFiles} from '../files/workspace-files.js';
@@ -164,8 +164,6 @@ export class SqlitePersistence {
         else if (!baseline && sameConfig(this.personaFiles.read(config.id).config, config)) this.personas.saveBaseline(config.id, this.personaFiles.currentDigest(config.id));
       } catch {/* An invalid draft must not stop bots using the last applied configuration. */}
     }
-    this.bots.migrateSettings();
-    this.sessions.backfill(this.deliveries.deliveries());
     this.stage = 'initialized';
   }
 
@@ -204,9 +202,6 @@ export class SqlitePersistence {
     }
     return result;
   }
-
-  /** Default persona written on a fresh install, exported for bootstrap tests. */
-  bootstrapConfigs(): readonly BotConfig[] {return this.personas.configs();}
 
   /**
    * Explicit application dependency bundle.  Every field is a narrow port; the

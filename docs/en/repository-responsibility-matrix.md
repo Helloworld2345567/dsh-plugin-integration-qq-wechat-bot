@@ -12,7 +12,7 @@ Application services depend on narrow `src/core/ports/` interfaces. SQLite/file 
 | Sessions / bindings | `SessionRepository`, `BindingRepository` | Scope ownership; atomic binding/session updates; reset/activate advance generation; cursors bind filters and collection revision |
 | Inbox / memory | `InboxRepository`, `MemoryRepository` | Scope/message-ID inbox idempotency; version CAS for memory correction; forget tombstones prevent stale-source resurrection |
 | Assets / media jobs | `AssetRepository`, `MediaJobRepository` | Asset/index writes in one transaction; explicit scope/source-session/path ownership; durable job state |
-| Delivery | `DeliveryRepository`, `DeliveryQueueRepository` | Stable intent/attempt/state identity; retry reuses records with allowed-state checks; unknown results are not automatically replayed |
+| Delivery | `DeliveryRepository`, `DeliveryQueueRepository` | QQ reply sequence numbers and delivery records are written in one transaction. Retries reuse the original record and sequence. Unknown outcomes require operator confirmation |
 | Automation | `AutomationRepository` | Schedules/proactive settings and runs belong to scope/bot; restart reloads enabled schedules and preserves interrupted runs |
 | Statistics | `StatsDataPort`, `StatsProjectionRepository`, `StatsSessionRepository` | Idempotent facts, rebuildable projections; missing evidence remains unknown |
 | Managed services | `ProfileRepository`, `CapabilityAcceptanceRepository`, `ServiceHealthRepository`, `ServiceStateRepository` | Immutable Profile revisions, configuration/resource content hashes, revision-bound acceptance and durable health/fence/jobs |

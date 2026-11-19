@@ -13,10 +13,11 @@ import {analysisEnabled} from './analysis.js';
 import {botSchema,modelSchema,skillNameSchema} from './types.js';
 import {validateWorkingDirectory} from './workspaces.js';
 import {parseCommand,unescapeChat,commandHelp,type ParsedCommand} from './commands.js';
+import {parseDirectImageCommand,validateDirectImageInputs,directImageFailureText} from './direct-image-command.js';
 import {parseNaturalControl} from './natural-commands.js';
 import {CommandBus,managementCommand,type CommandServices,type ImageSelection,type VoiceCatalog,type VoiceCatalogEntry} from './command-bus.js';
 import {imageProtocolSchema,type ImageProtocol} from './image-service-config.js';
-import {imageSkillEnabled} from './image-skill.js';
+import {imageSkillEnabled,imagePromptWithStyle} from './image-skill.js';
 import type {ChannelRegistry} from './channel-registry.js';
 import {deferredSessionActionSchema,sameSessionAction,sameSources,type DeferredSessionAction,type SessionActionRecord} from './session-actions.js';
 import {validateBatch,INPUT_LIMITS} from './limits.js';
@@ -45,7 +46,7 @@ export type {CommandServices} from './command-bus.js';
 export class BotRuntime {
   readonly states=new Map<string,string>();
   readonly connectionSupervisor:ConnectionSupervisor;
-  private readonly timers=new Map<string,ReturnType<typeof setTimeout>>();
+  private readonly timers=new Map<string,{timer:ReturnType<typeof setTimeout>;immediate:boolean}>();
   private readonly processing=new Map<string,{controller:AbortController;sessionId:string;sourceIds:string[];done:Promise<void>}>();
   readonly deliveryWorker:DeliveryWorker;
   private readonly controls=new Map<string,Promise<void>>();
@@ -75,7 +76,13 @@ export class BotRuntime {
     return this.harness.models?.()??Promise.resolve([]);
   }
   sessionStatus(scope:CallerScope):'waiting_upgrade'|'compacting'|'running'|'idle'{const key=scopeKey(scope);return this.quiescing?'waiting_upgrade':this.maintenance.has(key)?'compacting':this.processing.has(key)||this.repos.telemetry.actions.sessionActions<SessionActionRecord>().some(r=>r.scopeKey===key&&r.state==='running')?'running':'idle';}
-  health():{ready:true;serviceRunning:boolean;quiescing:boolean;activeTasks:number;pendingDeliveries:number;pendingSessionActions:number;connections:Record<string,string>;latency:{inboxToModel:{count:number;p50:number|null;p95:number|null;max:number|null};inboxToSent:{count:number;p50:number|null;p95:number|null;max:number|null}}}{return{ready:true,serviceRunning:this.serviceRunning(),quiescing:this.quiescing,activeTasks:this.processing.size+this.maintenance.size+this.controls.size,pendingDeliveries:this.repos.deliveries.deliveries(['pending','sending']).length,pendingSessionActions:this.repos.telemetry.actions.sessionActions<SessionActionRecord>().filter(r=>r.state==='queued').length,connections:Object.fromEntries(this.states),latency:{inboxToModel:this.repos.telemetry.metrics.metricPercentiles('modelStartedAt'),inboxToSent:this.repos.telemetry.metrics.metricPercentiles('sentAt')}};}
+  health(){
+    return {ready:true as const,serviceRunning:this.serviceRunning(),quiescing:this.quiescing,
+      activeTasks:this.processing.size+this.maintenance.size+this.controls.size,
+      pendingDeliveries:this.repos.deliveries.deliveries(['pending','sending']).length,
+      pendingSessionActions:this.repos.telemetry.actions.sessionActions<SessionActionRecord>().filter(r=>r.state==='queued').length,
+      connections:Object.fromEntries(this.states),latency:this.repos.telemetry.metrics.inboxLatency()};
+  }
   constructor(readonly repos:RuntimeRepositories,readonly assets:Assets,readonly media:MediaService,readonly harness:HarnessPort,readonly channels:ChannelRegistry,readonly credentials:Credentials,readonly debounceMs=2000,readonly turnTimeoutMs=0,readonly profiles?:ProfileStore,readonly systemLocale:()=>SystemLocale=()=> 'zh'){
     this.connectionSupervisor=new DurableConnectionSupervisor(repos.bots,this.channels,credentials,this.states,message=>this.receive(message));this.deliveryWorker=new DurableDeliveryWorker(repos,this.channels,credentials,undefined,this.profiles,()=>this.serviceRunning());this.commandBus=new CommandBus(this);this.automation=new AutomationScheduler(repos,{runPrompt:(binding,prompt,kind,signal,onText)=>this.runAutomationPrompt(binding,prompt,kind,signal,onText),flush:filter=>this.deliveryWorker.flush(filter),available:key=>this.serviceRunning()&&!this.quiescing&&!this.busy(key)&&!this.controls.has(key)&&!this.repos.inbox.messages(key).length});this.commandServices.automation={proactive:(binding,action,args,locale)=>this.automationCommand(binding,action,args,locale),schedule:(binding,action,args,locale)=>this.scheduleCommand(binding,action,args,locale)};
   }
@@ -95,7 +102,7 @@ export class BotRuntime {
   private resumeServiceConsumers():void{if(!this.serviceRunning()||this.quiescing)return;this.automation.start();this.resumeCommands();this.resumeSessionActions();for(const key of this.repos.inbox.scopesWithPending())this.schedule(key);void this.flushDeliveries();}
   async startService():Promise<void>{return this.changeService(async()=>{const starting=!this.serviceActive;this.serviceActive=true;await Promise.all(this.repos.bots.bots().filter(bot=>bot.enabled&&!bot.archived).map(bot=>this.connectionSupervisor.start(bot.id).catch(()=>{this.states.set(bot.id,'error');})));if(starting)this.resumeServiceConsumers();});}
   async stopService():Promise<void>{return this.changeService(async()=>{
-    if(!this.serviceActive)return;this.serviceActive=false;this.automation.close();for(const timer of this.timers.values())clearTimeout(timer);this.timers.clear();
+    if(!this.serviceActive)return;this.serviceActive=false;this.automation.close();for(const timer of this.timers.values())clearTimeout(timer.timer);this.timers.clear();
     for(const [key,task] of [...this.processing.entries(),...this.maintenance.entries()]){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}
     for(const [id,signal] of this.sessionActionSignals)if(this.repos.telemetry.actions.findSessionAction<SessionActionRecord>(id)?.state==='running')signal.controller.abort();
     for(const bot of this.repos.bots.bots())this.deliveryWorker.cancelBot(bot.id,'BOT_SERVICE_STOPPED');
@@ -144,7 +151,7 @@ export class BotRuntime {
     this.recheckPermissions();
     await this.connectionSupervisor.disconnect(botId);
     this.deliveryWorker.cancelBot(botId);
-    for(const [key,timer] of this.timers){const binding=this.repos.sessions.findBinding(key);if(binding?.scope.botId===botId){clearTimeout(timer);this.timers.delete(key);}}
+    for(const [key,timer] of this.timers){const binding=this.repos.sessions.findBinding(key);if(binding?.scope.botId===botId){clearTimeout(timer.timer);this.timers.delete(key);}}
     for(const [key,task] of this.processing){const binding=this.repos.sessions.findBinding(key);if(binding?.scope.botId===botId){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}}
     for(const [key,task] of this.maintenance){const binding=this.repos.sessions.findBinding(key);if(binding?.scope.botId===botId){task.controller.abort();this.harness.cancel(task.sessionId);}}
     for(const key of this.repos.inbox.scopesWithPending(['pending','deferred','control'])){const messages=this.repos.inbox.messages(key,['pending','deferred','control']);if(messages[0]?.scope.botId===botId)this.repos.inbox.mark(key,messages.map(m=>m.id),'cancelled');}
@@ -154,19 +161,22 @@ export class BotRuntime {
     if(!this.serviceRunning())return;
     const bot=this.repos.bots.bot(message.scope.botId);const definition=this.channels.require(message.scope.platform);if(!message.replyEnvelope&&definition.normalizeReply)message={...message,replyEnvelope:definition.normalizeReply(message.reply)};if(!bot.enabled||bot.archived||bot.channel!==message.scope.platform||bot.accountId!==message.scope.accountId)return;
     if(!message.id||!message.scope.senderId||!message.scope.channelId)throw new Error('INVALID_CHANNEL_IDENTITY');
+    // Classify the original text before unescaping chat, and persist that decision across restarts.
+    const direct=typeof message.text==='string'&&!!parseDirectImageCommand(message.text);
+    message={...message,directImageCommand:direct||undefined};
     const key=scopeKey(message.scope);if(!this.repos.inbox.accept(message))return;
-    const command=this.inboundCommand(message);
+    const command=direct?undefined:this.inboundCommand(message);
     if(command){this.repos.inbox.mark(key,[message.id],'control');if(!this.quiescing||(command.name==='stop'&&(this.busy(key)||this.repos.telemetry.actions.sessionActions<SessionActionRecord>().some(action=>action.scopeKey===key&&['queued','running'].includes(action.state)))))await this.dispatchCommand(message,command);return;}
     const escaped=unescapeChat(message.text);if(escaped!==message.text){message={...message,text:escaped};this.repos.inbox.updateMessage(key,message);}
     const stripped=message.text.trim();const hold=/(?:先别|不要|暂不|等我).*(?:分析|处理|指令)/.test(stripped);
     const uploadBinding=this.repos.sessions.binding(message.scope);
     if(!message.attachments.some(input=>input.kind==='audio'||input.kind==='file')||!permitted('bot_sing',this.effectiveConfig(uploadBinding),bot,message.scope))clearPendingSingingUpload(this.sessionPorts,uploadBinding);
     const awaitingSinging=hasPendingSingingUpload(this.sessionPorts,uploadBinding);
-    if(hold||(!awaitingSinging&&!stripped&&message.attachments.length>0&&message.attachments.every(a=>a.kind==='video'||a.kind==='file'))){this.repos.inbox.mark(key,[message.id],'deferred');return;}
+    if(!direct&&(hold||(!awaitingSinging&&!stripped&&message.attachments.length>0&&message.attachments.every(a=>a.kind==='video'||a.kind==='file')))){this.repos.inbox.mark(key,[message.id],'deferred');return;}
     this.schedule(key);
   }
   private interrupt(scope:CallerScope,preserveActionId?:string):void {
-    const key=scopeKey(scope);const timer=this.timers.get(key);if(timer)clearTimeout(timer);this.timers.delete(key);
+    const key=scopeKey(scope);const timer=this.timers.get(key);if(timer)clearTimeout(timer.timer);this.timers.delete(key);
     clearSingingCandidates(this.repos.media.singing,key);clearMusicState(this.repos.media.music,key);
     this.cancelSessionActions(key,systemDescriptor('actionCancelled'),preserveActionId);
     const binding=this.repos.sessions.binding(scope);this.processing.get(key)?.controller.abort();this.maintenance.get(key)?.controller.abort();this.harness.cancel(binding.sessionId);this.media.cancelScope(key);
@@ -196,7 +206,7 @@ export class BotRuntime {
         this.repos.botHistory.deleteSessionRecords(key,deleted);
         return{current,...replacement?{newSessionId:replacement.sessionId}:{}};
       });
-    }).finally(()=>{if(this.controls.get(key)===task){this.controls.delete(key);if(this.repos.inbox.messages(key).length)this.schedule(key);}});
+    }).finally(()=>{if(this.controls.get(key)===task){this.controls.delete(key);this.schedule(key);}});
     this.controls.set(key,task);await task;return result!;
   }
   async resumeSession(scope:CallerScope,id:string,authorize?:()=>void):Promise<SessionBinding>{
@@ -243,10 +253,10 @@ export class BotRuntime {
     return items.sort((a,b)=>a.id.localeCompare(b.id));
   }
   private voiceSelectionId(role:'tts'|'sts',config:BotConfig):string|undefined {
-    const options=role==='tts'?config.media.voice:config.media.singing;
-    if(!options)return;
-    if(role==='tts'&&options.protocol==='edge_tts'&&options.voice)return `edge/${options.voice}`;
-    const ref=options.profileRef;return ref?`${ref.serviceId}/${ref.profileId}`:undefined;
+    const voice=config.media.voice;
+    if(role==='tts'&&voice?.protocol==='edge_tts'&&voice.voice)return `edge/${voice.voice}`;
+    const ref=role==='tts'?voice?.profileRef:config.media.singing?.profileRef;
+    return ref?`${ref.serviceId}/${ref.profileId}`:undefined;
   }
   voiceCatalog(role:'tts'|'sts',binding?:SessionBinding):VoiceCatalog {
     if(!binding)return{role,override:false,items:this.voiceCatalogItems(role)};
@@ -279,7 +289,7 @@ export class BotRuntime {
     if(!this.serviceRunning())throw Error('BOT_SERVICE_STOPPED');
     const binding=this.repos.sessions.binding(scope);if(this.busy(binding.key))throw new SystemMessageError('busyCompact');if(this.quiescing)throw new SystemMessageError('upgrading');if(!binding.persisted)throw new SystemMessageError('noCompactContext');if(!this.harness.compact)throw new SystemMessageError('compactUnsupported');
     const controller=new AbortController();let answer='';
-    const done=Promise.resolve().then(async()=>{answer=await this.harness.compact!(binding,controller.signal);if(controller.signal.aborted)throw new SystemMessageError('compactCancelled');}).finally(()=>{this.maintenance.delete(binding.key);if(this.repos.inbox.messages(binding.key).length)this.schedule(binding.key);});
+    const done=Promise.resolve().then(async()=>{answer=await this.harness.compact!(binding,controller.signal);if(controller.signal.aborted)throw new SystemMessageError('compactCancelled');}).finally(()=>{this.maintenance.delete(binding.key);this.schedule(binding.key);});
     this.maintenance.set(binding.key,{controller,sessionId:binding.sessionId,done});await done;return answer;
   }
   queueSessionAction(binding:SessionBinding,snapshot:TurnSnapshot,input:DeferredSessionAction,signal:AbortSignal):{status:'queued';actionId:string;action:string}{
@@ -335,7 +345,7 @@ export class BotRuntime {
       const scope=record.scopeKey;const previous=this.controls.get(scope)??Promise.resolve();this.scheduledSessionActions.add(record.id);
       // Never await this chain from processing.done: an earlier /stop may be waiting for it.
       const task=previous.catch(()=>{}).then(async()=>{if(this.serviceRunning()&&!this.quiescing)await this.executeSessionAction(record.id);}).finally(()=>{
-        this.scheduledSessionActions.delete(record.id);if(this.controls.get(scope)===task){this.controls.delete(scope);this.resumeSessionActions(scope);if(this.repos.inbox.messages(scope).length)this.schedule(scope);}
+        this.scheduledSessionActions.delete(record.id);if(this.controls.get(scope)===task){this.controls.delete(scope);this.resumeSessionActions(scope);this.schedule(scope);}
       });this.controls.set(scope,task);
     }
   }
@@ -371,7 +381,7 @@ export class BotRuntime {
         const result=await this.executeCommand(message,command,locale);if(result!==undefined)await this.feedback(message,result);
         if(!['compact','evolve'].includes(command.name)||!this.repos.inbox.messages(key,['pending','processing']).some(m=>m.id===message.id))this.repos.inbox.mark(key,[message.id],'complete');
       }catch(error){this.repos.inbox.mark(key,[message.id],'failed');await this.feedback(message,systemErrorText(error,locale,'commandFailed'));}
-    }).finally(()=>{if(this.controls.get(key)===task){this.controls.delete(key);if(this.repos.inbox.messages(key).length)this.schedule(key);}});
+    }).finally(()=>{if(this.controls.get(key)===task){this.controls.delete(key);this.schedule(key);}});
     this.controls.set(key,task);return task;
   }
   private async executeCommand(message:InboundMessage,parsed:ParsedCommand,locale:SystemLocale):Promise<string|undefined>{
@@ -391,40 +401,54 @@ export class BotRuntime {
   private inboundCommand(message:InboundMessage):ParsedCommand|undefined{return parseCommand(message.text)??(message.text.trimStart().startsWith('//')?undefined:parseNaturalControl(message.text));}
   resumeCommands():void{if(!this.serviceRunning())return;for(const key of this.repos.inbox.scopesWithPending(['control']))for(const message of this.repos.inbox.messages(key,['control'])){const command=this.inboundCommand(message);if(command)void this.dispatchCommand(message,command);}}
   async drainControls():Promise<void>{await Promise.all([...this.controls.values()].map(task=>task.catch(()=>{})));}
-  pauseProcessing():void{this.quiescing=true;this.automation.close();for(const timer of this.timers.values())clearTimeout(timer);this.timers.clear();}
+  pauseProcessing():void{this.quiescing=true;this.automation.close();for(const timer of this.timers.values())clearTimeout(timer.timer);this.timers.clear();}
   async quiesce():Promise<void>{this.pauseProcessing();for(;;){await this.drainControls();await Promise.all([...this.processing.values(),...this.maintenance.values()].map(task=>task.done.catch(()=>{})));await this.automation.drain();await this.harness.drain?.();await this.flushDeliveries();await this.deliveryWorker.drain();if(!this.controls.size&&!this.processing.size&&!this.maintenance.size&&!this.deliveryWorker.activity().activeLanes)return;}}
   resumeProcessing():void{this.quiescing=false;this.resumeServiceConsumers();}
-  private schedule(key:string):void{if(!this.serviceRunning()||this.quiescing)return;const previous=this.timers.get(key);if(previous)clearTimeout(previous);this.timers.set(key,setTimeout(()=>{this.timers.delete(key);void this.process(key);},this.debounceMs));}
+  private schedule(key:string):void{
+    if(!this.serviceRunning()||this.quiescing||this.busy(key)||this.controls.has(key))return;
+    const previous=this.timers.get(key);
+    if(previous?.immediate)return;
+    const {count,hasDirectImage}=this.repos.inbox.pendingWindow(key,INPUT_LIMITS.batchMessages);
+    if(!count)return;
+    if(previous)clearTimeout(previous.timer);
+    const immediate=hasDirectImage||count===INPUT_LIMITS.batchMessages||this.debounceMs===0;
+    const timer=setTimeout(()=>{this.timers.delete(key);void this.process(key);},immediate?0:this.debounceMs);
+    this.timers.set(key,{timer,immediate});
+  }
   async process(key:string):Promise<void>{
     if(!this.serviceRunning()||this.quiescing||this.busy(key)||this.controls.has(key))return;
-    const pending=this.repos.inbox.messages(key);if(!pending.length)return;const locale=this.systemLocale();
-    const bot=this.repos.bots.bot(pending[0].scope.botId);if(!bot.enabled||bot.archived)return;
-    const deferred=this.repos.inbox.messages(key,['deferred']).filter(m=>m.timestamp>Date.now()-600000).slice(-INPUT_LIMITS.batchMessages);
-    const messages=[...deferred,...pending].slice(-INPUT_LIMITS.batchMessages);
-    const binding=this.repos.sessions.binding(pending[0].scope);
+    const messages=this.repos.inbox.nextBatch(key,INPUT_LIMITS.batchMessages,Date.now()-600000);if(!messages.length)return;
+    const source=messages.at(-1)!,sourceIds=messages.map(message=>message.id),locale=this.systemLocale();
+    const direct=source.directImageCommand?parseDirectImageCommand(source.text):undefined;
+    const bot=this.repos.bots.bot(source.scope.botId);if(!bot.enabled||bot.archived)return;
+    const binding=this.repos.sessions.binding(source.scope);
+    const enqueueResult=(turnId:string,outputs:Output[])=>{
+      this.repos.telemetry.metrics.updateTurnMetrics(key,sourceIds,{sessionId:binding.sessionId,turnId});
+      this.repos.deliveries.enqueue(binding,source.id,turnId,outputs,source.reply,this.replyEnvelope(source));
+    };
     const audioSourceMessageIds=new Set<string>();
     let waitingForSinging=hasPendingSingingUpload(this.sessionPorts,binding);
-    if(permitted('bot_sing',this.effectiveConfig(binding),bot,binding.scope))for(const message of messages){
+    if(!direct&&permitted('bot_sing',this.effectiveConfig(binding),bot,binding.scope))for(const message of messages){
       if((explicitSingingRequest(message.text)||waitingForSinging)&&message.attachments.some(input=>input.kind==='audio'||input.kind==='file')){
         audioSourceMessageIds.add(message.id);waitingForSinging=false;
       }
     }
-    try{validateBatch(messages,id=>this.repos.media.assets.asset(key,id).size,{audioSourceMessageIds});}catch(error){
-      const sourceIds=messages.map(m=>m.id);const at=Date.now();this.repos.inbox.mark(key,sourceIds,'failed');
+    try{if(!direct)validateBatch(messages,id=>this.repos.media.assets.asset(key,id).size,{audioSourceMessageIds});}catch(error){
+      const at=Date.now();this.repos.inbox.mark(key,sourceIds,'failed');
       this.repos.telemetry.failures.saveFailure(`${key}:${at}`,{sessionId:binding.sessionId,scope:key,code:error instanceof Error?error.message:'BATCH_INPUT_TOO_LARGE',state:'failed',stage:'attachments',sourceIds,at} satisfies ProcessingFailure);
-      this.repos.deliveries.enqueue(binding,pending.at(-1)!.id,`failure:${pending.at(-1)!.id}`,[{type:'text',text:systemMessage(locale,'batchTooLarge')}],pending.at(-1)!.reply,this.replyEnvelope(pending.at(-1)!));
-      await this.flushDeliveries();return;
+      enqueueResult(`failure:${source.id}`,[{type:'text',text:systemMessage(locale,'batchTooLarge')}]);
+      try{await this.flushDeliveries();}finally{this.schedule(key);}return;
     }
     const controller=new AbortController();
     const deadline=(this.turnTimeoutMs>0?AbortSignal.timeout(this.turnTimeoutMs):new AbortController().signal);const signal=AbortSignal.any([controller.signal,deadline]);
-    this.repos.inbox.mark(key,messages.map(m=>m.id),'processing');this.repos.telemetry.metrics.markTurnStage(key,messages.map(m=>m.id),'attachmentsStartedAt');
+    this.repos.inbox.mark(key,sourceIds,'processing');this.repos.telemetry.metrics.updateTurnMetrics(key,sourceIds,{sessionId:binding.sessionId,attachmentsStartedAt:Date.now()});
     const done=Promise.resolve().then(async()=>{
       let autoAsrFailure=false;
       let progress:TaskProgress|undefined;
       try{
       let stage:ProcessingFailure['stage']='attachments';const outputs:Output[]=[];let stagedTurnId:string|undefined;
       try{
-        const snapshot=freezeTurn(this.effectiveConfig(binding),bot,binding.scope,messages.map(m=>m.id),this.profiles,locale,this.media.imageSettings());
+        const snapshot=freezeTurn(this.effectiveConfig(binding),bot,binding.scope,sourceIds,this.profiles,locale,this.media.imageSettings());
         this.repos.telemetry.snapshots.saveTurnSnapshot(binding.sessionId,snapshot);
         const config=snapshot.config as BotConfig;
         const active=()=>{
@@ -435,11 +459,10 @@ export class BotRuntime {
         if(binding.scope.kind==='private'&&config.progressReply.enabled){
           progress=new TaskProgress({signal,active,systemLocale:snapshot.systemLocale,
             intervalMs:config.progressReply.intervalSeconds*1000,
-            format:(facts,progressSignal)=>this.harness.formatProgress?.(binding,snapshot,facts,progressSignal)??Promise.resolve(progressFallback(facts.stage,snapshot.systemLocale)),
+            format:(facts,progressSignal)=>(direct?undefined:this.harness.formatProgress?.(binding,snapshot,facts,progressSignal))??Promise.resolve(progressFallback(facts.stage,snapshot.systemLocale)),
             deliver:async(text,runId,sequence,expiresAt)=>{
               if(!active())return;
               for(const delivery of this.repos.deliveries.deliveries(['pending']))if(delivery.purpose==='progress'&&delivery.progress?.runId===runId)this.repos.deliveries.deliveryState(delivery,'cancelled');
-              const source=pending.at(-1)!;
               this.repos.deliveries.enqueue(binding,source.id,`progress:${runId}:${sequence}`,[{type:'text',text}],source.reply,this.replyEnvelope(source),{runId,generation:binding.generation,expiresAt});
               await this.deliveryWorker.flush({botId:bot.id});
             },
@@ -448,6 +471,16 @@ export class BotRuntime {
           this.deliveryWorker.registerProgress(progress.runId,active);
         }
         signal.throwIfAborted();
+        const authorizeImage=()=>{
+          if(!active())throw new ReplyContextChangedError();
+          if(!allowedNow('image_generation',snapshot,this.effectiveConfig(binding),this.repos.bots.bot(bot.id),binding.scope))throw new SystemMessageError('directImageDisabled');
+        };
+        if(direct){stage='media';authorizeImage();}
+        this.resolveQuotedMessages(key,messages);
+        if(direct)validateDirectImageInputs(direct,messages);
+        stage='attachments';
+        const imageReferences=new Set<string>();
+        let imageBytes=0;
         const transcripts=new Map<string,string>();
         const ensureTranscript=async(input:InboundMessage['attachments'][number],assetId:string):Promise<void>=>{
           if(input.kind!=='audio'||input.transcript)return;
@@ -463,51 +496,87 @@ export class BotRuntime {
         };
         for(const message of messages){
           // Only this user's own text or an explicit upload request may bypass ASR.
-          const singingUpload=allowedNow('bot_sing',snapshot,this.effectiveConfig(binding),bot,binding.scope)
-            &&audioSourceMessageIds.has(message.id);
-          if(message.quoted?.id){const quoted=this.repos.inbox.source(key,message.quoted.id);if(quoted)message.quoted={id:quoted.id,text:quoted.text,attachments:quoted.attachments};}
+          const singingUpload=audioSourceMessageIds.has(message.id)&&allowedNow('bot_sing',snapshot,this.effectiveConfig(binding),bot,binding.scope);
           for(const input of [...message.attachments,...(message.quoted?.attachments??[])]){
-            const skipAsr=singingUpload&&message.attachments.includes(input);
-            if(input.handle){this.repos.media.assets.asset(key,input.handle);if(!skipAsr)await ensureTranscript(input,input.handle);continue;}
-            const bytes=input.bytes?Buffer.from(input.bytes,'base64'):await this.channels.require(bot.channel).adapter.materialize(input,signal);
-            const asset=await this.assets.save(key,input,bytes);input.handle=asset.id;delete input.bytes;if(!skipAsr)await ensureTranscript(input,asset.id);
+            let asset;
+            if(input.handle)asset=this.repos.media.assets.asset(key,input.handle);
+            else{
+              const bytes=input.bytes?Buffer.from(input.bytes,'base64'):await this.channels.require(bot.channel).adapter.materialize(input,signal);
+              asset=await this.assets.save(key,input,bytes);input.handle=asset.id;delete input.bytes;
+            }
+            if(direct){
+              if(!imageReferences.has(asset.id)){imageReferences.add(asset.id);imageBytes+=asset.size;}
+              if(imageBytes>INPUT_LIMITS.batchAttachmentBytes)throw new Error('BATCH_ATTACHMENT_BYTES_LIMIT');
+            }else if(!(singingUpload&&message.attachments.includes(input)))await ensureTranscript(input,asset.id);
           }
           if(singingUpload)consumeSingingUpload(this.sessionPorts,binding);
           this.repos.inbox.updateMessage(key,message);
         }
-        this.repos.telemetry.metrics.markTurnStage(key,messages.map(m=>m.id),'attachmentsCompletedAt');
-        stage='model';progress?.update('model');const modelAt=Date.now();this.repos.telemetry.metrics.updateTurnMetrics(key,messages.map(m=>m.id),{sessionId:binding.sessionId,modelStartedAt:modelAt});const result=await this.harness.run(binding,messages,signal,{snapshot,onProgress:stage=>progress?.update(stage),onText:async message=>{
-          signal.throwIfAborted();if(!active())throw new ReplyContextChangedError();if(!message.text.trim())return;
-          stagedTurnId=message.turnId;
-          // Keep already-enqueued chunks unchanged so their output indexes remain stable.
-          for(let index=0;index<message.text.length;index+=1800)outputs.push({type:'text',text:message.text.slice(index,index+1800)});
-          const source=pending.at(-1)!;this.repos.deliveries.enqueue(binding,source.id,stagedTurnId,outputs,source.reply,this.replyEnvelope(source));
-          await this.deliveryWorker.flush({botId:bot.id});
-        }});
-        if(signal.aborted||this.repos.sessions.binding(binding.scope).sessionId!==binding.sessionId){this.repos.inbox.mark(key,messages.map(m=>m.id),'cancelled');return;}
-        this.repos.telemetry.metrics.markTurnStage(key,messages.map(m=>m.id),'modelCompletedAt');
+        this.repos.telemetry.metrics.markTurnStage(key,sourceIds,'attachmentsCompletedAt');
+        let result:HarnessResult;
+        if(direct?.kind==='request'){
+          stage='media';authorizeImage();progress?.update('image');
+          const parameters={...direct.parameters,prompt:imagePromptWithStyle(direct.parameters.prompt,config.imageStyle)};
+          const {assetIds}=await this.media.run(key,direct.operation,config,[...imageReferences],parameters,signal,authorizeImage,snapshot);
+          authorizeImage();
+          if(!assetIds.length)throw new SystemMessageError('directImageNoOutput');
+          result={turnId:`image:${source.id}`,outputs:assetIds.map(assetId=>({type:'asset',assetId})),snapshot};
+        }else{
+          stage='model';progress?.update('model');this.repos.telemetry.metrics.markTurnStage(key,sourceIds,'modelStartedAt');
+          result=await this.harness.run(binding,messages,signal,{snapshot,onProgress:stage=>progress?.update(stage),onText:async message=>{
+            signal.throwIfAborted();if(!active())throw new ReplyContextChangedError();if(!message.text.trim())return;
+            stagedTurnId=message.turnId;
+            // Keep already-enqueued chunks unchanged so their output indexes remain stable.
+            for(let index=0;index<message.text.length;index+=1800)outputs.push({type:'text',text:message.text.slice(index,index+1800)});
+            enqueueResult(stagedTurnId,outputs);
+            await this.deliveryWorker.flush({botId:bot.id});
+          }});
+          if(signal.aborted||this.repos.sessions.binding(binding.scope).sessionId!==binding.sessionId){this.repos.inbox.mark(key,sourceIds,'cancelled');return;}
+          this.repos.telemetry.metrics.markTurnStage(key,sourceIds,'modelCompletedAt');
+        }
         stage='delivery';const prepared=await this.prepareReplyOutputs(binding,result,signal,()=>progress?.update('media'));signal.throwIfAborted();progress?.stop();
+        if(direct)authorizeImage();
         for(const output of prepared){if(output.type==='text'&&output.text){for(let index=0;index<output.text.length;index+=1800)outputs.push({type:'text',text:output.text.slice(index,index+1800)});}else if(output.type==='asset'){this.repos.media.assets.asset(key,output.assetId!);outputs.push(output);}}
         if(!outputs.length)throw new Error('NO_DELIVERABLE_OUTPUT');
-        this.repos.telemetry.metrics.updateTurnMetrics(key,messages.map(m=>m.id),{turnId:result.turnId,deliveryStartedAt:Date.now()});this.repos.unitOfWork.transaction(()=>{this.repos.deliveries.enqueue(binding,pending.at(-1)!.id,result.turnId,outputs,pending.at(-1)!.reply,this.replyEnvelope(pending.at(-1)!));this.repos.inbox.mark(key,messages.map(m=>m.id),'complete');});
+        this.repos.unitOfWork.transaction(()=>{enqueueResult(result.turnId,outputs);this.repos.inbox.mark(key,sourceIds,'complete');});
       }catch(error){
         progress?.stop();
         const timedOut=deadline.aborted&&!controller.signal.aborted;const state=timedOut?'failed':controller.signal.aborted||signal.aborted||error instanceof ReplyContextChangedError?'cancelled':'failed';const at=Date.now();
-        this.repos.inbox.mark(key,messages.map(m=>m.id),state);this.repos.telemetry.failures.saveFailure(`${binding.sessionId}:${at}`,{sessionId:binding.sessionId,scope:key,code:timedOut?'TURN_DEADLINE_EXCEEDED':error instanceof Error?error.message:'PROCESS_FAILED',state,stage,sourceIds:messages.map(m=>m.id),at} satisfies ProcessingFailure);
+        this.repos.inbox.mark(key,sourceIds,state);this.repos.telemetry.failures.saveFailure(`${binding.sessionId}:${at}`,{sessionId:binding.sessionId,scope:key,code:timedOut?'TURN_DEADLINE_EXCEEDED':error instanceof Error?error.message:'PROCESS_FAILED',state,stage,sourceIds,at} satisfies ProcessingFailure);
         const noDeliverableOutput=error instanceof Error&&error.message==='NO_DELIVERABLE_OUTPUT';
         if(state==='failed'&&(stage!=='delivery'||noDeliverableOutput)&&this.repos.sessions.binding(binding.scope).sessionId===binding.sessionId){
           const image=messages.some(m=>[...m.attachments,...(m.quoted?.attachments??[])].some(a=>a.kind==='image'));
-          const text=systemMessage(locale,noDeliverableOutput?'noOutput':timedOut?'requestTimeout':autoAsrFailure?'asrFailed':stage==='attachments'?(image?'imageReadFailed':'attachmentReadFailed'):'modelFailed',{code:modelFailureCode(error)});
-          outputs.push({type:'text',text});this.repos.deliveries.enqueue(binding,pending.at(-1)!.id,stagedTurnId??`failure:${pending.at(-1)!.id}`,outputs,pending.at(-1)!.reply,this.replyEnvelope(pending.at(-1)!));
+          let text:string;
+          if(stage==='media'&&!timedOut)text=directImageFailureText(error,locale);
+          else if(error instanceof Error&&error.message==='BATCH_ATTACHMENT_BYTES_LIMIT')text=systemMessage(locale,'batchTooLarge');
+          else text=systemMessage(locale,noDeliverableOutput?'noOutput':timedOut?'requestTimeout':autoAsrFailure?'asrFailed':stage==='attachments'?(image?'imageReadFailed':'attachmentReadFailed'):'modelFailed',{code:modelFailureCode(error)});
+          outputs.push({type:'text',text});enqueueResult(stagedTurnId??`failure:${source.id}`,outputs);
         }
       }
       // Queue workers own delivery failures; they must not relabel completed model requests.
       await this.flushDeliveries();
-      }finally{progress?.stop();this.processing.delete(key);this.resumeSessionActions(key);if(this.repos.inbox.messages(key).length)this.schedule(key);}
+      }finally{progress?.stop();this.processing.delete(key);this.resumeSessionActions(key);this.schedule(key);}
     });
-    this.processing.set(key,{controller,sessionId:binding.sessionId,sourceIds:messages.map(m=>m.id),done});await done;
+    this.processing.set(key,{controller,sessionId:binding.sessionId,sourceIds,done});await done;
   }
   async flushDeliveries():Promise<void>{if(this.serviceRunning())await this.deliveryWorker.flush();}
+  private resolveQuotedMessages(key:string,messages:InboundMessage[]):void {
+    const sources=new Map<string,InboundMessage>();
+    for(const message of messages){
+      const id=message.quoted?.id;
+      if(id){
+        const quoted=sources.get(id)??this.repos.inbox.source(key,id);
+        if(quoted){
+          message.quoted={id,text:quoted.text,attachments:quoted.attachments};
+          sources.set(id,quoted);
+        }else{
+          const asset=this.repos.deliveries.findSentImageByReceipt(key,id);
+          if(asset)message.quoted={id,attachments:[{kind:'image',handle:asset.id,name:asset.name,mime:asset.mime}]};
+        }
+      }
+      sources.set(message.id,message);
+    }
+  }
   private assertReplyContext(binding:SessionBinding,snapshot:TurnSnapshot,signal:AbortSignal):void {
     signal.throwIfAborted();
     if(!this.serviceRunning())throw new ReplyContextChangedError();
@@ -533,9 +602,9 @@ export class BotRuntime {
   private async prepareVoiceReplyOutputs(binding:SessionBinding,result:HarnessResult,signal:AbortSignal,onVoice?:()=>void):Promise<Output[]> {
     const snapshot=result.snapshot,config=snapshot.config as BotConfig;
     if(config.media.voice?.replyMode!=='auto'||!analysisEnabled(config,'tts')||result.voiceAttempted||result.singingAttempted)return result.outputs;
+    const text=spokenReplyText(result.outputs);if(!text)return result.outputs;
     const voiceService=snapshot.services.voice;
     if(config.media.voice?.protocol!=='edge_tts'&&(!voiceService?.snapshot||!['ready','partial'].includes(voiceService.state)))return replyNotice(result.outputs,systemMessage(snapshot.systemLocale??'zh','voiceProfileUnavailable'));
-    const text=spokenReplyText(result.outputs);if(!text)return result.outputs;
     const authorize=()=>{
       this.assertReplyContext(binding,snapshot,signal);
       const current=this.repos.sessions.findBinding(binding.key)!;
@@ -587,7 +656,7 @@ export class BotRuntime {
       runSignal.throwIfAborted();const current=this.repos.sessions.findBinding(key);
       if(!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation||permissionsRevoked(snapshot,this.effectiveConfig(current),this.repos.bots.bot(binding.scope.botId),binding.scope))throw Error('AUTOMATION_CONTEXT_CHANGED');
       answer={turnId:result.turnId,outputs:await this.prepareReplyOutputs(binding,result,runSignal),snapshot};
-    }).finally(()=>{this.processing.delete(key);this.resumeSessionActions(key);if(this.repos.inbox.messages(key).length)this.schedule(key);});
+    }).finally(()=>{this.processing.delete(key);this.resumeSessionActions(key);this.schedule(key);});
     this.processing.set(key,{controller,sessionId:binding.sessionId,sourceIds:[],done});
     await done;return answer!;
   }
@@ -606,6 +675,6 @@ export class BotRuntime {
     }
     const id=args.trim();if(!id)throw new SystemMessageError('scheduleIdRequired');const job=this.automation.listJobs().find(item=>item.id===id&&item.scopeKey===binding.key);if(!job)throw new SystemMessageError('scheduleMissing');if(action==='pause'||action==='resume'){this.automation.setJob(id,action==='resume');return systemMessage(locale,action==='resume'?'scheduleResumed':'schedulePaused');}if(action==='delete'){this.automation.deleteJob(id);return systemMessage(locale,'scheduleDeleted');}if(action==='run'){this.automation.queueJob(job);return systemMessage(locale,'scheduleQueued');}return systemMessage(locale,'scheduleUsage');
   }
-  async close():Promise<void>{this.closed=true;this.serviceActive=false;this.automation.close();for(const timer of this.timers.values())clearTimeout(timer);for(const [key,task] of [...this.processing.entries(),...this.maintenance.entries()]){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}await this.serviceChange.catch(()=>{});await this.deliveryWorker.close();await this.connectionSupervisor.disconnectAll();await Promise.all([...this.processing.values(),...this.maintenance.values()].map(p=>p.done.catch(()=>{})));await this.automation.drain();await this.drainControls();await this.deliveryWorker.drain();for(const signal of this.sessionActionSignals.values())signal.dispose();this.sessionActionSignals.clear();await this.harness.dispose();if(this.claimed){this.repos.lifecycle.release(this.owner);this.claimed=false;}}
+  async close():Promise<void>{this.closed=true;this.serviceActive=false;this.automation.close();for(const timer of this.timers.values())clearTimeout(timer.timer);for(const [key,task] of [...this.processing.entries(),...this.maintenance.entries()]){task.controller.abort();this.harness.cancel(task.sessionId);this.media.cancelScope(key);}await this.serviceChange.catch(()=>{});await this.deliveryWorker.close();await this.connectionSupervisor.disconnectAll();await Promise.all([...this.processing.values(),...this.maintenance.values()].map(p=>p.done.catch(()=>{})));await this.automation.drain();await this.drainControls();await this.deliveryWorker.drain();for(const signal of this.sessionActionSignals.values())signal.dispose();this.sessionActionSignals.clear();await this.harness.dispose();if(this.claimed){this.repos.lifecycle.release(this.owner);this.claimed=false;}}
 }
 

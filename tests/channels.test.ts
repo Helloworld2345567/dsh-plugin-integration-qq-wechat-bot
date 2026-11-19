@@ -2,6 +2,12 @@ import {test} from 'node:test';import assert from 'node:assert/strict';import {r
 import {decryptBinding,qqInbound,qqGroupObservation,QQAdapter,qqChannel} from '../src/channels/qq.js';import {decodeMediaKey,weixinInbound,WeixinAdapter} from '../src/channels/weixin.js';import {botSchema} from '../src/core/types.js';
 import {EventEmitter} from 'node:events';
 const qq=botSchema.parse({id:'qq',name:'QQ',channel:'qq',accountId:'app'});const wx=botSchema.parse({id:'wx',name:'WX',channel:'weixin',accountId:'bot'});
+test('platform replies preserve the exact quoted server message ID for image edits',()=>{
+  const id='9223372036854775807';
+  const qqReply=qqInbound(qq,{t:'C2C_MESSAGE_CREATE',d:{id:'next',content:'/edit brighten',author:{user_openid:'alice'},message_reference:{message_id:id}}});
+  const wxReply=weixinInbound(wx,{message_type:1,message_id:'next',from_user_id:'alice',item_list:[{type:1,text_item:{text:'/edit brighten'},ref_msg:{svr_id:id,title:'Image'}}]});
+  assert.equal(qqReply?.quoted?.id,id);assert.equal(wxReply?.quoted?.id,id);
+});
 test('QQ active automation delivery uses a durable sequence without an expired reply message ID',async()=>{
   const payloads:any[]=[];
   const adapter=new QQAdapter((async(url:string,init:any)=>{if(url.includes('getAppAccessToken'))return{access_token:'fixture',expires_in:3600};payloads.push(JSON.parse(init.body));return{id:'active-receipt'};}) as any);

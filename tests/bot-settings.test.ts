@@ -3,15 +3,15 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
-import {botSchema,botSettingsSchema,botSettingsFromConfig,configSchema,type CallerScope} from '../src/core/types.js';
+import {botSettingsSchema,botSettingsFromConfig,configSchema,type CallerScope} from '../src/core/types.js';
 import {Assets,MediaService} from '../src/core/media.js';
+import {imageServiceSettingsSchema} from '../src/core/image-service-config.js';
 import {BotRuntime} from '../src/core/runtime.js';
 import {freezeTurn,allowedNow} from '../src/core/policy.js';
 import {Admin} from '../src/harness/admin.js';
 import {BotFeatures} from '../src/core/features.js';
 import {ProfileStore} from '../src/core/profile-store.js';
 import {fixtureChannels} from './test-channel.js';
-import {seedLegacyBot} from './sqlite-fixtures.js';
 
 const scope=(botId='one'):CallerScope=>({botId,platform:'qq',accountId:botId,kind:'private',channelId:'owner',senderId:'owner'});
 async function fixture(t:any){
@@ -31,12 +31,12 @@ test('bot runtime settings accept only runtime preferences and preserve Profile 
   assert.equal(botSettingsSchema.parse({...settings,media:{voice:{enabled:true,engine:'gpt-sovits',profileRef:{serviceId:'gpt-sovits',profileId:'speaker'}}}}).media.voice?.profileRef?.profileId,'speaker');
 });
 
-test('existing bots snapshot their applied config once and omitted settings never overwrite the snapshot',async t=>{
-  const home=await mkdtemp(path.resolve('.codex/bot-settings-migration-'));t.after(()=>rm(home,{recursive:true,force:true}));
+test('new bots snapshot their persona settings once and omitted settings never overwrite the snapshot',async t=>{
+  const home=await mkdtemp(path.resolve('.codex/bot-settings-snapshot-'));t.after(()=>rm(home,{recursive:true,force:true}));
   let store=new SqlitePersistence(home);
   try{
     const old=store.personas.config('default');store.personas.saveConfig({...old,model:{provider:'P',model:'original'},progressReply:{enabled:false,intervalSeconds:120}},old.revision);
-    seedLegacyBot(store,'one',botSchema.parse({id:'one',name:'One',channel:'qq'}));
+    store.bots.saveBot({id:'one',name:'One',channel:'qq'});
     store.close();store=new SqlitePersistence(home);
     const migrated=store.bots.bot('one');assert.equal(migrated.settings?.model?.model,'original');assert.equal(migrated.settings?.progressReply.intervalSeconds,120);
     const persona=store.personas.config('default');store.personas.saveConfig({...persona,model:{provider:'P',model:'later'}},persona.revision);
@@ -70,6 +70,7 @@ test('persona switching preserves bot settings and session overrides while froze
 
 test('bot save validates model selections and bot-scoped status reads each bot settings',async t=>{
   const f=await fixture(t);for(const id of ['one','two'])f.runtime.saveBot({id,name:id,channel:'qq',enabled:true});
+  t.mock.method(f.runtime.media,'imageSettings',()=>imageServiceSettingsSchema.parse({comfyUiWorkflowPath:path.join(f.home,'workflow.json')}));
   const admin=new Admin({} as any,f.runtime,'fixture',async()=>{}),one=f.store.bots.bot('one');
   await assert.rejects(admin.invoke('bot.save',{...one,settings:{...one.settings!,model:{provider:'P',model:'invalid'}}}),/UNKNOWN_MODEL/);assert.deepEqual(f.store.bots.bot('one'),one);
   await admin.invoke('bot.save',{...one,settings:{...one.settings!,media:{image:{enabled:true,protocol:'comfyui'}}}});

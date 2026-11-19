@@ -27,7 +27,7 @@ flowchart LR
 
 渠道身份拥有会话、附件、记忆和输出，模型不能指定可信身份或本机路径。bot 可以共享人格，但渠道所有权始终隔离。每轮冻结人格、模型、技能、工具和媒体配置，修改从下一轮生效；执行时还要检查当前权限，撤权立即阻止后续调用。
 
-人格由 `config.json` 与 `persona.md` 编辑，只支持 `schemaVersion: 4`，不读取、迁移或回退 V3。SQLite revision 是生效快照；应用文件时校验 schema、revision 与文件状态。机器人独立保存运行设置，切换人格保留会话历史与模型、音色和图片服务覆盖。授权凭据由 Harness credentials 管理，合法机器人 ID 经一致映射读写，避免键冲突。
+人格由 `config.json` 与 `persona.md` 编辑，使用 `schemaVersion: 4`。SQLite revision 是生效快照；应用文件时校验 schema、revision 与文件状态。机器人独立保存运行设置，切换人格保留会话历史与模型、音色和图片服务覆盖。授权凭据由 Harness credentials 管理，合法机器人 ID 经一致映射读写，避免键冲突。
 
 普通与排队消息保留原文、当前引用和附件；附件元数据及转写放入内部上下文，时间和工作目录由运行上下文提供。工具按需披露，宿主不把原始工具 JSON 或推理内容转发给平台。
 
@@ -55,7 +55,7 @@ DSH 原生日志负责完整历史与恢复；插件 SQLite 保存绑定、历�
 | `bot_voice`、`bot_music`、`bot_sing` | 分别处理语音、音乐获取和 RVC 转换；复用统一任务与附件投递 |
 | `bot_session` | 查询、新建、压缩或恢复会话；即时停止由宿主命令处理 |
 | `bot_model`、`bot_voice_control`、`bot_image_control` | 修改当前会话覆盖，下一轮生效 |
-| `bot_skills` | 修改共享人格的技能启停，影响使用该人格的会话 |
+| `bot_skills` | 查询技能或修改当前机器人的技能开关，其会话从下一轮生效 |
 
 `skills/catalog.json` 与各技能 `operations.json` 声明固定入口、工具路由、参数、模型角色及交付。构建生成 Host/Python registry；宿主只派发操作 ID，Python 从受信包根导入固定 `dsh_bot_runtime` 入口。人格、工作区和模型响应不参与代码发现，技能代码不能自行发送平台消息。
 

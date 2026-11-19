@@ -5,6 +5,7 @@ import type {ComfyWorkflowModel} from './comfyui-workflow-model.js';
 import { z } from 'zod';
 import path from 'node:path';
 import {edgeTtsVoiceIds,normalizeGptSovitsBaseUrl,normalizeVoiceServiceBaseUrl} from './voice-config.js';
+import {rvcTuningSchema} from './rvc-worker-config.js';
 import {serviceProfileRefSchema,type ProfileState,type ServiceProfileRef,type TurnServiceSnapshot} from './service-contract.js';
 
 export const idSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
@@ -54,8 +55,6 @@ export const edgeTtsVoiceIdSchema=z.enum(edgeTtsVoiceIds);
 export type EdgeTtsVoiceId= z.infer<typeof edgeTtsVoiceIdSchema>;
 export const edgeTtsSchema=z.object({protocol:z.literal('edge_tts'),voice:edgeTtsVoiceSchema});
 export type EdgeTtsConfig=z.infer<typeof edgeTtsSchema>;
-export const edgeTtsFallbackSchema=z.object({enabled:z.boolean().default(false),voice:edgeTtsVoiceSchema});
-export type EdgeTtsFallbackConfig=z.infer<typeof edgeTtsFallbackSchema>;
 const commonConfigFields={
   id:idSchema,name:z.string().trim().min(1).max(100),revision:z.number().int().positive().default(1),
   personaPrompt:z.string().min(1).max(32000),model:modelSchema.nullable().default(null),
@@ -69,29 +68,17 @@ const commonConfigFields={
   archived:z.boolean().default(false),
 };
 
-// Older personas and bot settings stored connection details here. Service
-// settings now own them; discard only these retired fields when reading.
-const v4ImageSchema=z.preprocess(value=>{
-  if(!value||typeof value!=='object'||Array.isArray(value))return value;
-  const {baseUrl:_baseUrl,model:_model,keyEnv:_keyEnv,workflowEnv:_workflowEnv,...current}=value as Record<string,unknown>;
-  return current;
-},imageSkillOverrideSchema);
-const v4AnalysisSchema=z.object({enabled:z.boolean().default(true),protocol:z.enum(['chat_completions','transcriptions']).default('chat_completions'),provider:z.never().optional(),model:z.never().optional(),baseUrl:z.never().optional(),keyEnv:z.never().optional()}).strict();
+const videoSettingsSchema=z.object({enabled:z.boolean().default(true)}).strict();
+const asrSettingsSchema=videoSettingsSchema.extend({protocol:z.enum(['chat_completions','transcriptions']).default('chat_completions')});
 const v4VoiceSchema=z.object({
   enabled:z.boolean().default(false),engine:z.enum(['edge_tts','gpt-sovits','breeze-tts']).optional(),profileRef:serviceProfileRefSchema.optional(),replyMode:z.enum(['on_demand','auto']).default('on_demand'),format:z.enum(['mp3','wav']).default('mp3'),
   // Edge TTS is a built-in provider without an operator endpoint, path or credential.
-  protocol:z.literal('edge_tts').optional(),voice:edgeTtsVoiceSchema.optional(),edgeTts:edgeTtsFallbackSchema.optional(),
-  gptSovits:z.never().optional(),baseUrl:z.never().optional(),endpoint:z.never().optional(),credentials:z.never().optional(),
+  protocol:z.literal('edge_tts').optional(),voice:edgeTtsVoiceSchema.optional(),
 }).strict().superRefine((value,ctx)=>{if(value.protocol==='edge_tts'&&value.profileRef)ctx.addIssue({code:'custom',path:['profileRef'],message:'内置 Edge TTS 不使用服务 Profile',params:{message:systemDescriptor('edgeProfileInvalid')}});if(value.protocol==='edge_tts'&&value.engine&&value.engine!=='edge_tts')ctx.addIssue({code:'custom',path:['engine'],message:'Edge TTS 引擎标识不匹配',params:{message:systemDescriptor('edgeEngineMismatch')}});if(value.engine==='edge_tts'&&value.protocol!=='edge_tts')ctx.addIssue({code:'custom',path:['engine'],message:'Edge TTS 需要 edge_tts 协议',params:{message:systemDescriptor('edgeProtocolRequired')}});if(value.engine&&value.engine!=='edge_tts'&&value.profileRef&&value.profileRef.serviceId!==value.engine)ctx.addIssue({code:'custom',path:['engine'],message:'语音引擎与服务 Profile 不匹配',params:{message:systemDescriptor('voiceEngineProfileMismatch')}});if(value.protocol==='edge_tts'&&value.format==='wav')ctx.addIssue({code:'custom',path:['format'],message:'Edge TTS 语音输出仅支持 MP3',params:{message:systemDescriptor('edgeMp3Required')}});});
-const v4SingingSeparationSchema=z.object({
-  enabled:z.boolean().default(false),instrumentalMix:z.boolean().default(false),volume:z.number().min(0).max(2).default(1),status:z.literal('unconfigured').default('unconfigured'),
-  modelId:z.never().optional(),modelPath:z.never().optional(),weightsPath:z.never().optional(),
-}).strict();
 const v4SingingSchema=z.object({
-  enabled:z.boolean().default(false),profileRef:serviceProfileRefSchema.optional(),speakerId:z.number().int().min(0).max(65535).default(0),pitchShift:z.number().int().min(-24).max(24).default(0),indexRate:z.number().min(0).max(1).default(0),defaultOutput:z.enum(['mp3','wav']).default('mp3'),separation:v4SingingSeparationSchema.default({enabled:false,instrumentalMix:false,volume:1,status:'unconfigured'}),
-  protocol:z.never().optional(),serviceUrl:z.never().optional(),modelVersion:z.never().optional(),singingModelId:z.never().optional(),singingWeightsPath:z.never().optional(),singingIndexPath:z.never().optional(),endpoint:z.never().optional(),credentials:z.never().optional(),
+  enabled:z.boolean().default(false),profileRef:serviceProfileRefSchema.optional(),...rvcTuningSchema.shape,defaultOutput:z.enum(['mp3','wav']).default('mp3'),
 }).strict();
-const v4MusicSchema=z.object({enabled:z.boolean().default(false),profileRef:serviceProfileRefSchema.optional(),includeLyrics:z.boolean().default(false),home:z.never().optional(),sources:z.never().optional(),endpoint:z.never().optional(),credentials:z.never().optional(),locator:z.never().optional()}).strict();
+const v4MusicSchema=z.object({enabled:z.boolean().default(false),profileRef:serviceProfileRefSchema.optional(),includeLyrics:z.boolean().default(false)}).strict();
 
 const forbiddenV4Key=/^(?:endpoint|port|baseurl|url|home|root|path|.*path|.*weights?|credentials?|credentialref|locator|token|secret|apikey|keyenv)$/i;
 function forbiddenV4Path(value:unknown,segments:string[]=[]):string|undefined {
@@ -104,7 +91,7 @@ function forbiddenV4Path(value:unknown,segments:string[]=[]):string|undefined {
 }
 export const v4ConfigSchema=z.object({
   schemaVersion:z.literal(4).default(4),...commonConfigFields,
-  media:z.object({image:v4ImageSchema.optional(),asr:v4AnalysisSchema.optional(),video:v4AnalysisSchema.optional(),voice:v4VoiceSchema.optional(),singing:v4SingingSchema.optional(),music:v4MusicSchema.optional()}).strict().default({}),
+  media:z.object({image:imageSkillOverrideSchema.optional(),asr:asrSettingsSchema.optional(),video:videoSettingsSchema.optional(),voice:v4VoiceSchema.optional(),singing:v4SingingSchema.optional(),music:v4MusicSchema.optional()}).strict().default({}),
 }).strict().superRefine((value,ctx)=>{const found=forbiddenV4Path(value);if(found)ctx.addIssue({code:'custom',path:found.split('.'),message:'v4 人格不得保存服务地址、端口、路径、权重、凭据或 locator',params:{message:systemDescriptor('personaPrivateServiceFields')}});});
 
 export type BotConfig=z.infer<typeof v4ConfigSchema>;
@@ -157,7 +144,7 @@ export type BotInstance = z.infer<typeof botSchema>;
 export interface CallerScope { botId: string; platform: string; accountId: string; kind: 'private' | 'group'; channelId: string; senderId: string }
 export interface MediaInput {kind:'image'|'audio'|'video'|'file';name:string;mime:string;url?:string;bytes?:string;handle?:string;transcript?:string;remote?:{query?:string;key?:string;fullUrl?:string}}
 export interface ChannelReplyEnvelope { channelId:string; version:number; payload:Record<string,string> }
-export interface InboundMessage {id:string;scope:CallerScope;text:string;attachments:MediaInput[];quoted?:{id?:string;text?:string;attachments?:MediaInput[]};reply:Record<string,string>;replyEnvelope?:ChannelReplyEnvelope;timestamp:number}
+export interface InboundMessage {id:string;scope:CallerScope;text:string;directImageCommand?:true;attachments:MediaInput[];quoted?:{id?:string;text?:string;attachments?:MediaInput[]};reply:Record<string,string>;replyEnvelope?:ChannelReplyEnvelope;timestamp:number}
 export interface SessionBinding { key:string;scope:CallerScope;sessionId:string;generation:number;persisted:boolean;personaId?:string;modelOverride?:z.infer<typeof modelSchema>;imageProtocolOverride?:ImageProtocol;ttsOverride?:TtsOverride;stsOverride?:StsOverride;recentSince?:number }
 export interface SessionRecord { id:string;scopeKey:string;scope:CallerScope;generation:number;persisted:boolean;createdAt:number;updatedAt:number;personaId?:string;modelOverride?:z.infer<typeof modelSchema>;imageProtocolOverride?:ImageProtocol;ttsOverride?:TtsOverride;stsOverride?:StsOverride;recentSince?:number;workspace?:string }
 export type ServiceProfileRole='voice'|'singing'|'music';
@@ -169,7 +156,7 @@ export type DeliveryAttemptPhase='prepare'|'upload'|'commit';
 export interface DeliveryAttempt {number:number;phase:DeliveryAttemptPhase;assetId?:string;fileKey?:string;uploadQuery?:string;aesKey?:string;encryptedSize?:number;fileInfo?:string;fileInfoExpiresAt?:number;startedAt?:number;lastError?:string;causeCode?:string;causeMessage?:string;httpStatus?:number;platformCode?:string;platformMessage?:string;platformTraceId?:string;autoRetryCount?:number}
 export interface Output {type:'text'|'asset';text?:string;assetId?:string;resend?:boolean;asFile?:boolean}
 export interface Delivery {purpose?:'result'|'progress';progress?:{runId:string;generation:number;expiresAt:number};replySequence?:number;id:string;scopeKey:string;botId:string;sessionId:string;sessionGeneration?:number;sourceId:string;turnId:string;index:number;output:Output;reply:Record<string,string>;replyEnvelope?:ChannelReplyEnvelope;state:'pending'|'sending'|'sent'|'unknown'|'failed'|'cancelled';receipt?:string;error?:string;attempt?:DeliveryAttempt;createdAt?:number;updatedAt?:number;sentAt?:number}
-export interface TurnMetric {id:string;scopeKey:string;sourceId:string;sessionId?:string;turnId?:string;receivedAt:number;queuedAt?:number;attachmentsStartedAt?:number;attachmentsCompletedAt?:number;modelStartedAt?:number;modelFirstFeedbackAt?:number;modelCompletedAt?:number;deliveryStartedAt?:number;sentAt?:number;state?:'received'|'processing'|'complete'|'failed'|'cancelled'}
+export interface TurnMetric {id:string;scopeKey:string;sourceId:string;sessionId?:string;turnId?:string;receivedAt:number;queuedAt?:number;attachmentsStartedAt?:number;attachmentsCompletedAt?:number;modelStartedAt?:number;modelFirstChunkAt?:number;modelFirstTextAt?:number;modelCompletedAt?:number;deliveryStartedAt?:number;firstSentAt?:number;sentAt?:number;state?:'received'|'processing'|'complete'|'failed'|'cancelled'}
 export interface Credential { accountId:string;token?:string;appSecret?:string;baseUrl?:string }
 export interface LoginState { status:'pending'|'confirmed'|'expired'|'denied';qr?:string;ticket?:string;credential?:Credential }
 export interface ChannelOutboundContext {binding:SessionBinding;outputs:Output[];signal:AbortSignal;authorize:()=>void}

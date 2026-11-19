@@ -5,7 +5,7 @@ import {botModelArgumentsSchema,type BotModelArguments,type BotModelResult} from
 export function defineBotModelTool(execute:(args:BotModelArguments,exec:ToolRunContext)=>Promise<unknown>){
   return defineTool({
     name:'bot_model',
-    description:"List or change the model for the current trusted private session. set requires provider and model; reset restores the persona default.",
+    description:"List or change the model for the current trusted private session. set requires provider and model; reset restores the bot default.",
     parameters:{action:{type:'string',required:true,enum:['list','set','reset']},provider:{type:'string'},model:{type:'string'}},
     output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
     isConcurrencySafe:args=>args.action==='list',

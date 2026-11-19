@@ -12,7 +12,7 @@
 | 会话与绑定 | `SessionRepository`、`BindingRepository` | scope 所有权；binding 与 session 原子更新；reset/activate 推进 generation；分页绑定筛选与集合 revision |
 | 入站消息与记忆 | `InboxRepository`、`MemoryRepository` | 入站按 scope/message ID 幂等；记忆更正使用 version CAS，forget tombstone 防止旧来源复活 |
 | 附件与媒体任务 | `AssetRepository`、`MediaJobRepository` | 附件记录与索引同事务；scope、来源会话与实际路径有明确归属；任务状态持久化 |
-| 投递 | `DeliveryRepository`、`DeliveryQueueRepository` | intent、attempt 与状态使用稳定身份；retry 复用原记录，按允许状态更新；不可自动重放未知结果 |
+| 投递 | `DeliveryRepository`、`DeliveryQueueRepository` | QQ 回复序号与投递记录在同一事务写入。重试复用原记录和序号，结果未知时须人工确认 |
 | 自动化 | `AutomationRepository` | schedule/proactive 与运行记录归 scope/bot；启动恢复启用计划，保留中断记录 |
 | 统计 | `StatsDataPort`、`StatsProjectionRepository`、`StatsSessionRepository` | 事实幂等、投影可重建；缺少证据时保持 unknown，不伪造统计 |
 | 受管服务 | `ProfileRepository`、`CapabilityAcceptanceRepository`、`ServiceHealthRepository`、`ServiceStateRepository` | Profile revision 不可变，content hash 绑定配置/资源；验收绑定修订，health/fence/job 独立持久化 |

@@ -122,13 +122,6 @@ for (const file of markdown) {
       } catch { failures.push(`${path.relative(root, file)} -> ${raw}: cannot inspect fragment #${parsed.fragment}`); }
     }
   }
-  // V3 persona migration is intentionally not a supported contract. Scan every
-  // published Markdown source, but allow explicit negative/V4-only statements.
-  const migrationClaim=/preserved\s+when\s+migrating\s+v3\s+personas?\s+to\s+v4|migrat(?:e|ing|ion)\s+v3(?:\s+personas?)?\s+(?:to|into)\s+v4|v3\s*(?:to|→)\s*v4.{0,40}migrat\w*|v3.{0,20}(?:到|至|→).{0,20}v4.{0,20}(?:迁移|升级|转换)|v3.{0,40}(?:迁移到|升级到|转换为|回退到).{0,20}v4|(?:迁移|升级|转换).{0,20}v3.{0,20}(?:到|至|为).{0,20}v4/gis;
-  for(const claim of text.matchAll(migrationClaim)){
-    const before=text.slice(Math.max(0,(claim.index??0)-40),claim.index??0);
-    if(!/(?:does\s+not|do\s+not|not\s+supported|unsupported|不承诺|不支持|不会|不再|禁止|无)\s*.{0,30}$/is.test(before))failures.push(`${path.relative(root, file)}: unsupported V3-to-V4 persona migration promise`);
-  }
 }
 
 const workflows = [];

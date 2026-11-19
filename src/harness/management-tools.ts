@@ -28,7 +28,7 @@ export function defineBotPersonaTool(execute:(args:BotPersonaArguments,exec:Tool
 export function defineBotSkillsTool(execute:(args:BotSkillsArguments,exec:ToolRunContext)=>Promise<unknown>){
   return defineTool({
     name:'bot_skills',
-    description:"List or enable/disable published skills in trusted private chat. enable/disable requires a skill name and changes the shared persona.",
+    description:"List or enable/disable published skills in trusted private chat. enable/disable requires a skill name and changes this bot’s enabled skills.",
     parameters:{action:{type:'string',required:true,enum:['list','enable','disable']},name:{type:'string'}},
     output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
     isConcurrencySafe:args=>args.action==='list',
@@ -40,7 +40,7 @@ export function defineBotSkillsTool(execute:(args:BotSkillsArguments,exec:ToolRu
 export function defineBotVoiceControlTool(execute:(args:BotVoiceArguments,exec:ToolRunContext)=>Promise<unknown>){
   return defineTool({
     name:'bot_voice_control',
-    description:"List or change TTS/STS voices for the current trusted private session. set requires a voice id; reset restores the persona default.",
+    description:"List or change TTS/STS voices for the current trusted private session. set requires a voice id; reset restores the bot default.",
     parameters:{role:{type:'string',required:true,enum:['tts','sts']},action:{type:'string',required:true,enum:['list','set','reset']},id:{type:'string'}},
     output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
     isConcurrencySafe:args=>args.action==='list',

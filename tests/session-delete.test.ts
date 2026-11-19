@@ -91,7 +91,10 @@ for(const evidence of ['failure','turn-snapshot'] as const)test(`deleting a pre-
   f.store.inbox.accept({...input('downloaded'),attachments:[{kind:'file',name:'downloaded.txt',mime:'text/plain',bytes:Buffer.from('downloaded').toString('base64')}]});
   f.store.inbox.accept({...input('unavailable'),attachments:[{kind:'file',name:'missing.txt',mime:'text/plain',url:'https://example.invalid/missing'}]});
   await f.runtime.process(old.key);
-  assert.equal(modelCalls,0);assert.equal(f.store.turnMetrics.findTurnMetric(`inbox:${old.key}:downloaded`)?.sessionId,undefined);
+  const metricId=`inbox:${old.key}:downloaded`;
+  assert.equal(modelCalls,0);assert.equal(f.store.turnMetrics.findTurnMetric(metricId)?.sessionId,old.sessionId);
+  // Earlier stored attachment failures can lack the owning session on this source.
+  f.store.turnMetrics.updateTurnMetric(metricId,{sessionId:undefined,turnId:undefined});
   const attachment=f.store.assets.allAssets()[0];assert.ok(attachment);assert.equal(f.store.inbox.source(old.key,'downloaded')?.attachments[0].handle,attachment.id);
   if(evidence==='failure')f.store.database.records.delete('turn-snapshot',old.sessionId);
   else for(const row of f.store.failures.entries())f.store.failures.delete(row.id);

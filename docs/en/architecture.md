@@ -27,7 +27,7 @@ flowchart LR
 
 Channel identity owns sessions, attachments, memories and outputs. Models cannot supply trusted identity or local paths. Bots may share personas while channel ownership remains isolated. Each turn freezes persona, model, skill, tool and media configuration; edits apply next turn. Execution also checks current permissions, so revocation blocks subsequent calls.
 
-Personas are edited through `config.json` and `persona.md`. Only `schemaVersion: 4` is supported; V3 is not read, migrated or used as fallback. SQLite revisions are the active snapshots; applying files validates schema, revision and file state. Bots keep independent runtime settings; persona switching retains history and session model/voice/image-service overrides. Harness credentials owns authorization secrets with a consistent mapping for valid bot IDs.
+Personas are edited through `config.json` and `persona.md`. The persona format uses `schemaVersion: 4`. SQLite revisions are the active snapshots; applying files validates schema, revision and file state. Bots keep independent runtime settings; persona switching retains history and session model/voice/image-service overrides. Harness credentials owns authorization secrets with a consistent mapping for valid bot IDs.
 
 Ordinary and queued messages retain original text, current quotes and attachments. Attachment metadata/transcripts use internal context; time and working directory come from runtime context. Tools are disclosed on demand; raw tool JSON and reasoning are not sent to platforms.
 
@@ -55,7 +55,7 @@ Channel media storage is separate from session directories. SQLite records attac
 | `bot_voice`, `bot_music`, `bot_sing` | Speech, music acquisition and RVC conversion using shared jobs and attachment delivery |
 | `bot_session` | Query, create, compact or resume sessions; host commands handle immediate stop |
 | `bot_model`, `bot_voice_control`, `bot_image_control` | Change current-session overrides for the next turn |
-| `bot_skills` | Enable/disable skills on the shared persona, affecting sessions that use it |
+| `bot_skills` | List skills or change the current bot’s enabled skills for subsequent turns in its sessions |
 
 `skills/catalog.json` and each skill's `operations.json` declare fixed entries, routes, parameters, model roles and delivery. Builds generate Host/Python registries. The host dispatches operation IDs; Python imports fixed `dsh_bot_runtime` entries from a trusted package root. Personas, workspaces and model responses never discover executable code; skills cannot send platform messages directly.
 

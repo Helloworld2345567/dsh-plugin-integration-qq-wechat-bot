@@ -34,7 +34,7 @@ Only `src/infrastructure/sqlite/` imports `node:sqlite`; only infrastructure hol
 - Channel identity owns sessions, attachments, memories and outputs. Models cannot supply trusted identity, scope, local paths or platform targets.
 - Jobs freeze configuration and Profile revisions. Queue, execution, output registration and delivery still check cancellation, current permissions and session generation.
 - Private Profiles, credentials, endpoints and weight paths stay out of public persona projections and cross-layer errors. Return stable categories and sanitized diagnostics.
-- Only V4 personas are supported; V3 is not read, migrated or used as fallback. Unregistered capabilities remain `missing`/`blocked`, without silent substitution.
+- Unregistered capabilities remain `missing`/`blocked`, without silent substitution.
 - Unknown submission results are not replayed automatically; recovery retains job, Asset and delivery identities.
 - Service Adapters receive frozen jobs, controlled inputs and assigned directories. They do not own Store, Session, channel identity, delivery or Harness Context. The internal interface is not a third-party ABI commitment.
 

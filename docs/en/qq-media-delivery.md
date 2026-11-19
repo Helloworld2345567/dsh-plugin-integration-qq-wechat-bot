@@ -25,7 +25,7 @@ The hard limit is `200 * 1024 * 1024` bytes, checked against both registered and
 
 Files up to **5,000,000 bytes** use Base64 `file_data`. Larger files use `upload_prepare`, part PUTs, `upload_part_finish` and final `files` assembly without requiring a public file URL. Presigned PUTs do not carry bot authorization headers. Message submission follows receipt of `file_info`.
 
-An attachment delivery can take up to 15 minutes, with 60-second upload-request timeouts; text retains a 90-second timeout. Stopping a task or bot still cancels uploads immediately. See [qq-upload.ts](../../src/channels/qq-upload.ts) for the protocol implementation.
+An attachment delivery can take up to 15 minutes, with 60-second upload-request timeouts; text retains a 90-second timeout. Stopping a task or bot still cancels uploads immediately. See [qq-upload.ts](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/channels/qq-upload.ts) for the protocol implementation.
 
 The 100 MiB local audio-input budget and [Music's](music-integration.md) complete-MP3 policy below 20,000,000 bytes are independent of QQ limits. WeChat has its own channel limits.
 

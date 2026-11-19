@@ -35,10 +35,10 @@ Identify the failure a check should detect before running it. These are minimum 
 | Change | Checks |
 | --- | --- |
 | Documentation | `npm run check:docs`; add `npm run check:contracts` for command/version changes and `npm run check:release` for published-file changes |
-| TypeScript core or build scripts | `npm run check:architecture`, `npm run typecheck`, `npm test`, `npm run build`; add `npm run test:python` for Python protocol changes |
-| Python worker | `npm run check:architecture`, `npm run test:python`, `npm run check:python-dependencies`; verify archived `-P -m dsh_bot_runtime.worker` when package entries change |
+| TypeScript core or build scripts | `npm run check:architecture`, `npm run typecheck`, `npm run test:unit -- tests/<affected>.test.ts`, `npm run build`; add `npm run test:python:unit -- tests/<affected>.py` for Python protocol changes |
+| Python worker | `npm run check:architecture`, `npm run test:python:unit -- tests/<affected>.py`, `npm run check:python-dependencies`; verify archived `-P -m dsh_bot_runtime.worker` when package entries change |
 | Skill declarations or routes | `npm run generate:skills`, `npm run test:skills`; add Python tests for Python implementation changes |
-| UI or language resources | `npm run typecheck`, `npm test`, `npm run build`; verify both languages, placeholders and draft preservation |
+| UI or language resources | `npm run typecheck`, `npm run test:unit -- tests/<affected>.test.ts`, `npm run build`; verify both languages, placeholders and draft preservation |
 | Lifecycle | Source gate and `npm run test:lifecycle-native`; add `npm run test:install-smoke` for installation changes |
 | Installer or release contents | `npm run release:pack`, `npm run test:install-smoke` |
 

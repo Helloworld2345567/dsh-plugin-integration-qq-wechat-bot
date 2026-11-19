@@ -16,7 +16,9 @@ Tests use Node.js 24+, Python 3.12/3.13 and Harness `0.2.1-rc.5`. Use offline fi
 | `npm run test:skills` | Skill contracts, generated registries and focused skill unit regressions |
 | `npm run typecheck` | TypeScript type errors |
 | `npm run test` (or `npm test`) | TypeScript logic, SQLite and protocol fixtures; some media cases require test Python/FFmpeg |
+| `npm run test:unit -- tests/<affected>.test.ts` | Runs only the selected TypeScript files; without file arguments it matches `npm test` |
 | `npm run test:python` | Worker protocols, namespace imports, import side effects and media regressions; test Python required, FFmpeg for some cases |
+| `npm run test:python:unit -- tests/<affected>.py` | Runs only the selected Python unittest files; without file arguments it matches `npm run test:python` |
 | `npm run check:python-dependencies` | Requirement syntax, missing base packages or `pip check` conflicts; does not install dependencies |
 | `npm run build` | Main/lifecycle build failures; writes ignored `dist/` output and build digests |
 | `npm run check:docs` | Broken local links/anchors, missing language pairs and invalid CI YAML |
@@ -52,8 +54,26 @@ Do not use shared Harness profiles, real account/group/user IDs, tokens, cookies
 - Fixture success does not establish real QQ/WeChat delivery. Health/probe success does not establish media quality, complete audio or listening acceptance. Operators separately accept real platforms and external model services.
 - Check matching translations/placeholders, usable English labels at wide, 760px and 460px layouts, and draft preservation during language switching.
 - Bot system-message language is independent of UI language. Saving persists it for new operations while running turns retain their original language. Persona text, user content and TTS parameters remain unchanged.
-- Unregistered capabilities remain `missing`/`blocked`, without silent service substitution. Tests do not promise V3 persona migration, third-party Adapter ABI or external service results.
+- Unregistered capabilities remain `missing`/`blocked`, without silent service substitution. Tests do not promise third-party Adapter ABI or external service results.
 - From source, `python -B tests/benchmark_media_transform.py --repeats 3` reproduces synthetic-media benchmarks and cleans temporary output. It excludes networks, models and delivery and is not a performance guarantee.
+
+### Paired benchmark for explicit image commands and chat
+
+On 2026-11-19, five paired inputs ran on Windows with an RTX 5060 Ti 16 GB, a live DeepSeek Flash chat model, NativeHarness, the Python worker and ComfyUI. The generation prompts requested a cyan triangle and an orange square. The edits requested an outline change on a white disk while preserving a red, green or blue background. Two edits used a current attachment and one used a quoted image. Each edit session also contained an older image with a different background color.
+
+| Sample | Foreground model calls, chat / direct | Chat first / last image receipt (s) | Direct image receipt (s) |
+| --- | --- | --- | --- |
+| Generate cyan triangle | 5 / 0 | 15.371 / 15.371 | 4.664 |
+| Edit red image | 10 / 0 | 45.407 / 45.411 | 4.733 |
+| Edit quoted green image | 17 / 0 | 74.737 / 74.744 | 4.799 |
+| Generate orange square | 5 / 0 | 14.602 / 14.602 | 4.621 |
+| Edit blue image | 22 / 0 | 132.253 / 132.261 | 4.800 |
+
+To reproduce, use an isolated profile, start a fresh session for each arm and alternate arm order. Register input assets in both arms before timing and supply the green image via synthetic `quoted.attachments`. Measure from runtime intake until the local channel adapter accepts the image. On the same build, send `//draw` or `//edit` to pass the corresponding command through chat and `/draw` or `/edit` to submit it directly. Keep the ordinary two-second chat batching window and immediate scheduling for direct commands. Disable progress reminders in both arms. Use identical workflow files and synthetic attachments within each pair. Run Anima Turbo v1.1 at 384×384, seed 42111, Euler/simple, four steps and CFG 1. For edits, connect `LoadImage → VAEEncode → KSampler` with denoise 0.24. Warm up once and disable ComfyUI node caching. Execution history showed an empty cached-node list for all 17 timed sampling runs.
+
+Median first-image receipt times were 14.987 s for chat and 4.643 s for direct generation, and 74.737 s and 4.799 s for editing. Each chat session also made one background title call, excluded from the foreground count. Chat rewrote all five prompts and issued 3, 4 and 3 successful diffusion edits per edit request. It also invoked resizing, media downloads and unsuccessful generation attempts. Direct commands preserved the user prompt, applied the same configured style and ran one image job per request. Both arms selected the intended reference in 3/3 edit requests. Counting executed diffusion edits gives 10/10 for chat and 3/3 for direct. Checks covered the input asset, graph connection and 16 background-color samples per output. Outline quality was unscored. Median duration of a successful diffusion job was 4.783 s for chat and 4.724 s for direct commands. Receipts came from the local adapter. Live QQ/WeChat transport latency requires a separate measurement.
+
+The five pairs were timed before the reference-input connectivity check was added. A subsequent red-image `/edit` smoke test confirmed that the connected ComfyUI `LoadImage` node used a UUID filename and received bytes identical to the source. One edit job recorded one ComfyUI call, produced one local image receipt and preserved red at all 16 background samples.
 
 ## CI and failure handling
 

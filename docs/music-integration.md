@@ -6,11 +6,11 @@
 
 ## 配置与使用
 
-1. 在受管 Music Profile 的私有 `home` 中登记项目根目录；服务面板设置来源顺序。支持 `MiguMusicClient`、`KuwoMusicClient`、`QQMusicClient` 和 `NeteaseMusicClient`，默认咪咕、酷我。
+1. 在“服务 → 音乐下载服务”选择 Music 项目根目录，设置来源顺序并保存。首次使用可通过 `BOT_MUSIC_HOME` 提供根目录，已保存的面板值优先。留空时服务显示待配置。支持 `MiguMusicClient`、`KuwoMusicClient`、`QQMusicClient` 和 `NeteaseMusicClient`，默认咪咕、酷我。
 2. 在“机器人 → 媒体 → 音乐搜索与下载”开启能力并选择 Profile，同时启用 `bot_music` 和 `music-download`。机器人只保存 Profile 引用、开关和歌词偏好，歌词默认关闭。
 3. 直接按歌名、歌手下载最高匹配歌曲，或先搜索再选候选。候选与原始歌曲属于当前渠道会话，重置会话后旧候选不可继续使用。
 
-项目目录不在服务面板重复选择，解释器、输出路径和媒体地址不能由聊天模型指定。来源需要授权时，宿主向受控子进程注入 `MUSIC_QQ_COOKIES`、`MUSIC_NETEASE_COOKIES`（Cookie JSON 或分号分隔字符串），代理使用 `MUSIC_HTTP_PROXY`；凭据通过 Harness 管理，不写入机器人配置、候选或模型上下文。
+宿主从保存的项目目录选择解释器，管理输出路径和媒体地址。来源需要授权时，宿主向受控子进程注入 `MUSIC_QQ_COOKIES`、`MUSIC_NETEASE_COOKIES`（Cookie JSON 或分号分隔字符串），代理使用 `MUSIC_HTTP_PROXY`。凭据由 Harness 管理，仅在执行时提供给受控子进程。
 
 ## 歌曲转换与投递
 

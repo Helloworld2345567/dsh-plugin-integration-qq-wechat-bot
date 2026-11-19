@@ -29,10 +29,6 @@ const googleUrl = z.string().trim().min(1).max(2048).refine(value => {
   } catch { return false; }
 }, {message: 'Google 图片服务地址必须是 HTTPS 地址'});
 const keyEnv = z.string().trim().regex(/^[A-Z_][A-Z0-9_]*$/, 'API Key 环境变量名必须为大写变量名');
-const defaultComfyWorkflowPath = (): string => {
-  const separator = String.fromCharCode(92);
-  return `${String.fromCharCode(69)}:${separator}COMFYUI${separator}workflows${separator}Krea2Standard-api.json`;
-};
 
 /** Operator-owned image service settings.  Credentials remain environment-backed. */
 export const imageServiceSettingsSchema = z.object({
@@ -44,7 +40,7 @@ export const imageServiceSettingsSchema = z.object({
   googleModel: z.string().trim().min(1).max(256).default('gemini-2.5-flash-image'),
   googleKeyEnv: keyEnv.default('GEMINI_API_KEY'),
   comfyUiBaseUrl: localUrl.default('http://127.0.0.1:8188'),
-  comfyUiWorkflowPath: absolutePath('ComfyUI workflow').default(defaultComfyWorkflowPath()),
+  comfyUiWorkflowPath: z.union([z.literal(''),absolutePath('ComfyUI workflow')]).default(''),
 }).strict();
 
 export const imageServiceSettingsInputSchema = imageServiceSettingsSchema.extend({

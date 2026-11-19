@@ -25,7 +25,7 @@ QQ 音频优先转换为 24 kHz 单声道 SILK 语音气泡。超过 300 秒时�
 
 不超过 **5,000,000 字节**时使用 Base64 `file_data` 直传；更大文件依次执行 `upload_prepare`、分片 PUT、`upload_part_finish` 和 `files` 合并，无需公网文件地址。预签名 PUT 不携带机器人鉴权头。获得 `file_info` 后再提交消息。
 
-单附件投递最长 15 分钟，每次上传请求超时 60 秒；文字投递超时 90 秒。停止任务或关闭机器人仍立即取消上传。协议实现见 [qq-upload.ts](../src/channels/qq-upload.ts)。
+单附件投递最长 15 分钟，每次上传请求超时 60 秒；文字投递超时 90 秒。停止任务或关闭机器人仍立即取消上传。协议实现见 [qq-upload.ts](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/src/channels/qq-upload.ts)。
 
 本地音频输入的 100 MiB 预算和[音乐功能](music-integration.md)的完整 MP3 小于 20,000,000 字节策略，均与 QQ 平台上限独立；微信使用自己的渠道限制。
 

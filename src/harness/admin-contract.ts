@@ -19,7 +19,7 @@ export const adminQueryRequestSchema=z.discriminatedUnion('name',[
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('bots.list'),input:emptyInput}).strict(),
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('workspace.storage'),input:workspaceStorageFilterSchema}).strict(),
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('overview.sessions'),input:pageInput}).strict(),
-  z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('overview.deliveries'),input:z.object({...pageFields,scopeKey:z.string().min(1).max(128).optional()}).strict().default({limit:50})}).strict(),
+  z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('overview.deliveries'),input:z.object({...pageFields,scopeKey:z.string().min(1).max(128).optional(),botId:z.string().min(1).max(80).optional(),state:z.enum(['pending','sending','sent','failed','unknown','cancelled']).optional()}).strict().default({limit:50})}).strict(),
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('automation.list'),input:emptyInput}).strict(),
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('catalog.profiles'),input:catalogProfilesInputSchema}).strict(),
   z.object({version:z.literal(ADMIN_CONTRACT_VERSION),kind:z.literal('query'),name:z.literal('catalog.profile'),input:catalogProfileInputSchema}).strict(),
@@ -43,7 +43,7 @@ const capabilityInput=z.object({configId:z.string().min(1).max(80),revision:z.nu
 const memoryForgetInput=z.object({scope:z.string().min(1).max(128),key:z.string().min(1).max(100)}).strict();
 const memoryCorrectInput=z.object({scope:z.string().min(1).max(128),key:z.string().min(1).max(100),value:z.string().min(1).max(500),version:z.number().int().positive()}).strict();
 const sessionCancelInput=z.object({id:z.string().min(1).max(200)}).strict();
-const deliveryRetryInput=z.object({id:z.string().min(1).max(200)}).strict();
+export const deliveryRetryInput=z.object({id:z.string().min(1).max(200),confirmUnknown:z.literal(true).optional()}).strict();
 const loginBeginInput=idInput;
 const loginPollInput=z.object({attempt:z.string().min(1).max(200)}).strict();
 

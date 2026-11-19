@@ -8,7 +8,7 @@ STS 将选定音频转换为机器人所选 RVC 音色，使用 `bot_sing` 和 `
 
 运营者需准备 RVC Python 环境、FFmpeg/ffprobe、HuBERT/ContentVec、RMVPE、RVC v1/v2 的 F0 权重及可选匹配索引。GPT-SoVITS 权重不能用于 RVC；无索引时检索比例须为零，损坏索引会报错。
 
-在“机器人 → 媒体 → 音色转换 STS”开启能力并选择可用 Profile。机器人保存 Profile 引用和音高、输出格式等业务偏好；模型路径、版本、解释器、设备和服务地址保存在 Profile 私有配置，不交给聊天模型。默认输出 MP3 192 kbps，也支持 WAV。
+在“机器人 → 媒体 → 音色转换 STS”开启能力并选择可用 Profile。说话人、音高（半音）和检索比例均可留空以继承 Profile。填写 `0` 会覆盖对应的 Profile 值。CLI 和 HTTP 服务都使用轮次开始时的机器人设置。模型路径、版本、解释器、设备、分离器和服务地址由 Profile 管理。默认输出 MP3 192 kbps，也支持 WAV。
 
 模型库登记的 `rvc_cli_v1` Profile 按任务运行，无需常驻服务。使用 `rvc_http_v1` 时，在插件目录启动适配服务（变量填写实际路径）：
 

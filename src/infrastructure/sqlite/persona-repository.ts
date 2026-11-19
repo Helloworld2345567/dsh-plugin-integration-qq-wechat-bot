@@ -1,5 +1,5 @@
 import {storageDescriptor} from '../../i18n/storage.js';
-import {configSchema, configForWrite,botSettingsFromConfig,configWithBotSettings, type BotConfig, type SessionBinding} from '../../core/types.js';
+import {configSchema, configForWrite,configWithBotSettings, type BotConfig, type SessionBinding} from '../../core/types.js';
 import {sameConfig} from '../../core/personas.js';
 import {ConflictError,LocalizedError} from '../../core/errors.js';
 import type {PersonaConfigRepository, PersonaDraft, PersonaStatus} from '../../core/ports/persona.js';
@@ -29,12 +29,11 @@ export class SqlitePersonaConfigRepository implements PersonaConfigRepository {
     return configSchema.parse(value);
   }
   findConfig(id: string): BotConfig | undefined {return this.database.records.get<BotConfig>('config', id);}
-  configVersions(): readonly BotConfig[] {return this.database.records.list<BotConfig>('config-version').map(config => configSchema.parse(config));}
   configVersion(personaId: string, revision: number): BotConfig | undefined {return this.database.records.get<BotConfig>('config-version', `${personaId}:${revision}`);}
   effectiveConfig(binding: SessionBinding): BotConfig {
     const bot=this.bots().bot(binding.scope.botId);
     const persona=this.config(binding.personaId??bot.configId);
-    const config=configWithBotSettings(persona,bot.settings??botSettingsFromConfig(this.config(bot.configId)));
+    const config=configWithBotSettings(persona,bot.settings);
     let effective: BotConfig = binding.modelOverride ? {...config, model:{...binding.modelOverride}} : config;
     if (binding.imageProtocolOverride) {
       effective = {...effective, media:{...effective.media, image:{enabled:true, ...effective.media.image, protocol:binding.imageProtocolOverride}}};

@@ -8,6 +8,7 @@ import time
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
+from .workflow_inspector import REFERENCE_SLOT_UNAVAILABLE, WorkflowInspectionError, reference_slot
 
 from ..common import (
     IMAGE_MAX_BATCH, IMAGE_MAX_DIMENSION, IMAGE_MIN_DIMENSION, MAX_IMAGE_BYTES,
@@ -19,7 +20,6 @@ from ..common import (
 # mistake a development endpoint for a published service locator.
 DEFAULT_BASE_URL = "http://" + ".".join(("127", "0", "0", "1")) + ":8188"
 DEFAULT_MODEL = "comfyui"
-DEFAULT_COMFYUI_WORKFLOW = Path(f"{chr(69)}:{chr(92)}COMFYUI") / "workflows" / "Krea2Standard-api.json"
 
 
 def normalize_comfyui_base_url(value: str) -> str:
@@ -34,9 +34,10 @@ def normalize_comfyui_base_url(value: str) -> str:
 
 
 def _workflow_path(value: str | None) -> Path:
-    candidate = Path(value.strip()) if isinstance(value, str) and value.strip() else None
-    if candidate is None and DEFAULT_COMFYUI_WORKFLOW.is_file(): candidate = DEFAULT_COMFYUI_WORKFLOW
-    if candidate is None or not candidate.is_file(): raise ValueError("ComfyUI workflow JSON was not found")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("COMFYUI_WORKFLOW_REQUIRED")
+    candidate = Path(value.strip())
+    if not candidate.is_file(): raise ValueError("ComfyUI workflow JSON was not found")
     if candidate.stat().st_size <= 0 or candidate.stat().st_size > 4 * 1024 * 1024: raise ValueError("ComfyUI workflow JSON size is invalid")
     return candidate
 
@@ -84,6 +85,13 @@ def _valid_dimension(value: object) -> bool:
             and IMAGE_MIN_DIMENSION <= value <= IMAGE_MAX_DIMENSION and value % 8 == 0)
 
 
+def _is_batch_title(title: str) -> bool:
+    return (("batch" in title and "size" in title)
+            or ("批量" in title and "大小" in title)
+            or ("批次" in title and "大小" in title)
+            or title.strip() in {"batch", "batch_size", "批量", "批量大小", "批次", "批次大小"})
+
+
 def _inject_comfy_options(workflow: object, *, width: int | None = None, height: int | None = None, batch_size: int | None = None) -> dict:
     if (width is None) != (height is None): raise ValueError("ComfyUI width and height must be provided together")
     if width is not None and (not _valid_dimension(width) or not _valid_dimension(height)):
@@ -107,6 +115,15 @@ def _inject_comfy_options(workflow: object, *, width: int | None = None, height:
     for node in nodes.values():
         inputs = node.get("inputs")
         if not isinstance(inputs, dict): continue
+        class_type = str(node.get("class_type", "")).lower()
+        if class_type == "resolutionpreset" and width is not None:
+            raw_resolution = inputs.get("resolution_json")
+            try: resolution = json.loads(raw_resolution) if isinstance(raw_resolution, str) else None
+            except json.JSONDecodeError: resolution = None
+            if isinstance(resolution, dict) and resolution.get("version") == 1:
+                resolution["width"], resolution["height"] = width, height
+                inputs["resolution_json"] = json.dumps(resolution, ensure_ascii=False, separators=(",", ":"))
+                applied_width = applied_height = True
         title = str(node.get("_meta", {}).get("title", "")).lower() if isinstance(node.get("_meta"), dict) else ""
         value_key = "value" if "value" in inputs else "size" if "size" in inputs else None
         if value_key is None or isinstance(inputs[value_key], (list, tuple, dict)): continue
@@ -114,7 +131,7 @@ def _inject_comfy_options(workflow: object, *, width: int | None = None, height:
             inputs[value_key] = width; applied_width = True
         if height is not None and "height" in title:
             inputs[value_key] = height; applied_height = True
-        if batch_size is not None and ("batch" in title and "size" in title or title.strip() in {"batch", "batch_size"}):
+        if batch_size is not None and _is_batch_title(title):
             inputs[value_key] = batch_size; applied_batch = True
     if (width is None or applied_width) and (height is None or applied_height) and (batch_size is None or applied_batch): return root
 
@@ -133,29 +150,33 @@ def _inject_comfy_options(workflow: object, *, width: int | None = None, height:
 
 
 def _inject_comfy_reference(session, base_url: str, workflow: dict, source: Path) -> dict:
+    _, nodes = _workflow_nodes(workflow)
+    slot = reference_slot(nodes)
+    if slot is None:
+        raise WorkflowInspectionError(REFERENCE_SLOT_UNAVAILABLE)
+    upload_name = f"{uuid.uuid4().hex}{source.suffix}"
     with source.open("rb") as handle:
-        response = session.request("POST", f"{base_url}/upload/image", headers={"Accept": "application/json"}, timeout=60, allow_redirects=False, files={"image": (source.name, handle, input_content_type(source))}, data={"overwrite": "true"})
+        response = session.request("POST", f"{base_url}/upload/image", headers={"Accept": "application/json"}, timeout=60, allow_redirects=False, files={"image": (upload_name, handle, input_content_type(source))})
     if response.status_code != 200: raise ValueError("ComfyUI reference upload failed")
     try: uploaded = response.json()
     except ValueError as exc: raise ValueError("ComfyUI upload response is not JSON") from exc
     if not isinstance(uploaded, dict) or not isinstance(uploaded.get("name"), str): raise ValueError("ComfyUI upload response is invalid")
     filename = uploaded["name"]; subfolder = uploaded.get("subfolder")
     if isinstance(subfolder, str) and subfolder: filename = f"{subfolder}/{filename}"
-    _, nodes = _workflow_nodes(workflow)
-    for node in nodes.values():
-        if str(node.get("class_type", "")).lower() != "loadimage": continue
-        inputs = node.get("inputs")
-        if isinstance(inputs, dict) and isinstance(inputs.get("image"), str): inputs["image"] = filename; return workflow
-    raise ValueError("ComfyUI workflow has no LoadImage node")
+    slot["image"] = filename
+    return workflow
 
 
-def _comfy_image_records(session, base_url: str, workflow_path: Path, prompt: str, output_dir: Path, stem: str, *, timeout: float, output_format: str, output_compression: int | None, inputs: list[Path] | None = None, width: int | None = None, height: int | None = None, batch_size: int = 1) -> list[Path]:
+def _comfy_image_records(session, base_url: str, workflow_path: Path, prompt: str, output_dir: Path, stem: str, *, timeout: float, output_format: str, output_compression: int | None, inputs: list[Path] | None = None, width: int | None = None, height: int | None = None, batch_size: int = 1, usage_job: dict | None = None) -> list[Path]:
     workflow = _inject_comfy_prompt(json.loads(workflow_path.read_text(encoding="utf-8")), prompt)
     workflow = _inject_comfy_options(workflow, width=width, height=height, batch_size=batch_size if batch_size != 1 else None)
     if inputs:
         if len(inputs) > 1: raise ValueError("ComfyUI editing accepts one reference image")
         workflow = _inject_comfy_reference(session, base_url, workflow, inputs[0])
     payload = workflow if isinstance(workflow.get("prompt"), dict) else {"prompt": workflow}
+    if usage_job:
+        from dsh_bot_runtime.model_usage import journal
+        usage_call = journal(usage_job)
     response = request_with_retry(session, "POST", f"{base_url}/prompt", headers={"Content-Type": "application/json", "Accept": "application/json"}, timeout=timeout or None, json={**payload, "client_id": str(uuid.uuid4())})
     if response.status_code != 200: raise ValueError("ComfyUI prompt submission failed")
     submitted = response.json(); prompt_id = submitted.get("prompt_id") if isinstance(submitted, dict) else None
@@ -184,7 +205,10 @@ def _comfy_image_records(session, base_url: str, workflow_path: Path, prompt: st
             images.append((data, detect_content_type(data)))
             if len(images) > 10: raise ValueError("ComfyUI returned too many images")
     if not images: raise ValueError("ComfyUI workflow returned no images")
-    return save_images(images, output_dir, stem, output_format=output_format, output_compression=output_compression)
+    paths = save_images(images, output_dir, stem, output_format=output_format, output_compression=output_compression)
+    if usage_job:
+        journal(usage_job, usage_call, {"model": stem})
+    return paths
 
 
 def common_parser(parser: argparse.ArgumentParser) -> None:
@@ -220,22 +244,23 @@ def main(argv=None) -> int:
             if len(args.image) > 1: raise ValueError()
         base_url = normalize_comfyui_base_url(args.base_url); workflow_path = _workflow_path(args.workflow)
     except (OSError, ValueError): return _failure("IMAGE_CONFIGURATION_INVALID", args.record, 2)
-    if args.dry_run: _emit({"verdict": "PASS", "dry_run": True, "requested_count": args.n}, args.record); return 0
+    if args.dry_run:
+        if args.operation == "edit":
+            try:
+                _, nodes = _workflow_nodes(json.loads(workflow_path.read_text(encoding="utf-8")))
+            except (OSError, ValueError): return _failure("IMAGE_CONFIGURATION_INVALID", args.record, 2)
+            if reference_slot(nodes) is None: return _failure(REFERENCE_SLOT_UNAVAILABLE, args.record, 2)
+        _emit({"verdict": "PASS", "dry_run": True, "requested_count": args.n}, args.record); return 0
     try:
         import requests
     except ModuleNotFoundError: return _failure("MEDIA_DEPENDENCY_MISSING", args.record)
     record = {"verdict": "FAIL", "error": {"code": "IMAGE_PROVIDER_FAILED"}}
-    usage_job = None; usage_call = None
+    usage_job = {"usagePath": str(args.usage_record), "output": str(args.output_dir), "endpoint": {"model": args.model}} if args.usage_record else None
     try:
         args.output_dir.mkdir(parents=True, exist_ok=True)
-        if args.usage_record:
-            from dsh_bot_runtime.model_usage import journal
-            usage_job = {"usagePath": str(args.usage_record), "output": str(args.output_dir), "endpoint": {"model": args.model}}
-            usage_call = journal(usage_job)
-        paths = _comfy_image_records(requests.Session(), base_url, workflow_path, args.prompt, args.output_dir, args.model, timeout=args.timeout, output_format=args.output_format, output_compression=args.output_compression, inputs=getattr(args, "image", None), width=args.width, height=args.height, batch_size=args.n)
-        if usage_job:
-            journal(usage_job, usage_call, {"model": args.model})
+        paths = _comfy_image_records(requests.Session(), base_url, workflow_path, args.prompt, args.output_dir, args.model, timeout=args.timeout, output_format=args.output_format, output_compression=args.output_compression, inputs=getattr(args, "image", None), width=args.width, height=args.height, batch_size=args.n, usage_job=usage_job)
         record = {"verdict": "PASS", "outputs": [path.name for path in paths], "returned_count": len(paths)}; _emit({"verdict": "PASS", "returned_count": len(paths)}); return 0
+    except WorkflowInspectionError: return _failure(REFERENCE_SLOT_UNAVAILABLE, args.record, 2)
     except (OSError, ValueError, requests.RequestException): return _failure("IMAGE_PROVIDER_FAILED", args.record)
     finally:
         if args.record and record.get("verdict") == "PASS": args.record.parent.mkdir(parents=True, exist_ok=True); args.record.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")

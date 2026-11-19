@@ -8,7 +8,7 @@ STS converts selected audio into the bot's chosen RVC voice through `bot_sing` a
 
 Provide an RVC Python environment, FFmpeg/ffprobe, HuBERT/ContentVec, RMVPE, RVC v1/v2 F0 weights and an optional matching index. GPT-SoVITS weights cannot be used for RVC. Retrieval rate must be zero without an index; a corrupt configured index fails explicitly.
 
-Enable **Bots → Media → Voice conversion STS** and select an available Profile. Bot settings contain the Profile reference and preferences such as pitch/output format. Model paths, versions, interpreter, device and endpoint belong to private Profile configuration and are not exposed to the chat model. Output defaults to MP3 at 192 kbps; WAV is also supported.
+Enable **Bots → Media → Voice conversion STS** and select an available Profile. Leave speaker ID, pitch in semitones or retrieval rate blank to inherit the corresponding Profile value. Entering `0` overrides that value. Both CLI and HTTP conversions use the bot settings captured when the turn started. The Profile owns model paths, versions, interpreter, device, separator and endpoint. Output defaults to MP3 at 192 kbps. WAV is also supported.
 
 Library-discovered `rvc_cli_v1` Profiles run per job without a persistent service. For `rvc_http_v1`, start the adapter from the plugin directory, setting the variables to your actual paths:
 

@@ -90,17 +90,12 @@ test('overview summary is bounded, redacted and supports unchanged revision resp
   assert.equal((await admin.query({version:1,kind:'query',name:'overview.summary',input:{changedSince:first.revision}}) as any).unchanged,true);
 });
 
-test('legacy state facade remains available separately from the summary query',async t=>{
-  const {admin}=await fixture(t);const legacy:any=await admin.invoke('state',{});assert.ok(Array.isArray(legacy.configs));assert.ok(Array.isArray(legacy.bots));assert.ok('sessions' in legacy);const summary:any=await admin.query({version:1,kind:'query',name:'overview.summary',input:{}});assert.equal('sessions' in summary.data,false);assert.equal('jobs' in summary.data,false);
-});
-
-test('numeric and mixed-case bot IDs do not break summary, bot list or legacy state queries',async t=>{
+test('numeric and mixed-case bot IDs work in summary and bot list queries',async t=>{
   const {admin,store}=await fixture(t,createBotCredentials({readRecord:async()=>undefined,modifyRecord:async(_key,mutate)=>mutate(undefined),deleteRecord:async()=>{}}));
   for(const id of ['1','QQ_Bot'])store.bots.saveBot(botSchema.parse({id,name:id,channel:'qq'}));
   const summary:any=await admin.query({version:1,kind:'query',name:'overview.summary',input:{}});
   const bots:any=await admin.query({version:1,kind:'query',name:'bots.list',input:{}});
-  const state:any=await admin.invoke('state',{});
-  for(const result of [summary.data.bots,bots.data,state.bots])for(const id of ['1','QQ_Bot'])assert.equal(result.find((bot:any)=>bot.id===id).credentialConfigured,false);
+  for(const result of [summary.data.bots,bots.data])for(const id of ['1','QQ_Bot'])assert.equal(result.find((bot:any)=>bot.id===id).credentialConfigured,false);
 });
 
 test('deleting a bot hides it from all bot queries and invalidates a pending login result',async t=>{
@@ -116,8 +111,8 @@ test('deleting a bot hides it from all bot queries and invalidates a pending log
   finishLogin({status:'confirmed',credential:{accountId:'account'}});
   await assert.rejects(polling,/状态已改变/);assert.equal(writes,0);assert.equal(admin.attempts.size,0);
   const summary:any=await admin.query({version:1,kind:'query',name:'overview.summary',input:{}});
-  const bots:any=await admin.query({version:1,kind:'query',name:'bots.list',input:{}});const state:any=await admin.invoke('state',{});
-  for(const list of [summary.data.bots,bots.data,state.bots])assert.deepEqual(list.map((bot:any)=>bot.id),['other']);
+  const bots:any=await admin.query({version:1,kind:'query',name:'bots.list',input:{}});
+  for(const list of [summary.data.bots,bots.data])assert.deepEqual(list.map((bot:any)=>bot.id),['other']);
   assert.equal(summary.data.counts.bots,1);
   await assert.rejects(admin.invoke('login.begin',{id:'bot'}),/已删除/);
   await assert.rejects(admin.invoke('bot.credentials',{id:'bot',credential:{accountId:'account',appSecret:'secret'}}),/已删除/);
@@ -160,4 +155,24 @@ test('delivery query exposes sanitized platform rejection details and hides uplo
   const delivery=store.deliveries.deliveries()[0];store.deliveries.deliveryState({...delivery,attempt:{number:1,phase:'upload',httpStatus:400,platformCode:'400100',platformMessage:'file too large https://signed.example/private?token=secret',platformTraceId:'qq-trace-123',fileInfo:'secret-upload-receipt',aesKey:'secret-key',lastError:'HTTP 400'}},'failed',undefined,'HTTP 400');
   const result:any=await admin.query({version:1,kind:'query',name:'overview.deliveries',input:{limit:10,scopeKey:binding.key}}),attempt=result.items[0].attempt;
   assert.equal(attempt.httpStatus,400);assert.equal(attempt.platformCode,'400100');assert.equal(attempt.platformTraceId,'qq-trace-123');assert.match(attempt.platformMessage,/file too large/);assert.doesNotMatch(JSON.stringify(result),/signed\.example|token=secret|secret-upload-receipt|secret-key/);
+});
+
+test('delivery filters apply before paging and uncertain sends require an explicit resend',async t=>{
+  const {admin,store}=await fixture(t);
+  const scope={botId:'bot',platform:'qq' as const,accountId:'account',kind:'private' as const,channelId:'channel',senderId:'sender'};
+  const first=store.sessions.binding(scope);
+  store.bots.saveBot({id:'another',name:'Another',channel:'qq',enabled:true});
+  const other=store.sessions.binding({...scope,botId:'another'});
+  store.deliveries.enqueue(first,'one','one',[{type:'text',text:'reply'}],{});
+  store.deliveries.enqueue(other,'two','two',[{type:'text',text:'other'}],{});
+  store.deliveries.enqueue(first,'three','three',[{type:'text',text:'stage'}],{},undefined,{runId:'run',generation:first.generation,expiresAt:1});
+  for(const delivery of store.deliveries.deliveries())store.deliveries.deliveryState(delivery,delivery.purpose==='progress'?'failed':'unknown');
+  const page:any=await admin.query({version:1,kind:'query',name:'overview.deliveries',input:{botId:'bot',state:'unknown',limit:1}});
+  assert.equal(page.items.length,1);assert.equal(page.hasMore,false);assert.equal(page.items[0].botId,'bot');assert.equal(page.items[0].purpose,undefined);
+  const id=page.items[0].id,calls:string[]=[];
+  (admin.runtime as any).deliveryWorker={retry:async(id:string)=>{calls.push(id);}};
+  const retry=(input:unknown)=>admin.command({version:1,kind:'command',name:'delivery.retry',input});
+  await assert.rejects(retry({id}),/核对/);
+  await assert.rejects(retry({id:store.deliveries.deliveries().find(row=>row.purpose==='progress')!.id,confirmUnknown:true}),/不可恢复/);
+  assert.deepEqual(calls,[]);await retry({id,confirmUnknown:true});assert.deepEqual(calls,[id]);
 });

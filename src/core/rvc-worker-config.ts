@@ -2,6 +2,11 @@ import {diagnostic} from '../i18n/diagnostics.js';
 import {z} from 'zod';
 import {normalizeGptSovitsBaseUrl} from './voice-config.js';
 const voicePathSchema=z.string().trim().min(1).max(4096).refine(value=>!/[\x00-\x1f]/.test(value));
+export const rvcTuningSchema=z.object({
+  speakerId:z.number().int().min(0).max(65535).optional(),
+  pitchShift:z.number().int().min(-24).max(24).optional(),
+  indexRate:z.number().min(0).max(1).optional(),
+});
 /** Private HTTP worker payload; never accepted in persona configuration. */
 const singingSeparationSchema=z.object({
   enabled:z.boolean().default(false),

@@ -54,6 +54,10 @@ class _BatchSession:
 
 
 class ComfyUiTests(unittest.TestCase):
+    def test_workflow_must_be_configured(self):
+        with self.assertRaisesRegex(ValueError, "COMFYUI_WORKFLOW_REQUIRED"):
+            comfyui_image_api._workflow_path(None)
+
     def test_dispatcher_selects_isolated_service_adapters(self):
         self.assertIs(image_api._adapter("openai"), openai_image_api)
         self.assertIs(image_api._adapter("comfyui"), comfyui_image_api)
@@ -151,6 +155,32 @@ class ComfyUiTests(unittest.TestCase):
 
         self.assertEqual(result["707:837"]["inputs"], {"width_override": 640, "height_override": 768, "batch_size": 3})
 
+    def test_comfy_options_update_resolution_preset_and_chinese_batch_control(self):
+        workflow = {"prompt": {
+            "76": {
+                "class_type": "ResolutionPreset",
+                "_meta": {"title": "📐 分辨率预设"},
+                "inputs": {"resolution_json": '{"version":1,"width":1024,"height":1600,"preset":"landscape"}'},
+            },
+            "207": {
+                "class_type": "PrimitiveInt",
+                "_meta": {"title": "批量大小"},
+                "inputs": {"value": 1},
+            },
+            "53": {
+                "class_type": "EmptyLatentImage",
+                "inputs": {"width": ["76", 0], "height": ["76", 1], "batch_size": ["207", 0]},
+            },
+        }}
+
+        result = comfyui_image_api._inject_comfy_options(workflow, width=1792, height=1024, batch_size=2)
+
+        self.assertEqual(
+            json.loads(result["prompt"]["76"]["inputs"]["resolution_json"]),
+            {"version": 1, "width": 1792, "height": 1024, "preset": "landscape"},
+        )
+        self.assertEqual(result["prompt"]["207"]["inputs"]["value"], 2)
+
     def test_comfy_options_update_krea_easy_int_controls_and_return_batch_pngs(self):
         workflow = {"prompt": {
             "45": {"class_type": "easy int", "_meta": {"title": "Width"}, "inputs": {"value": 1024}},
@@ -192,6 +222,64 @@ class ComfyUiTests(unittest.TestCase):
                 timeout=2, output_format="jpg", output_compression=None,
             )
         self.assertEqual(outputs[0].suffix, ".jpg")
+
+    def test_overlapping_edits_with_the_same_source_name_keep_separate_uploaded_references(self):
+        from PIL import Image
+        filenames, stored, references = [], {}, []
+
+        def upload(method, url, **kwargs):
+            self.assertEqual((method, url), ("POST", "http://127.0.0.1:8188/upload/image"))
+            self.assertNotEqual(kwargs.get("data", {}).get("overwrite"), "true")
+            name, handle, mime = kwargs["files"]["image"]
+            filenames.append(name)
+            self.assertEqual((Path(name).suffix, mime), (".PNG", "image/png"))
+            # ComfyUI may choose its own filename and subfolder.
+            returned_name = "accepted-" + name
+            stored["incoming/" + returned_name] = handle.read()
+            return _Response(200, {"name": returned_name, "subfolder": "incoming"})
+
+        session = Mock()
+        session.request.side_effect = upload
+        expected = []
+        with tempfile.TemporaryDirectory() as root:
+            for user, color in (("a", "red"), ("b", "blue")):
+                source = Path(root) / user / "current.PNG"
+                source.parent.mkdir()
+                Image.new("RGB", (2, 2), color).save(source)
+                expected.append(source.read_bytes())
+                workflow = {
+                    "unused": {"class_type": "LoadImage", "inputs": {"image": "unchanged.png"}},
+                    "1": {"class_type": "LoadImage", "inputs": {"image": "placeholder.png"}},
+                    "out": {"class_type": "Image Saver Simple", "inputs": {"images": ["1", 0], "metadata": ["unused", 0]}},
+                }
+                updated = comfyui_image_api._inject_comfy_reference(session, "http://127.0.0.1:8188", workflow, source)
+                self.assertEqual(updated["unused"]["inputs"]["image"], "unchanged.png")
+                references.append(updated["1"]["inputs"]["image"])
+        self.assertEqual(len(set(filenames)), 2)
+        self.assertEqual([stored[reference] for reference in references], expected)
+
+    def test_edit_rejects_a_disconnected_reference_before_upload_submission_or_usage(self):
+        from PIL import Image
+        workflow = {
+            "prompt": {"class_type": "CLIPTextEncode", "inputs": {"text": "placeholder"}},
+            "load": {"class_type": "LoadImage", "inputs": {"image": "unused.png"}},
+            "switch": {"class_type": "ComfySwitchNode", "inputs": {"on_false": ["load", 0]}},
+            "gen": {"class_type": "EmptyImage", "inputs": {}},
+            "saved": {"class_type": "ConditionalSaveImage", "inputs": {"images": ["gen", 0]}},
+            "view": {"class_type": "PreviewImage", "inputs": {"images": ["gen", 0]}},
+        }
+        with tempfile.TemporaryDirectory() as root, patch("requests.Session") as session:
+            folder=Path(root); source=folder/"source.png"; config=folder/"workflow.json"
+            result=folder/"edit.json"; usage=folder/"usage.json"
+            Image.new("RGB", (2, 2), "red").save(source)
+            config.write_text(json.dumps({"prompt":workflow}), encoding="utf-8")
+            args=["edit", "--prompt", "edit", "--image", str(source), "--workflow", str(config),
+                  "--output-dir", str(folder), "--usage-record", str(usage), "--record", str(result)]
+            for extra in ([], ["--dry-run"]):
+                self.assertNotEqual(comfyui_image_api.main(args+extra), 0)
+                self.assertEqual(json.loads(result.read_text(encoding="utf-8"))["error"]["code"], "COMFYUI_REFERENCE_SLOT_UNAVAILABLE")
+            session.return_value.request.assert_not_called()
+            self.assertFalse(usage.exists())
 
     def test_protocol_and_comfyui_configuration_ignore_environment(self):
         retired = {"BOT_IMAGE_PROTOCOL": "comfyui", "BOT_IMAGE_MODEL": "ignored-model",

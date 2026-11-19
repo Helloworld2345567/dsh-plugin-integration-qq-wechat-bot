@@ -46,6 +46,24 @@ Selection precedence is session override → bot image settings → global Servi
 
 Overrides survive restarts, new or cleared sessions, and persona switches. Restoring history uses that session's saved selection. Disabled image capabilities prevent setting a service, but queries and clearing overrides remain available. Commands only select existing service configuration: they do not change addresses, keys, models or workflows, probe service health, or automatically switch services after generation failures.
 
+### Direct image generation and editing
+
+With the image skill and tool enabled, the following commands call the image service selected for the turn. A successful request delivers images.
+
+| Example message | Result |
+| --- | --- |
+| `/draw A rain-soaked street reflecting the neon lights` | Generate from text with the service's default size and count. |
+| `/draw --size 1024x768 --n 2 A mountain ridge in a woodcut style` | Request a specific resolution and count. |
+| `/edit Change the sky to sunset and keep the person's expression` | Edit images attached to or quoted by this message, or images staged immediately beforehand. |
+
+The Chinese prefixes `生图：` and `生成图片：` select generation. `修图：` and `编辑图片：` select editing. Each accepts either an ASCII or a full-width colon. Ordinary requests in natural language continue through the chat model.
+
+To edit an image the bot just sent, reply to that image message with `/edit` and the requested changes. The host looks up an exact platform message ID within the same channel identity and uses the locally retained image. QQ supplies the ID in its send receipt. WeChat iLink needs matching server IDs in both the send response and the quoted message. If iLink only acknowledged the send, or the stored image has been cleaned up, attach the image again.
+
+Put optional `--size WxH` and `--n count` before the prompt. Use a separate `--` if the prompt itself starts with two hyphens, as in `/draw -- --n is the text on the poster`. Size and count depend on the selected service or workflow. For example, Google may return multiple images from one request and rejects a requested count of two. Use `/draw` with text only. For multiple reference images, `/edit` preserves their order and removes duplicate attachment handles. The selected service determines how many references it accepts.
+
+ComfyUI edits use one reference input. The workflow needs one `LoadImage` connected to the image output, for example through `VAEEncode` into the sampler. If the input cannot be identified, the plugin asks for an editing workflow before uploading.
+
 ## Installer, launcher and Harness variables
 
 `BOT_INSTALL_LAYERS` defaults to required `core,basic-media`, with optional `voice-generation`, `music`, `singing-rvc`; CLI `--layers=` takes priority. `BOT_SOURCE_ROOT` is for source installation, testing and rollback validation only.
@@ -64,7 +82,7 @@ The main Config schema has these fields, configurable in the Harness bundle:
 | --- | --- | --- |
 | `dataDir` | Bot runtime directory; absent value derives from `BOT_DATA_HOME`, `DSH_HOME` and `.runtime/bot-data` | Plugin reload |
 | `python` | Media worker interpreter; otherwise `BOT_PYTHON` or `python` | Plugin reload |
-| `debounceMs` | Merge delay for inbound messages in one session; `2000` ms, range `0–60000` | Plugin reload |
+| `debounceMs` | Wait after the latest inbound message when fewer than 8 are pending in a session. Default `2000` ms, range `0–60000`. At 8, the oldest batch is scheduled immediately or when the current turn finishes. | Plugin reload |
 | `autoStart` | `true`; `false` loads panel/configuration/history and waits for explicit service start before channels/background tasks | Plugin reload |
 | `messageLocale` | `zh` (default) or `en` for all bots' help/results/errors/progress. Saves immediately under **Services → Bot service**, persisted by Harness | No; subsequent operations |
 
@@ -83,6 +101,26 @@ UI follows Harness `locale.preference` independently of global `messageLocale`. 
 Commands, ordinary turns and each automation run capture system-message language at start. Active tasks, queued session actions and their restart recovery retain that language. Recurring tasks use the latest setting on the next run. Old configuration/records without a language field mean Chinese; generated messages are neither retranslated nor resent.
 
 Panel-created personas receive initial text once in the current UI language. Fresh-install built-in personas preserve identity/behavior but follow user/conversation language rather than requiring Chinese. Existing installations' personas are not rewritten. Built-in skills/model operation instructions use one English source; normal replies follow persona/user requirements.
+
+### Offline cleanup of existing development configurations
+
+Fresh configurations can skip this step. To reuse an older development installation, stop the plugin and back up the configuration directory and database. Run the following SQLite statement in `bots.sqlite` to remove retired media fields from bots, current personas and persona revisions.
+
+```sql
+WITH media AS (
+  SELECT kind, id, json, CASE kind WHEN 'bot' THEN '$.settings.media' ELSE '$.media' END AS p
+  FROM records WHERE kind IN ('bot', 'config', 'config-version')
+), cleaned AS (
+  SELECT kind, id, json_remove(json, p||'.image.baseUrl', p||'.image.model',
+    p||'.image.keyEnv', p||'.image.workflowEnv', p||'.voice.edgeTts',
+    p||'.video.protocol', p||'.singing.separation') AS body
+  FROM media
+)
+UPDATE records AS r SET json = c.body FROM cleaned AS c
+WHERE r.kind = c.kind AND r.id = c.id AND json(r.json) <> c.body;
+```
+
+Remove the same fields under `media` in each existing persona's `config.json`, preserving other edits. After restart, review persona drafts in the panel and apply as needed. Speaker, pitch and retrieval rate keep their stored values, including zero. Clear any of these fields in the bot's media settings to inherit it from the selected RVC Profile.
 
 ## Development/test-only variables
 

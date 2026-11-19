@@ -1,9 +1,27 @@
+import {existsSync} from 'node:fs';
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {createTestRoot, finalizeTestRoot, spawnCapture} from './test-process.mjs';
 import {redactEvidence, safeSubprocessEnv, validateTestPython} from './test-environment.mjs';
 
 const root = process.cwd();
+
+function testModules(arguments_) {
+  if (!arguments_.length) return ['discover', '-s', 'tests', '-p', 'test_*.py'];
+  const modules = [];
+  for (const value of arguments_) {
+    const absolute = path.resolve(root, value);
+    const relative = path.relative(root, absolute);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative) || !/^tests[\\/]test_[^\\/]+\.py$/i.test(relative)) {
+      throw new Error(`Invalid Python test path: ${value}`);
+    }
+    if (!existsSync(absolute)) throw new Error(`Python test not found: ${value}`);
+    modules.push(relative.replaceAll(path.sep, '.').replace(/\.py$/i, ''));
+  }
+  return [...new Set(modules)].sort();
+}
+
+const testArguments = testModules(process.argv.slice(2));
 const temporary = await createTestRoot(root, 'python');
 const home = path.join(temporary, 'home');
 const temp = path.join(temporary, 'tmp');
@@ -23,7 +41,7 @@ try {
   await writeFile(env.PIP_CONFIG_FILE, '[global]\nno-index = true\n');
   await writeFile(env.npm_config_userconfig, '');
   const python = await validateTestPython(candidate, env);
-  const result = await spawnCapture(python, ['-B', '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_*.py'], {cwd: root, env, timeoutMs: 10 * 60 * 1000});
+  const result = await spawnCapture(python, ['-B', '-m', 'unittest', ...testArguments], {cwd: root, env, timeoutMs: 10 * 60 * 1000});
   if (result.output) console.error(redactEvidence(result.output));
 } catch (error) {
   failed = true;

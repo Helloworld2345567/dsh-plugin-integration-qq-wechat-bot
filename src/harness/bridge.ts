@@ -39,6 +39,7 @@ import {recentFailureContext} from '../core/failure-context.js';
 import type { HarnessPort, HarnessResult } from '../core/runtime.js';
 import type {HarnessRunOptions,ModelCapabilityDiagnostics} from '../core/runtime-ports.js';
 import {abortable,progressFallback,type ProgressFacts,type ProgressStage} from '../core/progress.js';
+import {imagePromptWithStyle} from '../core/image-skill.js';
 import type { BotConfig, InboundMessage, SessionBinding, TurnSnapshot, Output } from '../core/types.js';
 import {PromptAssembler} from './prompt-assembler.js';
 import {StatsEventAdapter} from './stats-event-adapter.js';
@@ -54,7 +55,7 @@ import {executeSingingTool} from './singing-tool.js';
 import {executeMusicTool} from './music-tool.js';
 import type {SingingTurn} from '../core/singing-state.js';
 
-export interface LiveSession { agent:Agent; binding:SessionBinding; snapshot:TurnSnapshot; skills:Readonly<Record<string,FrozenSkill>>; sources:string[]; assets:Output[]; explicitAssets?:Set<string>; images:Map<string,{failed:number;active:number}>; voice:{attempted:boolean}; singing:SingingTurn; cwd:string; shellDirectory?:string; selection:ModelSelectionRef; restrictions?:()=>void; invalidator?:()=>void; refreshTools?:()=>void; loadedTools:Set<string>; toolSections:AssembledSection[]; policyError?:Error }
+export interface LiveSession { agent:Agent; binding:SessionBinding; snapshot:TurnSnapshot; skills:Readonly<Record<string,FrozenSkill>>; sources:string[]; referenceImageIds?:ReadonlySet<string>; assets:Output[]; explicitAssets?:Set<string>; images:Map<string,{failed:number;active:number}>; voice:{attempted:boolean}; singing:SingingTurn; cwd:string; shellDirectory?:string; selection:ModelSelectionRef; restrictions?:()=>void; invalidator?:()=>void; refreshTools?:()=>void; loadedTools:Set<string>; toolSections:AssembledSection[]; policyError?:Error }
 export interface HarnessExtensions {skills?:DynamicSkills;stats?:StatsService;management?:BotManagement;model?:(binding:SessionBinding,snapshot:TurnSnapshot,args:BotModelArguments,signal:AbortSignal)=>Promise<unknown>;voice?:(binding:SessionBinding,snapshot:TurnSnapshot,args:BotVoiceArguments,signal:AbortSignal)=>Promise<unknown>;image?:(binding:SessionBinding,snapshot:TurnSnapshot,args:BotImageArguments,signal:AbortSignal)=>Promise<unknown>;evolve?:(binding:SessionBinding,snapshot:TurnSnapshot,args:Record<string,unknown>,signal:AbortSignal)=>Promise<unknown>}
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -63,7 +64,9 @@ declare module '@deepseek-ai/dsh-llm' {
 }
 
 interface RunningTurn extends HarnessRunOptions {
+  referenceImageIds:Set<string>;
   pendingText:Array<{seq:number;turnId:string;text:string}>;
+  firstTextRecorded?:boolean;
   forwardedText:Set<number>;
   textDelivery?:Promise<void>;
   deliveryError?:Error;
@@ -237,7 +240,6 @@ export class NativeHarness implements HarnessPort {
     const providers=this.ctx.llm.listProviders();if(!providers.some(p=>p.id===config.model!.provider))throw new Error('UNKNOWN_MODEL_PROVIDER');
     const models=await this.ctx.llm.listModels(config.model.provider);if(!models.some(m=>m.id===config.model!.model))throw new Error('UNKNOWN_MODEL');
     if(config.model.reasoningEffort){const model=await this.ctx.llm.resolveModelInfo(config.model.provider,config.model.model);if(!model.reasoning?.efforts.some(e=>e.id===config.model!.reasoningEffort))throw new Error('UNKNOWN_REASONING_EFFORT');}
-    for(const role of ['asr','video'] as const){const override=config.media[role];if(!override?.provider&&!override?.model)continue;const provider=override.provider??config.model.provider;if(!(await this.ctx.llm.listModels(provider)).some(m=>m.id===(override.model??config.model!.model)))throw new Error('UNKNOWN_MEDIA_MODEL');}
   }
   private selection(config:BotConfig):ModelSelectionRef['current'] {return config.model?{provider:config.model.provider,model:config.model.model,reasoningEffort:config.model.reasoningEffort?ReasoningEffortId(config.model.reasoningEffort):undefined}:undefined;}
   private sessionBinding(id:string):SessionBinding|undefined {
@@ -294,11 +296,19 @@ export class NativeHarness implements HarnessPort {
       agentCtx.on('session/event',(session,event)=>{
         if(session.id!==agent.id)return;
         const run=this.runOptions.get(binding.sessionId);
-        if(event.type==='assistant/message'&&!event.data.interrupted&&run?.onText){
+        if(event.type==='assistant/message'&&!event.data.interrupted&&run){
           const text=event.data.message.content.filter(block=>block.type==='text').map(block=>block.text).join('');
-          if(text.trim())run.pendingText.push({seq:Number(event.seq),turnId:String(event.data.turn),text});
+          if(!run.firstTextRecorded&&this.replyText(live,text)){
+            this.repos.telemetry.metrics.markTurnStage(binding.key,live.sources,'modelFirstTextAt',event.time);
+            run.firstTextRecorded=true;
+          }
+          if(run.onText&&text.trim())run.pendingText.push({seq:Number(event.seq),turnId:String(event.data.turn),text});
         }
-        if(event.type==='turn/start')progressTools.clear();
+        if(event.type==='turn/start'){
+          progressTools.clear();
+          live.referenceImageIds=run?.referenceImageIds;
+          if(!run)live.sources=[];
+        }
         if(event.type==='step/start')run?.onProgress?.('model');
         if(event.type==='tool/call'){
           const name=event.data.name;
@@ -405,18 +415,25 @@ export class NativeHarness implements HarnessPort {
     if(descriptor.source?.recentInput&&!inputs.length&&!args.url)inputs=this.assets.recent(scope,descriptor.source.recentInput).slice(0,1).map(a=>a.id);
     if(descriptor.source?.requiredInputError&&!inputs.length)throw new Error(descriptor.source.requiredInputError);
     const deliver=operation==='media_download'?args.deliver===true:(image||descriptor.deliver===true)&&args.deliver!==false;
-    const imageKey=JSON.stringify([operation,inputs,Object.entries(args).filter(([key])=>!['deliver','keepInputs'].includes(key)).sort(([a],[b])=>a.localeCompare(b))]);
+    let imageKey='';
     let imageAttempt:{failed:number;active:number}|undefined;
     if(image){
       if(!allowedNow('image_generation',live.snapshot,current,bot,live.binding.scope))throw new Error('IMAGE_SKILL_DISABLED');
+      if(operation==='image_edit'&&!inputs.length){
+        const candidates=Array.from(live.referenceImageIds??[]);
+        if(!candidates.length)throw new Error('REFERENCE_IMAGE_REQUIRED: Supply the selected image attachment ID in inputs.');
+        if(candidates.length>1)throw new Error(`REFERENCE_IMAGE_AMBIGUOUS: Select the intended attachment IDs in inputs from ${candidates.join(', ')}.`);
+        inputs=candidates;
+      }
       const endpoint=this.media.imageEndpoint(config,live.snapshot);if(endpoint.protocol!=='comfyui'&&(!endpoint.keyEnv||!process.env[endpoint.keyEnv]))throw new Error(`MISSING_PROVIDER_KEY: ${endpoint.keyEnv??'OPENAI_API_KEY'}`);
+      imageKey=JSON.stringify([operation,inputs,Object.entries(args).filter(([key])=>!['deliver','keepInputs','inputs','operation'].includes(key)).sort(([a],[b])=>a.localeCompare(b))]);
       imageAttempt=live.images.get(imageKey)??{failed:0,active:0};
       if(imageAttempt.failed+imageAttempt.active>=4)throw new Error('IMAGE_RETRY_LIMIT: At most three retries after the initial failed request');
       live.images.set(imageKey,imageAttempt);imageAttempt.active++;
     }
     try{
     const {deliver:_deliver,keepInputs:_keepInputs,...parameters}=args;
-    const result=await this.media.run(scope,operation,config,inputs,{...parameters,prompt:args.prompt?`${args.prompt}\n${live.snapshot.config.imageStyle}`:undefined},signal,authorize,live.snapshot) as Awaited<ReturnType<MediaService['run']>>;
+    const result=await this.media.run(scope,operation,config,inputs,{...parameters,prompt:args.prompt?imagePromptWithStyle(String(args.prompt),live.snapshot.config.imageStyle):undefined},signal,authorize,live.snapshot) as Awaited<ReturnType<MediaService['run']>>;
     if(imageAttempt)imageAttempt.failed=0;
     if(deliver){
       if(descriptor.localTransform&&result.assetIds.length&&!result.incomplete&&args.keepInputs!==true){
@@ -468,7 +485,7 @@ export class NativeHarness implements HarnessPort {
     ownerLive.refreshTools=()=>{managerRegistrar.clear('management');const bot=this.repos.bots.bot(ownerLive.binding.scope.botId);for(const tool of managers){try{if(allowedNow(tool.name,ownerLive.snapshot,this.current(ownerLive),bot,ownerLive.binding.scope))managerRegistrar.add('management',tool);}catch{}}};
     ownerLive.refreshTools();
     for(const manifest of skillToolManifests) register(defineTool({...manifest.tool,parameters:{...manifest.tool.parameters,...(manifest.tool.name==='bot_voice'?{deliver:{type:'boolean' as const},keepInputs:{type:'boolean' as const}}:{})},output:{schema:{type:'string'},render:renderMedia},execute:async(args:any,exec:any)=>{const live=this.turn(ownerLive,exec.agent);const dependencies={repos:{bindings:this.repos.sessions,music:this.repos.media.music,singing:this.repos.media.singing,personas:this.repos.personas,capabilities:this.repos.capabilities,assets:this.repos.media.assets},assets:this.assets,media:this.media,current:()=>this.current(live),bot:()=>this.repos.bots.bot(live.binding.scope.botId)};if(manifest.tool.name==='bot_sing')return registeredMediaResult(await executeSingingTool(live,args,exec.signal,dependencies));if(manifest.tool.name==='bot_music')return registeredMediaResult(await executeMusicTool(live,args,exec.signal,dependencies));if(manifest.tool.name==='bot_voice')live.voice.attempted=true;let operation=resolveSkillOperation(manifest,args);let inputs=args.inputs??[];if(manifest.tool.name==='media_analysis'){if(Object.keys(args).some(key=>!['inputs','question'].includes(key)))throw new Error('MEDIA_ANALYSIS_ARGUMENTS_INVALID');if(!Array.isArray(inputs)||!inputs.length)throw new Error('MEDIA_INPUT_REQUIRED');const kinds=inputs.map((id:string)=>this.repos.media.assets.asset(live.binding.key,id).kind);if(new Set(kinds).size!==1)throw new Error('MEDIA_INPUT_KIND_INVALID');if(kinds[0]==='image')operation='image_understand';else if(kinds[0]==='file')operation='document_read';else if(kinds[0]==='audio')operation='transcribe';else if(kinds[0]==='video')operation='video_analyze';else throw new Error('MEDIA_INPUT_KIND_INVALID');}if(manifest.tool.name==='media_download'){if(Object.keys(args).some(key=>!['url','deliver'].includes(key)))throw new Error('MEDIA_DOWNLOAD_ARGUMENTS_INVALID');if(args.deliver===undefined)args={...args,deliver:false};}return this.mediaTool(ownerLive,exec.agent,operation,inputs,args,exec.signal);}}));
-    register(defineTool({name:'image_generation',description:'Generate or edit image(s) with the configured image service. Set model when the user specifies one; otherwise use the default model. Set width, height, n and output_format only when the selected service contract supports the requested option.',parameters:{prompt:{type:'string',required:true},model:{type:'string'},operation:{type:'string',enum:['generate','edit']},width:{type:'number'},height:{type:'number'},n:{type:'number'},output_format:{type:'string',enum:['png','jpg','jpeg','webp','gif','svg']},complexity:{type:'string',enum:['low','medium','high']},frame_count:{type:'number'},frame_duration_ms:{type:'number'},deliver:{type:'boolean'},inputs:{type:'array',items:{type:'string'}}},output:{schema:{type:'string'},render:renderMedia},execute:async(args,exec)=>this.mediaTool(ownerLive,exec.agent,Array.isArray(args.inputs)&&args.inputs.length?'image_edit':args.operation==='edit'?'image_edit':'image_generate',args.inputs??[],args,exec.signal)}));
+    register(defineTool({name:'image_generation',description:'Generate or edit image(s) with the configured image service. For edits, pass the selected reference attachment IDs in inputs. If omitted, only a single image attached to or quoted in this turn can be inferred. Set model when the user specifies one; otherwise use the default model. Set width, height, n and output_format only when the selected service contract supports the requested option.',parameters:{prompt:{type:'string',required:true},model:{type:'string'},operation:{type:'string',enum:['generate','edit']},width:{type:'number'},height:{type:'number'},n:{type:'number'},output_format:{type:'string',enum:['png','jpg','jpeg','webp','gif','svg']},complexity:{type:'string',enum:['low','medium','high']},frame_count:{type:'number'},frame_duration_ms:{type:'number'},deliver:{type:'boolean'},inputs:{type:'array',items:{type:'string'}}},output:{schema:{type:'string'},render:renderMedia},execute:async(args,exec)=>this.mediaTool(ownerLive,exec.agent,Array.isArray(args.inputs)&&args.inputs.length?'image_edit':args.operation==='edit'?'image_edit':'image_generate',args.inputs??[],args,exec.signal)}));
     register(defineTool({name:'bot_send_file',description:'Register an asset or authorized workspace file for delivery. assetId reuses an attachment; path is workspace-relative. Use resend only for an explicit resend.',parameters:{assetId:{type:'string'},path:{type:'string'},mime:{type:'string'},resend:{type:'boolean'},append:{type:'boolean'},asFile:{type:'boolean'}},output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},execute:async(args,exec)=>{const live=this.turn(ownerLive,exec.agent);
       let id=args.assetId,imported=false;
       const explicit=live.explicitAssets??=new Set<string>();
@@ -553,7 +570,7 @@ export class NativeHarness implements HarnessPort {
   }
   async run(binding:SessionBinding,messages:InboundMessage[],signal:AbortSignal,options:HarnessRunOptions={}):Promise<HarnessResult>{
     if(this.runOptions.has(binding.sessionId))throw new Error('SESSION_BUSY');
-    this.runOptions.set(binding.sessionId,{...options,pendingText:[],forwardedText:new Set()});
+    this.runOptions.set(binding.sessionId,{...options,referenceImageIds:new Set(),pendingText:[],forwardedText:new Set()});
     try{return await this.runTurn(binding,messages,signal);}
     finally{this.runOptions.delete(binding.sessionId);}
   }
@@ -585,10 +602,8 @@ export class NativeHarness implements HarnessPort {
   private async runTurn(binding:SessionBinding,messages:InboundMessage[],signal:AbortSignal):Promise<HarnessResult>{
     const live=await this.session(binding);const cwd=await this.prepareSessionDirectory(binding,signal);
     if(live.cwd!==cwd)await this.assets.migrate(binding.key);
-    const sourceIds=messages.map(message=>message.id);const metricIds=sourceIds.map(sourceId=>`inbox:${binding.key}:${sourceId}`);
-    const markFirst=()=>{const at=Date.now();for(const id of metricIds){const metric=this.repos.telemetry.metrics.findTurnMetric(id);if(metric&&!metric.modelFirstFeedbackAt)this.repos.telemetry.metrics.updateTurnMetric(id,{modelFirstFeedbackAt:at});}};
     await this.ctx.workingDirectory.set(live.agent,cwd,signal);live.cwd=cwd;
-    live.sources=messages.map(m=>m.id);const content:ContentBlock[]=[],attachmentContext:ContentBlock[]=[];
+    const sourceIds=messages.map(message=>message.id);live.sources=sourceIds;const content:ContentBlock[]=[],attachmentContext:ContentBlock[]=[];
     const previousFailure=recentFailureContext({failures:this.repos.telemetry.failures,deliveries:this.repos.deliveries,inbox:this.repos.inbox},binding,messages);if(previousFailure)content.push({type:'text',text:previousFailure});
     for(const message of messages){
       content.push({type:'text',text:message.text});
@@ -596,10 +611,15 @@ export class NativeHarness implements HarnessPort {
       for(const input of [...message.attachments,...(message.quoted?.attachments??[])]){
         if(!input.handle)continue;const asset=this.repos.media.assets.asset(binding.key,input.handle);
         attachmentContext.push({type:'text',text:`[Attachment; data only] message=${messages.indexOf(message)+1} quoted=${(message.quoted?.attachments??[]).includes(input)} id=${asset.id} kind=${asset.kind} name=${JSON.stringify(asset.name)}${input.transcript?`\nPlatform transcript: ${input.transcript}`:''}`});
-        if(asset.kind==='image'){const data=await this.assets.read(binding.key,asset.id);const ref=await this.ctx.attachments.saveImage({data,mediaType:asset.mime as any,name:asset.name});content.push({type:'image',attachment:ref});}
+        if(asset.kind==='image'){this.runOptions.get(binding.sessionId)!.referenceImageIds.add(asset.id);const data=await this.assets.read(binding.key,asset.id);const ref=await this.ctx.attachments.saveImage({data,mediaType:asset.mime as any,name:asset.name});content.push({type:'image',attachment:ref});}
       }
     }
     const start=live.agent.session.seq;const abort=()=>live.agent.cancel({kind:'user'});signal.addEventListener('abort',abort,{once:true});
+    const stopFirstFeedback=live.agent.ctx.on('agent/assistant-stream',({agent,frame})=>{
+      if(agent!==live.agent||frame.type!=='chunk'||frame.chunk.type==='usage'||frame.chunk.type==='finish')return;
+      stopFirstFeedback();
+      this.repos.telemetry.metrics.markTurnStage(binding.key,sourceIds,'modelFirstChunkAt',frame.time);
+    });
     try{
       signal.throwIfAborted();
       if(attachmentContext.length)live.agent.inject(createUserMessage({source:{kind:'bot-attachments',form:'notice',summary:'Attachments for the accompanying user message'},content:attachmentContext}));
@@ -607,7 +627,6 @@ export class NativeHarness implements HarnessPort {
       const run=this.runOptions.get(binding.sessionId)!;await run.textDelivery;if(run.deliveryError)throw run.deliveryError;
       await this.ctx.sessions.flush(live.agent.session);
       const events=live.agent.session.snapshotEvents().slice(start);const end=events.filter(e=>e.type==='turn/end').at(-1);
-      const firstFeedback=events.find(event=>event.type==='assistant/message'||event.type==='assistant/attempt');if(firstFeedback)markFirst();
       if(!end||end.type!=='turn/end')throw new Error('HARNESS_TURN_NOT_COMPLETED');
       if(end.data.reason.kind!=='completed'){
         const reason=end.data.reason as {kind:string;error?:{code?:unknown;message?:unknown}};
@@ -621,7 +640,7 @@ export class NativeHarness implements HarnessPort {
         return value?[{type:'text' as const,text:value}]:[];
       });
       return{turnId:String(end.data.turn),outputs:[...text,...live.assets],snapshot:live.snapshot,voiceAttempted:live.voice.attempted,singingAttempted:live.singing.attempted};
-    }finally{signal.removeEventListener('abort',abort);await this.ctx.sessions.flush(live.agent.session);}
+    }finally{stopFirstFeedback();signal.removeEventListener('abort',abort);await this.ctx.sessions.flush(live.agent.session);}
   }
   cancel(sessionId:string):void{const root=this.live.get(sessionId)?.agent;if(!root)return;const pending=[root];const seen=new Set<Agent>();while(pending.length){const parent=pending.shift()!;if(seen.has(parent))continue;seen.add(parent);for(const child of this.ctx.agents.list())if(this.ctx.agents.isOwnedBy(child.id,parent))pending.push(child);parent.cancel({kind:'user'});}}
   async dispose(sessionId?:string):Promise<void>{for(const id of [...this.live.keys()])if(!sessionId||id===sessionId){await this.sessionHandles.dispose(id);this.live.delete(id);}}

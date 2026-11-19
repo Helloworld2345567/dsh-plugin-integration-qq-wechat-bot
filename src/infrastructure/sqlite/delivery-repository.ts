@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import type {ChannelReplyEnvelope, Delivery, Output, SessionBinding} from '../../core/types.js';
+import type {Asset, ChannelReplyEnvelope, Delivery, Output, SessionBinding} from '../../core/types.js';
 import {decodeCursor, encodeCursor, filterHash} from '../../core/pagination.js';
 import type {Page} from '../../core/ports/common.js';
 import type {DeliveryPageRequest, DeliveryRepository, DeliveryState} from '../../core/ports/delivery.js';
@@ -39,6 +39,18 @@ export class SqliteDeliveryRepository implements DeliveryRepository {
     if (!selected.length) return [];
     const placeholders = selected.map(() => '?').join(',');
     return this.decode(this.database.db.prepare(`SELECT json,state FROM deliveries WHERE scope=? AND json_extract(json,'$.output.type')='asset' AND json_extract(json,'$.output.assetId')=? AND state IN (${placeholders}) ORDER BY created_at,id`).all(scopeKey, assetId, ...selected) as {json:string;state:DeliveryState}[]);
+  }
+  findSentImageByReceipt(scopeKey: string, receipt: string): Asset | undefined {
+    if (!receipt) return;
+    // iLink can acknowledge a send without a platform message ID.
+    const row = this.database.db.prepare(`
+      SELECT a.json FROM deliveries d
+      JOIN records a ON a.kind='asset' AND a.id=json_extract(d.json,'$.output.assetId')
+      WHERE d.scope=? AND d.state='sent' AND json_extract(d.json,'$.output.type')='asset'
+        AND json_extract(d.json,'$.receipt')=? AND ? <> ('ilink-accepted:' || d.id)
+        AND json_extract(a.json,'$.scopeKey')=d.scope AND json_extract(a.json,'$.kind')='image'
+    `).get(scopeKey, receipt, receipt) as {json:string} | undefined;
+    return row ? JSON.parse(row.json) as Asset : undefined;
   }
   nextSendable(botId: string, limit: number): readonly Delivery[] {
     return this.decode(this.database.db.prepare(`SELECT json,state FROM deliveries pending WHERE bot_id=? AND state='pending' AND NOT EXISTS(SELECT 1 FROM deliveries blocker WHERE blocker.scope=pending.scope AND blocker.turn_id=pending.turn_id AND blocker.output_index<pending.output_index AND blocker.state IN ('pending','sending')) ORDER BY created_at,id LIMIT ?`).all(botId, limit) as {json:string;state:DeliveryState}[]);
@@ -92,12 +104,7 @@ export class SqliteDeliveryRepository implements DeliveryRepository {
   }
   private nextReplySequence(botId: string, reply: Readonly<Record<string, string>>): number {
     const key = JSON.stringify([botId, reply.kind, reply.target, reply.msgId]);
-    let previous = this.database.records.get<number>('reply-sequence', key);
-    if (previous === undefined) {
-      const row = this.database.db.prepare("SELECT MAX(COALESCE(json_extract(json,'$.replySequence'),output_index+1)) value FROM deliveries WHERE bot_id=? AND COALESCE(json_extract(json,'$.replyEnvelope.payload.kind'),json_extract(json,'$.reply.kind'))=? AND COALESCE(json_extract(json,'$.replyEnvelope.payload.target'),json_extract(json,'$.reply.target'))=? AND COALESCE(json_extract(json,'$.replyEnvelope.payload.msgId'),json_extract(json,'$.reply.msgId'))=?").get(botId, reply.kind ?? '', reply.target ?? '', reply.msgId ?? '') as {value:number|null};
-      previous = row.value ?? 0;
-    }
-    const next = previous + 1;
+    const next = (this.database.records.get<number>('reply-sequence', key) ?? 0) + 1;
     this.database.records.put('reply-sequence', key, next);
     return next;
   }
@@ -115,17 +122,16 @@ export class SqliteDeliveryRepository implements DeliveryRepository {
   }
   deliveryState(delivery: Delivery, state: DeliveryState, receipt?: string, error?: string): void {
     const now = Date.now(), next = {...delivery, state, receipt, error, updatedAt:now, ...(state === 'sent' ? {sentAt:now} : {})};
-    this.database.db.prepare('UPDATE deliveries SET json=?,state=? WHERE id=?').run(JSON.stringify(next), state, delivery.id);
-    this.deps.stats().observeDelivery(next);
-    this.database.bump('deliveries');
+    this.database.savepoint('delivery_state', () => {
+      this.database.db.prepare('UPDATE deliveries SET json=?,state=? WHERE id=?').run(JSON.stringify(next), state, delivery.id);
+      if (delivery.purpose !== 'progress' && (state === 'sending' || state === 'sent')) {
+        this.deps.metrics().recordDeliveryStage(delivery.scopeKey, delivery.sessionId, delivery.turnId, state, now);
+      }
+      this.deps.stats().observeDelivery(next);
+      this.database.bump('deliveries');
+    });
   }
-  /** Recovery transition: in-flight sends become explicitly unknown. */
-  unknownSending(): void {this.database.db.exec("UPDATE deliveries SET state='unknown' WHERE state='sending'");}
   delete(id: string): number {return Number(this.database.db.prepare('DELETE FROM deliveries WHERE id=?').run(id).changes);}
   deleteScope(scope: string): void {this.database.db.prepare('DELETE FROM deliveries WHERE scope=?').run(scope);}
   deleteBot(botId: string): void {this.database.db.prepare('DELETE FROM deliveries WHERE bot_id=?').run(botId);}
-  /** Retained rows for scheduled cleanup. */
-  stale(before: number): readonly Delivery[] {
-    return this.deliveries().filter(delivery => (delivery.updatedAt ?? delivery.createdAt ?? 0) < before && ['sent', 'failed', 'cancelled', 'unknown'].includes(delivery.state));
-  }
 }

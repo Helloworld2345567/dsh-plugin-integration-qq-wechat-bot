@@ -8,6 +8,13 @@ export interface MetricPercentiles {
   p95: number | null;
   max: number | null;
 }
+export interface InboxLatency {
+  inboxToModel: MetricPercentiles;
+  inboxToFirstModelChunk: MetricPercentiles;
+  inboxToFirstModelText: MetricPercentiles;
+  inboxToFirstSent: MetricPercentiles;
+  inboxToSent: MetricPercentiles;
+}
 
 /** Per-turn timing observations used for operator metrics and retention. */
 export interface TurnMetricRepository {
@@ -15,9 +22,9 @@ export interface TurnMetricRepository {
   updateTurnMetric(id: string, patch: Partial<Omit<TurnMetric, 'id'>>): void;
   turnMetrics(): TurnMetric[];
   updateTurnMetrics(scope: string, sourceIds: readonly string[], patch: Partial<Omit<TurnMetric, 'id'>>): void;
-  updateTurnMetricsByTurn(scope: string, turnId: string, patch: Partial<Omit<TurnMetric, 'id'>>): void;
+  recordDeliveryStage(scope: string, sessionId: string, turnId: string, stage: 'sending' | 'sent', at: number): void;
   markTurnStage(scope: string, ids: readonly string[], field: TurnStageField, at?: number): void;
-  metricPercentiles(field: TurnStageField, from?: number, to?: number): MetricPercentiles;
+  inboxLatency(): InboxLatency;
 }
 
 /** Frozen configuration snapshot of one turn. */

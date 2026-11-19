@@ -61,6 +61,10 @@ Follow the [voice library](voice-model-library.md), [Music](music-integration.md
 | `failed` | Confirmed failure; resolve the prepare/upload/commit stage, error code and platform limit |
 | `unknown` | Submitted without confirmation of platform acceptance; recover using the existing record without rerunning TTS/RVC/Music automatically |
 
+In **Overview → Delivery records**, filter by bot and state, then expand a record to inspect its stage, error details and platform receipt. Retry a failed delivery after fixing its cause. For an unknown outcome, check the platform before confirming a resend that could duplicate the message. Progress reminders cannot be resent. Acceptance time comes from a successful send receipt. Use the session and turn to match deliveries from the same multi-part reply.
+
+Latency in the administration summary starts at plugin ingress. The first model chunk may carry reasoning or a tool call. `inboxToFirstModelText` measures the first committed visible assistant text. First and last platform acceptance track separate parts of a multi-part reply. Each stage statistic includes only records with an observed time for that stage.
+
 Attachments must belong to the current channel. Create a resend intent only on an explicit user request. Generation or queuing is not proof of receipt. See [QQ delivery](qq-media-delivery.md) for media limits and states.
 
 ## 11. Upgrade or rollback fails after installation

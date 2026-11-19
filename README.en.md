@@ -43,9 +43,9 @@ After installation, configure a chat model and credentials in Harness, open **Bo
 
 Implementation lives in `src/`, media workers in `python/`, skills in `skills/`, and auxiliary bundles in `packages/`. Scripts and tests live in `scripts/` and `tests/`.
 
-`npm run verify:release` runs release gates; use `npm run release:pack` to create an archive. See [Development](docs/en/development.md) for setup and checks appropriate to each change.
+`npm run verify:release` runs the release gates. `npm run release:pack` creates a temporary archive, validates its contents and removes it. See [Development](docs/en/development.md) for setup and checks appropriate to each change.
 
-See [CONTRIBUTING](CONTRIBUTING.en.md) for contributions, [SUPPORT](SUPPORT.en.md) for usage help, [SECURITY](SECURITY.en.md) for security reports, and [CODE_OF_CONDUCT](CODE_OF_CONDUCT.en.md) / [AGENTS](AGENTS.md) for collaboration rules. Release history is in [CHANGELOG](CHANGELOG.en.md).
+See [CONTRIBUTING](CONTRIBUTING.en.md) for contributions, [SUPPORT](SUPPORT.en.md) for usage help, [SECURITY](SECURITY.en.md) for security reports, and [CODE_OF_CONDUCT](CODE_OF_CONDUCT.en.md) / [AGENTS](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/AGENTS.md) for collaboration rules. Release history is in [CHANGELOG](CHANGELOG.en.md).
 
 ## License
 

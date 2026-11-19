@@ -1,9 +1,8 @@
 import {storageDescriptor} from '../../i18n/storage.js';
 import {LocalizedError} from '../../core/errors.js';
 import {randomUUID} from 'node:crypto';
-import type {CallerScope, Delivery, SessionBinding, SessionRecord} from '../../core/types.js';
+import type {CallerScope, SessionBinding, SessionRecord} from '../../core/types.js';
 import {scopeKey} from '../../core/identity.js';
-import {idSchema} from '../../core/types.js';
 import {decodeCursor, encodeCursor, filterHash} from '../../core/pagination.js';
 import type {Page} from '../../core/ports/common.js';
 import type {BindingRepository, SessionPageFilter, SessionRepository} from '../../core/ports/session.js';
@@ -36,10 +35,12 @@ export class SqliteSessionRepository implements SessionRepository, BindingReposi
   }
   updateSession(binding: SessionBinding): SessionBinding {
     if (binding.key !== scopeKey(binding.scope)) throw new Error('SESSION_OWNERSHIP_MISMATCH');
-    this.recordSession(binding);
-    this.records.put('binding', binding.key, binding);
-    this.database.bump('sessions');
-    return binding;
+    return this.database.savepoint('update_session',()=>{
+      this.recordSession(binding);
+      this.records.put('binding', binding.key, binding);
+      this.database.bump('sessions');
+      return binding;
+    });
   }
   markSessionPersisted(binding: SessionBinding): void {
     const current = this.records.get<SessionBinding>('binding', binding.key);
@@ -92,25 +93,5 @@ export class SqliteSessionRepository implements SessionRepository, BindingReposi
     const rows = this.database.db.prepare(`SELECT id,json FROM records${where}${where ? ' AND' : ' WHERE'} kind='session' ORDER BY CAST(json_extract(json,'$.updatedAt') AS INTEGER) DESC,id DESC LIMIT ?`).all(...params, limit + 1) as {id:string;json:string}[];
     const more = rows.length > limit, items = rows.slice(0, limit).map(row => JSON.parse(row.json) as SessionRecord), last = items.at(-1);
     return {items, nextCursor:more && last ? encodeCursor({v:1, collection:'sessions', filter:fingerprint, revision, time:last.updatedAt, id:last.id}) : null, revision:`sessions:${revision}`};
-  }
-  /**
-   * Rebuild session records from durable evidence at open time.  Delivery rows
-   * prove that an old session belongs to an existing channel identity; no
-   * global history scan is performed.
-   */
-  backfill(deliveries: readonly Delivery[]): void {
-    const bindings = this.bindings().filter(binding => {
-      const scope = binding?.scope;
-      if (!scope || !idSchema.safeParse(scope.platform).success || !['private', 'group'].includes(scope.kind)) return false;
-      if (![scope.botId, scope.accountId, scope.channelId, scope.senderId, binding.sessionId].every(value => typeof value === 'string' && value.length > 0)) return false;
-      return binding.key === scopeKey(scope);
-    });
-    for (const binding of bindings) this.recordSession(binding);
-    for (const delivery of deliveries) {
-      if (this.findSession(delivery.sessionId)) continue;
-      const owner = bindings.find(binding => binding.key === delivery.scopeKey && binding.scope.botId === delivery.botId);
-      if (!owner) continue;
-      this.records.put('session', delivery.sessionId, {id:delivery.sessionId, scopeKey:owner.key, scope:owner.scope, generation:0, persisted:true, createdAt:delivery.createdAt ?? 0, updatedAt:delivery.updatedAt ?? delivery.createdAt ?? 0} satisfies SessionRecord);
-    }
   }
 }

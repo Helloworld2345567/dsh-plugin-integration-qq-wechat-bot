@@ -35,10 +35,10 @@ TypeScript 实现在 `src/`，媒体实现在 `python/dsh_bot_runtime/`，技能
 | 变更 | 检查 |
 | --- | --- |
 | 文档 | `npm run check:docs`；命令或运行版本变化加 `npm run check:contracts`；发布文件变化加 `npm run check:release` |
-| TypeScript 核心或构建脚本 | `npm run check:architecture`、`npm run typecheck`、`npm test`、`npm run build`；跨 Python 协议加 `npm run test:python` |
-| Python worker | `npm run check:architecture`、`npm run test:python`、`npm run check:python-dependencies`；变更包入口时验证归档中的 `-P -m dsh_bot_runtime.worker` |
+| TypeScript 核心或构建脚本 | `npm run check:architecture`、`npm run typecheck`、`npm run test:unit -- tests/<affected>.test.ts`、`npm run build`；跨 Python 协议加 `npm run test:python:unit -- tests/<affected>.py` |
+| Python worker | `npm run check:architecture`、`npm run test:python:unit -- tests/<affected>.py`、`npm run check:python-dependencies`；变更包入口时验证归档中的 `-P -m dsh_bot_runtime.worker` |
 | 技能声明或路由 | `npm run generate:skills`、`npm run test:skills`；Python 实现变化再运行 Python 测试 |
-| UI 或语言资源 | `npm run typecheck`、`npm test`、`npm run build`；验证中英文切换、占位符和草稿保留 |
+| UI 或语言资源 | `npm run typecheck`、`npm run test:unit -- tests/<affected>.test.ts`、`npm run build`；验证中英文切换、占位符和草稿保留 |
 | lifecycle | 源码门禁及 `npm run test:lifecycle-native`；安装流程变化加 `npm run test:install-smoke` |
 | 安装器或发布内容 | `npm run release:pack`、`npm run test:install-smoke` |
 

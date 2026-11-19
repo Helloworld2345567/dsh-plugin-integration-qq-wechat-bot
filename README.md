@@ -43,9 +43,9 @@
 
 实现位于 `src/`，媒体 worker 位于 `python/`，技能位于 `skills/`，辅助 bundle 位于 `packages/`；脚本与测试分别位于 `scripts/`、`tests/`。
 
-`npm run verify:release` 执行发布门禁；生成归档使用 `npm run release:pack`。开发准备和按变更选择验证的方式见[开发指南](docs/development.md)。
+`npm run verify:release` 执行发布门禁。`npm run release:pack` 生成临时归档、检查包内容并在结束时清理归档。开发准备和按变更选择验证的方式见[开发指南](docs/development.md)。
 
-贡献请读 [CONTRIBUTING.md](CONTRIBUTING.md)；使用问题见 [SUPPORT.md](SUPPORT.md)，安全报告见 [SECURITY.md](SECURITY.md)，协作规则见 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) 与 [AGENTS.md](AGENTS.md)。版本记录见 [CHANGELOG.md](CHANGELOG.md)。
+贡献请读 [CONTRIBUTING.md](CONTRIBUTING.md)；使用问题见 [SUPPORT.md](SUPPORT.md)，安全报告见 [SECURITY.md](SECURITY.md)，协作规则见 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) 与 [AGENTS.md](https://github.com/Helloworld2345567/dsh-plugin-integration-qq-wechat-bot/blob/main/AGENTS.md)。版本记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 许可证
 

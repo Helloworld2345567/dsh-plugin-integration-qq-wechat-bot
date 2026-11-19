@@ -26,12 +26,17 @@ test('repository contract: reopen keeps configuration revision, bindings, assets
   const asset:Asset={id:'asset-1',scopeKey:binding.key,name:'a.txt',mime:'text/plain',kind:'file',path:path.join(home,'a.txt'),size:3,createdAt:Date.now(),sessionId:binding.sessionId};
   repos.media.assets.saveAsset(asset);
   repos.deliveries.enqueue(binding,'source','turn',[{type:'text',text:'hello'}],{});
+  const historical=repos.sessions.findSession(binding.sessionId)!;
+  const active=repos.sessions.reset(binding.scope);
   persistence.close();
   const reopened=SqlitePersistence.open(home).initialize().migrate();
   const again=reopened.repositories();
   assert.equal(again.personas.config('default').revision,saved.revision);
-  assert.equal(again.sessions.findBinding(binding.key)?.sessionId,binding.sessionId);
+  assert.equal(again.sessions.findBinding(binding.key)?.sessionId,active.sessionId);
+  assert.equal(again.sessions.findSession(historical.id)?.createdAt,historical.createdAt);
+  assert.equal(again.sessions.findSession(historical.id)?.scopeKey,binding.key);
   assert.equal(again.media.assets.asset(binding.key,'asset-1').name,'a.txt');
+  assert.deepEqual(again.media.assets.recentAssets(binding.key,binding.sessionId).map(item=>item.id),['asset-1']);
   assert.equal(again.deliveries.deliveries(['pending']).length,1);
   assert.equal(again.inbox.countMessages(),0);
   reopened.close();
@@ -52,10 +57,11 @@ test('repository contract: scopes, sessions and assets stay isolated',async t=>{
 test('repository contract: persona revision CAS rejects a stale writer without changing state',async t=>{
   const {repos}=await fixture(t);
   const config=repos.personas.config('default');
-  repos.personas.saveConfig({...config,name:'First'},config.revision);
+  const saved=repos.personas.saveConfig({...config,name:'First'},config.revision);
   assert.throws(()=>repos.personas.saveConfig({...config,name:'Stale'},config.revision),/配置已被其他操作修改/);
   assert.equal(repos.personas.config('default').name,'First');
-  assert.equal(repos.personas.configVersions().filter(row=>row.id==='default').length,2);
+  assert.equal(repos.personas.configVersion('default',config.revision)?.name,config.name);
+  assert.equal(repos.personas.configVersion('default',saved.revision)?.name,'First');
 });
 
 test('repository contract: session reset advances generation and stale cursors cannot be reused',async t=>{
@@ -73,6 +79,14 @@ test('repository contract: session reset advances generation and stale cursors c
   assert.throws(()=>repos.sessions.pageSessions({},1,page.nextCursor!),/PAGE_STALE/);
 });
 
+test('a failed session update rolls back both the historical record and current binding',async t=>{
+  const {persistence,repos}=await fixture(t),binding=repos.sessions.binding(privateScope('bot','owner'));
+  t.mock.method(persistence.database,'bump',()=>{throw Error('revision write failed');});
+  assert.throws(()=>repos.sessions.updateSession({...binding,sessionId:'incomplete'}),/revision write failed/);
+  assert.equal(repos.sessions.findBinding(binding.key)?.sessionId,binding.sessionId);
+  assert.equal(repos.sessions.findSession('incomplete'),undefined);
+});
+
 test('repository contract: delivery ordering, cursor binding and original-ID retry are stable',async t=>{
   const {repos}=await fixture(t);
   const binding=repos.sessions.binding(privateScope('bot','owner'));
@@ -88,6 +102,36 @@ test('repository contract: delivery ordering, cursor binding and original-ID ret
   repos.deliveries.deliveryState(second,'failed',undefined,'rejected');assert.deepEqual(repos.deliveries.nextSendable('bot',10).map(row=>row.index),[2]);
   const retried=repos.deliveries.retry(first.id);assert.equal(retried?.id,first.id);assert.equal(retried?.state,'pending');
   assert.equal(repos.deliveries.retry(first.id),undefined,'a pending delivery is not duplicated by retry');
+});
+
+test('a referenced platform message resolves only to its sent image in the caller scope',async t=>{
+  const {repos}=await fixture(t),first=repos.sessions.binding(privateScope('bot','alice')),second=repos.sessions.binding(privateScope('bot','bob'));
+  const image:Asset={id:'original',scopeKey:first.key,sessionId:first.sessionId,kind:'image',mime:'image/png',name:'original.png',path:'original.png',size:16,createdAt:10};
+  const otherImage={...image,id:'other',scopeKey:second.key,sessionId:second.sessionId};
+  const audio={...image,id:'song',kind:'audio' as const,mime:'audio/wav'};
+  for(const asset of [image,otherImage,audio])repos.media.assets.saveAsset(asset);
+  const queue=repos.deliveries;
+  queue.enqueue(first,'inbound','turn',[{type:'asset',assetId:image.id},{type:'asset',assetId:audio.id},{type:'text',text:'caption'}],{});
+  queue.enqueue(second,'inbound','turn',[{type:'asset',assetId:otherImage.id}],{});
+  const [sentImage,sentAudio,caption,other]=queue.deliveries();
+  const receipt='9223372036854775807';
+  queue.deliveryState(sentImage,'unknown',receipt);
+  assert.equal(queue.findSentImageByReceipt(first.key,receipt),undefined);
+  queue.deliveryState(sentImage,'sent',receipt);
+  queue.deliveryState(sentAudio,'sent','audio-receipt');
+  queue.deliveryState(caption,'sent','text-receipt');
+  assert.deepEqual(queue.findSentImageByReceipt(first.key,receipt),image);
+  assert.equal(queue.findSentImageByReceipt(second.key,receipt),undefined);
+  queue.deliveryState(other,'sent',receipt);
+  assert.deepEqual(queue.findSentImageByReceipt(second.key,receipt),otherImage);
+  for(const id of ['audio-receipt','text-receipt','inbound',sentImage.id,'']){
+    assert.equal(queue.findSentImageByReceipt(first.key,id),undefined,id);
+  }
+  const ack=`ilink-accepted:${other.id}`;
+  queue.deliveryState(other,'sent',ack);
+  assert.equal(queue.findSentImageByReceipt(second.key,ack),undefined);
+  repos.media.assets.deleteAsset(first.key,image.id);
+  assert.equal(queue.findSentImageByReceipt(first.key,receipt),undefined);
 });
 
 test('repository contract: unknown is not replayed and explicit resend creates a new intent',async t=>{

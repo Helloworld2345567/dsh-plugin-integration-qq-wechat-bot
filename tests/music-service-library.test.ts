@@ -36,3 +36,21 @@ test('missing Music home leaves a visible missing profile without throwing',asyn
   assert.equal(profiles.require({serviceId:'music',profileId:'default'}).state,'missing');
 });
 
+test('first installation has no Music root and an explicit saved root takes precedence',async t=>{
+  const initialEnv={BOT_MUSIC_HOME:process.env.BOT_MUSIC_HOME,MUSIC_HOME:process.env.MUSIC_HOME};
+  t.after(()=>{for(const [key,value] of Object.entries(initialEnv)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
+  delete process.env.BOT_MUSIC_HOME;delete process.env.MUSIC_HOME;
+  const store=settingsStore(),profiles=new ProfileStore(),library=new MusicServiceLibrary(store,profiles);
+  await library.initialize();
+  assert.equal(library.view().musicHome,'');
+  assert.equal(library.status().safeDiagnostic,'MUSIC_HOME_REQUIRED');
+  assert.equal(library.profile()?.state,'missing');
+  const root=path.resolve('.codex','explicit-music');
+  process.env.BOT_MUSIC_HOME=path.resolve('.codex','env-music');
+  assert.equal(library.view().musicHome,process.env.BOT_MUSIC_HOME);
+  store.write({musicHome:root});
+  assert.equal(library.view().musicHome,root);
+  store.write({musicHome:''});
+  assert.equal(library.view().musicHome,'');
+});
+

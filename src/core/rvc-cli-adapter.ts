@@ -8,10 +8,11 @@ import {IsolatedServiceAdapter,assertOutputFile,providerFailure,SERVICE_OPERATIO
 import {ServiceContractError} from './service-errors.js';
 import type {CancelResult,HealthResult,ResolvedServiceProfileRevision,ServiceAdapterJob,ServiceProfileRevision,ServiceResult} from './service-contract.js';
 import type {ServiceShadowComparator} from './service-shadow.js';
+import {rvcTuningSchema} from './rvc-worker-config.js';
 
 const separationSchema=z.object({enabled:z.literal(true),status:z.literal('configured'),modelId:z.enum(['vocals','vocals-aggressive']),modelPath:z.string().min(1).max(4096),instrumentalMix:z.boolean(),volume:z.number().min(0).max(2)}).strict().optional();
 const profileSchema=z.object({protocol:z.literal('rvc_cli_v1'),python:z.string().min(1).max(4096),rvcRoot:z.string().min(1).max(4096),device:z.enum(['cpu','cuda']).default('cpu'),modelVersion:z.enum(['v1','v2']),singingModelId:z.string().min(1).max(256),singingWeightsPath:z.string().min(1).max(4096),singingIndexPath:z.string().min(1).max(4096).optional(),speakerId:z.number().int().min(0).max(65535).default(0),pitchShift:z.number().int().min(-24).max(24).default(0),indexRate:z.number().min(0).max(1).default(0),separation:separationSchema}).strict().superRefine((value,ctx)=>{if(!value.singingIndexPath&&value.indexRate!==0)ctx.addIssue({code:'custom',path:['indexRate'],message:'index requires zero rate when absent'});});
-const parametersSchema=z.object({sourceType:z.enum(['vocals','mixed']),format:z.enum(['wav','mp3']).default('wav'),pitchShift:z.number().int().min(-24).max(24).optional(),indexRate:z.number().min(0).max(1).optional(),speakerId:z.number().int().min(0).max(65535).optional()}).strict();
+const parametersSchema=rvcTuningSchema.extend({sourceType:z.enum(['vocals','mixed']),format:z.enum(['wav','mp3']).default('wav')}).strict();
 const runnerStatusSchema=z.discriminatedUnion('status',[z.object({status:z.literal('succeeded')}).strict(),z.object({status:z.literal('failed'),error:z.object({code:z.string().max(120).regex(/^SINGING_[A-Z_]+$/)}).strict()}).strict()]);
 type ActiveCli={submitted:boolean;controller:AbortController;settled:Promise<void>};
 export class RvcCliServiceAdapter extends IsolatedServiceAdapter {

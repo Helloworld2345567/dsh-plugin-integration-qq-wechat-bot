@@ -184,8 +184,8 @@ test('image skill uses explicit operator service settings without legacy persona
   const config=configSchema.parse({id:'image',name:'Image',personaPrompt:'A',media:{}});assert.equal('vision' in config.media,false);
   const settings=imageServiceSettingsSchema.parse({openAiBaseUrl:'https://example.com/v1',openAiModel:'custom'});
   const endpoint=resolveImageSkill(config,settings);assert.equal(endpoint.keyEnv,'OPENAI_API_KEY');assert.equal(endpoint.model,'custom');assert.equal(endpoint.baseUrl,settings.openAiBaseUrl);
-  const override=configSchema.parse({...config,media:{image:{model:'persona-model'}}});assert.equal(resolveImageSkill(override,settings).model,'custom');assert.equal(resolveImageSkill(override,settings).baseUrl,settings.openAiBaseUrl);
-  assert.equal(resolveImageSkill(override).model,'gpt-image-2');
+  assert.equal(configSchema.safeParse({...config,media:{image:{model:'persona-model'}}}).success,false);
+  assert.equal(resolveImageSkill(config).model,'gpt-image-2');
   assert.throws(()=>resolveImageSkill({...config,media:{image:{enabled:false}}},settings),/IMAGE_SKILL_DISABLED/);
   const owner=botSchema.parse({id:'one',name:'One',channel:'qq',enabled:true});const snapshot=freezeTurn(config,owner,scope(),[]);
   assert.equal(allowedNow('image_generation',snapshot,config,owner,scope()),true);assert.equal(allowedNow('image_generation',snapshot,{...config,skills:[]},owner,scope()),false);
@@ -203,11 +203,122 @@ test('URL-only messages start a turn without waiting for a follow-up message',as
   let calls=0;const f=await runtimeFixture(t,async(_binding,messages)=>{calls++;assert.equal(messages[0].text,'https://example.com/article');return{turnId:'url',outputs:[],snapshot:freezeTurn(configSchema.parse({id:'x',name:'X',personaPrompt:'X'}),botSchema.parse({id:'one',name:'One',channel:'qq'}),scope(),messages.map(m=>m.id))};});
   await f.runtime.receive(message('url','https://example.com/article'));assert.equal(f.store.inbox.messages(scopeKey(scope()),['pending']).length,1);await f.runtime.process(scopeKey(scope()));assert.equal(calls,1);
 });
+test('a burst processes the earliest eight messages and resumes the remaining inbox after a rejected batch',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const batches:string[][]=[];
+  const f=await runtimeFixture(t,async(_binding,messages,_signal,options)=>{
+    batches.push(messages.map(item=>item.id));
+    return {turnId:String(batches.length),outputs:[{type:'text',text:'ok'}],snapshot:options!.snapshot!};
+  });
+  const key=scopeKey(scope());
+  for(let i=1;i<=9;i++)await f.runtime.receive(message(String(i),'hello'));
+  await f.runtime.process(key);
+  assert.deepEqual(batches,[['1','2','3','4','5','6','7','8']]);
+  assert.equal(f.store.deliveries.deliveries(['sent'])[0].sourceId,'8');
+  await f.runtime.process(key);
+  assert.deepEqual(batches[1],['9']);
+
+  for(let i=1;i<=9;i++){
+    const item=message(`more-${i}`,i===9?'final':'x'.repeat(32*1024));
+    if(i===1)item.quoted={text:'just over the batch limit'};
+    await f.runtime.receive(item);
+  }
+  // Only the validation failure can schedule another pass.
+  t.mock.timers.tick(60000);
+  await settleProgress();
+  assert.equal(f.store.deliveries.deliveries(['sent']).at(-1)?.sourceId,'more-8');
+  assert.deepEqual(f.store.inbox.messages(key).map(item=>item.id),['more-9']);
+  t.mock.timers.tick(60000);
+  await settleProgress();
+  assert.deepEqual(batches.at(-1),['more-9']);
+});
+test('full inbox batches bypass the merge delay and drain a full backlog before restarting the trailing timer',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const user=scope('one','alice','group'),release=gate(),batches:string[][]=[];
+  const f=await runtimeFixture(t,async(_binding,messages,_signal,options)=>{
+    batches.push(messages.map(item=>item.id));
+    if(batches.length===1)await release.promise;
+    return {turnId:String(batches.length),outputs:[{type:'text',text:'ok'}],snapshot:options!.snapshot!};
+  });
+  const add=(id:number)=>f.runtime.receive(message(String(id),'hello',user));
+  await add(1);t.mock.timers.tick(59000);
+  await add(2);t.mock.timers.tick(1000);await settleProgress();
+  assert.equal(batches.length,0);
+  for(let i=3;i<=9;i++)await add(i);
+  t.mock.timers.tick(1);await settleProgress();
+  assert.deepEqual(batches,[['1','2','3','4','5','6','7','8']]);
+  for(let i=10;i<=17;i++)await add(i);
+  t.mock.timers.tick(1);await settleProgress();assert.equal(batches.length,1);
+  release.resolve();await settleProgress();
+  t.mock.timers.tick(1);await settleProgress();
+  assert.deepEqual(batches[1],['9','10','11','12','13','14','15','16']);
+  t.mock.timers.tick(59999);await settleProgress();assert.equal(batches.length,2);
+  t.mock.timers.tick(1);await settleProgress();assert.deepEqual(batches[2],['17']);
+});
 test('deferred video is silent, materialized only after instruction, handles stay scoped',async t=>{
   let calls=0;const f=await runtimeFixture(t,async(binding,messages)=>{calls++;assert.equal(messages.length,2);assert.ok(messages[0].attachments[0].handle);return{turnId:'t',outputs:[],snapshot:freezeTurn(configSchema.parse({id:'x',name:'X',personaPrompt:'X'}),botSchema.parse({id:'one',name:'One',channel:'qq'}),binding.scope,[])};});
   const clip=message('v','');clip.attachments=[{kind:'video',mime:'video/mp4',name:'video.mp4',bytes:Buffer.from('fixture').toString('base64')}];await f.runtime.receive(clip);await f.runtime.process(scopeKey(scope()));assert.equal(calls,0);assert.equal(f.store.assets.allAssets().length,0);
   await f.runtime.receive(message('go','请分析刚才的视频'));await f.runtime.process(scopeKey(scope()));assert.equal(calls,1);
   const saved=f.store.inbox.source(scopeKey(scope()),'v')!;assert.ok(saved.attachments[0].handle);assert.throws(()=>f.store.assets.asset(scopeKey(scope('two')),saved.attachments[0].handle!));
+});
+test('staged and final platform receipts timestamp every batched source and leave other sessions alone',async t=>{
+  let now=Date.now();
+  t.mock.method(Date,'now',()=>now);
+  const key=scopeKey(scope()),start=now;
+  const f=await runtimeFixture(t,async(_binding,_messages,_signal,options)=>{
+    await options!.onText!({turnId:'1',text:'starting'});
+    for(const id of ['a','b']){
+      const metric=f.store.turnMetrics.findTurnMetric(`inbox:${key}:${id}`)!;
+      assert.equal(metric.firstSentAt,start+10);
+      assert.equal(metric.sentAt,start+10);
+    }
+    now+=100;
+    return {turnId:'1',outputs:[{type:'text',text:'finished'}],snapshot:options!.snapshot!};
+  },async()=>{now+=10;return 'receipt';});
+  f.store.inbox.accept(message('older','previous session'));
+  f.store.inbox.mark(key,['older'],'complete');
+  const oldId=`inbox:${key}:older`;
+  f.store.turnMetrics.updateTurnMetric(oldId,{sessionId:'previous',turnId:'1',sentAt:start-1});
+  await f.runtime.receive(message('a','one'));await f.runtime.receive(message('b','two'));
+  await f.runtime.process(key);
+  for(const id of ['a','b']){
+    const metric=f.store.turnMetrics.findTurnMetric(`inbox:${key}:${id}`)!;
+    assert.equal(metric.deliveryStartedAt,start);
+    assert.equal(metric.firstSentAt,start+10);
+    assert.equal(metric.sentAt,start+120);
+  }
+  assert.equal(f.store.turnMetrics.findTurnMetric(oldId)?.firstSentAt,undefined);
+  assert.equal(f.store.turnMetrics.findTurnMetric(oldId)?.sentAt,start-1);
+  assert.equal(f.runtime.health().latency.inboxToFirstSent.p50,10);
+  assert.equal(f.runtime.health().latency.inboxToSent.p50,120);
+});
+test('deferred materials reserve room with the following instruction even in a full burst',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const batches:string[][]=[];
+  const f=await runtimeFixture(t,async(_binding,messages,_signal,options)=>{
+    batches.push(messages.map(m=>m.id));
+    return {turnId:String(batches.length),outputs:[{type:'text',text:'done'}],snapshot:options!.snapshot!};
+  });
+  const key=scopeKey(scope());
+  const attachment=(id:string,at=Date.now())=>{
+    const item=message(id,'');item.timestamp=at;
+    item.attachments=[{kind:'file',mime:'text/plain',name:'note.txt',bytes:Buffer.from('note').toString('base64')}];return item;
+  };
+  await f.runtime.receive(attachment('stale',Date.now()-601000));await f.runtime.receive(attachment('first-file'));
+  for(let i=1;i<=8;i++)await f.runtime.receive(message(String(i),'analyse'));
+  await f.runtime.receive(attachment('next-file'));
+  await f.runtime.process(key);
+  assert.deepEqual(batches[0],['first-file','1','2','3','4','5','6','7']);
+  assert.equal(f.store.deliveries.deliveries(['sent']).at(-1)?.sourceId,'7');
+  assert.equal(f.store.inbox.stateOf(key,'stale'),'cancelled');
+  await f.runtime.receive(message('9','follow up'));
+  await f.runtime.process(key);assert.deepEqual(batches[1],['8']);
+  await f.runtime.process(key);assert.deepEqual(batches[2],['next-file','9']);
+  for(let i=0;i<9;i++)await f.runtime.receive(attachment(`file-${i}`));
+  await f.runtime.receive(message('10','analyse uploads'));await f.runtime.process(key);
+  assert.deepEqual(batches[3],['file-2','file-3','file-4','file-5','file-6','file-7','file-8','10']);
+  assert.equal(f.store.inbox.stateOf(key,'file-0'),'cancelled');assert.equal(f.store.inbox.stateOf(key,'file-1'),'cancelled');
+  assert.deepEqual(f.store.inbox.messages(key,['deferred']),[]);
 });
 test('audio without a platform transcript is transcribed once per attachment and passed to the harness',async t=>{
   let calls=0;let seen:any[]=[];const f=await runtimeFixture(t,async(_binding,messages)=>{seen=messages;return{turnId:'audio',outputs:[],snapshot:freezeTurn(f.store.personas.config('default'),f.store.bots.bot('one'),scope(),messages.map(m=>m.id))};});

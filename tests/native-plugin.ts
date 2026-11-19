@@ -123,8 +123,20 @@ export async function apply(ctx:Context){
     const toolJson=(result:any)=>{assert.equal(result.isError,false,JSON.stringify(result));return JSON.parse(result.content.filter((block:any)=>block.type==='text').map((block:any)=>block.text).join(''));};
     const noHostPaths=(value:unknown)=>{const json=JSON.stringify(value);assert.doesNotMatch(json,/"(?:path|resourceBase|candidateRoot|directory|workingDirectory)"/);assert.ok(!json.includes(JSON.stringify(home).slice(1,-1)),'catalog must not expose the host data directory');};
     inbox.accept(msg('first','我喜欢绿茶'));
+    let firstChunkAt:number|undefined;
+    beforeFinal=()=>{
+      firstChunkAt=repos.telemetry.metrics.findTurnMetric(`inbox:${binding.key}:first`)?.modelFirstChunkAt;
+      assert.ok(firstChunkAt,'the first native stream chunk must be recorded before the final model step');
+      assert.equal(repos.telemetry.metrics.findTurnMetric(`inbox:${binding.key}:first`)?.modelFirstTextAt,undefined,'tool-only model steps have no visible assistant body');
+    };
     const stages:string[]=[];let ends=0;
     const first=await bridge.run(binding,[msg('first','我喜欢绿茶')],AbortSignal.timeout(30000),{onProgress:stage=>stages.push(stage),onEnd:()=>ends++});
+    const firstAssistant=bridge.live.get(binding.sessionId)!.agent.session.snapshotEvents().find(event=>event.type==='assistant/message');
+    const firstFrame=firstAssistant?.data.stream?.find(item=>item.type==='chunk'&&item.chunk.type==='block-start');
+    assert.ok(firstFrame&&firstFrame.type==='chunk');assert.equal(firstChunkAt,firstFrame.time);
+    assert.equal(repos.telemetry.metrics.findTurnMetric(`inbox:${binding.key}:first`)?.modelFirstChunkAt,firstChunkAt);
+    const firstBody=bridge.live.get(binding.sessionId)!.agent.session.snapshotEvents().find(e=>e.type==='assistant/message'&&e.data.message.content.some(b=>b.type==='text'&&b.text.trim()));
+    assert.ok(firstBody);assert.equal(repos.telemetry.metrics.findTurnMetric(`inbox:${binding.key}:first`)?.modelFirstTextAt,firstBody.time);
     assert.ok(stages.includes('tool'));assert.ok(stages.includes('model'));assert.equal(ends,1);
     assert.deepEqual(first.outputs,[{type:'text',text:'FINAL_ONLY'}]);assert.equal(first.snapshot.config.id,'default');assert.equal(requests.length,3);assert.ok(requests.every(r=>r.model==='first'));
     assert.deepEqual(requestTools(requests[0]),['bot_tools'],'plain first step must expose only the loader');
@@ -174,11 +186,14 @@ export async function apply(ctx:Context){
       return{binding:stageBinding,input,snapshot,script};
     };
     const staged=stagedFixture('staged-delivery');
+    inbox.accept(staged.input);
     const stagedAsset=await runtime.assets.save(staged.binding.key,{kind:'file',name:'staged-output.txt',mime:'text/plain'},Buffer.from('STAGED_ARTIFACT'));
     staged.script.steps.push({text:'FIRST_PROGRESS',tool:{name:'bot_tools',args:{names:['bot_send_file']}}},{text:'SECOND_PROGRESS',tool:{name:'bot_send_file',args:{assetId:stagedAsset.id}}},{text:'FINAL_PROGRESS'});
     let enterStage!:()=>void,releaseStage!:()=>void;const stageEntered=new Promise<void>(resolve=>enterStage=resolve),stageGate=new Promise<void>(resolve=>releaseStage=resolve);
     const stagedText:Array<{turnId:string;text:string}>=[];
     const stagedWork=bridge.run(staged.binding,[staged.input],AbortSignal.timeout(30000),{snapshot:staged.snapshot,onText:async(event:{turnId:string;text:string})=>{
+      const firstBody=bridge.live.get(staged.binding.sessionId)!.agent.session.snapshotEvents().find(e=>e.type==='assistant/message');
+      assert.ok(firstBody);assert.equal(repos.telemetry.metrics.findTurnMetric(`inbox:${staged.binding.key}:${staged.input.id}`)?.modelFirstTextAt,firstBody.time);
       stagedText.push(event);assert.equal(bridge.live.get(staged.binding.sessionId)!.assets.length,0,'pre-tool text must be delivered before the business tool registers its artifact');
       if(event.text==='FIRST_PROGRESS'){enterStage();await stageGate;}
     }});
@@ -202,8 +217,10 @@ export async function apply(ctx:Context){
     assert.equal(collectedResult.outputs.filter(output=>output.type==='text').map(output=>output.text).join('\n\n'),'COLLECTED_FIRST\n\nCOLLECTED_SECOND\n\nCOLLECTED_FINAL','a consumer without onText must receive every completed assistant body in order');
     assert.doesNotMatch(JSON.stringify(collectedResult.outputs),/STAGED_PRIVATE_REASONING|"sessionId"|"loaded"/);await bridge.dispose(collected.binding.sessionId);
     const failedAttempt=stagedFixture('staged-failed-attempt');failedAttempt.script.failAttempt=true;const failedAttemptText:string[]=[];
+    inbox.accept(failedAttempt.input);
     await assert.rejects(bridge.run(failedAttempt.binding,[failedAttempt.input],AbortSignal.timeout(30000),{snapshot:failedAttempt.snapshot,onText:async(event:{turnId:string;text:string})=>{failedAttemptText.push(event.text);}}));
     assert.deepEqual(failedAttemptText,[],'text from a failed streaming attempt must never be delivered');await bridge.dispose(failedAttempt.binding.sessionId);
+    assert.equal(repos.telemetry.metrics.findTurnMetric(`inbox:${failedAttempt.binding.key}:${failedAttempt.input.id}`)?.modelFirstTextAt,undefined);
     const rejected=stagedFixture('staged-rejected-callback');
     const rejectedAsset=await runtime.assets.save(rejected.binding.key,{kind:'file',name:'not-delivered.txt',mime:'text/plain'},Buffer.from('MUST_NOT_REGISTER'));
     rejected.script.steps.push({tool:{name:'bot_tools',args:{names:['bot_send_file']}}},{text:'REJECTED_PROGRESS',tool:{name:'bot_send_file',args:{assetId:rejectedAsset.id}}},{text:'MUST_NOT_CONTINUE'});
@@ -405,6 +422,23 @@ export async function apply(ctx:Context){
       assert.notEqual(distinct.assetId,asset.id,'different bytes with the same size must remain a separate attachment');
       assert.equal(bridge.live.get(binding.sessionId)!.assets.length,2);
     }finally{runtime.media.run=mediaRun;beforeFinal=undefined;runtime.saveBot({...bots.bot('fixture'),trustedUsers:[]});}
+    // An edit may infer only one distinct image from this turn (including a quoted image).
+    const reference={kind:'image' as const,name:'reference.png',mime:'image/png',handle:asset.id};
+    const secondReference=await runtime.assets.save(binding.key,{kind:'image',name:'second-reference.png',mime:'image/png'},pixels);
+    const inferred:string[][]=[];
+    try{
+      runtime.media.run=async(_scope,operation,_config,inputs)=>{assert.equal(operation,'image_edit');inferred.push(inputs);return{assetIds:[]};};
+      mediaCall={name:'image_generation',args:{operation:'edit',prompt:'Edit the attached reference'}};
+      await bridge.run(binding,[{...msg('infer-reference','edit'),attachments:[reference],quoted:{attachments:[reference]}}],AbortSignal.timeout(30000));
+      assert.deepEqual(inferred,[[asset.id]]);
+      mediaCall={name:'image_generation',args:{operation:'edit',prompt:'Edit the selected image'}};
+      await bridge.run(binding,[{...msg('ambiguous-reference','edit'),attachments:[reference,{...reference,handle:secondReference.id}]}],AbortSignal.timeout(30000));
+      assert.match(JSON.stringify(requests.at(-1)!.messages.filter(m=>m.role==='tool').at(-1)),/REFERENCE_IMAGE_AMBIGUOUS/);
+      mediaCall={name:'image_generation',args:{operation:'edit',prompt:'Edit a missing reference'}};
+      await bridge.run(binding,[msg('missing-reference','edit')],AbortSignal.timeout(30000));
+      assert.match(JSON.stringify(requests.at(-1)!.messages.filter(m=>m.role==='tool').at(-1)),/REFERENCE_IMAGE_REQUIRED/);
+      assert.deepEqual(inferred,[[asset.id]],'missing or ambiguous references must not start a media job');
+    }finally{runtime.media.run=mediaRun;}
     runtime.media.run=async(_scope,operation,config,inputs)=>{assert.equal(config.media.image,undefined);assert.equal(operation,'image_edit');assert.deepEqual(inputs,[asset.id]);imageCalls++;if(imageCalls<=2)throw Error('IMAGE_PROVIDER_FAILED');imageEntered();await imageFinish;return{assetIds:[asset.id]};};
     try{
       // Any supplied reference image is an edit, even if the model omits or

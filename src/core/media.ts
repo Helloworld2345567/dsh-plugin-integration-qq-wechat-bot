@@ -1,3 +1,4 @@
+import {rvcTuningSchema} from './rvc-worker-config.js';
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -164,6 +165,7 @@ export class MediaService {
       if(useService){
         const frozen=snapshot!.services[serviceRole!]!.snapshot!,serviceOperation=serviceOperationFor(operation,frozen.serviceId);if(!serviceOperation)throw Error('SERVICE_OPERATION_MAPPING_MISSING');
         const selectedParameters:Record<string,unknown>=operation==='voice_speak'?Object.fromEntries(['text','style','speed','format'].filter(key=>parameters[key]!==undefined).map(key=>[key,parameters[key]])):operation==='singing_convert'?Object.fromEntries(['sourceType','format'].filter(key=>parameters[key]!==undefined).map(key=>[key,parameters[key]])):operation==='music_search'?Object.fromEntries(['song','artist'].filter(key=>parameters[key]!==undefined).map(key=>[key,parameters[key]])):operation==='music_acquire'?Object.fromEntries(['song','artist','selection','includeLyrics'].filter(key=>parameters[key]!==undefined).map(key=>[key,parameters[key]])):{};
+        if(operation==='singing_convert')Object.assign(selectedParameters,rvcTuningSchema.parse(snapshot!.config.media.singing));
         const serviceResult=await this.serviceRuntime!.execute({operation:serviceOperation,profile:{serviceId:frozen.serviceId,profileId:frozen.profileId},profileRevision:frozen.profileRevision,profileContentHash:frozen.profileContentHash,inputHandles:source.map(item=>item.id),resolvedInputs:source.map(item=>({handle:item.id,kind:item.kind,path:item.path,name:item.name,mime:item.mime})),parameters:selectedParameters,outputDirectory:directory,idempotencyKey:id,deadline:descriptor.timeoutMs>0?Date.now()+descriptor.timeoutMs:Date.now()+15*60*1000,scopeKey:scope,signal:combined,authorize});
         result={text:serviceResult.text,assets:serviceResult.outputs.map(output=>({path:output.path,name:path.basename(output.relativePath),mime:output.mime,kind:output.kind})),observations:serviceResult.observations};
         const music=(serviceResult.observations as any)?.music;if(music)result.music=music;
@@ -172,7 +174,21 @@ export class MediaService {
         : await this.worker.run(job,combined,credentials);
       combined.throwIfAborted();
       authorize?.();
-      const save=async(files:MediaFile[])=>{const ids:string[]=[];for(const file of files){const resolved=await realpath(file.path);const root=await realpath(directory);if(!resolved.startsWith(root+path.sep))throw new Error('WORKER_OUTPUT_OUTSIDE_JOB');const size=(await stat(resolved)).size;const maxBytes=file.kind==='video'?VIDEO_LIMITS.attachmentBytes:file.kind==='audio'?AUDIO_LIMITS.outputBytes:INPUT_LIMITS.attachmentBytes;if(size>maxBytes)throw new Error('OUTPUT_TOO_LARGE');const bytes=await readFile(resolved);combined.throwIfAborted();authorize?.();assertSession();const asset=await this.assets.save(scope,{name:file.name,mime:file.mime,kind:file.kind},bytes,id,'generated',sessionBound?singingSession:undefined,expectedBinding?.generation,sessionBound?()=>{combined.throwIfAborted();authorize?.();assertSession();}:undefined);assertSession();ids.push(asset.id);}return ids;};
+      const authorizeOutput=()=>{combined.throwIfAborted();authorize?.();assertSession();};
+      const save=async(files:MediaFile[])=>{
+        const ids:string[]=[];
+        for(const file of files){
+          const resolved=await realpath(file.path),root=await realpath(directory);
+          if(!resolved.startsWith(root+path.sep))throw new Error('WORKER_OUTPUT_OUTSIDE_JOB');
+          const size=(await stat(resolved)).size;
+          const maxBytes=file.kind==='video'?VIDEO_LIMITS.attachmentBytes:file.kind==='audio'?AUDIO_LIMITS.outputBytes:INPUT_LIMITS.attachmentBytes;
+          if(size>maxBytes)throw new Error('OUTPUT_TOO_LARGE');
+          const bytes=await readFile(resolved);authorizeOutput();
+          const asset=await this.assets.save(scope,{name:file.name,mime:file.mime,kind:file.kind},bytes,id,'generated',sessionBound?singingSession:undefined,expectedBinding?.generation,authorizeOutput);
+          ids.push(asset.id);
+        }
+        return ids;
+      };
       const assetIds=await save(result.assets??[]);const contextAssetIds=await save(result.contextAssets??[]);
       persist({state:'complete',assetIds,contextAssetIds,finishedAt:Date.now()});
       assertSession();return {text:result.text,coverage:result.coverage,incomplete:result.incomplete,assetIds,contextAssetIds,...(result.music?{music:result.music}:{})};

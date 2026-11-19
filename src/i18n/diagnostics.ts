@@ -87,6 +87,7 @@ export const diagnostics={
   loginStateChanged:{zh:'机器人状态已改变，请停止后重新扫码',en:'The bot state changed. Stop it and scan a new QR code.'},
   sessionNotOwned:{zh:'会话不属于机器人集成',en:'This session does not belong to the bot integration.'},
   deliveryMissing:{zh:'投递不存在',en:'The delivery does not exist.'},
+  deliveryMayDuplicate:{zh:'平台可能已接收这条消息。请核对后再确认重发。',en:'The platform may already have accepted this message. Check before confirming a resend.'},
   deliveryNotRecoverable:{zh:'投递当前不可恢复',en:'This delivery cannot currently be recovered.'},
   invalidInput:{zh:'输入无效，请检查字段：{fields}',en:'Invalid input. Check these fields: {fields}'},
   validationIssue:{zh:'{field}：{reason}',en:'{field}: {reason}'},

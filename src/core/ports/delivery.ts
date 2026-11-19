@@ -1,4 +1,4 @@
-import type {ChannelReplyEnvelope, Delivery, Output, SessionBinding} from '../types.js';
+import type {Asset, ChannelReplyEnvelope, Delivery, Output, SessionBinding} from '../types.js';
 import type {Page} from './common.js';
 
 export type DeliveryState = Delivery['state'];
@@ -23,6 +23,7 @@ export interface DeliveryQueueRepository {
   nextSendable(botId: string, limit: number): readonly Delivery[];
   find(id: string, state?: DeliveryState): Delivery | undefined;
   findByAsset(scopeKey: string, assetId: string, states?: readonly DeliveryState[]): readonly Delivery[];
+  findSentImageByReceipt(scopeKey: string, receipt: string): Asset | undefined;
   retry(id: string): Delivery | undefined;
   hasEarlierBlocker(delivery: Delivery): boolean;
   pageDeliveries(request: DeliveryPageRequest): Page<Delivery>;

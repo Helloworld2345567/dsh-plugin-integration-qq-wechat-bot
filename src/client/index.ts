@@ -1,4 +1,5 @@
 import {StatisticsPanel} from './statistics.js';
+import {DeliveryRecords} from './delivery-records.js';
 import {AutomationPanel} from './automation.js';
 import {AdminClient} from './admin-client.js';
 import {panelStyles} from './styles.js';
@@ -18,18 +19,18 @@ import {installHostLeaveGuard} from './host-leave-guard.js';
 declare const window:Window & {__ModuleLoader__:any;__BOT_INTEGRATION__?:{endpoint:string;token:string}};
 window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(require:(id:string)=>any){
   const React=require('react');const h=React.createElement;let t:Translate=chinese;let locale:any;let settingsForm:any;
-  const defaultWindowsPath=(...parts:string[])=>[String.fromCharCode(69)+':',...parts].join(String.fromCharCode(92));
+
   const equal=(left:any,right:any)=>JSON.stringify(left)===JSON.stringify(right);
   const emptyBot=()=>({id:'',name:'',channel:'qq',configId:'default',trustedUsers:[]});
   const serviceDraft=(settings:any)=>({
     modelsRoot:settings.modelsRoot,gptSovitsUrl:settings.gptSovitsUrl,breezeTtsUrl:settings.breezeTtsUrl??'http://127.0.0.1:8080',
     gptSovitsProjectRoot:settings.gptSovitsProjectRoot??'',breezeTtsProjectRoot:settings.breezeTtsProjectRoot??'',breezeTtsVoicesRoot:settings.breezeTtsVoicesRoot??'',
-    imageProtocol:settings.imageProtocol??'openai',openAiBaseUrl:settings.openAiBaseUrl??'',openAiModel:settings.openAiModel??'',openAiKeyEnv:settings.openAiKeyEnv??'OPENAI_API_KEY',googleBaseUrl:settings.googleBaseUrl??'https://generativelanguage.googleapis.com/v1beta',googleModel:settings.googleModel??'gemini-2.5-flash-image',googleKeyEnv:settings.googleKeyEnv??'GEMINI_API_KEY',comfyUiBaseUrl:settings.comfyUiBaseUrl??'http://127.0.0.1:8188',comfyUiWorkflowPath:settings.comfyUiWorkflowPath??defaultWindowsPath('COMFYUI','workflows','Krea2Standard-api.json'),
-    musicHome:settings.musicHome??defaultWindowsPath('Music'),musicSources:Array.isArray(settings.musicSources)?[...settings.musicSources]:['MiguMusicClient','KuwoMusicClient'],
+    imageProtocol:settings.imageProtocol??'openai',openAiBaseUrl:settings.openAiBaseUrl??'',openAiModel:settings.openAiModel??'',openAiKeyEnv:settings.openAiKeyEnv??'OPENAI_API_KEY',googleBaseUrl:settings.googleBaseUrl??'https://generativelanguage.googleapis.com/v1beta',googleModel:settings.googleModel??'gemini-2.5-flash-image',googleKeyEnv:settings.googleKeyEnv??'GEMINI_API_KEY',comfyUiBaseUrl:settings.comfyUiBaseUrl??'http://127.0.0.1:8188',comfyUiWorkflowPath:settings.comfyUiWorkflowPath??'',
+    musicHome:settings.musicHome??'',musicSources:Array.isArray(settings.musicSources)?[...settings.musicSources]:['MiguMusicClient','KuwoMusicClient'],
   });
   async function api(action:string,input:any={},signal?:AbortSignal){
     const boot=window.__BOT_INTEGRATION__;if(!boot)throw uiError('serviceNotReady',t);
-    const strictCommand=action==='service.refresh'||action==='service.start'||action==='service.settings.save'||action==='service.settings.pick-directory'||action==='service.settings.pick-file'||action==='bot.service.start'||action==='bot.service.stop'||action==='session.delete'||action==='session.export'||action==='workspace.cleanup'||action==='workspace.pin';
+    const strictCommand=action==='service.refresh'||action==='service.start'||action==='service.settings.save'||action==='service.settings.pick-directory'||action==='service.settings.pick-file'||action==='bot.service.start'||action==='bot.service.stop'||action==='session.delete'||action==='session.export'||action==='workspace.cleanup'||action==='workspace.pin'||action==='delivery.retry';
     const response=await fetch(boot.endpoint,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${boot.token}`},body:JSON.stringify(strictCommand?{version:1,kind:'command',name:action,input}:{action,input}),signal});
     const body=await response.json();if(!response.ok)throw new PanelError(body.error||t('operationFailed'),body.message,body.issues);return body.result;
   }
@@ -82,10 +83,38 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
     const serviceStartRef=React.useRef(new Set<string>());
     const commandRef=React.useRef(new Set<string>());
     const serviceBaselineRef=React.useRef(voiceLibrary);serviceBaselineRef.current=voiceLibrary;
+    const sessionCursor=React.useRef(null as string|null),moreSessionsPending=React.useRef(false);
+    const [loadingSessions,setLoadingSessions]=React.useState(false);
     const ui=createUI(React,busy,setError,t);
     const client=()=>{if(!clientRef.current){const boot=window.__BOT_INTEGRATION__;if(!boot)throw uiError('serviceNotReady',t);clientRef.current=new AdminClient(boot);}return clientRef.current as AdminClient;};
     const query=async(name:string,input:any={},signal?:AbortSignal)=>client().query(name,input,signal);
-    const refresh=async()=>{const next:any=await query('overview.summary');if(next){let merged={...next,sessions:next.sessions??sessionsRef.current};if(next.sessionRevision&&next.sessionRevision!==sessionRevisionRef.current){sessionRevisionRef.current=next.sessionRevision;try{const page:any=await query('overview.sessions',{limit:100});sessionsRef.current=page?.items??[];merged={...next,sessions:sessionsRef.current};}catch{/* session details are optional; summary remains usable */}}setSummary(merged);setBots((current:any[]|null)=>current?.map(bot=>({...bot,...next.bots?.find((item:any)=>item.id===bot.id)}))??null);setSummaryError('');}};
+    const refresh=async()=>{
+      const next:any=await query('overview.summary');if(!next)return;
+      let sessionError:DisplayText='';
+      if(next.sessionRevision&&next.sessionRevision!==sessionRevisionRef.current){
+        try{
+          const page:any=await query('overview.sessions',{limit:100});
+          if(page){sessionsRef.current=page.items;sessionCursor.current=page.nextCursor;sessionRevisionRef.current=next.sessionRevision;}
+        }catch(e){sessionError=errorText(e);}
+      }
+      setSummary({...next,sessions:next.sessions??sessionsRef.current});
+      setBots((current:any[]|null)=>current?.map(bot=>({...bot,...next.bots?.find((item:any)=>item.id===bot.id)}))??null);
+      setSummaryError(sessionError);
+    };
+    const loadMoreSessions=async()=>{
+      const cursor=sessionCursor.current;if(!cursor||moreSessionsPending.current)return;
+      moreSessionsPending.current=true;setLoadingSessions(true);
+      try{
+        const page:any=await query('overview.sessions',{limit:100,cursor});
+        if(page&&sessionCursor.current===cursor){
+          sessionsRef.current=[...sessionsRef.current,...page.items];sessionCursor.current=page.nextCursor;
+          setSummary((current:any)=>({...current,sessions:sessionsRef.current}));
+        }
+      }catch(e){
+        if(e instanceof Error&&e.message.includes('PAGE_STALE')){sessionRevisionRef.current='';await refresh();}
+        else throw e;
+      }finally{moreSessionsPending.current=false;setLoadingSessions(false);}
+    };
     const refreshProfiles=async(signal?:AbortSignal)=>{const next=await loadServiceProfiles(query,signal,t);if(!signal?.aborted)setServiceProfiles(next);return next;};
     const refreshLibrary=async(signal?:AbortSignal,reportsOnly=false)=>{
       const epoch=serviceSettingsEpoch.current,next:any=await query('service.settings',{},signal);
@@ -230,14 +259,15 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
       ].map(([label,value])=>h('div',{className:'stats-card',key:label},h('small',null,label),h('strong',null,value)))):h('p',{role:'status'},t('loading')),
       h('section',{className:'card'},h('div',{className:'row spread'},h('h3',null,t('usage')),ui.button(stats?t('collapse'):t('statistics'),()=>setStats(!stats),{'aria-expanded':stats,'aria-controls':'bot-statistics',className:'quiet'})),h('div',{id:'bot-statistics'},h(StatisticsPanel,{React,api,bots:summaryBots,t,locale:activeLocale,compact:!stats,onError:setError}))),
       h('section',{className:'card'},h('div',{className:'row spread'},h('h3',null,t('connections')),ui.button(t('manage'),()=>navigate('bots'),{className:'quiet'})),...summaryBots.map((bot:any)=>h('div',{key:bot.id,className:'item row spread'},identity(bot),badge(bot))),summary&&!summaryBots.length?h('p',{className:'empty'},t('noBots')):null),
-      summary?.sessions?.length?h('section',{className:'card'},h('h3',null,t('sessionModels')),...summary.sessions.slice(0,100).map((session:any)=>{
+      h(DeliveryRecords,{React,t,locale:activeLocale,bots:summaryBots,running:summary?.health?.serviceRunning===true,query,api,confirm}),
+      summary?.sessions?.length?h('section',{className:'card'},h('h3',null,t('sessionModels')),...summary.sessions.map((session:any)=>{
         const model=session.effectiveModel??session.modelOverride??session.model;
         const created=session.createdAt?new Date(session.createdAt).toLocaleString(activeLocale==='en'?'en-US':'zh-CN'):'';
         return h('div',{className:'item row spread',key:session.id},
           h('div',null,h('span',null,t('sessionModel',{channel:session.channelId??session.platform??t('unknown'),model:model?`${model.provider} / ${model.model}`:t('none')})),h('div',null,h('small',{className:'muted',title:session.id},[session.personaId,session.id.slice(0,12),created].filter(Boolean).join(' · ')))),
           h('div',{className:'actions'},ui.button(t('exportSession'),async()=>{const result=await mutate('session.export',{id:session.id});setNotice(message('sessionExported',{path:result.path}));},{className:'quiet',disabled:busy||!!question||!session.persisted}),ui.button(t('delete'),async()=>{if(await confirm(message('deleteSessionTitle'),message('deleteSessionConfirm',{id:session.id})))await mutate('session.delete',{id:session.id},message('sessionDeleted'));},{className:'danger quiet','aria-label':t('deleteSessionLabel',{id:session.id}),disabled:busy||!!question})),
         );
-      })):null,
+      }),sessionCursor.current?ui.button(t('loadMore'),loadMoreSessions,{className:'quiet',disabled:loadingSessions}):null):null,
     );
     if(tab==='bots'){
       const savedSettings=activeBot?.settings;

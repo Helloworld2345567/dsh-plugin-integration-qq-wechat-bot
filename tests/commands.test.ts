@@ -11,7 +11,6 @@ import {createChannelRegistry} from '../src/core/channel-registry.js';
 import {botSchema,configSchema,type CallerScope,type InboundMessage,type ChannelAdapter} from '../src/core/types.js';
 import {freezeTurn} from '../src/core/policy.js';
 import {parseCommand} from '../src/core/commands.js';
-import {mutateLegacyDelivery,seedLegacyBinding} from './sqlite-fixtures.js';
 
 const scope=(senderId='alice',kind:'private'|'group'='private'):CallerScope=>({botId:'one',platform:'qq',accountId:'one',kind,channelId:kind==='group'?'room':senderId,senderId});
 let seq=0;
@@ -117,14 +116,6 @@ test('quiesce drains active tasks while preserving enabled state and accepts que
 test('evolve creates instructions before invoking agent and status uses command feedback',async t=>{
   const f=await fixture(t);let requested='';f.runtime.commandServices.evolution={request:async(_binding,goal)=>{requested=goal;return`Task id=test; bot_evolve: ${goal}`;},status:async()=> 'waiting',history:async()=> 'one',rollback:async()=> 'queued',restart:async()=> 'queued'};
   await f.runtime.receive(input('/evolve Add CaseSkill'));assert.equal(requested,'Add CaseSkill');assert.equal(f.sent.length,0);await f.runtime.process(scopeKey(scope()));assert.match(f.runs[0][0].text,/Task id=test/);await f.runtime.receive(input('/evolve status test'));assert.equal(f.sent.at(-1),'waiting');assert.equal(f.runs.length,1);
-});
-test('session backfill trusts binding and delivery evidence only and preserves unknown old send time',async t=>{
-  const f=await fixture(t);const binding=f.store.sessions.binding(scope());f.store.deliveries.enqueue(binding,'input','turn',[{type:'text',text:'old'}],{});const d=f.store.deliveries.deliveries()[0];const {createdAt,updatedAt,...legacy}=d;
-  mutateLegacyDelivery(f.store,d.id,{...legacy,sessionId:'proved-history'} as typeof d);const second=new SqlitePersistence(f.store.home);try{assert.equal(second.sessions.session(scope(),'proved-history').persisted,true);assert.equal(second.sessions.session(scope(),'proved-history').createdAt,0);assert.equal(second.deliveries.deliveries()[0].sentAt,undefined);assert.throws(()=>second.sessions.session(scope('bob'),'proved-history'));}finally{second.close();}
-});
-test('session backfill preserves partial legacy bindings without inferring ownership or crashing',async t=>{
-  const f=await fixture(t);seedLegacyBinding(f.store,'legacy',{sessionId:'unproven-history'});seedLegacyBinding(f.store,'invalid',{key:'invalid',sessionId:'invalid-scope',scope:{platform:'qq'}});const second=new SqlitePersistence(f.store.home);
-  try{assert.deepEqual(second.sessions.findBinding('legacy'),{sessionId:'unproven-history'});assert.equal(second.sessions.findSession('unproven-history'),undefined);assert.equal(second.sessions.findSession('invalid-scope'),undefined);}finally{second.close();}
 });
 test('startup pause keeps recovered inbox and pending deliveries held until activation resumes',async t=>{
   const f=await fixture(t);const binding=f.store.sessions.binding(scope());f.store.deliveries.enqueue(binding,'before-upgrade','turn',[{type:'text',text:'preserved'}],{});f.store.inbox.accept(input('queued before upgrade'));f.runtime.pauseProcessing();await f.runtime.initialize();await new Promise(r=>setImmediate(r));assert.equal(f.runs.length,0);assert.equal(f.sent.length,0);assert.equal(f.runtime.health().quiescing,true);f.runtime.resumeProcessing();await f.runtime.flushDeliveries();assert.deepEqual(f.sent,['preserved']);

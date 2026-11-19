@@ -177,8 +177,11 @@ test('image workflow settings preserve native paths and normalize Windows drive 
 
 test('ComfyUI start passes the complete workflow directory to deployment discovery',async t=>{
   const f=await fixture(t),directory=path.join(f.project,'workflows','api');
-  await f.library.save(settingsInput(f.library,{comfyUiWorkflowPath:path.join(directory,'workflow.json')}),new AbortController().signal);
   let root='';const library=new VoiceModelLibrary(f.store.voiceLibrarySettings,f.store.home,f.profiles,{scan:async()=>({version:1,models:[],diagnostics:[]})},{},{start:async settings=>{root=settings.projectRoot;return{serviceId:'comfyui',state:'ready',safeDiagnostic:'ready'};}});
+  assert.equal(library.view().comfyUiWorkflowPath,'');
+  await assert.rejects(()=>library.start('comfyui',new AbortController().signal),/COMFYUI_WORKFLOW_REQUIRED/);
+  assert.equal(root,'');
+  await f.library.save(settingsInput(f.library,{comfyUiWorkflowPath:path.join(directory,'workflow.json')}),new AbortController().signal);
   await library.start('comfyui',new AbortController().signal);assert.equal(root,directory);
 });
 

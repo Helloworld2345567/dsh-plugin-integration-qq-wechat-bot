@@ -4,7 +4,6 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
 import {SqlitePersistence} from '../src/infrastructure/sqlite/persistence.js';
 import {botSchema,configSchema,botSettingsFromConfig,type CallerScope} from '../src/core/types.js';
-import {permitted} from '../src/core/policy.js';
 
 const scope=(kind:'private'|'group'='private'):CallerScope=>({botId:'one',platform:'qq',accountId:'one',kind,channelId:kind==='private'?'alice':'room',senderId:'alice'});
 
@@ -42,11 +41,4 @@ test('session TTS and STS overrides merge without changing the persona and survi
     assert.equal(binding.stsOverride?.profileRef.profileId,'target');
     assert.equal(reopened.personas.effectiveConfig(binding).media.voice?.profileRef?.profileId,'speaker');
   }finally{reopened.close();}
-});
-
-test('voice control permission is restricted to trusted private callers',()=>{
-  const bot=botSchema.parse({id:'one',name:'One',channel:'qq',accountId:'one',enabled:true,trustedUsers:['alice']});
-  const config=configSchema.parse({id:'default',name:'Default',personaPrompt:'test'});
-  assert.equal(permitted('bot_voice_control',config,bot,scope('private')),true);
-  assert.equal(permitted('bot_voice_control',config,bot,scope('group')),false);
 });

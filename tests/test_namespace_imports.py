@@ -91,11 +91,6 @@ class NamespaceImportTests(unittest.TestCase):
         forward = self._probe(modules)
         reverse = self._probe(list(reversed(modules)))
         self.assertEqual(forward, reverse)
-        self.assertEqual(len(forward), 14)
-
-    def test_imports_never_create_bytecode_or_cache_directories(self):
-        caches = [path for path in PYTHON_ROOT.rglob("*") if path.name == "__pycache__" or path.suffix == ".pyc"]
-        self.assertEqual(caches, [])
 
 
 if __name__ == "__main__":

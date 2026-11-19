@@ -50,7 +50,7 @@ test('URL policy requires HTTPS, allowed ports and exact host or suffix matches'
 test('batch limits include already materialized asset sizes and metrics expose percentiles',async t=>{
   const store=await storeFixture(t);const key=scopeKey(scope);store.inbox.accept(message());const id=`inbox:${key}:message`;
   store.turnMetrics.updateTurnMetric(id,{modelStartedAt:Date.now()});
-  assert.equal(store.turnMetrics.metricPercentiles('modelStartedAt').count,1);
+  assert.equal(store.turnMetrics.inboxLatency().inboxToModel.count,1);
   assert.throws(()=>validateBatch([message({attachments:[{kind:'file',name:'old',mime:'application/octet-stream',handle:'asset'}]})],()=>INPUT_LIMITS.batchAttachmentBytes+1),/BATCH_ATTACHMENT_BYTES_LIMIT/);
   store.inbox.mark(key,['message'],'complete');const result=store.retain(Date.now(),{inbox:0,delivery:0,metric:0,failure:0});assert.equal(result.inbox,1);assert.equal(store.turnMetrics.findTurnMetric(id),undefined);
 });

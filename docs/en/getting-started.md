@@ -34,7 +34,7 @@ Run the selected guide's commands from the project root. Use that same guide for
 
 1. Open **Bot panel** in Harness settings. If absent, check the active profile, Harness version and installed bundles. Standalone products load both the main plugin and `dsh-bot-lifecycle`.
 2. Configure a chat model and credentials in Harness model settings. Harness credentials also stores QQ/WeChat account credentials; keep them out of personas and release files.
-3. Create a persona with a name and prompt. Only `schemaVersion: 4` is accepted; V3 and earlier formats are neither read nor migrated.
+3. Create a persona with a name and prompt. Use `schemaVersion: 4`.
 4. Create a bot, select its channel and persona, configure its model/replies/media, and authorize QQ/WeChat. Each bot owns its runtime settings; changes apply from the next turn.
 5. Start the bot and send ordinary text in an authorized private chat. Once text works, verify each required media capability.
 6. Inspect delivery records: `pending`/`registered` means queued, `failed` means confirmed failure, and `unknown` means the outcome after submission could not be confirmed. Platform receipts establish delivery.

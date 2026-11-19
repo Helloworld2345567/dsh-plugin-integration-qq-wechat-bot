@@ -25,6 +25,9 @@ test('STS card supports disabled drafts and enabling supplies dedicated permissi
   assert.equal(nodes.some(node=>node.type==='details'),false);
   assert.deepEqual(nodes.filter(node=>node.type==='label').map(node=>node.children[0]),['说话人','音高（半音）','检索比例','输出']);
   const retrieval=nodes.find(node=>node.type==='label'&&node.children[0]==='检索比例').children[1];assert.equal(retrieval.props.min,0);assert.equal(retrieval.props.max,1);assert.equal(retrieval.props.step,0.05);
+  assert.equal(retrieval.props.value,'');assert.ok(retrieval.props.placeholder);
+  retrieval.props.onChange({target:{value:'0'}});assert.equal(updated.media.singing.indexRate,0);
+  retrieval.props.onChange({target:{value:''}});assert.equal(updated.media.singing.indexRate,undefined);
   assert.doesNotMatch(JSON.stringify(nodes),/验收|health|acceptance|测试|权重|locator/);
   assert.ok(!nodes.some(node=>node.type==='label'&&/权重路径|服务地址|locator|凭据/i.test(String(node.children[0]))));
   nodes.find(node=>node.props?.role==='switch').props.onClick();await new Promise(resolve=>setImmediate(resolve));

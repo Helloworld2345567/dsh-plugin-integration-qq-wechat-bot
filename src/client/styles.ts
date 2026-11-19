@@ -265,4 +265,8 @@ export const panelStyles = `
 .bot-admin .workspace-storage th, .bot-admin .workspace-storage td:not(:first-child) { white-space: nowrap; overflow-wrap: normal; }
 .bot-admin .workspace-storage td:first-child { min-width: 180px; max-width: 360px; }
 .bot-admin .workspace-storage .toggle-row > span { display: none; }
+.bot-admin .delivery-record { padding: 8px 0; overflow-wrap: anywhere; }
+.bot-admin .delivery-record dl > div { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+.bot-admin .delivery-record dt { color: var(--muted); }
+.bot-admin .delivery-record dd { margin: 0; min-width: 0; }
 `;

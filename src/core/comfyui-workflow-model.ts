@@ -53,6 +53,7 @@ export function inspectComfyWorkflowModel(workflow:unknown):Readonly<ComfyWorkfl
 
 /** A missing or unsupported workflow must not prevent ordinary chat turns. */
 export function readComfyWorkflowModel(workflowPath:string):Readonly<ComfyWorkflowModel> {
+  if(!workflowPath)return UNKNOWN_COMFY_WORKFLOW_MODEL;
   try{
     const info=statSync(workflowPath);
     if(!info.isFile()||info.size<=0||info.size>4*1024*1024)return UNKNOWN_COMFY_WORKFLOW_MODEL;

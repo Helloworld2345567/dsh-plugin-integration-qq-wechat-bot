@@ -13,6 +13,7 @@ const CAPABILITIES = ['music.search', 'music.acquire'] as const;
 
 export interface MusicServiceReport {
   state: 'ready' | 'partial' | 'blocked' | 'missing';
+  registeredRoots: number;
   profileCount: number;
   checkedAt: number;
   safeDiagnostic?: string;
@@ -32,7 +33,7 @@ const revision = (value: MusicServiceSettings): string => `sha256:${canonicalJso
  * with no provider credentials or network code stored in the plugin.
  */
 export class MusicServiceLibrary {
-  private report: MusicServiceReport = {state: 'missing', profileCount: 0, checkedAt: 0};
+  private report: MusicServiceReport = {state: 'missing', registeredRoots: 0, profileCount: 0, checkedAt: 0};
   private pending: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -45,7 +46,7 @@ export class MusicServiceLibrary {
     const stored = this.settingsRepository.read();
     const value = stored && typeof stored === 'object' ? stored as Record<string, unknown> : {};
     return musicServiceSettingsSchema.parse({
-      musicHome: value.musicHome ?? this.defaults.musicHome ?? process.env.BOT_MUSIC_HOME ?? process.env.MUSIC_HOME,
+      musicHome: value.musicHome ?? this.defaults.musicHome,
       musicSources: value.musicSources ?? this.defaults.musicSources ?? undefined,
     });
   }
@@ -103,15 +104,20 @@ export class MusicServiceLibrary {
     const managedConfig = musicProfileConfig(settings);
     let state: MusicServiceReport['state'] = 'ready';
     let safeDiagnostic: string | undefined;
-    try {
-      const info = await lstat(settings.musicHome);
-      if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('MUSIC_HOME_INVALID');
-    } catch (error) {
-      state = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'blocked';
-      safeDiagnostic = state === 'missing' ? 'MUSIC_HOME_MISSING' : 'MUSIC_HOME_INVALID';
+    if (!settings.musicHome) {
+      state = 'missing';
+      safeDiagnostic = 'MUSIC_HOME_REQUIRED';
+    } else {
+      try {
+        const info = await lstat(settings.musicHome);
+        if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('MUSIC_HOME_INVALID');
+      } catch (error) {
+        state = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'blocked';
+        safeDiagnostic = state === 'missing' ? 'MUSIC_HOME_MISSING' : 'MUSIC_HOME_INVALID';
+      }
     }
-    const python = path.join(settings.musicHome, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
-    const entry = path.join(settings.musicHome, 'scripts', 'music_api.py');
+    const python = settings.musicHome && path.join(settings.musicHome, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+    const entry = settings.musicHome && path.join(settings.musicHome, 'scripts', 'music_api.py');
     if (state === 'ready') {
       try {
         const [pythonInfo, entryInfo] = await Promise.all([lstat(python), lstat(entry)]);
@@ -127,7 +133,7 @@ export class MusicServiceLibrary {
       displayName: 'Music catalog', modelLabel: settings.musicSources.join(' → '),
       managedConfig: {...managedConfig}, discovery: {sourceId: SOURCE_ID, resourceHash}, updatedAt: checkedAt,
     });
-    this.report = {state, profileCount: 1, checkedAt, ...(safeDiagnostic ? {safeDiagnostic} : {})};
+    this.report = {state, registeredRoots: settings.musicHome ? 1 : 0, profileCount: 1, checkedAt, ...(safeDiagnostic ? {safeDiagnostic} : {})};
   }
 }
 

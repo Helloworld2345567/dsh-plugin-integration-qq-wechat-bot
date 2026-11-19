@@ -138,7 +138,7 @@ export class BotHistoryService {
     const ids = new Set([...scopes, ...sessions, ...automations]);
     const records = rows.filter(row => !['bot', 'config', 'config-version', 'persona-files'].includes(row.kind) && (owns(row.value) || ids.has(row.id) ||
       (['failure', 'media-quota'].includes(row.kind) && row.id.split(':').some(part => ids.has(part))) ||
-      (row.kind === 'cursor' && row.id === botId) || (row.kind === 'channel-cursor' && row.id === `${this.deps.bots().bot(botId).channel}:${botId}`) ||
+      (row.kind === 'channel-cursor' && row.id === `${this.deps.bots().bot(botId).channel}:${botId}`) ||
       (row.kind === 'reply-sequence' && (JSON.parse(row.id) as unknown[])[0] === botId)));
     return {scopes, sessions, jobs, records};
   }

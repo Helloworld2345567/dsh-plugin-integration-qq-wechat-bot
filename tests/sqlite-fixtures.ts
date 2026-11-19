@@ -11,20 +11,8 @@ export function seedAppliedConfig(persistence:SqlitePersistence,config:BotConfig
   persistence.database.records.put('config',config.id,config);
   if(version)persistence.database.records.put('config-version',`${config.id}:${config.revision}`,config);
 }
-export function seedLegacyBinding(persistence:SqlitePersistence,key:string,value:unknown):void {
-  persistence.database.records.put('binding',key,value);
-}
-export function seedLegacyBot(persistence:SqlitePersistence,id:string,value:unknown):void {
-  persistence.database.records.put('bot',id,value);
-}
 export function seedLegacyAssetMetadata(persistence:SqlitePersistence,asset:Asset):void {
   persistence.database.records.put('asset',asset.id,asset);
-}
-export function seedLegacyCursor(persistence:SqlitePersistence,botId:string,value:unknown):void {
-  persistence.database.records.put('cursor',botId,value);
-}
-export function readCursorRecord(persistence:SqlitePersistence,kind:'cursor'|'channel-cursor',id:string):unknown {
-  return persistence.database.records.get(kind,id);
 }
 export function seedQuota(persistence:SqlitePersistence,key:string,value:number):void {
   persistence.database.records.put('media-quota',key,value);
@@ -53,13 +41,6 @@ export function botHistorySentinelCounts(persistence:SqlitePersistence):{memory:
     replySequence:persistence.database.records.count('reply-sequence'),
   };
 }
-export function mutateLegacyDelivery(persistence:SqlitePersistence,id:string,value:Delivery,outputIndex?:number):void {
-  if(outputIndex===undefined)persistence.database.db.prepare('UPDATE deliveries SET json=? WHERE id=?').run(JSON.stringify(value),id);
-  else persistence.database.db.prepare('UPDATE deliveries SET json=?,output_index=? WHERE id=?').run(JSON.stringify(value),outputIndex,id);
-}
-export function clearReplySequences(persistence:SqlitePersistence):void {
-  persistence.database.db.prepare("DELETE FROM records WHERE kind='reply-sequence'").run();
-}
 export function installFailingPersonaTrigger(persistence:SqlitePersistence):void {
   persistence.database.db.exec("CREATE TRIGGER fail_persona BEFORE UPDATE ON records WHEN NEW.kind='config' BEGIN SELECT RAISE(ABORT,'fixture commit failure'); END");
 }
@@ -67,7 +48,7 @@ export function seedMediaJob(persistence:SqlitePersistence,id:string,value:unkno
   persistence.jobs.saveJob(id,value);
 }
 export function seedMalformedStatsBinding(persistence:SqlitePersistence,key:string,value:unknown):void {
-  seedLegacyBinding(persistence,key,value);
+  persistence.database.records.put('binding',key,value);
 }
 export function seedLegacyDeliveryState(persistence:SqlitePersistence,delivery:Delivery,state:Delivery['state'],sentAt?:number):void {
   persistence.database.db.prepare('UPDATE deliveries SET state=?,json=? WHERE id=?').run(state,JSON.stringify({...delivery,state,...sentAt===undefined?{}:{sentAt}}),delivery.id);
