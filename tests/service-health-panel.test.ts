@@ -133,7 +133,10 @@ test('image settings stay independent and slow picking or background refresh nev
     assert.equal(field('工作流目录').props.disabled,false);
     field('工作流目录').props.onChange({target:{value:'E:\\COMFYUI\\workflows'}});button('进入目录').props.onClick();await settle();
     pickerResolve(Response.json({result:listing}));await settle();
+    states[40]={comfyUiWorkflowPath:'Use an absolute path'};
+    assert.equal(field('ComfyUI 工作流文件').props['aria-invalid'],true);
     button('selected.json').props.onClick();await settle();
+    assert.equal(field('ComfyUI 工作流文件').props['aria-invalid'],undefined);
     assert.equal(field('ComfyUI 服务地址').props.value,'http://127.0.0.1:8189');assert.equal(field('ComfyUI 工作流文件').props.value,'E:\\COMFYUI\\workflows\\selected.json');
     button('选择文件').props.onClick();await settle();button('取消').props.onClick();await settle();
     assert.equal(pickerSignal?.aborted,true);assert.equal(button('选择文件').props.disabled,false);

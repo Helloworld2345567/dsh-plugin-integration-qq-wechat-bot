@@ -1,4 +1,4 @@
-import {botStatus, list, pathPickerActions} from './ui.js';
+import {botStatus, list, pathPickerField} from './ui.js';
 import {panelSaveBar} from './layout.js';
 import type {Translate} from './locale.js';
 
@@ -149,10 +149,7 @@ function botDetail(React:any, props:BotsPanelProps, bot:any){
   );
   if(section==='workspace')content=h(React,'div',{className:'section-grid'},
     h(React, 'form', {className:'detail-section',onSubmit:(event:any)=>{event.preventDefault();if(workspaceDirty&&!workspaceSaving&&!props.commandPending)ui.button('',()=>props.onSaveWorkingDirectory(bot)).props.onClick();}},
-      h(React, 'div', {className:'directory-field'},
-        ui.field(t('workspaceRootLabel'), workingDirectory, value=>props.onWorkingDirectoryChange(bot,value), 'text', {id:`workspace-root-${bot.id}`,placeholder:t('defaultDirectory'),error:props.workspacePickError,disabled:workspaceSaving}),
-        pathPickerActions(React.createElement,ui,t,{pending:props.workspacePicking===true,onPick:()=>props.onBrowseDirectory(bot),onCancel:props.onCancelPick,disabled:workspaceSaving}),
-      ),
+      pathPickerField(React.createElement,ui,t,{id:`workspace-root-${bot.id}`,label:t('workspaceRootLabel'),value:workingDirectory,onChange:value=>props.onWorkingDirectoryChange(bot,value),placeholder:t('defaultDirectory'),error:props.workspacePickError,pending:props.workspacePicking===true,onPick:()=>props.onBrowseDirectory(bot),onCancel:props.onCancelPick,disabled:workspaceSaving}),
       h(React, 'div', {className:'actions'},
         ui.button(t('defaultDirectory'),()=>props.onDefaultDirectory(bot),{className:'quiet'}),
       ),

@@ -34,10 +34,18 @@ export function createUI(React:any,busy:boolean,onError:(message:any)=>void,t:Tr
   return {button,toggle,field,select,textarea,details};
 }
 
-export function pathPickerActions(h:any,ui:{button:(label:string,action:()=>unknown,props?:any)=>any},t:Translate,options:{pending:boolean;onPick:()=>unknown;onCancel?:()=>unknown;file?:boolean;disabled?:boolean}){
+interface PathPickerOptions {pending:boolean;onPick?:()=>unknown;onCancel?:()=>unknown;file?:boolean;disabled?:boolean}
+
+export function pathPickerActions(h:any,ui:{button:(label:string,action:()=>unknown,props?:any)=>any},t:Translate,options:PathPickerOptions){
   return h('span',{className:'actions picker-actions'},
-    ui.button(t(options.pending?'selectingPath':options.file?'browseFile':'browseDirectory'),options.onPick,{disabled:options.disabled||options.pending,'aria-busy':options.pending}),
+    ui.button(t(options.pending?'selectingPath':options.file?'browseFile':'browseDirectory'),()=>options.onPick?.(),{disabled:options.disabled||options.pending||!options.onPick,'aria-busy':options.pending}),
     options.pending&&options.onCancel?ui.button(t('cancel'),options.onCancel,{disabled:false}):null);
+}
+
+export function pathPickerField(h:any,ui:{field:ReturnType<typeof createUI>['field'];button:(label:string,action:()=>unknown,props?:any)=>any},t:Translate,options:PathPickerOptions&{id:string;label:string;value:string|undefined;onChange:(value:string)=>void;placeholder?:string;error?:string}){
+  return h('div',{className:'directory-field'},
+    ui.field(options.label,options.value,options.onChange,'text',{id:options.id,placeholder:options.placeholder,error:options.error,disabled:options.disabled===true}),
+    pathPickerActions(h,ui,t,options));
 }
 
 export function dateInput(timestamp:number,timezone:string):string{

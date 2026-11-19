@@ -47,7 +47,7 @@ function publicDelivery(delivery:Delivery):Omit<Delivery,'reply'|'replyEnvelope'
 
 export class Admin {
   readonly attempts=new Map<string,{botId:string;ticket:string;expires:number}>();
-  constructor(readonly ctx:Context,readonly runtime:BotRuntime,readonly token:string,readonly revealDirectory:(directory:string)=>Promise<void>=openDirectory,readonly features?:BotFeatures,readonly services?:ServiceManagement,readonly chooseDirectory:(initial?:string,locale?:SystemLocale,signal?:AbortSignal)=>Promise<string|undefined>=(_initial,_locale,signal)=>pickDirectory(ctx.get('directoryPicker'),signal),readonly chooseFile:(initial?:string,locale?:SystemLocale,signal?:AbortSignal)=>Promise<WorkflowFileList>=(_initial,_locale,signal)=>listWorkflowFiles(_initial,signal)){}
+  constructor(readonly ctx:Context,readonly runtime:BotRuntime,readonly token:string,readonly revealDirectory:(directory:string)=>Promise<void>=openDirectory,readonly features?:BotFeatures,readonly services?:ServiceManagement,readonly chooseDirectory:(initial?:string,locale?:SystemLocale,signal?:AbortSignal)=>Promise<string|undefined>=(current,locale,signal)=>pickDirectory(ctx.get('directoryPicker'),signal,{current,locale}),readonly chooseFile:(initial?:string,locale?:SystemLocale,signal?:AbortSignal)=>Promise<WorkflowFileList>=(_initial,_locale,signal)=>listWorkflowFiles(_initial,signal)){}
   private statusConfigs(input:unknown):Array<[string,BotConfig]> {
     const {scope}=z.object({scope:z.literal('bots').optional()}).strict().parse(input??{});
     const repos=this.runtime.repos;

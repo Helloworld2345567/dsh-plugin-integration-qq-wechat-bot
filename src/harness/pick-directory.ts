@@ -2,18 +2,23 @@ import type {DirectoryPicker} from '@deepseek-ai/dsh-host-directory-picker';
 import {localizedError,LocalizedError} from '../core/errors.js';
 import {realpath,stat} from 'node:fs/promises';
 import path from 'node:path';
+import type {SystemLocale} from '../i18n/common.js';
+import {pickWindowsDirectory} from './windows-directory-picker.js';
 
 export type DirectoryPickerHost=Pick<DirectoryPicker,'capability'>;
 
-/** Use the host's native chooser so its desktop activation and worker lifecycle stay together. */
-export async function pickDirectory(host:DirectoryPickerHost|undefined,signal:AbortSignal=new AbortController().signal):Promise<string|undefined>{
+/** Windows needs an owned topmost dialog; other desktops use the host chooser. */
+export async function pickDirectory(host:DirectoryPickerHost|undefined,signal:AbortSignal=new AbortController().signal,options:{current?:string;locale?:SystemLocale}={},platform:NodeJS.Platform=process.platform):Promise<string|undefined>{
   const combined=AbortSignal.any([signal,AbortSignal.timeout(300000)]);
   let selected:unknown;
   try{
     combined.throwIfAborted();
-    const capability=host?.capability();
-    if(capability?.kind!=='native')throw localizedError('directoryPickerUnsupported');
-    selected=await capability.pick(combined);
+    if(platform==='win32')selected=await pickWindowsDirectory(options.current,options.locale??'zh',combined);
+    else{
+      const capability=host?.capability();
+      if(capability?.kind!=='native')throw localizedError('directoryPickerUnsupported');
+      selected=await capability.pick(combined);
+    }
     combined.throwIfAborted();
   }catch(error){
     if(error instanceof LocalizedError)throw error;

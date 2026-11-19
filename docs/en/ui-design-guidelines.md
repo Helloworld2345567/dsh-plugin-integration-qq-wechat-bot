@@ -51,7 +51,7 @@ Consistency applies to action meaning, submission timing, and loading, cancellat
 
 | Operation | Result of clicking | Submission and cancellation |
 | --- | --- | --- |
-| Select directory | All directory fields call the same host directory-picker capability and fill the corresponding field on success | Update only the draft. Cancellation preserves the original value. Do not open File Explorer, save, or start a service |
+| Select directory | All directory fields call the same native directory-picker entry point and fill the corresponding field on success | Update only the draft. Cancellation preserves the original value. Do not open File Explorer, save, or start a service |
 | Select file | Open the existing workflow file picker and accept only currently supported files | Fill the draft after selection. Cancellation makes no change. Do not alternate between text prompts or simulated directories at different entry points |
 | Open directory | Use the existing host capability to open the actual directory | Immediate action; do not change fields or mark the draft dirty |
 | Select provider/model/service/voice | Use consistent controls for similar selectors. Prefer native select controls for finite options; use selection dialogs only for complex catalogs | Change only the corresponding draft. Do not automatically save, start, authorize, probe, or preview audio |
@@ -65,9 +65,11 @@ Consistency applies to action meaning, submission timing, and loading, cancellat
 ### Directory and file selection
 
 - Use the current path only as an initial location supported by the existing capability. Do not introduce new configuration or compatibility layers because a native picker cannot open a specific location.
+- On Windows, use a topmost owner window so the directory picker opens above other windows; release both on close or cancellation. Other platforms retain the host picker.
 - Show “Selecting…” and a cancellation action while selecting, locking only that selection action. Unrelated fields remain editable.
 - After page or object changes, cancellation, or unmounting, late selection results must not populate a different object.
 - Show a short failure reason and retry action near the field. User cancellation is not an error.
+- Clear the field's previous picker error when editing its path, restoring its default, or undoing changes. Saving a scope ends its pending selection and ignores late results.
 - Follow the same flow for workspace directories, model libraries, and service roots. File selection and opening a directory retain their distinct meanings.
 - Use “Enter directory” and “Parent directory” inside the file browser, and “Open directory” for opening the system file manager. Do not add directory creation, uploads, or general file management.
 

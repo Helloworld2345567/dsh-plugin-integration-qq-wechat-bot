@@ -73,3 +73,26 @@ test('music sources remain an ordered draft and service save belongs to one form
   tree().find(node=>node.type==='form').props.onSubmit({preventDefault:()=>{}});await settle();
   assert.deepEqual(calls.at(-1),['save']);
 });
+
+test('the music directory uses the shared chooser and editing only changes its draft',async()=>{
+  const {props,calls,tree}=fixture({selectedService:'music',saving:true});
+  props.draft.musicHome='E:/Music';
+  const input=tree().find(node=>node.type==='input'&&node.props.id==='service-field-musicHome');
+  assert.equal(input.props.disabled,false);
+  assert.equal(input.props.value,'E:/Music');
+  input.props.onChange({target:{value:'E:/Music Library'}});
+  tree().find(node=>node.type==='button'&&node.children.includes(chinese('browseDirectory'))).props.onClick();await settle();
+  assert.deepEqual(calls,[['draft',{musicHome:'E:/Music Library'}],['directory','musicHome']]);
+  assert.equal(props.settings.musicHome,undefined);
+});
+
+test('the workflow picker is disabled without a file action and never invokes a directory action',async()=>{
+  const {props,calls,tree}=fixture({selectedService:'comfyui'});
+  let button=tree().find(node=>node.type==='button'&&node.children.includes(chinese('browseFile')));
+  assert.equal(button.props.disabled,true);
+  assert.equal(tree().find(node=>node.type==='input'&&node.props.id==='service-field-comfyUiWorkflowPath').props.disabled,false);
+  props.onPickFile=key=>calls.push(['file',key]);
+  button=tree().find(node=>node.type==='button'&&node.children.includes(chinese('browseFile')));
+  assert.equal(button.props.disabled,false);button.props.onClick();await settle();
+  assert.deepEqual(calls,[['file','comfyUiWorkflowPath']]);
+});

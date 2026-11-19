@@ -444,6 +444,57 @@ test('workspace picker ignores cancelled and switched-object responses without l
   }finally{harness.restore();}
 });
 
+test('workspace path edits, defaults and revert clear a previous picker error',async()=>{
+  const bot={id:'bot',name:'Bot',channel:'qq',configId:'default',workingDirectory:'C:/saved'};
+  const states:any[]=['bots',{bots:[bot],configs:[],counts:{pendingDeliveries:0},health:{}},'','','',false,[bot]];states[28]='workspace';
+  const harness=panelHarness(states,()=>{throw Error('Picker unavailable');});
+  const field=()=>harness.render().find(n=>n.type==='label'&&n.children[0]==='工作区根目录').children[1];
+  const button=(label:string)=>harness.render().find(n=>n.type==='button'&&n.children.includes(label));
+  try{
+    await harness.start('workspace-picker-error-reset');
+    for(const action of ['edit','default','revert']){
+      button('选择目录').props.onClick();await settlePanel();
+      assert.equal(field().props['aria-invalid'],true);
+      if(action==='edit')field().props.onChange({target:{value:'C:/typed'}});
+      else button(action==='default'?'默认目录':'撤销').props.onClick();
+      await settlePanel();assert.equal(field().props['aria-invalid'],undefined);
+    }
+    assert.equal(field().props.value,'C:/saved');
+  }finally{harness.restore();}
+});
+
+test('music directory uses the shared draft picker and saving discards its late response',async()=>{
+  const summary={bots:[],configs:[],counts:{pendingDeliveries:0},health:{}};
+  const settings={revision:'fixture',modelsRoot:'',gptSovitsUrl:'http://127.0.0.1:9880',musicHome:'C:/music',musicSources:['MiguMusicClient'],reports:{}};
+  const states:any[]=['services',summary];states[24]=settings;states[25]={...settings};states[36]='music';states[40]={musicHome:'Use an absolute path',gptSovitsUrl:'Use an HTTP address'};
+  const calls:any[]=[];let finish:(result:any)=>void=()=>{},fail=false;
+  const harness=panelHarness(states,body=>{
+    calls.push(body);
+    if(body.name==='service.settings.pick-directory'){
+      if(fail)throw Error('Picker unavailable');
+      return new Promise(resolve=>{finish=resolve;});
+    }
+    if(body.name==='service.settings.save')return{data:{...settings,...body.input}};
+    throw Error('Unexpected request');
+  });
+  const field=()=>harness.render().find(n=>n.type==='label'&&n.children[0]==='音乐项目目录').children[1];
+  const pick=async()=>{harness.render().find(n=>n.type==='button'&&n.children.includes('选择目录')).props.onClick();await settlePanel();};
+  try{
+    await harness.start('music-shared-picker');await pick();
+    assert.equal(calls.at(-1).input.current,'C:/music');
+    finish({path:'C:/chosen'});await settlePanel();assert.equal(field().props.value,'C:/chosen');
+    assert.equal(field().props['aria-invalid'],undefined);assert.equal(states[40].gptSovitsUrl,'Use an HTTP address');
+    assert.equal(calls.some(body=>body.name==='service.settings.save'),false);
+    fail=true;await pick();assert.equal(field().props['aria-invalid'],true);
+    field().props.onChange({target:{value:'C:/typed'}});assert.equal(field().props['aria-invalid'],undefined);
+    fail=false;await pick();submitButton(harness.render(),'保存');await settlePanel();
+    finish({path:'C:/late'});await settlePanel();
+    assert.equal(field().props.value,'C:/typed');
+    assert.equal(calls.find(body=>body.name==='service.settings.save').input.musicHome,'C:/typed');
+    assert.equal(harness.render().some(n=>n.children.includes('正在选择…')),false);
+  }finally{harness.restore();}
+});
+
 
 test('workspace and trust writes do not submit a persona draft or revert a saved persona',async()=>{
   const persona=configSchema.parse({id:'default',name:'Default',personaPrompt:'Prompt'});

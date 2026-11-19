@@ -1,11 +1,12 @@
 import {diagnosticText,reportDiagnostics,type Translate} from './locale.js';
 import type {PanelUI} from './bots-panel.js';
 import {panelSaveBar,panelSplit} from './layout.js';
-import {pathPickerActions} from './ui.js';
+import {pathPickerField} from './ui.js';
 import {modelLibraryLabel,serviceHealthLabel} from './service-health.js';
 
 export type ServicePanelId='robot'|'gpt-sovits'|'breeze-tts'|'openai'|'google'|'comfyui'|'music'|'rvc';
 export type StartableServiceId='gpt-sovits'|'breeze-tts'|'comfyui';
+export type ServiceDirectoryKey='modelsRoot'|'gptSovitsProjectRoot'|'breezeTtsProjectRoot'|'breezeTtsVoicesRoot'|'musicHome';
 export const serviceSettingKeys={
   'gpt-sovits':['gptSovitsUrl','gptSovitsProjectRoot'],
   'breeze-tts':['breezeTtsUrl','breezeTtsProjectRoot','breezeTtsVoicesRoot'],
@@ -52,7 +53,7 @@ export interface ServicesPanelProps {
   onRevert?:()=>unknown;
   onRefresh:()=>unknown;
   onStart:(serviceId:StartableServiceId,saveFirst:boolean)=>unknown;
-  onPickDirectory:(key:'modelsRoot'|'gptSovitsProjectRoot'|'breezeTtsProjectRoot'|'breezeTtsVoicesRoot')=>unknown;
+  onPickDirectory:(key:ServiceDirectoryKey)=>unknown;
   onPickFile?:(key:'comfyUiWorkflowPath')=>unknown;
   onToggleRobotService:()=>unknown;
 }
@@ -64,12 +65,13 @@ function stateBadge(h:any,props:ServicesPanelProps,serviceId:ServicePanelId){
   return h('span',{key:'status',className:`badge${['degraded','unavailable','blocked'].includes(value?.state)?' warning':''}`,role:'status',title:diagnosticText(value,props.locale)},serviceHealthLabel(value,props.t));
 }
 
-function directoryField(props:ServicesPanelProps,key:'modelsRoot'|'gptSovitsProjectRoot'|'breezeTtsProjectRoot'|'breezeTtsVoicesRoot'|'comfyUiWorkflowPath',label:string){
-  const h=props.React.createElement,file=key==='comfyUiWorkflowPath';
-  return h('div',{className:'directory-field'},
-    props.ui.field(label,props.draft[key],value=>props.onDraftChange({[key]:value}),'text',{id:`service-field-${key}`,error:props.fieldErrors?.[key]??(props.pickError?.key===key?props.pickError.message:undefined),disabled:false}),
-    pathPickerActions(h,props.ui,props.t,{pending:props.picking===key,file,onPick:()=>file?props.onPickFile?.(key):props.onPickDirectory(key),onCancel:props.onCancelPick}),
-  );
+function directoryField(props:ServicesPanelProps,key:ServiceDirectoryKey|'comfyUiWorkflowPath',label:string){
+  return pathPickerField(props.React.createElement,props.ui,props.t,{
+    id:`service-field-${key}`,label,value:props.draft[key],onChange:value=>props.onDraftChange({[key]:value}),
+    error:props.fieldErrors?.[key]??(props.pickError?.key===key?props.pickError.message:undefined),
+    pending:props.picking===key,file:key==='comfyUiWorkflowPath',
+    onPick:key==='comfyUiWorkflowPath'?(props.onPickFile?()=>props.onPickFile!(key):undefined):()=>props.onPickDirectory(key),onCancel:props.onCancelPick,
+  });
 }
 
 function startButton(props:ServicesPanelProps,serviceId:StartableServiceId){
@@ -120,7 +122,7 @@ export function ServicesPanel(props:ServicesPanelProps){
     else if(selected==='comfyui'){
       fields=h('div',{className:'fields'},field('comfyUiBaseUrl',t('comfyUiAddress'),'url'),directoryField(props,'comfyUiWorkflowPath',t('comfyUiWorkflow')));
       actions=startButton(props,'comfyui');
-    }else if(selected==='music')fields=h('div',{className:'fields'},h('div',{className:'full'},h('h4',null,t('musicSourcePriority')),orderedSources(props)));
+    }else if(selected==='music')fields=h('div',{className:'fields'},directoryField(props,'musicHome',t('musicHome')),h('div',{className:'full'},h('h4',null,t('musicSourcePriority')),orderedSources(props)));
     else fields=directoryField(props,'modelsRoot',t('stsModelDirectory'));
   }else fields=h('p',{role:'status'},t('loading'));
   const list=h('nav',{className:'service-list entity-list','aria-label':t('services')},...services.map(service=>props.ui.button([

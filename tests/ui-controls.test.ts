@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createUI,pathPickerActions} from '../src/client/ui.js';
+import {createUI,pathPickerActions,pathPickerField} from '../src/client/ui.js';
 import {english} from '../src/client/locale.js';
 
 const React={createElement:(type:any,props:any,...children:any[])=>({type,props,children})};
@@ -38,4 +38,21 @@ test('a pending picker exposes an enabled cancel action while other picker actio
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(cancelled,1);
   assert.equal(pathPickerActions(React.createElement,ui,english,{pending:false,onPick:()=>{}}).children[0].props.disabled,false);
+});
+
+test('file and directory fields preserve editable drafts and associated errors while a chooser is pending',async()=>{
+  for(const file of [false,true]){
+    const calls:any[]=[];
+    const ui=createUI(React,true,()=>{});
+    const field=pathPickerField(React.createElement,ui,english,{id:'path',label:'Path',value:'C:/draft',pending:true,file,error:'Choose an accessible path',onChange:value=>calls.push(['draft',value]),onPick:()=>calls.push(['pick']),onCancel:()=>calls.push(['cancel'])});
+    const input=field.children[0].children[1],actions=field.children[1].children;
+    assert.equal(input.props.disabled,false);
+    assert.equal(input.props['aria-describedby'],'path-error');
+    input.props.onChange({target:{value:'C:/typed'}});
+    assert.equal(actions[0].props.disabled,true);
+    assert.equal(actions[0].props.type,'button');
+    assert.equal(actions[1].props.disabled,false);
+    actions[1].props.onClick();await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(calls,[['draft','C:/typed'],['cancel']]);
+  }
 });
