@@ -409,6 +409,7 @@ export async function apply(ctx:Context){
       mediaCall={name:'image_generation',args:{prompt:'Generate a single image'}};
       beforeFinal=async()=>{
         const parent=bridge.live.get(binding.sessionId)!.agent;
+        assert.ok(requests.at(-1)!.messages.some(message=>message.role==='tool'&&message.content.some(block=>block.type==='image')),'generated image pixels must be returned to the model as native image input');
         assert.ok(JSON.stringify(ctx.tools.schemas(parent).find(tool=>tool.name==='image_generation')!.parameters).includes('"model"'),'the image tool must expose a per-request model parameter');
         const registered=toolJson(await ctx.tools.execute({name:'bot_send_file',arguments:{path:copyPath,mime:'image/png'},callId:ToolCallId('generated-image-copy'),agent:parent,signal:AbortSignal.timeout(5000)}));
         assert.equal(registered.assetId,asset.id,'path registration must reuse the automatically registered image, even under a different filename');

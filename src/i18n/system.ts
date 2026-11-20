@@ -47,7 +47,7 @@ const zh={
 
   modelRequired:'请在机器人配置中选择聊天模型',
   rollbackChanged:'已有后续修改，不能覆盖回退',
-  skillImage:'按当前配置生成或编辑图片，成功自动登记回传',skillMedia:'先下载真实媒体附件，再读取图片、文档、音频或视频；分析复用原生模型提供商',skillVoice:'按用户要求生成并发送 AI 语音',skillSinging:'通过人声分离和独立 RVC 角色模型转换歌曲或人声音频',skillMusic:'搜索歌曲、选择真实候选并下载音乐，可将歌曲交给音色转换',
+  skillImage:'按当前配置生成或编辑图片，成功自动登记回传',skillMedia:'先下载真实媒体附件，再处理文档、音频或视频；图片直接交给当前模型识别',skillVoice:'按用户要求生成并发送 AI 语音',skillSinging:'通过人声分离和独立 RVC 角色模型转换歌曲或人声音频',skillMusic:'搜索歌曲、选择真实候选并下载音乐，可将歌曲交给音色转换',
   helpBasic:'/help 帮助\n/new（/reset）开启新会话（保留历史）\n/stop 停止任务\n/compact 压缩上下文\n/status 当前状态\n/sessions [页码] 历史会话\n/resume <会话ID> 恢复会话\n/skills 当前技能\n/draw [--size 宽x高] [--n 张数] <提示词> 生图（也可用“生图：提示词”）\n/edit [--size 宽x高] [--n 张数] <提示词> 编辑参考图（也可用“修图：提示词”）',
   directImageEditNeedsImage:'请随 /edit 附上或引用要编辑的图片。',
   directImageDrawHasMedia:'/draw 只接受文字提示词。编辑所提供的图片请用 /edit。',
@@ -132,7 +132,7 @@ const en:Record<SystemMessageKey,string>={
 
   modelRequired:'Select a chat model in the bot settings.',
   rollbackChanged:'Later changes exist and cannot be overwritten by a rollback.',
-  skillImage:'Generate or edit images with the configured service and register successful outputs',skillMedia:'Download real media attachments, then read images, documents, audio or video through native model providers',skillVoice:'Generate and send AI speech when requested',skillSinging:'Convert songs or vocals with vocal separation and an independent RVC voice model',skillMusic:'Search songs, select real candidates, download music and pass songs to voice conversion',
+  skillImage:'Generate or edit images with the configured service and register successful outputs',skillMedia:'Download real media attachments, then process documents, audio or video; pass images directly to the current model',skillVoice:'Generate and send AI speech when requested',skillSinging:'Convert songs or vocals with vocal separation and an independent RVC voice model',skillMusic:'Search songs, select real candidates, download music and pass songs to voice conversion',
   helpBasic:'/help Help\n/new (/reset) Start a new session and keep history\n/stop Stop the current task\n/compact Compact context\n/status Current status\n/sessions [page] Session history\n/resume <session ID> Resume a session\n/skills Current skills\n/draw [--size WxH] [--n count] <prompt> Generate images\n/edit [--size WxH] [--n count] <prompt> Edit reference images',
   directImageEditNeedsImage:'Attach or quote the image to edit and use /edit.',
   directImageDrawHasMedia:'/draw takes a text prompt. Use /edit to change the supplied images.',

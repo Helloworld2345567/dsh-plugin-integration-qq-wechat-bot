@@ -22,6 +22,14 @@ test('the compatibility media entry keeps image retry limits and explicit speech
   assert.equal(section(prompt,'bot-singing'),'');
 });
 
+test('native image input does not trigger redundant media analysis',()=>{
+  const prompt=buildChatPrompt({...input,loadedTools:new Set(['bot_media','media_analysis','image_generation'])});
+  const media=section(prompt,'bot-media');
+  assert.match(media,/user-uploaded and quoted images/);
+  assert.match(media,/never call media_analysis/);
+  assert.match(media,/load the media-analysis skill just to understand one of these images/);
+});
+
 test('remembering is disclosed only with the tool and retains host-owned source attribution',()=>{
   assert.equal(section(buildChatPrompt(input),'bot-memory-guide'),'');
   const prompt=buildChatPrompt({...input,loadedTools:new Set(['bot_remember'])});

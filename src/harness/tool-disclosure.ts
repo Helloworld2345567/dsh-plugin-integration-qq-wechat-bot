@@ -13,7 +13,7 @@ const summaries:Readonly<Record<string,string>>={
   bot_send_file:'Register a file for delivery',
   bot_remember:'Save a stated user preference',bot_forget_memory:'Forget a saved preference',bot_read_social:'Read a public social post',
   image_generation:'Generate or edit an image',media_download:'Download shared media as an attachment',
-  media_analysis:'Analyze existing media attachments',media_transform:'Convert or edit media attachments',
+  media_analysis:'Analyze audio, video or documents when native chat input is unavailable',media_transform:'Convert or edit media attachments',
   bot_voice:'Generate requested speech',bot_sing:'Convert singing or speech voices',bot_music:'Search or download music',
 };
 const sectionTools:Readonly<Record<string,readonly string[]>>={

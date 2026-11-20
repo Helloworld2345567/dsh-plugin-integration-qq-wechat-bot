@@ -84,7 +84,7 @@ class GoogleImageTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(parts[1]["inlineData"]["data"]), source.read_bytes())
         self.assertIn("models/custom-image:generateContent", request.call_args.args[2])
 
-    def test_google_generation_preserves_multiple_provider_images(self):
+    def test_google_generation_preserves_distinct_provider_images(self):
         first = self.png("first.png", "red").read_bytes()
         second = self.png("second.png", "blue").read_bytes()
         response = Mock(status_code=200)
@@ -105,6 +105,25 @@ class GoogleImageTests(unittest.TestCase):
         self.assertEqual(len(saved["outputs"]), 2)
         self.assertEqual((self.root / saved["outputs"][0]).read_bytes(), first)
         self.assertEqual((self.root / saved["outputs"][1]).read_bytes(), second)
+
+    def test_google_generation_deduplicates_equivalent_png_and_jpeg(self):
+        image = Image.new("RGB", (8, 8), "red")
+        png = io.BytesIO(); image.save(png, format="PNG")
+        jpeg = io.BytesIO(); image.save(jpeg, format="JPEG", quality=96)
+        response = Mock(status_code=200)
+        response.json.return_value = {"candidates": [{"content": {"parts": [
+            {"inlineData": {"mimeType": "image/png", "data": base64.b64encode(png.getvalue()).decode("ascii")}},
+            {"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(jpeg.getvalue()).decode("ascii")}},
+        ]}}]}
+        record = self.root / "equivalent.json"
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "fixture-key"}, clear=True), \
+                patch.object(google_api, "request_with_retry", return_value=response):
+            result = google_api.main(["generate", "--prompt", "equivalent image", "--output-format", "png",
+                                      "--output-dir", str(self.root), "--record", str(record)])
+        self.assertEqual(result, 0)
+        saved = json.loads(record.read_text(encoding="utf-8"))
+        self.assertEqual(saved["returned_count"], 1)
+        self.assertEqual(len(saved["outputs"]), 1)
 
     def test_google_generation_deduplicates_identical_provider_images(self):
         raw = self.png("duplicate.png", "green").read_bytes()

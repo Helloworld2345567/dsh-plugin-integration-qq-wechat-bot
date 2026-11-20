@@ -113,7 +113,7 @@
     {
       "tool": {
         "name": "media_analysis",
-        "description": "Analyze current-session media attachments by ID. The host dispatches image, document, audio and video inputs.",
+        "description": "Analyze current-session audio, document or video attachments by ID when native chat input is unavailable. User-uploaded and quoted images already visible to the model do not need this tool.",
         "parameters": {
           "inputs": {
             "type": "array",

@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -75,6 +77,23 @@ def _decode_inline(value: object) -> tuple[bytes, str]:
     return data, detect_content_type(data)
 
 
+def _visual_fingerprint(data: bytes) -> bytes:
+    """Hash normalized pixels so equivalent encodings count as one image."""
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(io.BytesIO(data)) as source:
+            source.load()
+            image = ImageOps.exif_transpose(source).convert("RGBA")
+            # A small channel quantization absorbs harmless JPEG round-off
+            # while preserving ordinary image differences.
+            pixels = bytes(value & 0xF8 for value in image.tobytes())
+            shape = f"{image.width}x{image.height}".encode("ascii")
+    except (OSError, ValueError, TypeError):
+        return b"raw:" + hashlib.sha256(data).digest()
+    return b"pixels:" + shape + b":" + hashlib.sha256(pixels).digest()
+
+
 def response_items(payload: object) -> list[tuple[bytes, str]]:
     if not isinstance(payload, dict):
         raise ValueError("Google response is not an object")
@@ -82,7 +101,7 @@ def response_items(payload: object) -> list[tuple[bytes, str]]:
     if not isinstance(candidates, list) or not candidates:
         raise ValueError("Google response contains no candidates")
     images: list[tuple[bytes, str]] = []
-    seen: set[tuple[str, bytes]] = set()
+    seen: set[bytes] = set()
     for candidate in candidates:
         if not isinstance(candidate, dict):
             continue
@@ -98,17 +117,14 @@ def response_items(payload: object) -> list[tuple[bytes, str]]:
                 continue
             image = _decode_inline(inline)
             # A few compatible Vertex/Gemini gateways repeat an identical
-            # inline part. Preserve distinct variants while suppressing exact
-            # (mime, data) duplicates from the same response.
-            key = (image[1], image[0])
+            # inline part with a different encoding or metadata. Preserve
+            # distinct variants while suppressing visually identical images.
+            key = _visual_fingerprint(image[0])
             if key not in seen:
                 seen.add(key)
                 images.append(image)
     if not images:
         raise ValueError("Google response contains no image data")
-    # Gemini image models may return more than one inline image even when the
-    # request asks for a single output. Preserve every validated image; the
-    # shared saver and service result contract support multiple output assets.
     return images
 
 
