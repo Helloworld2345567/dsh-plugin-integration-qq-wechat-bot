@@ -1,6 +1,6 @@
 # Architecture boundaries and extensions
 
-[简体中文](../architecture-boundaries.md) | English
+[简体中文](../cn/architecture-boundaries.md) | English
 
 This page defines source responsibilities and dependencies. See [architecture](architecture.md) for behavior and [repository responsibilities](repository-responsibility-matrix.md) for persistence. Run `npm run check:architecture` after production-module changes; fix ownership/dependencies identified by rule IDs instead of widening allowlists.
 
@@ -51,7 +51,7 @@ Only `src/infrastructure/sqlite/` imports `node:sqlite`; only infrastructure hol
 
 Python imports use full `dsh_bot_runtime...` names or explicit relative imports. Do not modify `sys.path`, create modules from arbitrary paths or accept model-provided entries. The host sets a trusted root and starts `-P -m`, without inheriting caller `PYTHONPATH`. Imports must not start networks, threads, subprocesses, servers or databases, write files or edit profiles. Use explicit `main`/`execute` entry points.
 
-Repository extensions verify persistence, isolation, revision/CAS, cursors and transaction rollback against real temporary SQLite. Lifecycle owns its build and prepack rejects stale dist; do not copy protocols, identity or hash algorithms into the main package. See [ADR 0004](adr/0004-lifecycle-bundle-compatibility.md) for bundle design and [ADR 0005](adr/0005-repository-ports.md) for repositories.
+Repository extensions verify persistence, isolation, revision/CAS, cursors and transaction rollback against real temporary SQLite. Lifecycle owns its build and prepack rejects stale dist; do not copy protocols, identity or hash algorithms into the main package.
 
 ## Static gate
 

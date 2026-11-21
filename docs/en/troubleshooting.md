@@ -1,8 +1,8 @@
 # Operations Troubleshooting
 
-[简体中文](../troubleshooting.md) | English
+[简体中文](../cn/troubleshooting.md) | English
 
-Identify the installation mode, versions and failing stage before choosing a remedy. Public reports should contain sanitized codes, states and necessary versions, not credentials, full logs, databases, attachments, user IDs, signed URLs or local paths. See [support](../../SUPPORT.en.md).
+Identify the installation mode, versions and failing stage before choosing a remedy. Public reports should contain sanitized codes, states and necessary versions, not credentials, full logs, databases, attachments, user IDs, signed URLs or local paths.
 
 ## 1. Plugin absent from Harness settings
 
@@ -51,7 +51,7 @@ For missing Edge TTS dependencies, run `python -m pip install -r requirements-vo
 
 `missing`/`blocked` is expected when optional services are not deployed. Check external projects, model libraries and Service Profiles under **Services**, complete missing resources and refresh; then select the voice/capability in bot media settings. Endpoints, model paths and weights belong in private Profile configuration, not personas.
 
-Follow the [voice library](voice-model-library.md), [Music](music-integration.md) or [RVC](singing-conversion.md) guide for dependencies. A successful health/probe only demonstrates reachability or protocol support; validate actual synthesis, download or conversion output separately.
+Check the actual state of external projects, model libraries and Service Profiles. A successful health/probe only demonstrates reachability or protocol support; validate actual output separately.
 
 ## 10. Delivery remains pending, failed or unknown
 
@@ -65,7 +65,7 @@ In **Overview → Delivery records**, filter by bot and state, then expand a rec
 
 Latency in the administration summary starts at plugin ingress. The first model chunk may carry reasoning or a tool call. `inboxToFirstModelText` measures the first committed visible assistant text. First and last platform acceptance track separate parts of a multi-part reply. Each stage statistic includes only records with an observed time for that stage.
 
-Attachments must belong to the current channel. Create a resend intent only on an explicit user request. Generation or queuing is not proof of receipt. See [QQ delivery](qq-media-delivery.md) for media limits and states.
+Attachments must belong to the current channel. Create a resend intent only on an explicit user request. Generation or queuing is not proof of receipt.
 
 ## 11. Upgrade or rollback fails after installation
 
@@ -80,4 +80,4 @@ Record sanitized phase, error code and health-check stage. See [standalone deplo
 
 ## 12. Collect sanitized diagnostics
 
-Provide plugin version/commit, Harness/Node/Python/FFmpeg versions, installation mode, command, failing stage, error code and capability/delivery state. Add media type, size range and platform-receipt status only when relevant. Replace paths with `<path>`, identities with `<id>` and secrets with `<redacted>` before submitting. Report vulnerabilities privately through [security](../../SECURITY.en.md).
+Provide plugin version/commit, Harness/Node/Python/FFmpeg versions, installation mode, command, failing stage, error code and capability/delivery state. Add media type, size range and platform-receipt status only when relevant. Replace paths with `<path>`, identities with `<id>` and secrets with `<redacted>` before submitting. Report vulnerabilities privately through [security](SECURITY.md).

@@ -1,8 +1,8 @@
 # Repository responsibilities and recovery
 
-[简体中文](../repository-responsibility-matrix.md) | English
+[简体中文](../cn/repository-responsibility-matrix.md) | English
 
-Application services depend on narrow `src/core/ports/` interfaces. SQLite/file implementations live under `src/infrastructure/`. See [architecture boundaries](architecture-boundaries.md) and [ADR 0005](adr/0005-repository-ports.md). This page records business constraints; ports, adapters and tests own exact methods, tables and error codes.
+Application services depend on narrow `src/core/ports/` interfaces. SQLite/file implementations live under `src/infrastructure/`. See [architecture boundaries](architecture-boundaries.md). This page records business constraints; ports, adapters and tests own exact methods, tables and error codes.
 
 ## Responsibilities
 

@@ -2,7 +2,7 @@ import {readFile} from 'node:fs/promises';
 
 const packageJson = JSON.parse(await readFile('package.json', 'utf8'));
 const lock = JSON.parse(await readFile('package-lock.json', 'utf8'));
-const notices = await readFile('THIRD_PARTY_NOTICES.md', 'utf8');
+const notices = await readFile('docs/cn/THIRD_PARTY_NOTICES.md', 'utf8');
 const failures = [];
 const noticeText = notices.toLowerCase();
 const root = lock.packages[''];
@@ -25,8 +25,8 @@ for (const required of [
   'DeepSeek Harness', 'Cordis', 'astr-bot-sakura', 'video_understanding_core',
   'openclaw-weixin', 'AGPL', 'PolyForm Noncommercial', 'Music', 'MIT',
   'Python', 'ws', 'yaml', 'zod', 'silk-wasm',
-]) if (!noticeText.includes(required.toLowerCase())) failures.push(`THIRD_PARTY_NOTICES.md missing ${required}`);
-for (const requiredFile of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'CHANGELOG.md', 'SECURITY.md']) {
+]) if (!noticeText.includes(required.toLowerCase())) failures.push(`docs/cn/THIRD_PARTY_NOTICES.md missing ${required}`);
+for (const requiredFile of ['LICENSE', 'docs/cn/THIRD_PARTY_NOTICES.md', 'docs/cn/CHANGELOG.md', 'docs/cn/SECURITY.md']) {
   if (!(packageJson.files ?? []).includes(requiredFile)) failures.push(`package files missing ${requiredFile}`);
 }
 console.log(JSON.stringify({status: failures.length ? 'FAIL' : 'PASS', checked: Object.keys(root.dependencies ?? {}).length + Object.keys(root.devDependencies ?? {}).length, failures}, null, 2));

@@ -1,6 +1,6 @@
 # Deploy a Standalone Bot Product Profile
 
-[简体中文](../deploy-product-profile.md) | English
+[简体中文](../cn/deploy-product-profile.md) | English
 
 The installer creates an isolated `bots` profile, product data, media Python environment and workspace, installing the main plugin and `dsh-bot-lifecycle` together. Other Harness profiles are unaffected. See [Getting started](getting-started.md) for prerequisites/initial setup and [Configuration](configuration.md) for variables.
 
@@ -73,7 +73,7 @@ node scripts/start.mjs --port 3080
 
 The installer verifies paired compatibility, records a journal and excludes concurrent launcher use. Rerun the installer after interruption to complete recovery. If a previous archive fails verification, keep the product stopped; do not delete the journal or manually replace only one bundle. Older installations without `lifecycle-installation.json` also require offline paired installation.
 
-On `LIFECYCLE_*` errors, retain `installation.json`, `lifecycle-installation.json`, `lifecycle-installations/`, `evolution/` and package archives, then rerun the installer from trusted source or a verified archive. See [upgrade/rollback troubleshooting](troubleshooting.md#11-upgrade-or-rollback-fails-after-installation) for locks and recovery, and the [lifecycle bundle](../../packages/bot-lifecycle/README.en.md) / [ADR 0004](adr/0004-lifecycle-bundle-compatibility.md) for compatibility and retained data.
+On `LIFECYCLE_*` errors, retain `installation.json`, `lifecycle-installation.json`, `lifecycle-installations/`, `evolution/` and package archives, then rerun the installer from trusted source or a verified archive. See [upgrade/rollback troubleshooting](troubleshooting.md#11-upgrade-or-rollback-fails-after-installation) for locks and recovery, and the [lifecycle bundle](../../packages/bot-lifecycle/README.en.md) for compatibility and retained data.
 
 ## Uninstall
 

@@ -1,6 +1,6 @@
 # Install into an Existing DeepSeek Harness
 
-[简体中文](../install-existing-harness.md) | English
+[简体中文](../cn/install-existing-harness.md) | English
 
 This mode adds only the main plugin to an existing profile, without the standalone lifecycle coordinator. See [Getting started](getting-started.md) for prerequisites and initial setup. Choose [standalone deployment](deploy-product-profile.md) for supervised startup and managed upgrades.
 

@@ -1,6 +1,6 @@
 # Architecture
 
-[简体中文](../architecture.md) | English
+[简体中文](../cn/architecture.md) | English
 
 Harness owns the Agent loop, model calls, session logs and tool execution. The plugin owns QQ/WeChat integration, identity, personas, media, persistence and management UI. See [architecture boundaries](architecture-boundaries.md) for dependencies/extensions and [configuration](configuration.md) for operator settings.
 
@@ -61,7 +61,7 @@ Channel media storage is separate from session directories. SQLite records attac
 
 Media calls/retries are serial by default; explicit user requests allow concurrency. MediaService permits three concurrent calls and returns `MEDIA_CONCURRENCY_LIMIT` for a fourth. Local transforms also share up to three processing slots, with at most two per GIF. Waiting/running tasks can be cancelled; interrupted jobs are not replayed after restart. There are no daily call or cumulative video-duration quotas; file-size limits, 300-second video analysis, permissions and ownership still apply. A failed image request allows up to three additional model-directed retries.
 
-Inbound audio uses channel transcripts when available, otherwise automatic ASR before the turn; failure stops the turn instead of guessing. Automatic TTS follows final text and is skipped after an explicit voice or STS attempt. Service Profiles freeze revisions and keep private endpoints, weights and credentials out of model projections. See [media delivery](qq-media-delivery.md) for QQ SILK, WeChat audio and limits, and [voice models](voice-model-library.md) for service constraints.
+Inbound audio uses channel transcripts when available, otherwise automatic ASR before the turn; failure stops the turn instead of guessing. Automatic TTS follows final text and is skipped after an explicit voice or STS attempt. Service Profiles freeze revisions and keep private endpoints, weights and credentials out of model projections.
 
 ## Durable delivery and unknown outcomes
 
@@ -71,6 +71,6 @@ Unconfirmed cancellation or remote state can fence a managed service until its s
 
 ## Lifecycle and panel
 
-Standalone products install both the main plugin and `dsh-bot-lifecycle`. The coordinator remains independent of the replaceable main plugin and negotiates versioned protocols, capabilities and artifact identities. The launcher validates installation records and artifacts. Compatible updates may drain and hot-replace the main bundle; incompatible pairs require offline dual-bundle updates. Failure allows one rollback to still-matching previous artifacts. See [ADR 0004](adr/0004-lifecycle-bundle-compatibility.md).
+Standalone products install both the main plugin and `dsh-bot-lifecycle`. The coordinator remains independent of the replaceable main plugin and negotiates versioned protocols, capabilities and artifact identities. The launcher validates installation records and artifacts. Compatible updates may drain and hot-replace the main bundle; incompatible pairs require offline dual-bundle updates. Failure allows one rollback to still-matching previous artifacts.
 
 The panel organizes Overview, Bots, Services, Personas and Automation, with bot runtime, media, authorization and workspace managed independently. Writes use the admin API; UI never accesses the database directly. Third-party Service Adapter ABI is not available; see [adapter boundaries](service-adapter-abi-threat-model.md) for reasons and reassessment requirements.

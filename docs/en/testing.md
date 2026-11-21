@@ -1,6 +1,6 @@
 # Testing and acceptance
 
-[简体中文](../testing.md) | English
+[简体中文](../cn/testing.md) | English
 
 Tests use Node.js 24+, Python 3.12/3.13 and Harness `0.2.1-rc.5`. Use offline fixtures or local test servers by default, never real credentials or platform connections, and do not send platform messages. See [development](development.md) for minimum checks by change type.
 

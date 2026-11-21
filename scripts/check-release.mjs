@@ -28,7 +28,7 @@ async function declaredMarkdown(directory='docs'){
   }return result;
 }
 for(const document of await declaredMarkdown())if(!files.includes(document))throw new Error(`Declared documentation missing from npm pack: ${document}`);
-for(const stem of ['README','CONTRIBUTING','SECURITY','CODE_OF_CONDUCT','CHANGELOG','SUPPORT','THIRD_PARTY_NOTICES'])for(const suffix of ['.md','.en.md'])if(!files.includes(`${stem}${suffix}`))throw new Error(`Missing bilingual project document: ${stem}${suffix}`);
+for(const document of ['README.md','docs/en/README.md','docs/cn/CONTRIBUTING.md','docs/en/CONTRIBUTING.md','docs/cn/SECURITY.md','docs/en/SECURITY.md','docs/cn/CHANGELOG.md','docs/en/CHANGELOG.md','docs/cn/THIRD_PARTY_NOTICES.md','docs/en/THIRD_PARTY_NOTICES.md'])if(!files.includes(document))throw new Error(`Missing required project document: ${document}`);
 for(const document of ['packages/bot-lifecycle/README.md','packages/bot-lifecycle/README.en.md'])if(!files.includes(document))throw new Error(`Missing lifecycle documentation: ${document}`);
 for(const file of files)if(isReleaseTextFile(file)){const text=await readFile(file,'utf8');const findings=scanReleaseText(file,text);if(findings.length)throw new Error(`Sensitive release content in ${file}: ${findings.join(', ')}`);}
 if(files.includes('.env.example')){

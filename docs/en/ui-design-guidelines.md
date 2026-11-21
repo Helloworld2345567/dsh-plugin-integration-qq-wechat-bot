@@ -1,6 +1,6 @@
 # Panel UI design and extension guidelines
 
-English | [简体中文](../ui-design-guidelines.md)
+English | [简体中文](../cn/ui-design-guidelines.md)
 
 These guidelines apply to this plugin's panel refactoring and future extensions. The goal is to retain existing settings and capabilities, keep the interface concise, follow DSH usage conventions, and make similar operations consistent.
 

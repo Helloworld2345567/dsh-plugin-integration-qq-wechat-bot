@@ -29,4 +29,4 @@ The runtime handshake also binds the instance nonce and both artifact identities
 
 Draining, unknown outcomes, no automatic replay, one rollback, supervised restart, cancellation and service fences retain their semantics. Upgrades and rollbacks preserve personas, sessions, attachments, credential references and workspace data. They do not resend messages already accepted by an external platform whose local status is unknown. The coordinator neither imports QQ/WeChat messaging nor sends platform messages.
 
-An ordinary existing Harness profile installs only the main plugin, without this coordinator or a managed-upgrade commitment. See [standalone deployment](../../docs/en/deploy-product-profile.md), [ADR 0003](../../docs/en/adr/0003-lifecycle-and-uncertain-outcomes.md) and [ADR 0004](../../docs/en/adr/0004-lifecycle-bundle-compatibility.md).
+An ordinary existing Harness profile installs only the main plugin, without this coordinator or a managed-upgrade commitment. See [standalone deployment](../../docs/en/deploy-product-profile.md).

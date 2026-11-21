@@ -1,6 +1,6 @@
 # Python dependencies and runtime
 
-[简体中文](../python-dependencies.md) | English
+[简体中文](../cn/python-dependencies.md) | English
 
 Python **3.12 and 3.13** are supported. User requirement files use compatible ranges; `*-ci.txt` files pin CI snapshots. These snapshots do not guarantee wheels on every platform or compatibility with external model services.
 

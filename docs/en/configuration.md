@@ -1,6 +1,6 @@
 # Configuration Reference
 
-[简体中文](../configuration.md) | English
+[简体中文](../cn/configuration.md) | English
 
 This page documents only configuration read by current code/tests. Setting an unlisted environment variable does not add support for it. The UI supports Chinese and English; personas accept only `schemaVersion: 4`.
 
@@ -128,7 +128,7 @@ See [testing](testing.md) for interpreter, temporary-directory and native-test v
 
 ## Contents excluded from environment/release files
 
-Do not put QQ/WeChat tokens, account/user/group IDs, Harness credentials, API keys, cookies, signed URLs, databases, full logs, weights or absolute local paths into `.env`, personas, Issues, PRs or npm archives. `.env.example` contains names, empty values and safe guidance only; it is not a credential template. See [security](../../SECURITY.en.md) and [support](../../SUPPORT.en.md).
+Do not put QQ/WeChat tokens, account/user/group IDs, Harness credentials, API keys, cookies, signed URLs, databases, full logs, weights or absolute local paths into `.env`, personas, Issues, PRs or npm archives. `.env.example` contains names, empty values and safe guidance only; it is not a credential template. See [security](SECURITY.md).
 
 ## Schedules, proactive conversations and progress
 

@@ -1,6 +1,6 @@
 # Getting Started
 
-[简体中文](../getting-started.md) | English
+[简体中文](../cn/getting-started.md) | English
 
 ## Prerequisites
 
@@ -43,8 +43,6 @@ The UI follows Harness language. **Services** independently selects system-messa
 
 ## Add optional capabilities
 
-- Voice and character models: [Voice model library](voice-model-library.md), [RVC conversion](singing-conversion.md).
-- Music search/download: [Music integration](music-integration.md).
 - Installation or usage failures: [Troubleshooting](troubleshooting.md).
 
 Unregistered or unavailable capabilities show `missing` or `blocked` without silently switching services. Health and automated tests do not replace actual platform delivery, complete media output or listening checks. Operators verify platform authorization, quotas and external-service availability separately.

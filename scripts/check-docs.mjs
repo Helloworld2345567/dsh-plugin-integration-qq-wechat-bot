@@ -49,15 +49,14 @@ function localTarget(raw) {
 
 const failures = [];
 const linkPattern = /!?\[[^\]]*\]\(\s*(?:<([^>\n]+)>|([^\s)\n]+))/g;
-const rootDocuments = new Set(['README', 'CONTRIBUTING', 'SECURITY', 'CODE_OF_CONDUCT', 'CHANGELOG', 'SUPPORT', 'THIRD_PARTY_NOTICES']);
+const markdownPaths = new Set(markdown.map(file => path.relative(root, file).replaceAll('\\', '/')));
 function languageCounterpart(relative) {
-  if (relative.startsWith('docs/en/')) return `docs/${relative.slice('docs/en/'.length)}`;
-  if (relative.startsWith('docs/')) return `docs/en/${relative.slice('docs/'.length)}`;
-  const rootDocument = /^([^/]+?)(\.en)?\.md$/.exec(relative);
-  if (rootDocument && rootDocuments.has(rootDocument[1])) return `${rootDocument[1]}${rootDocument[2] ? '' : '.en'}.md`;
+  if (relative === 'README.md') return 'docs/en/README.md';
+  if (relative === 'docs/en/README.md') return 'README.md';
+  if (relative.startsWith('docs/en/')) return `docs/cn/${relative.slice('docs/en/'.length)}`;
+  if (relative.startsWith('docs/cn/')) return `docs/en/${relative.slice('docs/cn/'.length)}`;
   if (/^packages\/[^/]+\/README(?:\.en)?\.md$/.test(relative)) return relative.endsWith('.en.md') ? relative.replace(/\.en\.md$/, '.md') : relative.replace(/\.md$/, '.en.md');
 }
-const markdownPaths = new Set(markdown.map(file => path.relative(root, file).replaceAll('\\', '/')));
 let languagePairs = 0;
 for (const file of markdown) {
   const text = await readFile(file, 'utf8');

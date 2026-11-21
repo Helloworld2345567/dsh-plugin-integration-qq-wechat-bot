@@ -1,6 +1,6 @@
 # Dependency audits and upgrades
 
-[简体中文](../dependency-audit.md) | English
+[简体中文](../cn/dependency-audit.md) | English
 
 This page describes dependency sources, audit entry points and known deferrals. Vulnerability counts change with advisories and the lockfile; use the current report. A historical passing check does not establish that the current installation has no vulnerabilities.
 
@@ -8,7 +8,7 @@ This page describes dependency sources, audit entry points and known deferrals. 
 
 - Node uses lockfile v3 and `npm ci`. Committed `resolved` URLs point to `https://registry.npmjs.org/` and retain integrity values. Restricted networks can explicitly override the registry or use an organizational cache without committing private mirror URLs.
 - [Python dependencies](python-dependencies.md) defines user ranges, CI snapshots, optional dependencies and external-service boundaries. Audit tools belong only in a temporary environment, outside runtime packages.
-- See [third-party notices](../../THIRD_PARTY_NOTICES.en.md) for license inventories and redistribution obligations.
+- See [third-party notices](THIRD_PARTY_NOTICES.md) for license inventories and redistribution obligations.
 
 ## Audit commands and interpretation
 

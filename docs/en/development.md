@@ -1,8 +1,8 @@
 # Development
 
-[简体中文](../development.md) | English
+[简体中文](../cn/development.md) | English
 
-This page covers source development; use [getting started](getting-started.md) for deployment. See [contributing](../../CONTRIBUTING.en.md#bilingual-maintenance) for bilingual maintenance.
+This page covers source development; use [getting started](getting-started.md) for deployment. See [contributing](CONTRIBUTING.md#bilingual-maintenance) for bilingual maintenance.
 
 For panel refactoring and extensions, follow the [UI design guidelines](ui-design-guidelines.md).
 

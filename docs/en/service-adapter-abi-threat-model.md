@@ -1,6 +1,6 @@
 # Third-party Service Adapter boundaries
 
-[简体中文](../service-adapter-abi-threat-model.md) | English
+[简体中文](../cn/service-adapter-abi-threat-model.md) | English
 
 **Third-party Service Adapter ABI is not implemented or available.** The internal TypeScript `ServiceAdapter` interface serves built-in implementations, not a stable ABI for third-party packages. This page records why the proposal stopped; it does not describe deployed isolation capabilities.
 

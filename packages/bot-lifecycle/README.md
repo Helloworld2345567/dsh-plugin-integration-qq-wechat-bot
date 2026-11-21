@@ -29,4 +29,4 @@
 
 排空、unknown、不自动重放、一次回滚、监督重启、取消与服务 fence 语义不变。升级和回滚保留人格、会话、附件、凭据引用和工作区数据；不会把外部平台已经接受但本地状态未知的消息重新发送。coordinator 不导入或发送 QQ／微信消息。
 
-普通已有 Harness profile 只安装主插件，不包含本 coordinator，也不获得受管升级承诺。详见[独立产品部署](../../docs/deploy-product-profile.md)、[ADR 0003](../../docs/adr/0003-lifecycle-and-uncertain-outcomes.md)和[ADR 0004](../../docs/adr/0004-lifecycle-bundle-compatibility.md)。
+普通已有 Harness profile 只安装主插件，不包含本 coordinator，也不获得受管升级承诺。详见[独立产品部署](../../docs/cn/deploy-product-profile.md)。

@@ -17,14 +17,14 @@ test('documentation gate requires paired pages and reciprocal top navigation wit
     return {exit:result.status,...JSON.parse(result.stdout) as {status:string;languagePairs:number;failures:string[]}};
   };
   try{
-    write('docs/guide.md','# 指南\n\n简体中文 | [English](en/guide.md)\n');
+    write('docs/cn/guide.md','# 指南\n\n简体中文 | [English](../en/guide.md)\n');
     assert.ok(check().failures.some(value=>value.includes('missing language counterpart docs/en/guide.md')));
     write('docs/en/guide.md','# Guide\n\nEnglish only\n');
-    assert.ok(check().failures.some(value=>value.includes('missing top language navigation to docs/guide.md')));
-    write('docs/en/guide.md','# Guide\n\n[简体中文](../guide.md) | English\n');
+    assert.ok(check().failures.some(value=>value.includes('missing top language navigation to docs/cn/guide.md')));
+    write('docs/en/guide.md','# Guide\n\n[简体中文](../cn/guide.md) | English\n');
     write('skills/sample/SKILL.md','# Runtime instructions\n\nA single English runtime source.\n');
     assert.deepEqual(check(),{exit:0,status:'PASS',markdownFiles:3,languagePairs:1,yamlFiles:0,failures:[]});
-    write('docs/en/orphan.md','# Orphan\n\n[简体中文](../orphan.md) | English\n');
-    assert.ok(check().failures.some(value=>value.includes('missing language counterpart docs/orphan.md')));
+    write('docs/en/orphan.md','# Orphan\n\n[简体中文](../cn/orphan.md) | English\n');
+    assert.ok(check().failures.some(value=>value.includes('missing language counterpart docs/cn/orphan.md')));
   }finally{rmSync(directory,{recursive:true,force:true});}
 });
