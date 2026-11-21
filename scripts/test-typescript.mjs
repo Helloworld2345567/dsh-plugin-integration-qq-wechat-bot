@@ -1,30 +1,13 @@
-import {existsSync,globSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {mkdir, mkdtemp, rm, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {tmpdir} from 'node:os';
-import {spawnCapture, createTestRoot, finalizeTestRoot} from './test-process.mjs';
+import {spawnCapture, createTestRoot, finalizeTestRoot, selectTestFiles} from './test-process.mjs';
 import {redactEvidence, safeSubprocessEnv} from './test-environment.mjs';
 
 const root = process.cwd();
 
-function testFiles(arguments_) {
-  if (!arguments_.length) return globSync('tests/*.test.ts').sort();
-  const selected = [];
-  for (const value of arguments_) {
-    const absolute = path.resolve(root, value);
-    const relative = path.relative(root, absolute);
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative) || !/^tests[\\/][^\\/]+\.test\.ts$/i.test(relative)) {
-      throw new Error(`Invalid TypeScript test path: ${value}`);
-    }
-    if (!existsSync(absolute)) throw new Error(`TypeScript test not found: ${value}`);
-    selected.push(relative.replaceAll(path.sep, '/'));
-  }
-  return [...new Set(selected)].sort();
-}
-
-const files = testFiles(process.argv.slice(2));
-if (!files.length) throw new Error('No TypeScript tests found');
+const files = selectTestFiles('tests/typescript', '*.test.ts');
 const cli = fileURLToPath(import.meta.resolve('tsx/cli'));
 const temporary = await createTestRoot(root, 'typescript');
 const processHome = path.join(temporary, 'home');

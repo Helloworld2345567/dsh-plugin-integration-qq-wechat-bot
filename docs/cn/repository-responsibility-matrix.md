@@ -20,7 +20,7 @@
 | 工作区与历史 | `HistoryLocationRepository`、`ChatHistoryPort`、`BotHistoryPort`、`WorkspacePort` | 路径由渠道身份推导；历史按需原子导出；删除仅处理该 bot/会话拥有的文件 |
 | 渠道与交互状态 | `CursorStore`、`MusicStateRepository`、`SingingStateRepository`、`VoiceLibrarySettingsRepository` | 渠道 cursor 按渠道/bot 隔离；音乐/翻唱候选绑定 scope、session generation，不跨会话复用 |
 
-底层 `records` 没有公开业务端口。其 kind 和读写只由所属基础设施 adapter 控制；需要 legacy 数据或故障注入的测试通过 `tests/sqlite-fixtures.ts`。
+底层 `records` 没有公开业务端口。其 kind 和读写只由所属基础设施 adapter 控制；需要 legacy 数据或故障注入的测试通过 `tests/fixtures/sqlite-fixtures.ts`。
 
 ## 事务与冲突
 
@@ -44,4 +44,4 @@
 
 ## 验证入口
 
-`npm run check:architecture` 检查 SQL 与 repository 所有权；`tests/repository-contract.test.ts` 在真实临时 SQLite 上验证重开、隔离、CAS、cursor、事务回滚和恢复。相关业务测试验证各边界行为，完整发布使用 `npm run verify:release`。
+`npm run check:architecture` 检查 SQL 与 repository 所有权。运行 `npm test -- tests/typescript/storage/repository-contract.test.ts` 可在临时 SQLite 数据库上验证重开、隔离、CAS、cursor、事务回滚和恢复。相关业务测试验证各边界行为，完整发布使用 `npm run verify:release`。

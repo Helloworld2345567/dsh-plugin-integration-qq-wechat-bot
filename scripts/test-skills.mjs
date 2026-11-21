@@ -4,7 +4,6 @@ import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const cli=fileURLToPath(import.meta.resolve('tsx/cli'));
 
 function run(command,args){
   return new Promise((resolve,reject)=>{
@@ -15,4 +14,4 @@ function run(command,args){
 
 await run(process.execPath,['scripts/check-skills.mjs']);
 await run(process.execPath,['scripts/generate-skill-registry.mjs','--check']);
-await run(process.execPath,[cli,'--test','--test-concurrency=1','tests/skills.test.ts','tests/skill-operations.test.ts']);
+await run(process.execPath,['scripts/test-typescript.mjs','tests/typescript/skills']);

@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {existsSync} from 'node:fs';
+import {existsSync, globSync} from 'node:fs';
 import {mkdir, mkdtemp, readFile, rm, rmdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -9,6 +9,26 @@ import {validatePackageArchive} from './archive-validation.mjs';
 import {safeSubprocessEnv, redactEvidence, relativeEvidencePath} from './test-environment.mjs';
 
 export const MAX_OUTPUT_BYTES = 128 * 1024;
+
+export function selectTestFiles(directory, pattern, selectors = process.argv.slice(2)) {
+  const files = globSync(`**/${pattern}`, {cwd: directory, withFileTypes: true})
+    .filter(entry => entry.isFile())
+    .map(entry => path.relative(process.cwd(), path.join(entry.parentPath, entry.name)).split(path.sep).join('/'))
+    .sort();
+  if (!files.length) throw new Error(`No ${pattern} files found in ${directory}`);
+  if (!selectors.length) return files;
+
+  const selected = new Set();
+  for (const selector of selectors) {
+    const relative = path.relative(process.cwd(), path.resolve(selector)).split(path.sep).join('/');
+    const matches = files.filter(file => file === relative || file.startsWith(`${relative}/`));
+    if (relative !== directory && !relative.startsWith(`${directory}/`) || !matches.length) {
+      throw new Error(`No matching tests in ${directory} for: ${selector}`);
+    }
+    for (const file of matches) selected.add(file);
+  }
+  return [...selected].sort();
+}
 
 export async function createTestRoot(root, prefix) {
   const parent = path.join(root, '.codex');

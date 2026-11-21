@@ -51,7 +51,7 @@ await mkdir(path.dirname(env.PIP_CONFIG_FILE), {recursive: true});
 await writeFile(env.PIP_CONFIG_FILE, '[global]\nno-index = true\n');
 await writeFile(env.npm_config_userconfig, '');
   await runEsbuild(['src/index.ts', '--outfile=dist/index.js', '--bundle', '--platform=node', '--format=esm', '--target=node24', '--packages=external'], {cwd: root, env});
-  await runEsbuild(['tests/native-plugin.ts', `--outfile=${path.join(fixture, 'index.js')}`, '--bundle', '--platform=node', '--format=esm', '--target=node24', '--packages=external'], {cwd: root, env});
+  await runEsbuild(['tests/native/native-plugin.ts', `--outfile=${path.join(fixture, 'index.js')}`, '--bundle', '--platform=node', '--format=esm', '--target=node24', '--packages=external'], {cwd: root, env});
   await writeFile(path.join(fixture, 'package.json'), JSON.stringify({name: 'dsh-bot-native-fixture', version: '0.0.0', type: 'module', exports: './index.js', dsh: {bundle: {patch: './cordis.patch.yml'}}}));
   await writeFile(path.join(fixture, 'cordis.patch.yml'), '- insert:\n    - id: bot-native-fixture\n      name: dsh-bot-native-fixture\n');
   await writeFile(path.join(home, 'profiles', 'bots', 'package.json'), JSON.stringify({name: 'native-smoke-profile', private: true, type: 'module', dsh: {profile: {bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']}}}));

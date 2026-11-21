@@ -4,6 +4,29 @@
 
 测试使用 Node.js 24+、Python 3.12/3.13 和 Harness `0.2.1-rc.5`。默认使用离线 fixture 或本地测试服务器，不读取真实凭据，不连接真实平台，不发送平台消息。按变更选择最低检查见[开发指南](development.md)。
 
+## 开发时按范围运行
+
+从仓库根目录执行。两个入口都可以在 `--` 后传一个或多个文件或目录，省略参数会运行该语言的整套测试。
+
+```powershell
+# 运行技能目录中的 TypeScript 用例
+npm test -- tests/typescript/skills
+# 一起验证 ComfyUI 请求和工作流识别
+npm run test:python -- tests/python/test_comfyui.py tests/python/test_workflow_inspector.py
+```
+
+TypeScript 用例放在 `tests/typescript/` 下，按被测行为选择目录。
+
+| 目录 | 用例归属 |
+| --- | --- |
+| `bot/`、`harness/` | 聊天命令、人格、轮次调度放在 `bot/`；工具调用、权限和宿主接口放在 `harness/` |
+| `channels/`、`delivery/` | QQ/微信协议、上传和接收放在 `channels/`；出站队列、投递回执和重试放在 `delivery/` |
+| `media/`、`services/` | 媒体配置、素材和处理结果放在 `media/`；服务适配器、配置档案与启停放在 `services/` |
+| `skills/`、`storage/` | 技能声明与操作注册放在 `skills/`；SQLite、历史记录和工作区持久化放在 `storage/` |
+| `ui/`、`tooling/` | 面板交互与界面语言放在 `ui/`；架构检查、发布和生命周期脚本放在 `tooling/` |
+
+Python worker 用例在 `tests/python/`，共享 fixture 在 `tests/fixtures/`，Harness 集成测试插件在 `tests/native/`，手动基准在 `tests/benchmarks/`。
+
 ## 命令用途
 
 | 命令 | 检测的失败与运行条件 |
@@ -16,9 +39,9 @@
 | `npm run test:skills` | 技能契约、生成文件与关键技能单元回归 |
 | `npm run typecheck` | TypeScript 类型错误 |
 | `npm run test`（或 `npm test`） | TypeScript 逻辑、SQLite 和协议 fixture 回归；部分媒体用例需要测试 Python/FFmpeg |
-| `npm run test:unit -- tests/<affected>.test.ts` | 只运行指定的 TypeScript 文件；不带文件参数时与 `npm test` 相同 |
+| `npm run test:unit` | `npm test` 的别名，接受相同的文件和目录参数 |
 | `npm run test:python` | worker 协议、命名空间导入、import 副作用及媒体处理回归；需要测试 Python，部分用例需要 FFmpeg |
-| `npm run test:python:unit -- tests/<affected>.py` | 只运行指定的 Python unittest 文件；不带文件参数时与 `npm run test:python` 相同 |
+| `npm run test:python:unit` | `npm run test:python` 的别名，接受相同的文件和目录参数 |
 | `npm run check:python-dependencies` | requirements 语法、基础包缺失或 `pip check` 冲突；不安装依赖 |
 | `npm run build` | 主包与 lifecycle 构建失败；生成忽略的 `dist/` 与构建摘要 |
 | `npm run check:docs` | 本地链接、锚点、双语配对和 CI YAML 错误 |
@@ -45,7 +68,7 @@ Runner 使用最小环境白名单、隔离用户/临时目录和动态端口，
 | `BOT_TEST_ANALYSIS_KEY` | 明显假的凭据传递 fixture，不调用真实服务 |
 | `NATIVE_TEST_RESULT`、`LIFECYCLE_NATIVE_FOLDER` | runner 创建的结果文件或生命周期临时根 |
 | `BOT_HOME`、`BOT_WORKSPACE_ROOT`、`BOT_PERSONAS_ROOT`、`BOT_DATA_HOME`、`BOT_PYTHON` | runner 创建或校验的隔离目录与解释器 |
-| `PYTHONPATH` | runner 固定为受信 `python/` 包根，不是用户可继承的测试输入 |
+| `PYTHONPATH` | Python 单测 runner 指向仓库内的 `python/` 和 `tests/python/`，用于加载实现和测试模块 |
 
 不得使用共享 Harness profile、真实账号/群/用户 ID、token、Cookie、模型端点或用户 npm/pip 配置。测试变量不能写入生产配置或公开 Issue。
 
@@ -55,7 +78,7 @@ Runner 使用最小环境白名单、隔离用户/临时目录和动态端口，
 - 检查中英词条和占位符一致，英文标签在宽屏及 760px、460px 布局可用，语言切换保留草稿。
 - 固定机器人提示语言独立于 UI；保存后持久化，新操作使用新语言，进行中的轮次保留原语言。人格文本、用户内容和 TTS 参数不随切换改写。
 - 未登记能力继续显示 `missing`/`blocked`，不静默换服务。测试不承诺 第三方 Adapter ABI 或外部服务结果。
-- 源码中的 `python -B tests/benchmark_media_transform.py --repeats 3` 可复现合成素材基准并自动清理临时产物；不含网络、模型或平台投递，不是性能承诺。
+- 在仓库根目录运行 `python -B tests/benchmarks/benchmark_media_transform.py --repeats 3` 可复现使用合成素材的本地媒体转换基准。脚本会清理临时产物。
 
 ### 明确图片指令与聊天路径的配对实测
 

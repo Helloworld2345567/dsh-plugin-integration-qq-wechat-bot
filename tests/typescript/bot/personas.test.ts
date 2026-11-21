@@ -1,0 +1,132 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,existsSync,rmSync,symlinkSync} from 'node:fs';
+import path from 'node:path';
+import {DatabaseSync} from 'node:sqlite';
+import {SqlitePersistence} from '../../../src/infrastructure/sqlite/persistence.js';
+import {defaultPersonasRoot} from '../../../src/core/personas.js';
+import {BotRuntime} from '../../../src/core/runtime.js';
+import {Assets,MediaService} from '../../../src/core/media.js';
+import {botSchema,configSchema,type BotConfig} from '../../../src/core/types.js';
+import {freezeTurn,allowedNow} from '../../../src/core/policy.js';
+import {Admin} from '../../../src/harness/admin.js';
+import {fixtureChannels} from '../../fixtures/test-channel.js';
+import {installFailingPersonaTrigger,seedAppliedConfig} from '../../fixtures/sqlite-fixtures.js';
+import {LocalizedError} from '../../../src/core/errors.js';
+import {formatStorageMessage} from '../../../src/i18n/storage.js';
+
+function fixture(t:any){
+  const root=mkdtempSync(path.resolve('.codex/personas-test-'));const home=path.join(root,'storages','bot-integration');const store=new SqlitePersistence(home);
+  t.after(()=>{store.close();rmSync(root,{recursive:true,force:true});});
+  const folder=store.personaFiles.directory('sakura');
+  const settings=()=>JSON.parse(readFileSync(path.join(folder,'config.json'),'utf8'));
+  const edit=(patch:any)=>writeFileSync(path.join(folder,'config.json'),JSON.stringify({...settings(),...patch},null,2));
+  const assets=new Assets(store.repositories());let cancellations=0;
+  const adapter={beginLogin:async()=>({status:'pending' as const}),pollLogin:async()=>({status:'expired' as const}),connect:async()=>{},materialize:async()=>Buffer.alloc(0),send:async()=> 'receipt'};
+  const runtime=new BotRuntime(store.repositories(),assets,new MediaService(store.repositories(),assets),{run:async()=>{throw Error('unused');},cancel:()=>{},dispose:async()=>{},deleteSessions:async()=>{},validateModel:async c=>{if(c.model?.model==='invalid')throw Error('UNKNOWN_MODEL');},recheckPermissions:()=>{cancellations++;}},fixtureChannels(adapter),{} as any);
+  t.after(()=>runtime.close());
+  return{root,home,store,folder,settings,edit,runtime,cancellations:()=>cancellations};
+}
+
+test('persona file diagnostics retain descriptors through status and keep legacy Chinese errors',t=>{
+  const f=fixture(t);
+  assert.throws(()=>f.store.personaFiles.directory('con'),error=>error instanceof LocalizedError&&error.message==='人格 ID 不能使用系统保留名称'&&formatStorageMessage(error.localizedMessage,'en')==='The persona ID cannot be a reserved system name.');
+  rmSync(path.join(f.folder,'persona.md'));
+  const status=f.store.personas.personaStatus('sakura');
+  assert.equal(status.state,'error');
+  assert.equal(status.error,'人格目录必须同时包含 config.json 和 persona.md');
+  assert.equal(formatStorageMessage(status.message,'en'),'The persona directory must contain both config.json and persona.md.');
+});
+
+test('existing applied configurations export once at the product root, preserving revisions, history and sessions',_t=>{
+  const root=mkdtempSync(path.resolve('.codex/personas-migration-'));const home=path.join(root,'storages','bot-integration');mkdirSync(home,{recursive:true});
+  const original=configSchema.parse({id:'sakura',name:'迁移人设',revision:9,personaPrompt:'原始人设\n第二行',model:{provider:'fixture',model:'chat'},tools:['web_search']});
+  const db=new DatabaseSync(path.join(home,'bots.sqlite'));db.exec('CREATE TABLE records(kind TEXT,id TEXT,json TEXT,PRIMARY KEY(kind,id))');
+  const put=db.prepare('INSERT INTO records VALUES(?,?,?)');
+  for(const c of [configSchema.parse({id:'default',name:'默认',personaPrompt:'默认人设'}),original])put.run('config',c.id,JSON.stringify(c));
+  put.run('config-version','sakura:8',JSON.stringify({...original,revision:8,personaPrompt:'历史'}));put.run('binding','fixture',JSON.stringify({sessionId:'same-session'}));db.close();
+  let store=new SqlitePersistence(home);
+  try{
+    assert.equal(store.personaFiles.root,path.join(root,'personas'));assert.equal(defaultPersonasRoot(path.join(root,'custom')),path.join(root,'custom','personas'));
+    const file=store.personaFiles.read('sakura');assert.deepEqual(file.config,original);assert.equal('personaPrompt' in JSON.parse(readFileSync(path.join(root,'personas','sakura','config.json'),'utf8')),false);
+    assert.equal(store.personas.personaStatus('sakura').state,'synced');assert.equal(store.sessions.findBinding('fixture')?.sessionId,'same-session');assert.equal(store.personas.configVersion('sakura',8)?.personaPrompt,'历史');
+    writeFileSync(path.join(root,'personas','sakura','persona.md'),'手工草稿');store.close();store=new SqlitePersistence(home);
+    assert.equal(store.personaFiles.read('sakura').config.personaPrompt,'手工草稿');assert.deepEqual(store.personas.config('sakura'),original);assert.equal(store.personas.personaStatus('sakura').state,'draft');
+  }finally{store.close();rmSync(root,{recursive:true,force:true});}
+});
+
+test('panel saves overwrite external persona drafts, while file drafts can still be applied explicitly',async t=>{
+  const f=fixture(t);const old=f.store.personas.config('sakura');
+  const saved=await f.runtime.saveConfig({...old,name:'面板名称',personaPrompt:'面板人设'},old.revision);
+  assert.deepEqual(f.store.personaFiles.read('sakura').config,saved);assert.equal(saved.revision,2);
+  const bot=f.store.bots.saveBot(botSchema.parse({id:'one',name:'One',channel:'qq',configId:'sakura',enabled:true}));
+  const scope={botId:bot.id,platform:'qq' as const,accountId:'one',kind:'private' as const,channelId:'alice',senderId:'alice'};const binding=f.store.sessions.binding(scope);const snapshot=freezeTurn(saved,bot,scope,[]);
+  f.edit({name:'文件名称',tools:[]});writeFileSync(path.join(f.folder,'persona.md'),'文件人设\n保留换行\n');
+  const overwritten=await f.runtime.saveConfig({...saved,name:'覆盖'},saved.revision);
+  assert.equal(overwritten.revision,3);assert.equal(f.store.personaFiles.read('sakura').config.name,'覆盖');assert.equal(f.store.personaFiles.read('sakura').config.personaPrompt,'面板人设');assert.equal(f.store.personas.personaStatus('sakura').state,'synced');
+  f.edit({name:'文件名称',tools:[]});writeFileSync(path.join(f.folder,'persona.md'),'文件人设\n保留换行\n');
+  const applied=await f.runtime.applyPersonaFiles('sakura');
+  assert.equal(applied.revision,4);assert.equal(applied.personaPrompt,'文件人设\n保留换行\n');assert.equal(f.settings().revision,4);assert.equal(f.store.personas.personaStatus('sakura').state,'synced');
+  assert.equal(f.store.sessions.binding(scope).sessionId,binding.sessionId);assert.equal(snapshot.config.personaPrompt,'面板人设');assert.equal(allowedNow('bot_media',snapshot,applied,bot,scope),false);assert.ok(f.cancellations()>=2);
+  assert.equal((await f.runtime.applyPersonaFiles('sakura')).revision,4);assert.equal(f.store.personas.configVersion('sakura',3)?.personaPrompt,'面板人设');
+});
+
+test('invalid files keep the applied version intact; stale drafts and file changes conflict',async t=>{
+  const f=fixture(t);const old=f.store.personas.config('sakura');
+  for(const patch of [{id:'other'},{apiKey:'must-not-be-accepted'},{revision:99}]){
+    writeFileSync(path.join(f.folder,'config.json'),JSON.stringify({...(({personaPrompt,...rest})=>rest)(old),...patch}));
+    await assert.rejects(f.runtime.applyPersonaFiles('sakura'));assert.deepEqual(f.store.personas.config('sakura'),old);
+  }
+  writeFileSync(path.join(f.folder,'config.json'),'not json');await assert.rejects(f.runtime.applyPersonaFiles('sakura'));assert.equal(f.store.personas.personaStatus('sakura').state,'error');
+  writeFileSync(path.join(f.folder,'config.json'),JSON.stringify((({personaPrompt,...rest})=>rest)(old)));
+  const draft=f.store.personas.readPersonaDraft('sakura');writeFileSync(path.join(f.folder,'persona.md'),'校验时发生的修改');
+  assert.throws(()=>f.store.personas.saveConfig(draft.config,draft.config.revision,draft.digest),/校验期间被修改/);assert.deepEqual(f.store.personas.config('sakura'),old);assert.equal(readFileSync(path.join(f.folder,'persona.md'),'utf8'),'校验时发生的修改');
+});
+
+test('interrupted two-file saves recover according to the SQLite commit and preserve unexpected external changes',t=>{
+  const f=fixture(t);const beforeConfig=f.settings();const beforePersona=readFileSync(path.join(f.folder,'persona.md'),'utf8');
+  const before={config:readFileSync(path.join(f.folder,'config.json'),'utf8'),persona:beforePersona};
+  const next={...f.store.personas.config('sakura'),name:'新版本',personaPrompt:'新的人设',revision:2};const {personaPrompt,...settings}=next;
+  const after={config:JSON.stringify(settings,null,2)+'\n',persona:personaPrompt};const journal=path.join(f.folder,'.pending.json');
+  writeFileSync(journal,JSON.stringify({before,after}));writeFileSync(path.join(f.folder,'persona.md'),after.persona);
+  f.store.personaFiles.recover('sakura',f.store.personas.config('sakura'));assert.equal(readFileSync(path.join(f.folder,'persona.md'),'utf8'),beforePersona);assert.deepEqual(f.settings(),beforeConfig);assert.equal(existsSync(journal),false);
+  writeFileSync(journal,JSON.stringify({before,after}));writeFileSync(path.join(f.folder,'persona.md'),after.persona);
+  seedAppliedConfig(f.store,next,false);f.store.personaFiles.recover('sakura',next);assert.deepEqual(f.settings(),settings);assert.equal(existsSync(journal),false);
+  writeFileSync(journal,JSON.stringify({before,after}));writeFileSync(path.join(f.folder,'persona.md'),'人工在崩溃后修改');
+  assert.throws(()=>f.store.personaFiles.recover('sakura',next),/保存期间被修改/);assert.equal(readFileSync(path.join(f.folder,'persona.md'),'utf8'),'人工在崩溃后修改');assert.equal(existsSync(journal),true);
+});
+
+test('a failed SQLite commit restores the draft pair without publishing a revision',t=>{
+  const f=fixture(t);const old=f.store.personas.config('sakura');const fingerprint=f.store.personaFiles.read('sakura').digest;
+  installFailingPersonaTrigger(f.store);
+  assert.throws(()=>f.store.personas.saveConfig({...old,personaPrompt:'must roll back'},old.revision),/fixture commit failure/);
+  assert.deepEqual(f.store.personas.config('sakura'),old);assert.equal(f.store.personaFiles.read('sakura').digest,fingerprint);assert.equal(f.store.personas.configVersion('sakura',2),undefined);assert.equal(existsSync(path.join(f.folder,'.pending.json')),false);
+});
+
+test('a live writer journal is never recovered by a second persistence instance',t=>{
+  const f=fixture(t);const before={config:readFileSync(path.join(f.folder,'config.json'),'utf8'),persona:readFileSync(path.join(f.folder,'persona.md'),'utf8')};
+  const journal=path.join(f.folder,'.pending.json');writeFileSync(journal,JSON.stringify({pid:process.pid,before,after:{...before,persona:'正在保存'}}));
+  writeFileSync(path.join(f.folder,'persona.md'),'正在保存');
+  const other=new SqlitePersistence(f.home);try{assert.equal(readFileSync(path.join(f.folder,'persona.md'),'utf8'),'正在保存');assert.equal(existsSync(journal),true);assert.equal(other.personas.personaStatus('sakura').state,'error');assert.throws(()=>other.personas.saveConfig({...other.personas.config('sakura'),name:'并发写入'},1),/活动进程/);}finally{other.close();}
+});
+
+test('file actions use validated persona IDs, support adding a persona, and never accept caller paths',async t=>{
+  const f=fixture(t);const admin=new Admin({} as any,f.runtime,'fixture',async()=>{});
+  const copy={...f.settings(),id:'new-persona',revision:1};const folder=f.store.personaFiles.directory(copy.id);mkdirSync(folder);writeFileSync(path.join(folder,'config.json'),JSON.stringify(copy));writeFileSync(path.join(folder,'persona.md'),'新的人设');
+  const created=await admin.invoke('config.files.apply',{id:copy.id}) as BotConfig;assert.equal(created.revision,1);assert.equal(created.personaPrompt,'新的人设');
+  for(const id of ['../outside','../sakura','CON','SAKURA','D:/outside'])await assert.rejects(admin.invoke('config.files.apply',{id}));
+  await assert.rejects(admin.invoke('config.files.apply',{id:'sakura',path:f.root}));
+  const directories=await admin.invoke('directories',{}) as any;assert.equal(directories.configDirectory,path.join(f.root,'personas'));assert.equal(directories.storageDirectory,f.home);assert.equal(directories.personas.find((p:any)=>p.id==='new-persona').state,'synced');
+});
+
+test('pre-existing partial or invalid persona drafts survive migration and do not disable applied configs',t=>{
+  const f=fixture(t);rmSync(path.join(f.folder,'config.json'));writeFileSync(path.join(f.folder,'persona.md'),'保留草稿');
+  const reopened=new SqlitePersistence(f.home);try{assert.equal(reopened.personas.config('sakura').revision,1);assert.equal(reopened.personas.personaStatus('sakura').state,'error');assert.equal(readFileSync(path.join(f.folder,'persona.md'),'utf8'),'保留草稿');assert.equal(existsSync(path.join(f.folder,'config.json')),false);}finally{reopened.close();}
+});
+
+test('persona directory junctions cannot redirect reads or writes outside the personas root',async t=>{
+  const f=fixture(t);const target=path.join(f.root,'outside');mkdirSync(target);const file=path.join(target,'persona.md');writeFileSync(file,'不可覆盖');
+  const link=path.join(f.store.personaFiles.root,'linked');symlinkSync(target,link,process.platform==='win32'?'junction':'dir');
+  await assert.rejects(f.runtime.applyPersonaFiles('linked'),/普通目录/);
+  assert.throws(()=>f.store.personas.saveConfig({...f.store.personas.config('sakura'),id:'linked'}),/普通目录/);assert.equal(readFileSync(file,'utf8'),'不可覆盖');assert.equal(existsSync(path.join(target,'config.json')),false);
+});

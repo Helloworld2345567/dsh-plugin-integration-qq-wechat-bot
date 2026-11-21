@@ -30,15 +30,15 @@ Ordinary tests use fixtures, temporary profiles and a minimal subprocess environ
 
 ## Choose checks by change
 
-Identify the failure a check should detect before running it. These are minimum pre-submission scopes; [testing](testing.md) explains commands and environments.
+During development, start with the affected test files or feature directories. The table gives the scope for submission. The [testing guide](testing.md#run-focused-tests-during-development) shows how to select suites.
 
 | Change | Checks |
 | --- | --- |
 | Documentation | `npm run check:docs`; add `npm run check:contracts` for command/version changes and `npm run check:release` for published-file changes |
-| TypeScript core or build scripts | `npm run check:architecture`, `npm run typecheck`, `npm run test:unit -- tests/<affected>.test.ts`, `npm run build`; add `npm run test:python:unit -- tests/<affected>.py` for Python protocol changes |
-| Python worker | `npm run check:architecture`, `npm run test:python:unit -- tests/<affected>.py`, `npm run check:python-dependencies`; verify archived `-P -m dsh_bot_runtime.worker` when package entries change |
+| TypeScript core or build scripts | Run `npm run check:architecture`, `npm run typecheck`, the affected TypeScript tests and `npm run build`. For example, use `npm test -- tests/typescript/delivery` for outbound delivery changes. Include the relevant worker tests for Python protocol changes |
+| Python worker | Run `npm run check:architecture`, the affected Python tests (for example, `npm run test:python -- tests/python/test_worker.py`) and `npm run check:python-dependencies`. Verify the packaged `-P -m dsh_bot_runtime.worker` entry when it changes |
 | Skill declarations or routes | `npm run generate:skills`, `npm run test:skills`; add Python tests for Python implementation changes |
-| UI or language resources | `npm run typecheck`, `npm run test:unit -- tests/<affected>.test.ts`, `npm run build`; verify both languages, placeholders and draft preservation |
+| UI or language resources | Run `npm run typecheck`, `npm test -- tests/typescript/ui` and `npm run build`. Verify both languages, placeholders and draft preservation |
 | Lifecycle | Source gate and `npm run test:lifecycle-native`; add `npm run test:install-smoke` for installation changes |
 | Installer or release contents | `npm run release:pack`, `npm run test:install-smoke` |
 

@@ -30,15 +30,15 @@ TypeScript 实现在 `src/`，媒体实现在 `python/dsh_bot_runtime/`，技能
 
 ## 按变更选择验证
 
-先确定要检测的失败，再选择相应命令。下面是变更提交前的最低范围；完整命令用途与测试环境见[测试契约](testing.md)。
+开发时先运行受影响的测试文件或功能目录。下表给出提交前的检查范围，选取用例的命令见[测试指南](testing.md#开发时按范围运行)。
 
 | 变更 | 检查 |
 | --- | --- |
 | 文档 | `npm run check:docs`；命令或运行版本变化加 `npm run check:contracts`；发布文件变化加 `npm run check:release` |
-| TypeScript 核心或构建脚本 | `npm run check:architecture`、`npm run typecheck`、`npm run test:unit -- tests/<affected>.test.ts`、`npm run build`；跨 Python 协议加 `npm run test:python:unit -- tests/<affected>.py` |
-| Python worker | `npm run check:architecture`、`npm run test:python:unit -- tests/<affected>.py`、`npm run check:python-dependencies`；变更包入口时验证归档中的 `-P -m dsh_bot_runtime.worker` |
+| TypeScript 核心或构建脚本 | `npm run check:architecture`、`npm run typecheck`、受影响的 TypeScript 用例和 `npm run build`。例如修改出站投递时运行 `npm test -- tests/typescript/delivery`。涉及 Python 协议时另跑对应的 worker 用例 |
+| Python worker | `npm run check:architecture`、受影响的 Python 用例（例如 `npm run test:python -- tests/python/test_worker.py`）及 `npm run check:python-dependencies`。变更包入口时验证归档中的 `-P -m dsh_bot_runtime.worker` |
 | 技能声明或路由 | `npm run generate:skills`、`npm run test:skills`；Python 实现变化再运行 Python 测试 |
-| UI 或语言资源 | `npm run typecheck`、`npm run test:unit -- tests/<affected>.test.ts`、`npm run build`；验证中英文切换、占位符和草稿保留 |
+| UI 或语言资源 | `npm run typecheck`、`npm test -- tests/typescript/ui` 和 `npm run build`。验证中英文切换、占位符和草稿保留 |
 | lifecycle | 源码门禁及 `npm run test:lifecycle-native`；安装流程变化加 `npm run test:install-smoke` |
 | 安装器或发布内容 | `npm run release:pack`、`npm run test:install-smoke` |
 

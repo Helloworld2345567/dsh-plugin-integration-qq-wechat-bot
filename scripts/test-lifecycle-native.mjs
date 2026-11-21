@@ -54,7 +54,7 @@ export const name='bot-integration';export function apply(ctx){const trace=value
   const lifecycleArtifact={...await archiveTestPackage(lifecycleSource,home,env),identity:await identity(lifecycleSource),packageVersion:lifecycleManifest.version,lifecycle:{schemaVersion:1,role:'coordinator',packageName:lifecycleManifest.name,packageVersion:lifecycleManifest.version,...lifecycleManifest.dshLifecycle}};
   const observer = path.join(folder, 'observer');
   await mkdir(observer, {recursive: true});
-  await runEsbuild(['tests/lifecycle-native-plugin.ts', `--outfile=${path.join(observer, 'index.js')}`, '--bundle', '--platform=node', '--format=esm', '--target=node24', '--packages=external'], {cwd: root, env});
+  await runEsbuild(['tests/native/lifecycle-native-plugin.ts', `--outfile=${path.join(observer, 'index.js')}`, '--bundle', '--platform=node', '--format=esm', '--target=node24', '--packages=external'], {cwd: root, env});
   await atomicJson(path.join(observer, 'package.json'), {name: 'dsh-lifecycle-native-fixture', version: '0.0.0', type: 'module', exports: './index.js', dsh: {bundle: {patch: './cordis.patch.yml'}}});
   await writeFile(path.join(observer, 'cordis.patch.yml'), '- insert:\n    - id: bot-lifecycle-native-fixture\n      name: dsh-lifecycle-native-fixture\n');
   await atomicJson(path.join(profile, 'package.json'), {name: 'lifecycle-native-profile', private: true, type: 'module', dsh: {profile: {bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']}}});

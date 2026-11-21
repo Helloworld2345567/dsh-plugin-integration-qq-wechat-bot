@@ -20,7 +20,7 @@ Application services depend on narrow `src/core/ports/` interfaces. SQLite/file 
 | Workspace / history | `HistoryLocationRepository`, `ChatHistoryPort`, `BotHistoryPort`, `WorkspacePort` | Identity-derived paths; atomic on-demand history exports; deletion only touches owned bot/session files |
 | Channel / interaction state | `CursorStore`, `MusicStateRepository`, `SingingStateRepository`, `VoiceLibrarySettingsRepository` | Channel/bot cursor isolation; music/singing candidates bind scope and session generation, without cross-session reuse |
 
-Raw `records` has no public business port. Owning infrastructure adapters control kinds and access; legacy/fault-injection tests use `tests/sqlite-fixtures.ts`.
+Raw `records` has no public business port. Owning infrastructure adapters control kinds and access; legacy/fault-injection tests use `tests/fixtures/sqlite-fixtures.ts`.
 
 ## Transactions and conflicts
 
@@ -44,4 +44,4 @@ Retention must preserve records required by queued, sending or unresolved operat
 
 ## Verification
 
-`npm run check:architecture` checks SQL/repository ownership. `tests/repository-contract.test.ts` uses real temporary SQLite for reopen persistence, isolation, CAS, cursors, rollback and recovery. Related business tests cover each boundary; `npm run verify:release` runs the complete source release gate.
+`npm run check:architecture` checks SQL/repository ownership. Run `npm test -- tests/typescript/storage/repository-contract.test.ts` to verify reopen persistence, isolation, CAS, cursors, rollback and recovery in a temporary SQLite database. Related business tests cover each boundary. `npm run verify:release` runs the complete source release gate.

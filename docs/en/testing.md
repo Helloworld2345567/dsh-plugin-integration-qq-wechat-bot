@@ -4,6 +4,29 @@
 
 Tests use Node.js 24+, Python 3.12/3.13 and Harness `0.2.1-rc.5`. Use offline fixtures or local test servers by default, never real credentials or platform connections, and do not send platform messages. See [development](development.md) for minimum checks by change type.
 
+## Run focused tests during development
+
+Run commands from the repository root. Both runners accept one or more files or directories after `--`. Omit the arguments to run the full suite for that language.
+
+```powershell
+# Run the TypeScript skill tests
+npm test -- tests/typescript/skills
+# Check ComfyUI requests and workflow inspection together
+npm run test:python -- tests/python/test_comfyui.py tests/python/test_workflow_inspector.py
+```
+
+Place TypeScript tests under `tests/typescript/` according to the behavior they exercise.
+
+| Directories | Where a test belongs |
+| --- | --- |
+| `bot/`, `harness/` | Chat commands, personas and turn scheduling go in `bot/`. Tool calls, permissions and host interfaces go in `harness/`. |
+| `channels/`, `delivery/` | QQ/WeChat protocols, uploads and intake go in `channels/`. Outbound queues, receipts and retries go in `delivery/`. |
+| `media/`, `services/` | Media settings, assets and processing results go in `media/`. Service adapters, profiles and startup go in `services/`. |
+| `skills/`, `storage/` | Skill declarations and operation registration go in `skills/`. SQLite, history and workspace persistence go in `storage/`. |
+| `ui/`, `tooling/` | Panel interactions and interface languages go in `ui/`. Architecture checks, release and lifecycle scripts go in `tooling/`. |
+
+Python worker tests live in `tests/python/`, shared fixtures in `tests/fixtures/`, Harness integration test plugins in `tests/native/` and manual benchmarks in `tests/benchmarks/`.
+
 ## Command purposes
 
 | Command | Failures detected and requirements |
@@ -16,9 +39,9 @@ Tests use Node.js 24+, Python 3.12/3.13 and Harness `0.2.1-rc.5`. Use offline fi
 | `npm run test:skills` | Skill contracts, generated registries and focused skill unit regressions |
 | `npm run typecheck` | TypeScript type errors |
 | `npm run test` (or `npm test`) | TypeScript logic, SQLite and protocol fixtures; some media cases require test Python/FFmpeg |
-| `npm run test:unit -- tests/<affected>.test.ts` | Runs only the selected TypeScript files; without file arguments it matches `npm test` |
+| `npm run test:unit` | Alias for `npm test` with the same file and directory arguments |
 | `npm run test:python` | Worker protocols, namespace imports, import side effects and media regressions; test Python required, FFmpeg for some cases |
-| `npm run test:python:unit -- tests/<affected>.py` | Runs only the selected Python unittest files; without file arguments it matches `npm run test:python` |
+| `npm run test:python:unit` | Alias for `npm run test:python` with the same file and directory arguments |
 | `npm run check:python-dependencies` | Requirement syntax, missing base packages or `pip check` conflicts; does not install dependencies |
 | `npm run build` | Main/lifecycle build failures; writes ignored `dist/` output and build digests |
 | `npm run check:docs` | Broken local links/anchors, missing language pairs and invalid CI YAML |
@@ -45,7 +68,7 @@ Runners use a minimal environment allowlist, isolated home/temp directories and 
 | `BOT_TEST_ANALYSIS_KEY` | Obviously fake credential-routing fixture; no real service calls |
 | `NATIVE_TEST_RESULT`, `LIFECYCLE_NATIVE_FOLDER` | Runner-created result file or lifecycle temporary root |
 | `BOT_HOME`, `BOT_WORKSPACE_ROOT`, `BOT_PERSONAS_ROOT`, `BOT_DATA_HOME`, `BOT_PYTHON` | Runner-created/validated isolated directories and interpreter |
-| `PYTHONPATH` | Runner-set trusted `python/` root, not an inherited user input |
+| `PYTHONPATH` | The Python unit test runner sets this to the repository's `python/` and `tests/python/` directories to load implementation and test modules |
 
 Do not use shared Harness profiles, real account/group/user IDs, tokens, cookies, model endpoints or user npm/pip configuration. Keep test variables out of production configuration and public issues.
 
@@ -55,7 +78,7 @@ Do not use shared Harness profiles, real account/group/user IDs, tokens, cookies
 - Check matching translations/placeholders, usable English labels at wide, 760px and 460px layouts, and draft preservation during language switching.
 - Bot system-message language is independent of UI language. Saving persists it for new operations while running turns retain their original language. Persona text, user content and TTS parameters remain unchanged.
 - Unregistered capabilities remain `missing`/`blocked`, without silent service substitution. Tests do not promise third-party Adapter ABI or external service results.
-- From source, `python -B tests/benchmark_media_transform.py --repeats 3` reproduces synthetic-media benchmarks and cleans temporary output. It excludes networks, models and delivery and is not a performance guarantee.
+- From the repository root, run `python -B tests/benchmarks/benchmark_media_transform.py --repeats 3` to benchmark local media transforms with synthetic inputs. The script removes its temporary output.
 
 ### Paired benchmark for explicit image commands and chat
 
