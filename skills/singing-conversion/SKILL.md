@@ -14,4 +14,8 @@ Choose the action from the current state:
 - `list`: show the current candidate set.
 - `convert`: use the returned `candidateSet` and candidate number. Ask whether accompaniment is present when `sourceType` is unknown; `mixed` requires configured separation and `vocals` means vocals alone.
 
-Multiple conversions and retries are allowed in one turn. Execute sequentially by default; only an explicit user request permits parallel execution, with at most three concurrent media operations. Keep the requested source unless the user requests another. Do not truncate the complete result or expose paths and asset IDs. Successful conversion registers one AI voice audio attachment; reuse it for an explicit resend.
+Choose the requested song or version before calling `sing` or `convert`. For a single cover, stop after the first success. The host has queued the audio for delivery, even when `platformSent=false`. Reuse the registered audio for an explicit resend. If conversion fails, you may retry the requested source.
+
+The reported byte count describes the converted file. QQ prepares its voice encoding separately. If the user requests a smaller file or another format, process the same cover.
+
+Set `append=true` on a subsequent `sing` or `convert` only when the user explicitly requests additional songs or versions in this turn. Run conversions sequentially unless the user requests parallel execution, with at most three concurrent media operations. Keep the complete audio and keep paths and asset IDs private.

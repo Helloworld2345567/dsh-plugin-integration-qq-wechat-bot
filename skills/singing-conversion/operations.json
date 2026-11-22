@@ -6,9 +6,10 @@
     "permissionTool":"bot_sing",
     "tool": {
       "name":"bot_sing",
-      "description":"Sing or convert audio with the persona voice; successful conversions register audio. sing uses the catalog; prepare/list/convert use attachments or an explicit source. Mixed audio requires separation.",
+      "description":"Sing the chosen song with the persona voice. A successful sing or convert registers the cover for delivery. Use sing for a catalog song and prepare/list/convert for an attachment or explicit source. Mixed audio requires separation.",
       "parameters": {
         "action":{"type":"string","enum":["sing","prepare","list","convert"],"required":true},
+        "append":{"type":"boolean","description":"For sing or convert, set true only for an additional song or version the user explicitly requested in this turn."},
         "song":{"type":"string"},
         "artist":{"type":"string"},
         "inputs":{"type":"array","items":{"type":"string"}},

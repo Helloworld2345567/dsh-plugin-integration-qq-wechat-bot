@@ -44,7 +44,8 @@ test('loaded media instructions retain execution limits and disappear when tools
   const prompt=buildChatPrompt({...input,loadedTools:new Set(['image_generation','bot_sing','bot_send_file'])});
   assert.match(section(prompt,'bot-images'),/at most three concurrent media operations/);
   assert.match(section(prompt,'bot-images'),/at most three retries after the initial attempt/);
-  assert.match(section(prompt,'bot-singing'),/Multiple conversions and retries are allowed/);
+  assert.match(section(prompt,'bot-singing'),/single cover, stop after the first success/);
+  assert.match(section(prompt,'bot-singing'),/append=true only for additional songs or versions explicitly requested/);
   assert.match(section(prompt,'bot-media'),/sequentially by default/);
   assert.match(section(prompt,'bot-media'),/only when the user explicitly requests parallel execution/);
   assert.match(section(prompt,'bot-media'),/resend=true/);

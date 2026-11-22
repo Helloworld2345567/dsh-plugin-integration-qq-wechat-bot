@@ -52,11 +52,15 @@ test('candidate set replacement cannot redirect an old selection and invalid inp
 
 test('conversion failures can be retried after prepare while worker internals remain private',async t=>{
   const f=await fixture(t),p=await prepare(f);let calls=0;
-  f.deps.media={run:async()=>{calls++;throw Error('private C:\\models\\weights.pth traceback');}} as any;
+  f.deps.media={run:async()=>{
+    if(++calls===1)throw Error('private C:\\models\\weights.pth traceback');
+    const out=await f.assets.save(f.binding.key,{kind:'audio',mime:'audio/mpeg',name:'converted.mp3'},Buffer.from('converted'),'job');
+    return{assetIds:[out.id]};
+  }} as any;
   const convert=(candidateSet:string)=>f.call({action:'convert',candidateSet,candidate:1,sourceType:'vocals'});
   await assert.rejects(convert(p.candidateSet),/^Error: SINGING_CONVERSION_FAILED$/);
-  const replaced=await prepare(f);await assert.rejects(convert(replaced.candidateSet),/SINGING_CONVERSION_FAILED/);
-  assert.equal(calls,2);assert.equal(f.live.singing.attempted,true);
+  const replaced=await prepare(f);assert.equal(JSON.parse(await convert(replaced.candidateSet)).status,'succeeded');
+  assert.equal(calls,2);assert.equal(f.live.singing.attempted,true);assert.equal(f.live.assets.length,1);
 });
 
 test('v4 conversion preserves only safe singing provider codes and hides service diagnostics',async t=>{
@@ -70,7 +74,7 @@ test('v4 conversion preserves only safe singing provider codes and hides service
   });
 });
 
-test('success returns safe names, allows further conversions and forwards only business parameters',async t=>{
+test('successful conversions return safe names, reuse registered audio and forward only business parameters',async t=>{
   for(const [name,selection] of [['candidate',{candidate:1}],['legacy number',{number:1}],['candidate takes precedence',{candidate:1,number:2}]] as const)await t.test(name,async t=>{
     const f=await fixture(t),prepared=await prepare(f),p=JSON.parse(await f.call({action:'list'}));assert.deepEqual(p,prepared);let calls=0;
     f.deps.media={run:async(_scope:string,_operation:string,config:unknown,inputs:string[],parameters:unknown,_signal:AbortSignal,authorize:()=>void)=>{
@@ -80,9 +84,9 @@ test('success returns safe names, allows further conversions and forwards only b
     const args={action:'convert',candidateSet:p.candidateSet,sourceType:'vocals',serviceUrl:'http://evil.invalid',singingWeightsPath:'bad'};
     const result=JSON.parse(await f.call({...args,...selection}));assert.deepEqual(result.files,['converted.mp3']);assert.doesNotMatch(JSON.stringify(result),/models|assetId|serviceUrl|traceback/);
     for(const selected of [{candidate:p.candidates[0].candidate},{number:p.candidates[0].candidate}]){
-      const reused=JSON.parse(await f.call({...args,...selected}));assert.equal(reused.reused,undefined);assert.deepEqual(reused.files,result.files);
+      const reused=JSON.parse(await f.call({...args,...selected}));assert.equal(reused.status,'already_registered');assert.deepEqual(reused.files,result.files);
     }
-    assert.equal(calls,3);assert.equal(f.live.assets.length,3);
+    assert.equal(calls,1);assert.equal(f.live.assets.length,1);
   });
 });
 

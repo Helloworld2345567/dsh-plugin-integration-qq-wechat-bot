@@ -7,8 +7,8 @@ import {SqlitePersistence} from '../../../src/infrastructure/sqlite/persistence.
 import {Assets,MediaService} from '../../../src/core/media.js';
 import {botSchema,configSchema,type CallerScope} from '../../../src/core/types.js';
 import {freezeTurn} from '../../../src/core/policy.js';
-import {executeMusicTool,type MusicContext} from '../../../src/harness/music-tool.js';
-import {executeSingingTool} from '../../../src/harness/singing-tool.js';
+import {executeMusicTool} from '../../../src/harness/music-tool.js';
+import {executeSingingTool,type SingingContext} from '../../../src/harness/singing-tool.js';
 import {musicCandidates,clearMusicState} from '../../../src/core/music-state.js';
 import type {MediaWorkerJob} from '../../../src/core/worker-port.js';
 import {NativeHarness} from '../../../src/harness/bridge.js';
@@ -27,12 +27,17 @@ async function fixture(t:TestContext){
   const config=configSchema.parse({schemaVersion:4,id:'music',name:'Music',personaPrompt:'Hello',skills:['music-download','singing-conversion'],tools:['bot_music','bot_sing'],media:{music:{enabled:true,profileRef:{serviceId:'music',profileId:'default'}},singing:{enabled:true,profileRef:{serviceId:'rvc',profileId:'default'}}}});seedAppliedConfig(store,config);
   const bot=store.bots.saveBot(botSchema.parse({id:'bot',name:'Bot',channel:'qq',enabled:true,configId:config.id})),scope:CallerScope={botId:'bot',platform:'qq',accountId:'bot',kind:'private',channelId:'alice',senderId:'alice'},binding=store.sessions.binding(scope);
   const assets=new Assets(store.repositories());assets.workspace=async key=>path.join(home,'workspaces',key);
-  const live:MusicContext&{singing:{attempted:boolean}}={binding,snapshot:freezeTurn(config,bot,scope,['request'],testServiceProfiles()),assets:[],singing:{attempted:false}};
+  const live:SingingContext={binding,snapshot:freezeTurn(config,bot,scope,['request'],testServiceProfiles()),assets:[],singing:{attempted:false}};
   const calls:string[]=[],jobs:MediaWorkerJob[]=[];let format='mp3',hook:((job:MediaWorkerJob)=>Promise<void>)|undefined;
   const worker={run:async(job:MediaWorkerJob)=>{calls.push(job.operation);jobs.push(job);await hook?.(job);
     if(job.operation==='music_search')return {music:{candidates:[track,{...track,id:'song-2',title:'晴天（现场）'}],diagnostics:[{source:'MiguMusicClient',status:'success'}]}};
     const name=job.operation==='music_acquire'?`source.${format}`:'result.mp3',file=path.join(job.output,name);await writeFile(file,'audio');
-    if(job.operation==='music_acquire'){const lyric=path.join(job.output,'song.lrc');await writeFile(lyric,'[00:00]歌词');return {assets:[{path:file,name,mime:format==='mp3'?'audio/mpeg':'audio/flac',kind:'audio' as const},{path:lyric,name:'song.lrc',mime:'text/plain',kind:'file' as const}],music:{track:{...track,format}}};}
+    if(job.operation==='music_acquire'){
+      const lyric=path.join(job.output,'song.lrc');await writeFile(lyric,'[00:00]歌词');
+      const selected=job.parameters.selection as typeof track|undefined;
+      const resultTrack=selected??{...track,title:String(job.parameters.song)};
+      return {assets:[{path:file,name,mime:format==='mp3'?'audio/mpeg':'audio/flac',kind:'audio' as const},{path:lyric,name:'song.lrc',mime:'text/plain',kind:'file' as const}],music:{track:{...resultTrack,format}}};
+    }
     return {assets:[{path:file,name,mime:'audio/mpeg',kind:'audio' as const}]};
   }};
   const serviceKeys=new Set<string>();
@@ -45,7 +50,8 @@ async function fixture(t:TestContext){
   }};
   const media=new MediaService(store.repositories(),assets,undefined,undefined,worker,undefined,undefined,serviceRuntime as any),deps={repos:{bindings:store.sessions,music:store.musicState,singing:store.singingState,personas:store.personas,capabilities:store.capability,assets:store.assets},assets,media,current:()=>config,bot:()=>bot};
   const call=(args:Record<string,unknown>,signal=new AbortController().signal)=>executeMusicTool(live,args,signal,deps);
-  return {home,store,assets,config,bot,binding,live,media,deps,call,calls,jobs,setFormat:(value:string)=>{format=value;},setHook:(value:typeof hook)=>{hook=value;}};
+  const sing=async(args:Record<string,unknown>)=>JSON.parse(await executeSingingTool(live,args,new AbortController().signal,deps));
+  return {home,store,assets,config,bot,binding,live,media,deps,call,sing,calls,jobs,setFormat:(value:string)=>{format=value;},setHook:(value:typeof hook)=>{hook=value;}};
 }
 
 test('music search exposes scoped choices without provider URLs or identifiers',async t=>{
@@ -157,26 +163,75 @@ test('a new request can retry failed acquisition, while a successful current-ses
 test('named singing reuses the downloaded original and never makes a delivery MP3 before RVC',async t=>{
   const f=await fixture(t);f.setFormat('flac');await f.call({action:'download',song:'晴天'});const acquired=f.store.musicState.acquisition(f.binding.key);assert.ok(acquired?.sourceAssetId);
   f.live.snapshot=freezeTurn(f.config,f.bot,f.binding.scope,['sing-request'],testServiceProfiles());f.live.assets=[];
-  const args={action:'sing',song:'晴天'};const result=JSON.parse(await executeSingingTool(f.live,args,new AbortController().signal,f.deps));
+  const args={action:'sing',song:'晴天'};const result=await f.sing(args);
   assert.equal(result.track.title,'晴天');assert.deepEqual(f.calls,['music_acquire','music_delivery','singing_convert']);assert.equal(f.live.assets.length,1);
   assert.equal(f.jobs[2].inputs[0].path,f.store.assets.asset(f.binding.key,acquired.sourceAssetId).path);assert.deepEqual(f.jobs[2].parameters,{sourceType:'mixed',format:'mp3'});
-  await executeSingingTool(f.live,args,new AbortController().signal,f.deps);assert.equal(f.calls.filter(value=>value==='singing_convert').length,2);
+  assert.equal((await f.sing(args)).status,'already_registered');
+  assert.equal(f.calls.filter(value=>value==='singing_convert').length,1);
 });
-test('legacy singing selectors allow repeated conversions without sending the original',async t=>{
+test('legacy singing selectors reuse the selected cover without sending the original',async t=>{
   const f=await fixture(t),prepared=JSON.parse(await f.call({action:'search',song:'晴天'}));
   const candidate=prepared.candidates[1].candidate,args={action:'sing',candidateSet:prepared.candidateSet};
-  const result=JSON.parse(await executeSingingTool(f.live,{...args,number:candidate},new AbortController().signal,f.deps));
+  const result=await f.sing({...args,number:candidate});
   for(const selector of [{candidate,number:1},{number:candidate}]){
-    const retry=JSON.parse(await executeSingingTool(f.live,{...args,...selector},new AbortController().signal,f.deps));
-    assert.equal(retry.reused,undefined);assert.deepEqual(retry.files,result.files);
+    const retry=await f.sing({...args,...selector});
+    assert.equal(retry.status,'already_registered');assert.deepEqual(retry.files,result.files);assert.deepEqual(retry.track,result.track);
   }
-  assert.equal((f.jobs.find(job=>job.operation==='music_acquire')!.parameters.selection as any).id,'song-2');assert.deepEqual(f.calls,['music_search','music_acquire','singing_convert','singing_convert','singing_convert']);assert.equal(f.live.assets.length,3);
+  const source=f.store.musicState.acquisition(f.binding.key)!.sourceAssetId!;
+  const attachment=await f.sing({action:'prepare',inputs:[source]});
+  const converted=await f.sing({action:'convert',candidateSet:attachment.candidateSet,candidate:1,sourceType:'mixed'});
+  assert.equal(converted.status,'already_registered');assert.deepEqual(converted.track,result.track);
+  assert.equal((f.jobs.find(job=>job.operation==='music_acquire')!.parameters.selection as any).id,'song-2');
+  assert.deepEqual(f.calls,['music_search','music_acquire','singing_convert']);assert.equal(f.live.assets.length,1);
 });
-test('an attachment conversion allows a second named-song acquisition in the same turn',async t=>{
+test('a single song request delivers the selected cover even if the model calls sing with more titles',async t=>{
+  const f=await fixture(t);
+  const first=await f.sing({action:'sing',song:'宝贝'});
+  assert.equal(first.track.title,'宝贝');assert.equal(first.status,'succeeded');
+  for(const song of ['晴天','稻香','小幸运','勇气']){
+    const extra=await f.sing({action:'sing',song});
+    assert.equal(extra.status,'already_registered');assert.deepEqual(extra.track,first.track);
+  }
+  const coverId=f.store.singingState.attempt(f.binding.key)!.assetIds![0];
+  f.store.deliveries.enqueue(f.binding,'request','turn',f.live.assets,{});
+  assert.deepEqual(f.store.deliveries.deliveries().map(item=>item.output.assetId),[coverId]);
+  assert.deepEqual(f.calls,['music_acquire','singing_convert']);
+
+  f.live.snapshot=freezeTurn(f.config,f.bot,f.binding.scope,['next-request'],testServiceProfiles());
+  f.live.singing={attempted:false};f.live.assets=[];
+  const next=await f.sing({action:'sing',song:'晴天'});
+  assert.equal(next.status,'succeeded');assert.equal(next.track.title,'晴天');
+  assert.equal(f.live.assets.length,1);assert.notEqual(f.live.assets[0].assetId,coverId);
+});
+test('parallel song requests reserve the single cover before catalog acquisition finishes',async t=>{
+  const f=await fixture(t);
+  let started!:()=>void,release!:()=>void;
+  const entered=new Promise<void>(resolve=>{started=resolve;});
+  const pending=new Promise<void>(resolve=>{release=resolve;});
+  f.setHook(async job=>{if(job.operation==='music_acquire'&&job.parameters.song==='宝贝'){started();await pending;}});
+  const first=f.sing({action:'sing',song:'宝贝'});
+  try{
+    await entered;
+    const extra=await f.sing({action:'sing',song:'晴天'});
+    assert.equal(extra.status,'in_progress');assert.deepEqual(f.calls,['music_acquire']);
+  }finally{release();await first;}
+  assert.deepEqual(f.calls,['music_acquire','singing_convert']);assert.equal(f.live.assets.length,1);
+});
+test('an attachment cover blocks an unrequested catalog song and preserves other registered files',async t=>{
   const f=await fixture(t),input=await f.assets.save(f.binding.key,{kind:'audio',name:'vocals.wav',mime:'audio/wav'},Buffer.from('source'));
-  const prepared=JSON.parse(await executeSingingTool(f.live,{action:'prepare',inputs:[input.id]},new AbortController().signal,f.deps));
-  await executeSingingTool(f.live,{action:'convert',candidateSet:prepared.candidateSet,candidate:1,sourceType:'vocals'},new AbortController().signal,f.deps);
-  await executeSingingTool(f.live,{action:'sing',song:'晴天'},new AbortController().signal,f.deps);assert.deepEqual(f.calls,['singing_convert','music_acquire','singing_convert']);
+  const unrelated=await f.assets.save(f.binding.key,{kind:'audio',name:'greeting.mp3',mime:'audio/mpeg'},Buffer.from('greeting'));
+  f.live.assets.push({type:'asset',assetId:unrelated.id});
+  const prepared=await f.sing({action:'prepare',inputs:[input.id]});
+  const converted=await f.sing({action:'convert',candidateSet:prepared.candidateSet,candidate:1,sourceType:'vocals'});
+  const registered=[...f.live.assets];
+  assert.equal(registered.length,2);assert.equal(registered[0].assetId,unrelated.id);
+  const skipped=await f.sing({action:'sing',song:'晴天'});
+  assert.equal(skipped.status,'already_registered');assert.deepEqual(skipped.files,converted.files);
+  assert.equal(skipped.track,undefined);assert.deepEqual(f.live.assets,registered);assert.deepEqual(f.calls,['singing_convert']);
+  const appended=await f.sing({action:'sing',song:'晴天',append:true});
+  assert.equal(appended.status,'succeeded');assert.equal(appended.track.title,'晴天');
+  assert.deepEqual(f.calls,['singing_convert','music_acquire','singing_convert']);
+  assert.equal(f.live.assets.length,3);assert.deepEqual(f.live.assets.slice(0,2),registered);
 });
 test('music cannot bypass the dedicated tool through bot_media',async()=>{
   for(const operation of ['music_search','music_acquire','music_delivery'])await assert.rejects((NativeHarness.prototype as any).mediaTool.call({},{} as any,undefined,operation,[],{},new AbortController().signal),/MUSIC_USE_BOT_MUSIC/);

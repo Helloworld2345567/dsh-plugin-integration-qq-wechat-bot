@@ -4,7 +4,17 @@ import type {BindingRepository} from './ports/session.js';
 import type {MusicCandidate, SingingCandidate, SingingAttempt, SingingCandidates, SingingStateRepository} from './ports/media.js';
 
 export type {SingingCandidate,SingingAttempt,SingingCandidates};
-export interface SingingTurn {attempted:boolean}
+export interface SingingTurn {
+  attempted:boolean;
+  active?:number;
+  registered?:{
+    title:string;
+    track?:Omit<MusicCandidate,'locator'|'id'>;
+    files:string[];
+    format:string;
+    delivery:{stage:'converted_audio';format:string;bytes:number};
+  };
+}
 
 export interface SingingSessionPorts {
   bindings: BindingRepository;
