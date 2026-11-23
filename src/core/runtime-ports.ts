@@ -33,6 +33,7 @@ export interface ModelCapabilityDiagnostics extends ModelCatalogItem {
 }
 export interface HarnessPort {
   run(binding:SessionBinding,messages:InboundMessage[],signal:AbortSignal,options?:HarnessRunOptions):Promise<HarnessResult>;
+  applyTurnSelection?(binding:SessionBinding,before:TurnSnapshot,updated:TurnSnapshot):void;
   formatProgress?(binding:SessionBinding,snapshot:TurnSnapshot,facts:ProgressFacts,signal:AbortSignal):Promise<string>;
   cancel(sessionId:string):void;
   dispose(sessionId?:string):Promise<void>;

@@ -1,6 +1,6 @@
 ---
 name: voice-generation
-description: Generate AI speech replies on the user's explicit request, using the configured Edge TTS or GPT-SoVITS voice.
+description: Generate requested speech with the session’s selected TTS voice.
 ---
 
 # Voice generation

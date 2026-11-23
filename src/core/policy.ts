@@ -50,9 +50,53 @@ function freezeService(role:ServiceProfileRole,config:BotConfig,profiles?:Profil
   const selection:TurnServiceSelection={role,enabled:true,profileRef:Object.freeze({...options.profileRef}),state:profile.state,snapshot:Object.freeze({serviceId:profile.serviceId,profileId:profile.profileId,profileRevision:profile.revision,profileContentHash:profile.contentHash})};
   return Object.freeze(selection);
 }
+function selectedWorkflowModel(config:BotConfig,settings?:Readonly<ImageServiceSettings>) {
+  if(imageSkillEnabled(config)&&(config.media.image?.protocol??settings?.imageProtocol)==='comfyui')return readComfyWorkflowModel(settings?.comfyUiWorkflowPath??'');
+}
+
+export type TurnSelection='model'|'persona'|'image'|'tts'|'sts';
+
+/** Copy just the chosen session preference. Existing workers retain their original snapshot. */
+export function applyTurnSelection(snapshot:TurnSnapshot,selected:BotConfig,field:TurnSelection,profiles?:ProfileStore):TurnSnapshot {
+  const config={...snapshot.config};
+  const next={...snapshot,config};
+  switch(field){
+    case 'model':
+      config.model=selected.model?{...selected.model}:null;
+      break;
+    case 'persona': {
+      const {id,name,revision,personaPrompt}=selected;
+      Object.assign(config,{id,name,revision,personaPrompt});
+      next.personaId=id;
+      next.personaRevision=revision;
+      break;
+    }
+    case 'image':
+      config.media={...config.media,image:{enabled:config.media.image?.enabled??true,protocol:selected.media.image?.protocol}};
+      next.comfyWorkflowModel=selectedWorkflowModel(config,snapshot.imageServiceSettings);
+      break;
+    case 'tts': {
+      const previous=config.media.voice,voice=selected.media.voice;
+      if(!previous||!voice)return snapshot;
+      config.media={...config.media,voice:{...structuredClone(voice),enabled:previous.enabled,replyMode:previous.replyMode}};
+      next.services=Object.freeze({...snapshot.services,voice:freezeService('voice',config,profiles)});
+      break;
+    }
+    case 'sts': {
+      const previous=config.media.singing;
+      if(!previous)return snapshot;
+      config.media={...config.media,singing:{...previous,profileRef:structuredClone(selected.media.singing?.profileRef)}};
+      next.services=Object.freeze({...snapshot.services,singing:freezeService('singing',config,profiles)});
+      break;
+    }
+  }
+  deepFreeze(config);
+  return Object.freeze(next);
+}
+
 export function freezeTurn(config:BotConfig,bot:BotInstance,scope:CallerScope,sourceIds:string[],profiles?:ProfileStore,systemLocale:SystemLocale='zh',imageSettings:ImageServiceSettings=imageServiceSettingsSchema.parse({})):TurnSnapshot {
   const frozenConfig=deepFreeze(structuredClone(config));const services=Object.freeze(Object.fromEntries((['voice','singing','music'] as const).map(role=>[role,freezeService(role,config,profiles)]).filter(([,value])=>value!==undefined)));
-  const comfyWorkflowModel=imageSkillEnabled(config)&&(config.media.image?.protocol??imageSettings.imageProtocol)==='comfyui'?readComfyWorkflowModel(imageSettings.comfyUiWorkflowPath):undefined;
+  const comfyWorkflowModel=selectedWorkflowModel(config,imageSettings);
   return Object.freeze({systemLocale,config:frozenConfig,imageServiceSettings:Object.freeze({...imageSettings}),...(comfyWorkflowModel?{comfyWorkflowModel}:{}),personaId:config.id,personaRevision:config.revision,services,botId:bot.id,trusted:trusted(bot,scope),sourceIds:Object.freeze([...sourceIds]) as string[],startedAt:Date.now()});
 }
 function deepFreeze<T>(value:T):Readonly<T> { if(value && typeof value==='object') {Object.freeze(value); for(const child of Object.values(value)) deepFreeze(child);} return value; }

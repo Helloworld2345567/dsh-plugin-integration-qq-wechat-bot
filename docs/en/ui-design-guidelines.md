@@ -89,7 +89,7 @@ Consistency applies to action meaning, submission timing, and loading, cancellat
 - Maintain `baseline / draft / pending / error` by editing object and actual backend save boundary. Restoring the original value clears dirty state; do not introduce hashes.
 - Each editing scope has one save entry point. Avoid two unlabeled “Save” actions on the same page. Separate submission scopes, such as workspace and bot settings, must be displayed separately or clearly named. Do not present multiple requests as an atomic save.
 - Ordinary configuration follows select/edit, then save. Commands such as start/stop, authorization, and trust revocation retain immediate execution semantics. Revoked permissions are still rechecked at execution time.
-- Switching personas preserves history and takes effect from the next turn after saving. In-flight tasks continue using their frozen configuration. Refactoring must preserve these constraints.
+- Switching personas in the panel preserves history and takes effect from the next turn after saving. In-flight tasks continue using their frozen configuration.
 - Leaving a page or object with drafts offers Save and continue, Discard changes, and Continue editing. Creation and credential forms receive the same protection. Credentials remain only in current memory and the existing credentials service.
 - If editing remains available while saving, merging the response must not overwrite input entered after submission. Otherwise freeze only the current editing scope. Discard late asynchronous results based on request/object identity.
 - A refresh failure after a successful write must be reported as a refresh failure, not a failed save, and must not cause resubmission.

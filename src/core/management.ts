@@ -87,7 +87,9 @@ export class BotManagement {
   async persona(binding:SessionBinding,snapshot:TurnSnapshot,input:unknown,signal:AbortSignal){
     const current=this.current(binding,snapshot,signal,true);const args=botPersonaArgumentsSchema.parse(input);const config=this.runtime.effectiveConfig(current);
     if(args.action==='list')return{action:args.action,...(config.id!==snapshot.config.id?{currentTurnPersonaId:snapshot.config.id}:{}),personas:this.runtime.repos.personas.configs().filter(item=>!item.archived).map(item=>({id:item.id,name:item.name,current:item.id===config.id}))};
-    this.runtime.repos.personas.config(args.personaId!);const command=managementCommand({name:'persona',args:args.personaId!})!;const result=await this.runtime.commandBus.execute({source:'tool',binding:current,snapshot,signal,authorize:()=>this.current(binding,snapshot,signal,true)},command);return result.kind==='queued'?result.value:result;
+    const result=await this.runtime.commandBus.execute({source:'tool',binding:current,snapshot,signal,authorize:()=>this.current(binding,snapshot,signal,true)},{kind:'persona',action:'set',personaId:args.personaId});
+    if(result.kind!=='reply'||!result.data)throw Error('PERSONA_CONTROL_FAILED');
+    return result.data;
   }
 
   async skills(binding:SessionBinding,snapshot:TurnSnapshot,input:unknown,signal:AbortSignal){

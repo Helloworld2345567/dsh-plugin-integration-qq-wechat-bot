@@ -5,7 +5,7 @@ import path from 'node:path';
 import {SqlitePersistence} from '../../../src/infrastructure/sqlite/persistence.js';
 import {botSchema,v4ConfigSchema,type CallerScope} from '../../../src/core/types.js';
 import {ProfileStore} from '../../../src/core/profile-store.js';
-import {allowedNow,freezeTurn,permissionsRevoked} from '../../../src/core/policy.js';
+import {allowedNow,applyTurnSelection,freezeTurn,permissionsRevoked} from '../../../src/core/policy.js';
 import {DurableDeliveryWorker} from '../../../src/core/delivery-worker.js';
 import {Assets,MediaService} from '../../../src/core/media.js';
 import {createChannelRegistry} from '../../../src/core/channel-registry.js';
@@ -40,6 +40,54 @@ test('turn snapshots freeze persona and profile revisions; ready updates affect 
   const nextProfile=profiles.create({serviceId:'voice',profileId:'default',state:'ready',capabilities:['voice.speak'],displayName:'Voice 2',managedConfig:{endpoint:'changed'}});const nextConfig={...config,revision:2};seedAppliedConfig(store,nextConfig,false);
   assert.equal(profiles.assertExecutable(turn.services.voice!.snapshot!).revision,1);assert.equal(turn.personaRevision,1);assert.equal(turn.config.revision,1);
   const next=freezeTurn(nextConfig,bot,scope,['next'],profiles);assert.equal(next.personaRevision,2);assert.equal(next.services.voice?.snapshot?.profileRevision,nextProfile.revision);assert.notEqual(next.services.voice?.snapshot?.profileContentHash,turn.services.voice?.snapshot?.profileContentHash);
+});
+
+test('session selections compose without importing other bot settings or changing the original turn',()=>{
+  const config=serviceConfig(),bot=botSchema.parse({id:'bot',name:'Bot',channel:'qq',enabled:true,trustedUsers:['owner']});
+  config.tools.push('bot_media');
+  config.skills.push('image-generation');
+  config.allowHostTools=false;
+  const first=freezeTurn(config,bot,scope,['request']);
+  const selected=v4ConfigSchema.parse({...config,id:'other',name:'Other',revision:3,personaPrompt:'B',model:{provider:'p',model:'m'},allowHostTools:true,imageStyle:'edited in panel',media:{...config.media,image:{protocol:'comfyui'}}});
+  const model=applyTurnSelection(first,selected,'model');
+  const persona=applyTurnSelection(model,selected,'persona');
+  const image=applyTurnSelection(persona,selected,'image');
+  assert.deepEqual(image.config.model,selected.model);
+  assert.equal(image.config.personaPrompt,'B');
+  assert.equal(image.personaId,'other');
+  assert.equal(image.personaRevision,3);
+  assert.equal(image.config.media.image?.protocol,'comfyui');
+  assert.ok(image.comfyWorkflowModel);
+  assert.equal(image.config.imageStyle,'');
+  assert.equal(allowedNow('pwsh',image,selected,bot,scope),false);
+  assert.equal(image.startedAt,first.startedAt);
+  assert.equal(image.sourceIds,first.sourceIds);
+  assert.equal(first.config.model,null);
+  assert.equal(model.personaId,config.id);
+  assert.equal(persona.config.media.image,undefined);
+  const reset=applyTurnSelection(image,config,'image');
+  assert.equal(reset.config.media.image?.protocol,undefined);
+  assert.equal(reset.comfyWorkflowModel,undefined);
+});
+
+test('voice selections pin only the chosen profile revision and preserve turn-start voice policy and tuning',()=>{
+  const profiles=new ProfileStore(),config=serviceConfig(),bot=botSchema.parse({id:'bot',name:'Bot',channel:'qq',enabled:true,trustedUsers:['owner']});
+  const first=freezeTurn(config,bot,scope,[],profiles);
+  assert.equal(allowedNow('bot_voice',first,config,bot,scope),false);
+  const published=addProfiles(profiles);
+  const selected=v4ConfigSchema.parse({...config,media:{...config.media,voice:{...config.media.voice,replyMode:'on_demand'},singing:{...config.media.singing,pitchShift:12}}});
+  const tts=applyTurnSelection(first,selected,'tts',profiles);
+  assert.equal(tts.config.media.voice?.replyMode,'auto');
+  assert.equal(tts.services.voice?.snapshot?.profileContentHash,published.voice.contentHash);
+  assert.equal(allowedNow('bot_voice',tts,config,bot,scope),true);
+  assert.equal(tts.services.singing?.state,'missing');
+  const sts=applyTurnSelection(tts,selected,'sts',profiles);
+  assert.equal(sts.config.media.singing?.pitchShift,undefined);
+  assert.equal(sts.services.singing?.snapshot?.profileRevision,published.rvc.revision);
+  assert.equal(sts.services.voice,tts.services.voice);
+  assert.equal(first.services.voice?.state,'missing');
+  const disabled=freezeTurn({...config,media:{...config.media,voice:{...config.media.voice!,enabled:false}}},bot,scope,[],profiles);
+  assert.equal(allowedNow('bot_voice',applyTurnSelection(disabled,selected,'tts',profiles),selected,bot,scope),false);
 });
 
 test('missing, blocked, disabled and revoked profiles never fall back and immediately revoke old turns',async t=>{

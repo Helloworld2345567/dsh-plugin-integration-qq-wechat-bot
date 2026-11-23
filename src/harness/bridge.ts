@@ -34,12 +34,12 @@ import {defineBotModelTool} from './model-tool.js';
 import {defineBotSessionTool,defineBotPersonaTool,defineBotSkillsTool,defineBotVoiceControlTool,defineBotImageControlTool} from './management-tools.js';
 import {defineBotScheduleTool,defineBotProactiveTool} from './automation-tools.js';
 import type {BotManagement} from '../core/management.js';
-import type {BotModelArguments,BotVoiceArguments,BotImageArguments} from '../core/features.js';
+import type {BotModelArguments,BotVoiceArguments,BotImageArguments,BotImageResult} from '../core/features.js';
 import {recentFailureContext} from '../core/failure-context.js';
 import type { HarnessPort, HarnessResult } from '../core/runtime.js';
 import type {HarnessRunOptions,ModelCapabilityDiagnostics} from '../core/runtime-ports.js';
 import {abortable,progressFallback,type ProgressFacts,type ProgressStage} from '../core/progress.js';
-import {imagePromptWithStyle} from '../core/image-skill.js';
+import {imagePromptWithStyle,imageSkillEnabled,selectedImageService} from '../core/image-skill.js';
 import type { BotConfig, InboundMessage, SessionBinding, TurnSnapshot, Output } from '../core/types.js';
 import {PromptAssembler} from './prompt-assembler.js';
 import {StatsEventAdapter} from './stats-event-adapter.js';
@@ -55,8 +55,8 @@ import {executeSingingTool} from './singing-tool.js';
 import {executeMusicTool} from './music-tool.js';
 import type {SingingTurn} from '../core/singing-state.js';
 
-export interface LiveSession { agent:Agent; binding:SessionBinding; snapshot:TurnSnapshot; skills:Readonly<Record<string,FrozenSkill>>; sources:string[]; referenceImageIds?:ReadonlySet<string>; assets:Output[]; explicitAssets?:Set<string>; images:Map<string,{failed:number;active:number}>; voice:{attempted:boolean}; singing:SingingTurn; cwd:string; shellDirectory?:string; selection:ModelSelectionRef; restrictions?:()=>void; invalidator?:()=>void; refreshTools?:()=>void; loadedTools:Set<string>; toolSections:AssembledSection[]; policyError?:Error }
-export interface HarnessExtensions {skills?:DynamicSkills;stats?:StatsService;management?:BotManagement;model?:(binding:SessionBinding,snapshot:TurnSnapshot,args:BotModelArguments,signal:AbortSignal)=>Promise<unknown>;voice?:(binding:SessionBinding,snapshot:TurnSnapshot,args:BotVoiceArguments,signal:AbortSignal)=>Promise<unknown>;image?:(binding:SessionBinding,snapshot:TurnSnapshot,args:BotImageArguments,signal:AbortSignal)=>Promise<unknown>;evolve?:(binding:SessionBinding,snapshot:TurnSnapshot,args:Record<string,unknown>,signal:AbortSignal)=>Promise<unknown>}
+export interface LiveSession { agent:Agent; binding:SessionBinding; snapshot:TurnSnapshot; skills:Readonly<Record<string,FrozenSkill>>; sources:string[]; referenceImageIds?:ReadonlySet<string>; assets:Output[]; explicitAssets?:Set<string>; images:Map<string,{failed:number;active:number}>; voice:{attempted:boolean}; singing:SingingTurn; cwd:string; shellDirectory?:string; selection:ModelSelectionRef; refreshPrompt?:boolean; restrictions?:()=>void; invalidator?:()=>void; refreshTools?:()=>void; loadedTools:Set<string>; toolSections:AssembledSection[]; policyError?:Error }
+export interface HarnessExtensions {skills?:DynamicSkills;stats?:StatsService;management?:BotManagement;model?:(binding:SessionBinding,snapshot:TurnSnapshot,args:BotModelArguments,signal:AbortSignal)=>Promise<unknown>;voice?:(binding:SessionBinding,snapshot:TurnSnapshot,args:BotVoiceArguments,signal:AbortSignal)=>Promise<unknown>;image?:(binding:SessionBinding,snapshot:TurnSnapshot,args:BotImageArguments,signal:AbortSignal)=>Promise<BotImageResult>;evolve?:(binding:SessionBinding,snapshot:TurnSnapshot,args:Record<string,unknown>,signal:AbortSignal)=>Promise<unknown>}
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
     'bot-attachments': {kind:'bot-attachments';form:'notice';summary:string};
@@ -234,6 +234,18 @@ export class NativeHarness implements HarnessPort {
       if(!current||permissionsRevoked(live.snapshot,current,bot,live.binding.scope)){agent.cancel({kind:'user'});this.media.cancelScope(live.binding.key);}
     }
   }
+  applyTurnSelection(binding:SessionBinding,before:TurnSnapshot,updated:TurnSnapshot):void {
+    const live=this.live.get(binding.sessionId);
+    if(!live||live.snapshot!==before)return;
+    live.binding=binding;
+    live.snapshot=updated;
+    const model=updated.config.model,previous=before.config.model;
+    if(model?.provider!==previous?.provider||model?.model!==previous?.model||model?.reasoningEffort!==previous?.reasoningEffort
+      ||updated.personaId!==before.personaId||updated.personaRevision!==before.personaRevision){
+      live.selection.current=this.selection(updated.config as BotConfig);
+      live.refreshPrompt=true;
+    }
+  }
   async validateModel(config:BotConfig):Promise<void>{
     this.skillFiles.snapshot(config);
     if(!config.model)return;
@@ -371,11 +383,11 @@ export class NativeHarness implements HarnessPort {
     ctx.systemPrompt.context({name:'bot-time',order:100,interpolate:false,text:c=>`Current date and time: ${new Date(this.turn(owner,c.scope).snapshot.startedAt).toLocaleString('sv-SE')} (${Intl.DateTimeFormat().resolvedOptions().timeZone}).`});
     ctx.systemPrompt.context({name:'bot-memory',order:300,interpolate:false,text:()=>this.prompts.memory(this.repos.memory.memories(owner.binding.key))});
     ctx.on('session/event',(session,event)=>{if(session.id===agent.id&&event.type==='turn/start')owner.loadedTools.clear();});
-    let refreshPrompt=true;
+    owner.refreshPrompt=true;
     ctx.on('agent/pre-step',async(request,next)=>{
       const decision=await next();
-      if(request.agent!==agent||!refreshPrompt||decision.kind!=='enter')return decision;
-      refreshPrompt=false;return {...decision,startsRequestSeries:true};
+      if(request.agent!==agent||!owner.refreshPrompt||decision.kind!=='enter')return decision;
+      owner.refreshPrompt=false;return {...decision,startsRequestSeries:true};
     });
     ctx.on('system-prompt/assemble',async(_assembly,context,next)=>{
       const assembly=await next();if(context.scope!==agent)return assembly;
@@ -383,6 +395,15 @@ export class NativeHarness implements HarnessPort {
       const current=this.current(owner),bot=this.repos.bots.bot(owner.binding.scope.botId);
       return projectTools({...assembly,tools:assembly.tools.filter(tool=>this.childResult(tool.name,owner,agent)||allowedNow(tool.name,owner.snapshot,current,bot,owner.binding.scope))},owner.loadedTools);
     });
+  }
+  private imageCapabilities(snapshot:TurnSnapshot,service:Pick<ReturnType<MediaService['imageEndpoint']>,'protocol'|'model'>=selectedImageService(snapshot.config,snapshot.imageServiceSettings??this.media.imageSettings())){
+    const common={protocol:service.protocol??'openai',model:service.model,operations:['generate','edit']};
+    if(service.protocol==='comfyui')return {...common,workflowModel:snapshot.comfyWorkflowModel??UNKNOWN_COMFY_WORKFLOW_MODEL,
+      prompt:'workflow-dependent',referenceEdit:'workflow-dependent',size:'workflow-dependent',batch:'workflow-dependent',outputFormats:['png','jpg','jpeg']};
+    if(service.protocol==='google')return {...common,prompt:'supported',referenceEdit:'inline-image',size:'unsupported',
+      batch:'single requested output; duplicate inline images are filtered',outputFormats:['png','jpg','jpeg']};
+    return {...common,prompt:'supported',referenceEdit:'provider/model-dependent',size:'provider/model-dependent',batch:'provider/model-dependent',
+      outputFormats:'provider/model-dependent',gif:'provider/model-dependent',svg:'generation-only/provider-model-dependent'};
   }
   private async imageBlocks(scope:string,ids:string[]):Promise<ContentBlock[]>{
     if(ids.length>10)throw new Error('IMAGE_INPUT_LIMIT');const blocks:ContentBlock[]=[];
@@ -392,25 +413,26 @@ export class NativeHarness implements HarnessPort {
     if(operation==='singing_convert')throw Error('SINGING_USE_BOT_SING');
     if(operation.startsWith('music_'))throw Error('MUSIC_USE_BOT_MUSIC');
     const live=this.turn(ownerLive,agent);if(operation==='voice_speak')live.voice.attempted=true;
+    const snapshot=live.snapshot;
     const scope=live.binding.key;const bot=this.repos.bots.bot(live.binding.scope.botId);const current=this.current(live);
     const descriptor=this.operationRegistry.get(operation);
     const permissionTool=descriptor.permissionTool??'bot_media';
-    if(!allowedNow(permissionTool,live.snapshot,current,bot,live.binding.scope))throw new Error(permissionTool==='bot_voice'?'VOICE_OUTPUT_DISABLED':'MEDIA_TOOL_DISABLED');
-    if(operation==='social_read'&&!allowedNow('bot_read_social',live.snapshot,current,bot,live.binding.scope))throw new Error('SOCIAL_READ_DISABLED');
+    if(!allowedNow(permissionTool,snapshot,current,bot,live.binding.scope))throw new Error(permissionTool==='bot_voice'?'VOICE_OUTPUT_DISABLED':'MEDIA_TOOL_DISABLED');
+    if(operation==='social_read'&&!allowedNow('bot_read_social',snapshot,current,bot,live.binding.scope))throw new Error('SOCIAL_READ_DISABLED');
     if(operation==='image_understand'){
-      if(!allowedNow('bot_media',live.snapshot,current,bot,live.binding.scope))throw new Error('MEDIA_TOOL_DISABLED');
+      if(!allowedNow('bot_media',snapshot,current,bot,live.binding.scope))throw new Error('MEDIA_TOOL_DISABLED');
       const ids=inputs.length?inputs:this.assets.recent(scope,'image').slice(0,1).map(a=>a.id);if(!ids.length)throw new Error('IMAGE_INPUT_REQUIRED');
       return JSON.stringify({coverage:'NATIVE_CHAT_IMAGE_PIXELS',text:'Image pixels are attached to this tool result. Read them directly with the current model.',modelImages:await this.imageBlocks(scope,ids),assetIds:[]});
     }
     const image=operation==='image_generate'||operation==='image_edit';
     const authorize=()=>{
       const latest=this.current(live);const owner=this.repos.bots.bot(live.binding.scope.botId);
-      if(!allowedNow(permissionTool,live.snapshot,latest,owner,live.binding.scope)
-        || descriptor.tool&&!allowedNow(descriptor.tool,live.snapshot,latest,owner,live.binding.scope))throw new Error('MEDIA_TOOL_DISABLED');
+      if(!allowedNow(permissionTool,snapshot,latest,owner,live.binding.scope)
+        || descriptor.tool&&!allowedNow(descriptor.tool,snapshot,latest,owner,live.binding.scope))throw new Error('MEDIA_TOOL_DISABLED');
     };
-    const config=mediaConfigNow(live.snapshot,current);
+    const config=mediaConfigNow(snapshot,current);
     const role=descriptor.role;
-    if(descriptor.tool&&!allowedNow(descriptor.tool,live.snapshot,current,bot,live.binding.scope))throw new Error('MEDIA_ANALYSIS_DISABLED');
+    if(descriptor.tool&&!allowedNow(descriptor.tool,snapshot,current,bot,live.binding.scope))throw new Error('MEDIA_ANALYSIS_DISABLED');
     if(role&&!analysisEnabled(config,role))throw new Error('MEDIA_ANALYSIS_DISABLED');
     if(descriptor.source?.recentInput&&!inputs.length&&!args.url)inputs=this.assets.recent(scope,descriptor.source.recentInput).slice(0,1).map(a=>a.id);
     if(descriptor.source?.requiredInputError&&!inputs.length)throw new Error(descriptor.source.requiredInputError);
@@ -418,14 +440,14 @@ export class NativeHarness implements HarnessPort {
     let imageKey='';
     let imageAttempt:{failed:number;active:number}|undefined;
     if(image){
-      if(!allowedNow('image_generation',live.snapshot,current,bot,live.binding.scope))throw new Error('IMAGE_SKILL_DISABLED');
+      if(!allowedNow('image_generation',snapshot,current,bot,live.binding.scope))throw new Error('IMAGE_SKILL_DISABLED');
       if(operation==='image_edit'&&!inputs.length){
         const candidates=Array.from(live.referenceImageIds??[]);
         if(!candidates.length)throw new Error('REFERENCE_IMAGE_REQUIRED: Supply the selected image attachment ID in inputs.');
         if(candidates.length>1)throw new Error(`REFERENCE_IMAGE_AMBIGUOUS: Select the intended attachment IDs in inputs from ${candidates.join(', ')}.`);
         inputs=candidates;
       }
-      const endpoint=this.media.imageEndpoint(config,live.snapshot);if(endpoint.protocol!=='comfyui'&&(!endpoint.keyEnv||!process.env[endpoint.keyEnv]))throw new Error(`MISSING_PROVIDER_KEY: ${endpoint.keyEnv??'OPENAI_API_KEY'}`);
+      const endpoint=this.media.imageEndpoint(config,snapshot);if(endpoint.protocol!=='comfyui'&&(!endpoint.keyEnv||!process.env[endpoint.keyEnv]))throw new Error(`MISSING_PROVIDER_KEY: ${endpoint.keyEnv??'OPENAI_API_KEY'}`);
       imageKey=JSON.stringify([operation,inputs,Object.entries(args).filter(([key])=>!['deliver','keepInputs','inputs','operation'].includes(key)).sort(([a],[b])=>a.localeCompare(b))]);
       imageAttempt=live.images.get(imageKey)??{failed:0,active:0};
       if(imageAttempt.failed+imageAttempt.active>=4)throw new Error('IMAGE_RETRY_LIMIT: At most three retries after the initial failed request');
@@ -433,7 +455,7 @@ export class NativeHarness implements HarnessPort {
     }
     try{
     const {deliver:_deliver,keepInputs:_keepInputs,...parameters}=args;
-    const result=await this.media.run(scope,operation,config,inputs,{...parameters,prompt:args.prompt?imagePromptWithStyle(String(args.prompt),live.snapshot.config.imageStyle):undefined},signal,authorize,live.snapshot) as Awaited<ReturnType<MediaService['run']>>;
+    const result=await this.media.run(scope,operation,config,inputs,{...parameters,prompt:args.prompt?imagePromptWithStyle(String(args.prompt),snapshot.config.imageStyle):undefined},signal,authorize,snapshot) as Awaited<ReturnType<MediaService['run']>>;
     if(imageAttempt)imageAttempt.failed=0;
     if(deliver){
       if(descriptor.localTransform&&result.assetIds.length&&!result.incomplete&&args.keepInputs!==true){
@@ -471,7 +493,18 @@ export class NativeHarness implements HarnessPort {
       const loaded=loadTools(args.names,this.availableTools(ctx,live,exec.agent),live.loadedTools);
       return JSON.stringify({loaded,instructions:instructions().filter(text=>!previous.has(text))});
     }}));
-    register(defineTool({name:'skill',description:'Read the frozen skill instructions exposed in this turn.',parameters:{name:{type:'string',required:true}},output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},execute:async(args,exec)=>{const live=this.turn(ownerLive,exec.agent);const current=this.current(live);const skill=live.skills[args.name];if(!skill||!current.skills.includes(args.name))throw new Error('SKILL_NOT_ALLOWED');const rendered=renderSkillContent({...skill,provider:'bot-persona',...(Object.hasOwn(packagedSkills,args.name)?{resourceBase:undefined}:{})});if(args.name!=='image-generation')return rendered;const endpoint=this.media.imageEndpoint(live.snapshot.config as BotConfig,live.snapshot);const capabilities=endpoint.protocol==='comfyui'?{protocol:'comfyui',model:endpoint.model,workflowModel:live.snapshot.comfyWorkflowModel??UNKNOWN_COMFY_WORKFLOW_MODEL,operations:['generate','edit'],prompt:'workflow-dependent',referenceEdit:'workflow-dependent',size:'workflow-dependent',batch:'workflow-dependent',outputFormats:['png','jpg','jpeg']}:endpoint.protocol==='google'?{protocol:'google',model:endpoint.model,operations:['generate','edit'],prompt:'supported',referenceEdit:'inline-image',size:'unsupported',batch:'single requested output; duplicate inline images are filtered',outputFormats:['png','jpg','jpeg']}:{protocol:'openai',model:endpoint.model,operations:['generate','edit'],prompt:'supported',referenceEdit:'provider/model-dependent',size:'provider/model-dependent',batch:'provider/model-dependent',outputFormats:'provider/model-dependent',gif:'provider/model-dependent',svg:'generation-only/provider-model-dependent'};const service=`Selected image service contract: ${JSON.stringify(capabilities)}. Use only these reported capabilities; omit optional parameters unless the user asks for them. Do not infer provider support or access local service paths.`;const guidance=endpoint.protocol==='comfyui'?skill.serviceInstructions?.comfyui:undefined;return `${rendered}\n\n<host_service_context>\n${service}${guidance?'\n\n'+guidance:''}\n</host_service_context>`;}}));
+    register(defineTool({name:'skill',description:'Read the skill instructions exposed in this turn.',parameters:{name:{type:'string',required:true}},
+      output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},execute:async(args,exec)=>{
+        const live=this.turn(ownerLive,exec.agent),skill=live.skills[args.name];
+        if(!skill||!this.current(live).skills.includes(args.name))throw new Error('SKILL_NOT_ALLOWED');
+        const rendered=renderSkillContent({...skill,provider:'bot-persona',...(Object.hasOwn(packagedSkills,args.name)?{resourceBase:undefined}:{})});
+        if(args.name!=='image-generation')return rendered;
+        const capabilities=this.imageCapabilities(live.snapshot,this.media.imageEndpoint(live.snapshot.config as BotConfig,live.snapshot));
+        const service=`Selected image service contract: ${JSON.stringify(capabilities)}. Use only these reported capabilities; omit optional parameters unless the user asks for them. Do not infer provider support or access local service paths.`;
+        const guidance=capabilities.protocol==='comfyui'?skill.serviceInstructions?.comfyui:undefined;
+        return `${rendered}\n\n<host_service_context>\n${service}${guidance?'\n\n'+guidance:''}\n</host_service_context>`;
+      },
+    }));
     const managers=[
       defineBotScheduleTool(async(args,exec)=>{const live=this.turn(ownerLive,exec.agent);if(args.action!=='list')this.requireMainAgent(live,exec.agent);if(!this.extensions.management)throw Error('AUTOMATION_CONTROL_UNAVAILABLE');return this.extensions.management.schedule(live.binding,live.snapshot,args,exec.signal);}),
       defineBotProactiveTool(async(args,exec)=>{const live=this.turn(ownerLive,exec.agent);if(args.action!=='status')this.requireMainAgent(live,exec.agent);if(!this.extensions.management)throw Error('AUTOMATION_CONTROL_UNAVAILABLE');return this.extensions.management.proactive(live.binding,live.snapshot,args,exec.signal);}),
@@ -480,14 +513,22 @@ export class NativeHarness implements HarnessPort {
       defineBotSkillsTool(async(args,exec)=>{const live=this.turn(ownerLive,exec.agent);if(args.action!=='list')this.requireMainAgent(live,exec.agent);if(!this.extensions.management)throw new Error('SKILL_CONTROL_UNAVAILABLE');return this.extensions.management.skills(live.binding,live.snapshot,args,exec.signal);}),
       defineBotModelTool(async(args,exec)=>{const live=this.turn(ownerLive,exec.agent);if(args.action!=='list')this.requireMainAgent(live,exec.agent);const bot=this.repos.bots.bot(live.binding.scope.botId);if(!allowedNow('bot_model',live.snapshot,this.current(live),bot,live.binding.scope))throw new Error('TRUSTED_PRIVATE_REQUIRED');if(!this.extensions.model)throw new Error('MODEL_CONTROL_UNAVAILABLE');return this.extensions.model(live.binding,live.snapshot,args,exec.signal);}),
       defineBotVoiceControlTool(async(args,exec)=>{const live=this.turn(ownerLive,exec.agent);if(args.action!=='list')this.requireMainAgent(live,exec.agent);const bot=this.repos.bots.bot(live.binding.scope.botId);if(!allowedNow('bot_voice_control',live.snapshot,this.current(live),bot,live.binding.scope))throw new Error('TRUSTED_PRIVATE_REQUIRED');if(!this.extensions.voice)throw new Error('VOICE_CONTROL_UNAVAILABLE');return this.extensions.voice(live.binding,live.snapshot,args,exec.signal);}),
-      defineBotImageControlTool(async(args,exec)=>{const live=this.turn(ownerLive,exec.agent);if(args.action!=='list')this.requireMainAgent(live,exec.agent);const bot=this.repos.bots.bot(live.binding.scope.botId);if(!allowedNow('bot_image_control',live.snapshot,this.current(live),bot,live.binding.scope))throw new Error('TRUSTED_PRIVATE_REQUIRED');if(!this.extensions.image)throw new Error('IMAGE_CONTROL_UNAVAILABLE');return this.extensions.image(live.binding,live.snapshot,args,exec.signal);}),
+      defineBotImageControlTool(async(args,exec)=>{
+        const live=this.turn(ownerLive,exec.agent);
+        if(args.action!=='list')this.requireMainAgent(live,exec.agent);
+        const bot=this.repos.bots.bot(live.binding.scope.botId);
+        if(!allowedNow('bot_image_control',live.snapshot,this.current(live),bot,live.binding.scope))throw new Error('TRUSTED_PRIVATE_REQUIRED');
+        if(!this.extensions.image)throw new Error('IMAGE_CONTROL_UNAVAILABLE');
+        const result=await this.extensions.image(live.binding,live.snapshot,args,exec.signal);
+        return imageSkillEnabled(live.snapshot.config)?{...result,capabilities:this.imageCapabilities(live.snapshot)}:result;
+      }),
       defineTool({name:'bot_stats',description:'Query bot statistics for trusted private chats. Optional filters include range, bot, model, provider, kind and groups.',parameters:{range:{type:'string',enum:['today','7d','30d','all','custom']},from:{type:'string'},to:{type:'string'},botId:{type:'string'},model:{type:'string'},provider:{type:'string'},kind:{type:'string'},groups:{type:'boolean'}},output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},execute:async(args,exec)=>{const live=this.turn(ownerLive,exec.agent);const bot=this.repos.bots.bot(live.binding.scope.botId);if(!allowedNow('bot_stats',live.snapshot,this.current(live),bot,live.binding.scope))throw new Error('TRUSTED_PRIVATE_REQUIRED');if(!this.extensions.stats)throw new Error('STATS_UNAVAILABLE');return JSON.stringify(this.extensions.stats.query(args as any));}}),
       defineTool({name:'bot_evolve',description:'Manage persona, skill and plugin changes for trusted host-authorized requests. skill_write accepts a complete files JSON array; apply and restart queue activation.',parameters:{action:{type:'string',required:true,enum:['create','inspect','status','history','validate','apply','rollback','restart','persona','skill_write','reload']},goal:{type:'string'},taskId:{type:'string'},name:{type:'string'},content:{type:'string'},files:{type:'string'},expectedRevision:{type:'number'}},output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},execute:async(args,exec)=>{const live=this.turn(ownerLive,exec.agent);const bot=this.repos.bots.bot(live.binding.scope.botId);if(!['inspect','status','history'].includes(args.action))this.requireMainAgent(live,exec.agent);if(!allowedNow('bot_evolve',live.snapshot,this.current(live),bot,live.binding.scope))throw new Error('TRUSTED_HOST_PERMISSION_REQUIRED');if(!this.extensions.evolve)throw new Error('EVOLUTION_UNAVAILABLE');return JSON.stringify(await this.extensions.evolve(live.binding,live.snapshot,args,exec.signal));}}),
     ];
     const managerRegistrar=new ToolRegistrar<any>(tool=>register(tool));
     ownerLive.refreshTools=()=>{managerRegistrar.clear('management');const bot=this.repos.bots.bot(ownerLive.binding.scope.botId);for(const tool of managers){try{if(allowedNow(tool.name,ownerLive.snapshot,this.current(ownerLive),bot,ownerLive.binding.scope))managerRegistrar.add('management',tool);}catch{}}};
     ownerLive.refreshTools();
-    for(const manifest of skillToolManifests) register(defineTool({...manifest.tool,parameters:{...manifest.tool.parameters,...(manifest.tool.name==='bot_voice'?{deliver:{type:'boolean' as const},keepInputs:{type:'boolean' as const}}:{})},output:{schema:{type:'string'},render:renderMedia},execute:async(args:any,exec:any)=>{const live=this.turn(ownerLive,exec.agent);const dependencies={repos:{bindings:this.repos.sessions,music:this.repos.media.music,singing:this.repos.media.singing,personas:this.repos.personas,capabilities:this.repos.capabilities,assets:this.repos.media.assets},assets:this.assets,media:this.media,current:()=>this.current(live),bot:()=>this.repos.bots.bot(live.binding.scope.botId)};if(manifest.tool.name==='bot_sing')return registeredMediaResult(await executeSingingTool(live,args,exec.signal,dependencies));if(manifest.tool.name==='bot_music')return registeredMediaResult(await executeMusicTool(live,args,exec.signal,dependencies));if(manifest.tool.name==='bot_voice')live.voice.attempted=true;let operation=resolveSkillOperation(manifest,args);let inputs=args.inputs??[];if(manifest.tool.name==='media_analysis'){if(Object.keys(args).some(key=>!['inputs','question'].includes(key)))throw new Error('MEDIA_ANALYSIS_ARGUMENTS_INVALID');if(!Array.isArray(inputs)||!inputs.length)throw new Error('MEDIA_INPUT_REQUIRED');const kinds=inputs.map((id:string)=>this.repos.media.assets.asset(live.binding.key,id).kind);if(new Set(kinds).size!==1)throw new Error('MEDIA_INPUT_KIND_INVALID');if(kinds[0]==='image')operation='image_understand';else if(kinds[0]==='file')operation='document_read';else if(kinds[0]==='audio')operation='transcribe';else if(kinds[0]==='video')operation='video_analyze';else throw new Error('MEDIA_INPUT_KIND_INVALID');}if(manifest.tool.name==='media_download'){if(Object.keys(args).some(key=>!['url','deliver'].includes(key)))throw new Error('MEDIA_DOWNLOAD_ARGUMENTS_INVALID');if(args.deliver===undefined)args={...args,deliver:false};}return this.mediaTool(ownerLive,exec.agent,operation,inputs,args,exec.signal);}}));
+    for(const manifest of skillToolManifests) register(defineTool({...manifest.tool,parameters:{...manifest.tool.parameters,...(manifest.tool.name==='bot_voice'?{deliver:{type:'boolean' as const},keepInputs:{type:'boolean' as const}}:{})},output:{schema:{type:'string'},render:renderMedia},execute:async(args:any,exec:any)=>{const live=this.turn(ownerLive,exec.agent);const dependencies={repos:{bindings:this.repos.sessions,music:this.repos.media.music,singing:this.repos.media.singing,personas:this.repos.personas,capabilities:this.repos.capabilities,assets:this.repos.media.assets},assets:this.assets,media:this.media,current:()=>this.current(live),bot:()=>this.repos.bots.bot(live.binding.scope.botId)};if(manifest.tool.name==='bot_sing')return registeredMediaResult(await executeSingingTool({binding:live.binding,snapshot:live.snapshot,assets:live.assets,singing:live.singing},args,exec.signal,dependencies));if(manifest.tool.name==='bot_music')return registeredMediaResult(await executeMusicTool({binding:live.binding,snapshot:live.snapshot,assets:live.assets},args,exec.signal,dependencies));if(manifest.tool.name==='bot_voice')live.voice.attempted=true;let operation=resolveSkillOperation(manifest,args);let inputs=args.inputs??[];if(manifest.tool.name==='media_analysis'){if(Object.keys(args).some(key=>!['inputs','question'].includes(key)))throw new Error('MEDIA_ANALYSIS_ARGUMENTS_INVALID');if(!Array.isArray(inputs)||!inputs.length)throw new Error('MEDIA_INPUT_REQUIRED');const kinds=inputs.map((id:string)=>this.repos.media.assets.asset(live.binding.key,id).kind);if(new Set(kinds).size!==1)throw new Error('MEDIA_INPUT_KIND_INVALID');if(kinds[0]==='image')operation='image_understand';else if(kinds[0]==='file')operation='document_read';else if(kinds[0]==='audio')operation='transcribe';else if(kinds[0]==='video')operation='video_analyze';else throw new Error('MEDIA_INPUT_KIND_INVALID');}if(manifest.tool.name==='media_download'){if(Object.keys(args).some(key=>!['url','deliver'].includes(key)))throw new Error('MEDIA_DOWNLOAD_ARGUMENTS_INVALID');if(args.deliver===undefined)args={...args,deliver:false};}return this.mediaTool(ownerLive,exec.agent,operation,inputs,args,exec.signal);}}));
     register(defineTool({name:'image_generation',description:'Generate or edit image(s) with the configured image service. For edits, pass the selected reference attachment IDs in inputs. If omitted, only a single image attached to or quoted in this turn can be inferred. Set model when the user specifies one; otherwise use the default model. Set width, height, n and output_format only when the selected service contract supports the requested option.',parameters:{prompt:{type:'string',required:true},model:{type:'string'},operation:{type:'string',enum:['generate','edit']},width:{type:'number'},height:{type:'number'},n:{type:'number'},output_format:{type:'string',enum:['png','jpg','jpeg','webp','gif','svg']},complexity:{type:'string',enum:['low','medium','high']},frame_count:{type:'number'},frame_duration_ms:{type:'number'},deliver:{type:'boolean'},inputs:{type:'array',items:{type:'string'}}},output:{schema:{type:'string'},render:renderMedia},execute:async(args,exec)=>this.mediaTool(ownerLive,exec.agent,Array.isArray(args.inputs)&&args.inputs.length?'image_edit':args.operation==='edit'?'image_edit':'image_generate',args.inputs??[],args,exec.signal)}));
     register(defineTool({name:'bot_send_file',description:'Register an asset or authorized workspace file for delivery. assetId reuses an attachment; path is workspace-relative. Use resend only for an explicit resend.',parameters:{assetId:{type:'string'},path:{type:'string'},mime:{type:'string'},resend:{type:'boolean'},append:{type:'boolean'},asFile:{type:'boolean'}},output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},execute:async(args,exec)=>{const live=this.turn(ownerLive,exec.agent);
       let id=args.assetId,imported=false;

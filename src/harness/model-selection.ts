@@ -2,7 +2,7 @@ import type {Context} from '@deepseek-ai/cordis';
 import type {ModelSelectionRef} from '@deepseek-ai/dsh-agent';
 import {createDeveloperMessage,createUserMessage} from '@deepseek-ai/dsh-llm';
 
-/** Apply the frozen bot model without adding runtime notices to the conversation. */
+/** Bind each request to the model selected when its prompt was assembled. */
 export function installBotModelSelection(ctx:Context,selection:ModelSelectionRef):()=>void {
   const registerNotice=()=>ctx.on('agent/pre-step',async({signal},next)=>{
     const result=await next();if(result.kind==='reject'||signal.aborted)return result;

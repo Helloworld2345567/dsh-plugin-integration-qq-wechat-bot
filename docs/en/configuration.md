@@ -7,7 +7,8 @@ This page documents only configuration read by current code/tests. Setting an un
 ## Precedence and general rules
 
 - Personas own prompts and files; each bot stores its model, replies, media, tool and skill permissions. Bots can share personas; switching preserves history, bot settings and session overrides.
-- Persona edits create revisions; bot settings save independently. Both apply next turn, while running turns keep frozen configuration. Existing bots copy runtime settings once from their V4 persona; later legacy persona-field edits cannot overwrite them.
+- Persona edits in the panel create revisions. Bot settings save independently. These edits apply next turn. Existing bots copy runtime settings once from their V4 persona and retain their own settings after that.
+- In trusted private chats the main agent can choose a listed chat model, persona, image service or TTS/STS voice to fulfill a task. It honors the user’s named choice and keeps the current selection when it meets the request. A successful switch saves the choice for the session and applies to the next model request or matching media operation in the current turn. Jobs already running keep their original settings.
 - Configure image services under Services and select them in bot media settings; other media use managed Service Profiles. Harness credentials owns QQ/WeChat, chat-model and media-analysis credentials.
 
 ## Product and runtime directories
@@ -40,9 +41,9 @@ Address, model, protocol and workflow are explicit arguments, without environmen
 
 ### Session image service selection
 
-In trusted private chats, `/image` or `/image list` shows the current-turn and next-turn image services and session override state. Switch with `/image openai`, `/image comfyui`, or `/image google`; protocol names are case-insensitive. Natural requests such as “switch the image service to Google” use `bot_image_control` with the same behavior.
+In trusted private chats, `/image` or `/image list` shows the current-turn and next-turn image services and session override state. Use `/image openai`, `/image comfyui` or `/image google` to choose the service for subsequent messages. Protocol names are case-insensitive.
 
-Selection precedence is session override → bot image settings → global Services default. `/image reset` clears the session override. Changes apply next turn; running generation keeps its original service. Switching and requesting an image in the same message still uses the original service for that turn.
+For a request such as “use ComfyUI to edit the image I quoted,” the model can switch with `bot_image_control` and edit the image with ComfyUI in the same turn. Selection precedence is session override → bot image settings → global Services default. `/image reset` clears the session override.
 
 Overrides survive restarts, new or cleared sessions, and persona switches. Restoring history uses that session's saved selection. Disabled image capabilities prevent setting a service, but queries and clearing overrides remain available. Commands only select existing service configuration: they do not change addresses, keys, models or workflows, probe service health, or automatically switch services after generation failures.
 

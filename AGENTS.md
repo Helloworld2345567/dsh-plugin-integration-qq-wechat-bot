@@ -3,7 +3,7 @@
 - Use PowerShell 7 and `rg` on Windows.
 - For panel UI changes, follow [UI design and extension guidance](docs/cn/ui-design-guidelines.md): preserve existing configuration scope, keep copy concise, and use consistent interaction contracts.
 - Keep implementation in `src/`, media workers in `python/`, shared image operations in `skills/image-generation/`, and tests in `tests/`.
-- Bot configurations are personas. Switching a persona preserves session history and applies from the next turn; freeze in-flight configuration and recheck revoked permissions at execution time.
+- A trusted private chat’s main agent can select and save a chat model, persona, image service or TTS/STS voice for its own session. Apply the selection to subsequent steps in that turn and preserve history. Freeze already-started work and recheck revoked permissions at execution time.
 - Channel identity owns sessions, attachments, memories and outputs. Do not trust model-supplied identity or paths.
 - Keep runtime data, credentials, endpoints and user IDs out of release files. Credentials belong to the Harness credentials service; image keys come from environment variables.
 - Package with `npm run release:pack`; `prepublishOnly` enforces the same `npm run verify:release` gate for `npm publish`.

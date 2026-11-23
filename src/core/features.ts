@@ -20,18 +20,18 @@ export const botModelArgumentsSchema=z.object({action:z.enum(['list','set','rese
   if(value.action!=='set'&&(value.provider!==undefined||value.model!==undefined))ctx.addIssue({code:'custom',message:'list/reset 不接受 provider 或 model',params:{message:systemDescriptor('modelListResetInvalid')}});
 });
 export type BotModelArguments=z.infer<typeof botModelArgumentsSchema>;
-export interface BotModelResult {action:BotModelArguments['action'];sessionId:string;personaId:string;currentTurnModel:BotConfig['model'];nextTurnModel:BotConfig['model'];override:boolean;effective:'current'|'next_turn';models?:ModelCatalogItem[]}
+export interface BotModelResult {action:BotModelArguments['action'];sessionId:string;personaId:string;currentTurnModel:BotConfig['model'];nextTurnModel:BotConfig['model'];override:boolean;effective:'current';models?:ModelCatalogItem[]}
 export const botVoiceArgumentsSchema=z.object({role:z.enum(['tts','sts']),action:z.enum(['list','set','reset']),id:z.string().trim().min(1).max(200).optional()}).strict().superRefine((value,ctx)=>{
   if(value.action==='set'&&!value.id)ctx.addIssue({code:'custom',message:'set 需要 list 返回的准确音色 ID',params:{message:systemDescriptor('voiceSetRequired')}});
   if(value.action!=='set'&&value.id!==undefined)ctx.addIssue({code:'custom',message:'list/reset 不接受音色 ID',params:{message:systemDescriptor('voiceListResetInvalid')}});
 });
 export type BotVoiceArguments=z.infer<typeof botVoiceArgumentsSchema>;
-export interface BotVoiceResult {role:BotVoiceArguments['role'];action:BotVoiceArguments['action'];sessionId:string;current?:string;next?:string;override:boolean;effective:'current'|'next_turn';items?:ReadonlyArray<{id:string;displayName:string;modelLabel?:string;state:string;selectable:boolean;serviceId?:string;profileId?:string}>}
+export interface BotVoiceResult {role:BotVoiceArguments['role'];action:BotVoiceArguments['action'];sessionId:string;current?:string;next?:string;override:boolean;effective:'current';items?:ReadonlyArray<{id:string;displayName:string;modelLabel?:string;state:string;selectable:boolean;serviceId?:string;profileId?:string}>}
 export const botImageArgumentsSchema=z.object({action:z.enum(['list','set','reset']),protocol:z.string().trim().toLowerCase().pipe(imageProtocolSchema).optional()}).strict().superRefine((value,ctx)=>{
   if((value.action==='set')!==(value.protocol!==undefined))ctx.addIssue({code:'custom',message:'Only set requires an image protocol',params:{message:systemDescriptor('imageUsage')}});
 });
 export type BotImageArguments=z.infer<typeof botImageArgumentsSchema>;
-export interface BotImageResult {action:BotImageArguments['action'];sessionId:string;currentTurnProtocol:ImageProtocol;nextTurnProtocol:ImageProtocol;override:boolean;protocols:readonly ImageProtocol[];effective:'current'|'next_turn'}
+export interface BotImageResult {action:BotImageArguments['action'];sessionId:string;currentTurnProtocol:ImageProtocol;nextTurnProtocol:ImageProtocol;override:boolean;protocols:readonly ImageProtocol[];effective:'current'}
 
 interface ContentChange {id:string;kind:'persona'|'skill'|'reload';scopeKey:string;configId:string;goal:string;before:BotConfig;after?:BotConfig;phase:'preparing'|'succeeded'|'failed'|'rolled-back';createdAt:number;updatedAt:number;error?:string}
 export function parseStatsArguments(args:string):StatsQueryInput {
@@ -92,7 +92,7 @@ export class BotFeatures {
   async model(binding:SessionBinding,snapshot:TurnSnapshot,input:unknown,signal:AbortSignal):Promise<BotModelResult>{
     const authorize=():void=>{
       signal.throwIfAborted();const current=this.runtime.repos.sessions.findBinding(binding.key);
-      if(!current||current.sessionId!==binding.sessionId||scopeKey(current.scope)!==binding.key||scopeKey(binding.scope)!==binding.key||snapshot.botId!==current.scope.botId)throw Error('MODEL_SESSION_CHANGED');
+      if(!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation||scopeKey(current.scope)!==binding.key||scopeKey(binding.scope)!==binding.key||snapshot.botId!==current.scope.botId)throw Error('MODEL_SESSION_CHANGED');
       const bot=this.runtime.repos.bots.bot(current.scope.botId);if(!allowedNow('bot_model',snapshot,this.runtime.effectiveConfig(current),bot,current.scope))throw Error('TRUSTED_PRIVATE_REQUIRED');
     };
     authorize();const args=botModelArgumentsSchema.parse(input);const command=managementCommand({name:'model',args:args.action==='list'?'':args.action==='reset'?'reset':`${args.provider} ${args.model}`})!;const result=await this.runtime.commandBus.execute({source:'tool',binding,snapshot,signal,authorize},command);if(result.kind!=='reply'||!result.data)throw Error('MODEL_CONTROL_FAILED');return result.data as BotModelResult;

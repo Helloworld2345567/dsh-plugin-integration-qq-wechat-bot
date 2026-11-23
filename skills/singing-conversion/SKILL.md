@@ -1,6 +1,6 @@
 ---
 name: singing-conversion
-description: Acquire a real song from the music catalog, or use a current-session audio attachment or explicit public source, then apply separation and RVC to produce the current persona's AI voice.
+description: Convert a song from the music catalog, a session attachment or a public source with the session’s selected STS voice.
 ---
 
 # Song and speech voice conversion

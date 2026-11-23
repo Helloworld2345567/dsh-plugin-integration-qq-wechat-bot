@@ -25,7 +25,7 @@ flowchart LR
 
 ## Identity, configuration and permissions
 
-Channel identity owns sessions, attachments, memories and outputs. Models cannot supply trusted identity or local paths. Bots may share personas while channel ownership remains isolated. Each turn freezes persona, model, skill, tool and media configuration; edits apply next turn. Execution also checks current permissions, so revocation blocks subsequent calls.
+Channel identity owns sessions, attachments, memories and outputs. Models cannot supply trusted identity or local paths. Bots may share personas while channel ownership remains isolated. Each turn starts with a configuration snapshot. In a trusted private chat the main agent can switch the session’s chat model, persona, image service and TTS/STS voices for subsequent steps. Media jobs keep the settings they started with. Execution also checks current permissions, so revocation blocks subsequent calls.
 
 Personas are edited through `config.json` and `persona.md`. The persona format uses `schemaVersion: 4`. SQLite revisions are the active snapshots; applying files validates schema, revision and file state. Bots keep independent runtime settings; persona switching retains history and session model/voice/image-service overrides. Harness credentials owns authorization secrets with a consistent mapping for valid bot IDs.
 
@@ -54,7 +54,8 @@ Channel media storage is separate from session directories. SQLite records attac
 | `image_generation` | Generate/edit through configured OpenAI-compatible services, Google Gemini, or ComfyUI workflows |
 | `bot_voice`, `bot_music`, `bot_sing` | Speech, music acquisition and RVC conversion using shared jobs and attachment delivery |
 | `bot_session` | Query, create, compact or resume sessions; host commands handle immediate stop |
-| `bot_model`, `bot_voice_control`, `bot_image_control` | Change current-session overrides for the next turn |
+| `bot_model`, `bot_persona` | Save the session selection and use it for the next model request in the same turn |
+| `bot_image_control`, `bot_voice_control` | Save the image service, TTS voice or STS voice and use it for the next matching media operation |
 | `bot_skills` | List skills or change the current bot’s enabled skills for subsequent turns in its sessions |
 
 `skills/catalog.json` and each skill's `operations.json` declare fixed entries, routes, parameters, model roles and delivery. Builds generate Host/Python registries. The host dispatches operation IDs; Python imports fixed `dsh_bot_runtime` entries from a trusted package root. Personas, workspaces and model responses never discover executable code; skills cannot send platform messages directly.

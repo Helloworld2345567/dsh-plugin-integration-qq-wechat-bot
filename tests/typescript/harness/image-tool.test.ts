@@ -27,9 +27,9 @@ test('image control validates protocol-only actions and requires trusted private
   for(const other of [{...scope,kind:'group' as const,channelId:'group'},{...scope,senderId:'other',channelId:'other'}])assert.equal(permitted('bot_image_control',config,bot,other),false);
 });
 
-test('image tool exposes safe arguments and results, and is discoverable with next-turn guidance',async()=>{
+test('image control exposes the saved choice and guides the next image call in this turn',async()=>{
   const calls:unknown[]=[];
-  const tool=defineBotImageControlTool(async args=>{calls.push(args);return{action:args.action,sessionId:'host-session',currentTurnProtocol:'openai',nextTurnProtocol:args.protocol??'openai',override:args.action==='set',protocols:['openai','google','comfyui'],effective:args.action==='list'?'current':'next_turn'};});
+  const tool=defineBotImageControlTool(async args=>{calls.push(args);return{action:args.action,sessionId:'host-session',currentTurnProtocol:args.protocol??'openai',nextTurnProtocol:args.protocol??'openai',override:args.action==='set',protocols:['openai','google','comfyui'],effective:'current'};});
   assert.equal(tool.name,'bot_image_control');
   assert.deepEqual(Object.keys((tool.parameters as any).properties).sort(),['action','protocol']);
   assert.equal(tool.isConcurrencySafe?.({action:'list'}),true);
@@ -37,12 +37,12 @@ test('image tool exposes safe arguments and results, and is discoverable with ne
   assert.equal(tool.isConcurrencySafe?.({action:'reset'}),false);
   const exec={signal:new AbortController().signal} as ToolRunContext;
   const result=JSON.parse(await tool.execute({action:'set',protocol:'GOOGLE'},exec) as string);
-  assert.equal(result.sessionId,undefined);assert.equal(result.currentTurnProtocol,'openai');assert.equal(result.nextTurnProtocol,'google');assert.equal(result.effective,'next_turn');
+  assert.equal(result.sessionId,undefined);assert.equal(result.currentTurnProtocol,'google');assert.equal(result.nextTurnProtocol,'google');assert.equal(result.effective,'current');
   assert.deepEqual(calls,[{action:'set',protocol:'google'}]);
   await assert.rejects(tool.execute({action:'set',protocol:'google',baseUrl:'https://private.invalid'},exec));
-  assert.match(toolCatalogDescription([tool as any]),/bot_image_control: List or switch this session image service/);
+  assert.match(toolCatalogDescription([tool as any]),/bot_image_control: Select and save an image service for this task/);
   const prompt=buildChatPrompt({personaPrompt:'P',platform:'qq',loadedTools:new Set(['bot_image_control']),skillNames:[]}).sections.find(section=>section.name==='bot-management')!.text;
-  assert.match(prompt,/explicit user request/);assert.match(prompt,/currentTurnProtocol/);assert.match(prompt,/nextTurnProtocol/);assert.match(prompt,/next turn/);assert.match(prompt,/preserves session overrides/);
+  assert.match(prompt,/next image operation uses currentTurnProtocol/);assert.match(prompt,/capabilities returned by the switch/);assert.match(prompt,/same turn/);
 });
 
 async function fixture(t:any){
@@ -54,20 +54,22 @@ async function fixture(t:any){
   store.bots.saveBot({...bot,configId:'sakura'});const binding=store.sessions.binding(scope);
   const snapshot=()=>freezeTurn(runtime.effectiveConfig(store.sessions.binding(scope)),store.bots.bot('bot'),scope,[],undefined,'zh',media.imageSettings());
   t.after(async()=>{await runtime.close();store.close();await rm(directory,{recursive:true,force:true});});
-  return{store,runtime,features,binding,snapshot};
+  return{store,runtime,features,harness,binding,snapshot};
 }
 
-test('natural image set/reset uses the bound session and preserves the current parent/child service',async t=>{
+test('image set/reset publishes the selected protocol to the parent and keeps earlier child work isolated',async t=>{
   const f=await fixture(t),parent=f.snapshot(),child=f.snapshot(),original=f.store.bots.bot('bot');
   const another=f.store.sessions.binding({...scope,senderId:'another',channelId:'another'});
+  let active=parent;
+  f.harness.applyTurnSelection=(_binding,before,updated)=>{assert.equal(before,active);active=updated;};
   for(const protocol of ['google','comfyui','openai']){
-    const result=await f.features.image(f.binding,parent,{action:'set',protocol},new AbortController().signal);
-    assert.equal(result.effective,'next_turn');assert.equal(result.currentTurnProtocol,'openai');assert.equal(result.nextTurnProtocol,protocol);
+    const result=await f.features.image(f.binding,active,{action:'set',protocol},new AbortController().signal);
+    assert.equal(result.effective,'current');assert.equal(result.currentTurnProtocol,protocol);assert.equal(result.nextTurnProtocol,protocol);
     assert.equal(f.runtime.imageSelection(f.store.sessions.binding(scope)).nextTurnProtocol,protocol);
-    assert.equal(f.runtime.imageSelection(f.binding,parent).currentTurnProtocol,'openai');assert.equal(f.runtime.imageSelection(f.binding,child).currentTurnProtocol,'openai');
+    assert.equal(f.runtime.imageSelection(f.binding,active).currentTurnProtocol,protocol);assert.equal(f.runtime.imageSelection(f.binding,child).currentTurnProtocol,'openai');
   }
   assert.deepEqual(f.store.bots.bot('bot'),original);assert.equal(f.store.sessions.findBinding(another.key)!.imageProtocolOverride,undefined);
-  const reset=await f.features.image(f.binding,parent,{action:'reset'},new AbortController().signal);assert.equal(reset.override,false);assert.equal(reset.nextTurnProtocol,'openai');
+  const reset=await f.features.image(f.binding,active,{action:'reset'},new AbortController().signal);assert.equal(reset.override,false);assert.equal(reset.currentTurnProtocol,'openai');assert.equal(reset.nextTurnProtocol,'openai');
 });
 
 test('image control rejects cancellation, stale generations and sessions, forged scope and revoked trust without writes',async t=>{
@@ -87,4 +89,7 @@ test('disabling image generation blocks set while list and reset remain availabl
   await assert.rejects(f.features.image(f.binding,snapshot,{action:'set',protocol:'comfyui'},signal));assert.equal(f.store.sessions.binding(scope).imageProtocolOverride,'google');
   const listed=await f.features.image(f.binding,snapshot,{action:'list'},signal);assert.equal(listed.nextTurnProtocol,'google');
   const reset=await f.features.image(f.binding,snapshot,{action:'reset'},signal);assert.equal(reset.override,false);assert.equal(f.runtime.effectiveConfig(f.store.sessions.binding(scope)).media.image?.enabled,false);
+  const disabled=f.snapshot();f.store.bots.saveBot(current);
+  await assert.rejects(f.features.image(f.binding,disabled,{action:'set',protocol:'google'},signal),/未启用/);
+  assert.equal(f.store.sessions.binding(scope).imageProtocolOverride,undefined);
 });

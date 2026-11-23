@@ -39,11 +39,23 @@ test('model tool declaration exposes only list/set/reset and executes the host-b
   await assert.rejects(tool.execute({action:'set',provider:'Fixture',model:'Gemini-Case',sessionId:'another'},exec));assert.equal(f.store.sessions.binding(scope).modelOverride,undefined);
   assert.equal(tool.isConcurrencySafe?.({action:'set',provider:'Fixture',model:'Gemini-Case'}),false);
 });
-test('trusted model set/reset changes only host-bound session and leaves frozen parent/child and shared persona unchanged',async t=>{
+test('trusted model set/reset publishes the selected model to this turn and persists its session override',async t=>{
   const f=await fixture(t);const original=f.store.personas.config('sakura');const parent=f.snapshot(),child=f.snapshot();const another=f.store.sessions.binding({...scope,senderId:'another',channelId:'another'});
-  const set=await f.features.model(f.binding,parent,{action:'set',provider:'Fixture',model:'Gemini-Case'},new AbortController().signal);
-  assert.equal(set.effective,'next_turn');assert.deepEqual(set.currentTurnModel,f.catalog[0]);assert.deepEqual(set.nextTurnModel,f.catalog[1]);assert.deepEqual(parent.config.model,f.catalog[0]);assert.deepEqual(child.config.model,f.catalog[0]);assert.deepEqual(f.store.personas.config('sakura'),original);assert.equal(f.store.sessions.findBinding(another.key)!.modelOverride,undefined);assert.deepEqual(f.snapshot().config.model,f.catalog[1]);
-  const reset=await f.features.model(f.binding,f.snapshot(),{action:'reset'},new AbortController().signal);assert.deepEqual(reset.nextTurnModel,f.catalog[0]);assert.equal(reset.override,false);assert.deepEqual(f.store.personas.config('sakura'),original);
+  let active=parent;
+  f.harness.applyTurnSelection=(binding,before,updated)=>{assert.equal(binding.sessionId,f.binding.sessionId);assert.equal(before,active);active=updated;};
+  const set=await f.features.model(f.binding,active,{action:'set',provider:'Fixture',model:'Gemini-Case'},new AbortController().signal);
+  assert.equal(set.effective,'current');assert.deepEqual(set.currentTurnModel,f.catalog[1]);assert.deepEqual(set.nextTurnModel,f.catalog[1]);assert.deepEqual(active.config.model,f.catalog[1]);
+  assert.deepEqual(parent.config.model,f.catalog[0]);assert.deepEqual(child.config.model,f.catalog[0]);assert.deepEqual(f.store.personas.config('sakura'),original);assert.equal(f.store.sessions.findBinding(another.key)!.modelOverride,undefined);assert.deepEqual(f.snapshot().config.model,f.catalog[1]);
+  const reset=await f.features.model(f.binding,active,{action:'reset'},new AbortController().signal);assert.deepEqual(reset.currentTurnModel,f.catalog[0]);assert.deepEqual(reset.nextTurnModel,f.catalog[0]);assert.deepEqual(active.config.model,f.catalog[0]);assert.equal(reset.override,false);
+});
+test('reset without a bot default preserves the active model and the saved override',async t=>{
+  const f=await fixture(t),signal=new AbortController().signal;
+  await f.features.model(f.binding,f.snapshot(),{action:'set',...f.catalog[1]},signal);
+  const active=f.snapshot(),bot=f.store.bots.bot('bot');
+  f.store.bots.saveBot({...bot,settings:{...bot.settings!,model:null}});
+  await assert.rejects(f.features.model(f.binding,active,{action:'reset'},signal),/聊天模型/);
+  assert.deepEqual(f.store.sessions.binding(scope).modelOverride,f.catalog[1]);
+  assert.deepEqual(f.store.turnSnapshots.findTurnSnapshot(f.binding.sessionId)?.config.model,f.catalog[1]);
 });
 test('ordinary/group callers and newly granted privileges cannot access model management mid-turn',async t=>{
   const f=await fixture(t);const config=f.store.personas.config('sakura');
@@ -58,6 +70,7 @@ test('catalog revocation, cancelled calls, unknown models and stale sessions fai
   const f=await fixture(t);const frozen=f.snapshot();
   await assert.rejects(f.features.model(f.binding,frozen,{action:'set',provider:'Fixture',model:'missing'},new AbortController().signal),/UNKNOWN_MODEL/);assert.equal(f.store.sessions.binding(scope).modelOverride,undefined);
   const cancelled=new AbortController();cancelled.abort();await assert.rejects(f.features.model(f.binding,frozen,{action:'reset'},cancelled.signal));
+  await assert.rejects(f.features.model({...f.binding,generation:f.binding.generation+1},frozen,{action:'set',...f.catalog[1]},new AbortController().signal),/MODEL_SESSION_CHANGED/);
   f.harness.models=async()=>{f.store.bots.saveBot({...f.store.bots.bot('bot'),trustedUsers:[]});return f.catalog;};await assert.rejects(f.features.model(f.binding,frozen,{action:'list'},new AbortController().signal),/TRUSTED/);
   f.store.bots.saveBot({...f.store.bots.bot('bot'),trustedUsers:['owner']});f.store.sessions.reset(scope);await assert.rejects(f.features.model(f.binding,frozen,{action:'set',provider:'Fixture',model:'Gemini-Case'},new AbortController().signal),/MODEL_SESSION_CHANGED/);assert.equal(f.store.sessions.binding(scope).modelOverride,undefined);
 });

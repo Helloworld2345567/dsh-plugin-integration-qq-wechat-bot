@@ -1,11 +1,11 @@
 ---
 name: image-generation
-description: Dispatch image generation to the image service selected by operator configuration.
+description: Generate and edit images with the session’s selected image service.
 ---
 
 # Image generation
 
-Use `image_generation` for an explicit request to create or edit an image. The host appends the selected service contract to the tool result; use those reported capabilities and do not inspect local service paths or guess provider support.
+Use `image_generation` for an explicit request to create or edit an image. The host appends the selected service contract when you read this skill. If you switch the service, use its updated contract for subsequent image calls. Keep local service paths private.
 
 - For editing, use `operation="edit"` and pass the selected attachment IDs in `inputs`. The host can infer one unique image attached to or quoted in the current turn. If several images are available, select the requested references or ask which to edit. If the reference is missing, ask for it before proceeding.
 - Pass `model`, `width`/`height`, `n` or `output_format` only when the user explicitly asks for them. Keep the configured service defaults otherwise.

@@ -552,11 +552,28 @@ export async function apply(ctx:Context){
     ]){const denied=await ctx.tools.execute({...call,callId:ToolCallId('child-mutation-'+call.name+'-'+call.arguments.action),agent:modelFrozenChild.agent,signal:AbortSignal.timeout(5000)});assert.equal(denied.isError,true,JSON.stringify(call));assert.match(JSON.stringify(denied),/MAIN_AGENT_REQUIRED/,'child mutation must be rejected by the main-agent gate, not by missing inbox state');}
     assert.equal(actions.sessionActions().length,actionCountBeforeChild,'rejected child mutations must not create queued work');
     for(const call of [{name:'bot_session',arguments:{action:'status'}},{name:'bot_session',arguments:{action:'list'}},{name:'bot_model',arguments:{action:'list'}},{name:'bot_image_control',arguments:{action:'list'}},{name:'bot_persona',arguments:{action:'list'}},{name:'bot_skills',arguments:{action:'list'}}]){const result=toolJson(await ctx.tools.execute({...call,callId:ToolCallId('child-query-'+call.name+'-'+call.arguments.action),agent:modelFrozenChild.agent,signal:AbortSignal.timeout(5000)}));assert.equal(result.action,call.arguments.action);noHostPaths(result);}
-    const beforeModelSwitch=requests.length;mediaCall={name:'bot_model',args:{action:'set',provider:'bot-fixture',model:'first'}};
-    await bridge.run(sessions.binding(scope),[msg('natural-model-switch','请把当前会话切换到 first 模型')],AbortSignal.timeout(30000));const switchRequests=requests.slice(beforeModelSwitch).filter(r=>r.sessionId===active.id);assert.ok(switchRequests.length>=2,'tool call and its continuation must both execute');assert.ok(switchRequests.every(r=>r.model==='second'),'the model switch tool must not change its in-flight continuation model');
-    const switchTool=switchRequests.at(-1)!.messages.filter(m=>m.role==='tool').at(-1)!;assert.equal(switchTool.role,'tool');assert.equal(switchTool.isError,false,JSON.stringify(switchTool));const switchResult=JSON.parse(switchTool.content.filter(b=>b.type==='text').map(b=>b.text).join(''));assert.equal(switchResult.effective,'next_turn');assert.equal(switchResult.currentTurnModel.model,'second');assert.equal(switchResult.nextTurnModel.model,'first');assert.equal(personas.config('sakura').model?.model,'second');
-    await bridge.run(sessions.binding(scope),[msg('model-next-turn','现在用切换后的模型继续')],AbortSignal.timeout(30000));assert.equal(requests.at(-1)!.model,'first');
+    const requestedModel={provider:'bot-fixture-history',model:'first'};
+    const switchInput=msg('natural-model-switch','用 default 人格和 bot-fixture-history 的 first 模型回答：你叫什么？');
+    const beforeSwitch=active.session.snapshotEvents().length,beforeModelSwitch=requests.length,beforeNewProvider=inHistoryRequests.length;
+    mediaCall={name:'bot_persona',args:{action:'set',personaId:'default'}};
+    beforeTool=async()=>{mediaCall={name:'bot_model',args:{action:'set',...requestedModel}};};
+    const switched=await bridge.run(sessions.binding(scope),[switchInput],AbortSignal.timeout(30000));
+    const switchEvents=active.session.snapshotEvents().slice(beforeSwitch);
+    assert.equal(switchEvents.filter(event=>event.type==='turn/start').length,1);
+    assert.equal(switchEvents.filter(event=>event.type==='user/message'&&event.data.source.kind==='user').length,1);
+    const oldRoute=requests.slice(beforeModelSwitch).filter(r=>r.sessionId===active.id);
+    assert.match(systemTexts(oldRoute[0]).join('\n'),/PERSONA_B_FILE/);
+    assert.match(systemTexts(oldRoute.at(-1)!).join('\n'),/PERSONA_A/,'the persona must reach the next model step even before changing providers');
+    const [newRoute]=inHistoryRequests.slice(beforeNewProvider);
+    assert.ok(newRoute);assert.equal(newRoute.sessionId,active.id);assert.equal(newRoute.provider,requestedModel.provider);assert.equal(newRoute.model,requestedModel.model);
+    assert.match(systemTexts(newRoute).join('\n'),/PERSONA_A/);assert.ok(requestText(newRoute).includes(switchInput.text));
+    const switchResult=toolJson(newRoute.messages.findLast(message=>message.role==='tool'));
+    assert.equal(switchResult.effective,'current');assert.deepEqual(switchResult.currentTurnModel,requestedModel);assert.deepEqual(switchResult.nextTurnModel,requestedModel);
+    assert.equal(switched.snapshot.personaId,'default');assert.deepEqual(switched.outputs,[{type:'text',text:'HISTORY_FIXTURE_DONE'}]);
+    assert.equal(personas.config('sakura').model?.model,'second');
+    const continued=await bridge.run(sessions.binding(scope),[msg('model-next-turn','现在用切换后的模型继续')],AbortSignal.timeout(30000));assert.deepEqual(continued.snapshot.config.model,requestedModel);assert.equal(continued.snapshot.personaId,'default');assert.equal(inHistoryRequests.length,beforeNewProvider+2);
     modelFrozenChild.agent.followup({id:MessageId('frozen-model-child'),role:'user',content:[{type:'text',text:'父会话切换模型后子任务保持自己的冻结模型'}],source:{kind:'user'}});await modelFrozenChild.agent.whenIdle();assert.equal(requests.filter(r=>r.sessionId===modelFrozenChild.agent.id).at(-1)!.model,'second');await modelFrozenChild.dispose();
+    await runtime.setModel(scope,{provider:'bot-fixture',model:'first'});
     const imageControlScope={...scope,channelId:'image-control'},imageControlBinding=sessions.binding(imageControlScope),imageMediaBefore=bots.bot('fixture').settings!.media;
     const imageControlWorkflow=path.join(customCwd,'image-control-workflow.json');
     const controlImageSettings=imageServiceSettingsSchema.parse({...runtime.media.imageSettings(),comfyUiWorkflowPath:imageControlWorkflow});
@@ -567,25 +584,38 @@ export async function apply(ctx:Context){
       assert.equal(result.isError,false,JSON.stringify(result));const text=result.content.flatMap(block=>block.type==='text'?[block.text]:[]).join('\n');
       const match=/Selected image service contract: (\{.*\})\. Use only these reported capabilities/.exec(text);assert.ok(match);return JSON.parse(match[1]);
     };
+    const originalWorker=runtime.media.worker.run;
     try{
       updateSettings({media:{...imageMediaBefore,image:{enabled:true,protocol:'openai'}}});
-      await writeFile(imageControlWorkflow,JSON.stringify({'1':{class_type:'UNETLoader',inputs:{unet_name:'krea-2-turbo.safetensors'}},'2':{class_type:'KSampler',inputs:{model:['1',0]}},'3':{class_type:'VAEDecode',inputs:{samples:['2',0]}},'4':{class_type:'SaveImage',inputs:{images:['3',0]}}}));
+      await writeFile(imageControlWorkflow,JSON.stringify({'1':{class_type:'UNETLoader',inputs:{unet_name:'krea-2-turbo.safetensors'}},'2':{class_type:'KSampler',inputs:{model:['1',0],latent_image:['6',0]}},'3':{class_type:'VAEDecode',inputs:{samples:['2',0]}},'4':{class_type:'SaveImage',inputs:{images:['3',0]}},'5':{class_type:'LoadImage',inputs:{image:'reference.png'}},'6':{class_type:'VAEEncode',inputs:{pixels:['5',0]}}}));
+      const source=await runtime.assets.save(imageControlBinding.key,{kind:'image',name:'quoted-reference.png',mime:'image/png'},pixels);
+      const imageJobs:Array<{operation:string;protocol:unknown;workflow:unknown;inputs:string[]}>=[];
+      runtime.media.worker.run=async job=>{
+        assert.equal(job.scope,imageControlBinding.key);
+        imageJobs.push({operation:job.operation,protocol:job.endpoint?.protocol,workflow:job.endpoint?.workflowPath,inputs:job.inputs.map(input=>input.path)});
+        const file=path.join(job.output,'result.png');await writeFile(file,pixels);
+        return{assets:[{path:file,kind:'image',mime:'image/png',name:'result.png'}]};
+      };
       const beforeImageSwitch=requests.length;mediaCall={name:'bot_image_control',args:{action:'set',protocol:'comfyui'}};
-      await bridge.run(imageControlBinding,[imageControlMessage('natural-image-switch','切换图片服务到 ComfyUI')],AbortSignal.timeout(30000),{snapshot:imageControlSnapshot()});
+      beforeTool=async()=>{mediaCall={name:'image_generation',args:{operation:'edit',prompt:'Make the scene nighttime'}};};
+      const edited=await bridge.run(imageControlBinding,[{...imageControlMessage('natural-image-switch','用 ComfyUI 把我引用的图片改成夜景'),quoted:{attachments:[{kind:'image',handle:source.id,name:source.name,mime:source.mime}]}}],AbortSignal.timeout(30000),{snapshot:imageControlSnapshot()});
       const imageRequests=requests.slice(beforeImageSwitch).filter(request=>request.sessionId===imageControlBinding.sessionId);
       assert.match(imageRequests[0].tools!.find(tool=>tool.name==='bot_tools')!.description,/bot_image_control/,'image control must be discoverable before loading');
       assert.ok(imageRequests.some(request=>request.tools?.some(tool=>tool.name==='bot_image_control')),'loaded image control must enter the native model schema');
-      const resultMessage=imageRequests.at(-1)!.messages.filter(message=>message.role==='tool').at(-1)!;assert.equal(resultMessage.role,'tool');assert.equal(resultMessage.isError,false,JSON.stringify(resultMessage));
-      const result=JSON.parse(resultMessage.content.filter(block=>block.type==='text').map(block=>block.text).join(''));
-      assert.equal(result.currentTurnProtocol,'openai');assert.equal(result.nextTurnProtocol,'comfyui');assert.equal(result.effective,'next_turn');assert.equal(result.sessionId,undefined);noHostPaths(result);
-      assert.equal((await readImageContract('image-control-frozen-contract')).protocol,'openai','the current continuation must retain its image contract');
-      await bridge.run(sessions.binding(imageControlScope),[imageControlMessage('image-control-next','下一轮继续')],AbortSignal.timeout(30000),{snapshot:imageControlSnapshot()});
-      const contract=await readImageContract('image-control-next-contract');assert.equal(contract.protocol,'comfyui');assert.deepEqual(contract.workflowModel,{family:'krea2',variant:'turbo',checkpoints:['krea-2-turbo.safetensors']});
-      featureChecks.push('image service control is discoverable and callable through the native tool loader without host permissions','image service switch retains the current native image contract and next turn selects ComfyUI with matching workflow model metadata');
-    }finally{await bridge.dispose(imageControlBinding.sessionId);updateSettings({media:imageMediaBefore});await rm(imageControlWorkflow,{force:true});}
+      const result=toolJson(imageRequests.at(-1)!.messages.findLast(message=>message.role==='tool'&&message.content.some(block=>block.type==='text'&&block.text.includes('"currentTurnProtocol":'))));
+      assert.equal(result.currentTurnProtocol,'comfyui');assert.equal(result.nextTurnProtocol,'comfyui');assert.equal(result.effective,'current');assert.equal(result.sessionId,undefined);noHostPaths(result);
+      assert.equal(result.capabilities.protocol,'comfyui');assert.deepEqual(result.capabilities.workflowModel,{family:'krea2',variant:'turbo',checkpoints:['krea-2-turbo.safetensors']});
+      assert.deepEqual(await readImageContract('image-control-current-contract'),result.capabilities);
+      assert.deepEqual(imageJobs,[{operation:'image_edit',protocol:'comfyui',workflow:imageControlWorkflow,inputs:[source.path]}]);
+      assert.equal(edited.outputs.filter(output=>output.type==='asset').length,1);
+      mediaCall={name:'image_generation',args:{prompt:'Draw the moon'}};
+      await bridge.run(sessions.binding(imageControlScope),[imageControlMessage('image-control-next','画一轮月亮')],AbortSignal.timeout(30000),{snapshot:imageControlSnapshot()});
+      assert.equal(imageJobs.length,2);assert.deepEqual(imageJobs[1],{operation:'image_generate',protocol:'comfyui',workflow:imageControlWorkflow,inputs:[]});
+      featureChecks.push('native image selection updates the capability contract and dispatches an edit of the quoted attachment to the selected workflow in the same turn','subsequent image requests keep the saved service');
+    }finally{runtime.media.worker.run=originalWorker;await bridge.dispose(imageControlBinding.sessionId);updateSettings({media:imageMediaBefore});await rm(imageControlWorkflow,{force:true});}
     updateSettings({allowHostTools:true});await bridge.run(sessions.binding(scope),[msg('reenable-host','重新启用本机工具后继续当前会话')],AbortSignal.timeout(30000));
     const reopenedShell=await ctx.tools.execute({name:'pwsh',arguments:{command:"Write-Output 'SHELL_AFTER_PERMISSION_REENABLE'"},callId:ToolCallId('reopened-shell'),agent:active,signal:AbortSignal.timeout(15000)});assert.equal(reopenedShell.isError,false,JSON.stringify(reopenedShell));assert.ok(JSON.stringify(reopenedShell).includes('SHELL_AFTER_PERMISSION_REENABLE'));assert.equal(ctx.permissionPresets.current(active.session),'danger-full-access');
-    featureChecks.push('trusted bot_model schema and catalog remain available with host tools disabled','natural-language model tool returns next_turn and keeps the current native continuation on its old model','following native turn uses requested session model without changing shared persona or an existing child model','ordinary users can query basic native session and skills tools but cannot change shared skills','trusted persona and skill catalogs work without host permission and never expose resource paths','child agents can query management tools but every session/persona/skills/model mutation is rejected before queuing');
+    featureChecks.push('trusted bot_model schema and catalog remain available with host tools disabled','a single native turn switches persona and model provider and delivers the new provider’s reply','following native turn retains the session choices without changing the model of an existing child','ordinary users can query basic native session and skills tools but cannot change shared skills','trusted persona and skill catalogs work without host permission and never expose resource paths','child agents can query management tools but every session/persona/skills/model mutation is rejected before queuing');
     const failedPhoto={...msg('fixture-failed-photo','请根据我上传的参考照片生成一张新图片'),timestamp:Date.now()-1000};inbox.accept(failedPhoto);inbox.mark(newBinding.key,[failedPhoto.id],'failed');failures.saveFailure(`native-photo-failure:${newBinding.sessionId}`,{sessionId:newBinding.sessionId,scope:newBinding.key,state:'failed',stage:'attachments',sourceIds:[failedPhoto.id],at:Date.now()-1000,code:'ATTACHMENT_DOWNLOAD_FAILED'});
     await bridge.run(sessions.binding(scope),[msg('failed-photo-followup','为什么刚才的图片还没有生成')],AbortSignal.timeout(30000));const failureContext=JSON.stringify(requests.at(-1)!.messages);assert.ok(failureContext.includes('Host-recorded prior failure or delivery status'),'subsequent native request must receive durable host failure context');assert.ok(failureContext.includes('no new image was generated'),'failure context must not imply that an image was generated');assert.ok(failureContext.includes(failedPhoto.text),'failure context includes the actual failed user request');
     featureChecks.push('current user photo attachment admits native image pixels alongside its exact host asset reference','production PiAiAdapter passes exact encoded image bytes to a local provider callback without remote calls','existing session releases persistent terminals on permission downgrade and PowerShell works after permission reenable','later followup receives host-recorded attachment failure and explicitly knows no new image was generated');

@@ -17,7 +17,7 @@ export function defineBotSessionTool(execute:(args:BotSessionArguments,exec:Tool
 export function defineBotPersonaTool(execute:(args:BotPersonaArguments,exec:ToolRunContext)=>Promise<unknown>){
   return defineTool({
     name:'bot_persona',
-    description:"List or switch the current trusted private-chat persona. set requires a personaId.",
+    description:"List personas for this trusted private chat. set a listed personaId to use it for the next model request and save it for this session.",
     parameters:{action:{type:'string',required:true,enum:['list','set']},personaId:{type:'string'}},
     output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
     isConcurrencySafe:args=>args.action==='list',
@@ -40,7 +40,7 @@ export function defineBotSkillsTool(execute:(args:BotSkillsArguments,exec:ToolRu
 export function defineBotVoiceControlTool(execute:(args:BotVoiceArguments,exec:ToolRunContext)=>Promise<unknown>){
   return defineTool({
     name:'bot_voice_control',
-    description:"List or change TTS/STS voices for the current trusted private session. set requires a voice id; reset restores the bot default.",
+    description:"List TTS/STS voices for this trusted private chat. set a listed voice id or reset to the bot default. The selection applies to the next matching voice operation and persists for this session.",
     parameters:{role:{type:'string',required:true,enum:['tts','sts']},action:{type:'string',required:true,enum:['list','set','reset']},id:{type:'string'}},
     output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
     isConcurrencySafe:args=>args.action==='list',
@@ -52,7 +52,7 @@ export function defineBotVoiceControlTool(execute:(args:BotVoiceArguments,exec:T
 export function defineBotImageControlTool(execute:(args:BotImageArguments,exec:ToolRunContext)=>Promise<unknown>){
   return defineTool({
     name:'bot_image_control',
-    description:'List or switch the image service for this trusted private session. set requires a protocol; reset restores bot/global defaults. Changes apply from the next turn; image generation in this turn keeps its frozen service.',
+    description:'List image services for this trusted private chat. set a listed protocol or reset to the bot/global default. The selection applies to the next image operation and persists for this session.',
     parameters:{action:{type:'string',required:true,enum:['list','set','reset']},protocol:{type:'string',description:`Image protocol (case-insensitive): ${imageProtocolSchema.options.join(', ')}`}},
     output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
     isConcurrencySafe:args=>args.action==='list',

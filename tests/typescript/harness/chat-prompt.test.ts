@@ -8,7 +8,7 @@ const section=(value:ReturnType<typeof buildChatPrompt>,name:string)=>value.sect
 test('plain chat carries its persona and channel rules without unloaded capability guidance',()=>{
   const prompt=buildChatPrompt(input),text=prompt.sections.map(item=>item.text).join('\n');
   assert.equal(section(prompt,'bot-persona'),input.personaPrompt);
-  assert.match(text,/chatting through qq/);assert.match(text,/next turn/);assert.match(text,/only platformSent=true/);
+  assert.match(text,/chatting through qq/);assert.match(text,/only platformSent=true/);
   assert.match(text,/call bot_tools in this turn/);assert.match(text,/Loading does not execute them/);assert.match(text,/Answer ordinary conversation directly/);
   assert.doesNotMatch(text,/sourceId|revision|bot_voice|bot_sing|bot_schedule|candidateRoot|image-generation/);
   assert.deepEqual(prompt.contexts.map(item=>item.text),['']);
@@ -55,9 +55,16 @@ test('loaded media instructions retain execution limits and disappear when tools
 });
 
 test('management and automation guidance is disclosed independently and preserves authorization boundaries',()=>{
-  const management=buildChatPrompt({...input,loadedTools:new Set(['bot_model'])});
-  assert.match(section(management,'bot-management'),/explicit user request/);
-  assert.match(section(management,'bot-management'),/acknowledge and end the turn/);
+  const management=buildChatPrompt({...input,loadedTools:new Set(['bot_model','bot_persona'])});
+  const choices=section(management,'bot-management');
+  assert.match(choices,/when the task needs a different choice/);
+  assert.match(choices,/Honor the user’s requested selection/);
+  assert.match(choices,/saves the choice for this session/);
+  assert.match(choices,/next model request uses the selected chat model and persona/);
+  assert.doesNotMatch(choices,/explicit user request|end the turn/);
+  const maintenance=section(buildChatPrompt({...input,loadedTools:new Set(['bot_session','bot_skills'])}),'bot-management');
+  assert.match(maintenance,/explicit user request/);assert.match(maintenance,/acknowledge and end the turn/);
+  assert.doesNotMatch(maintenance,/when the task needs a different choice/);
   assert.equal(section(management,'bot-automation'),'');
   const automation=buildChatPrompt({...input,loadedTools:new Set(['bot_schedule'])});
   assert.match(section(automation,'bot-automation'),/contents are not preloaded/);

@@ -7,7 +7,7 @@ import type { BotConfig, BotInstance, InboundMessage, SessionBinding, Output, Tu
 import {configForWrite} from './types.js';
 import type {ProfileStore} from './profile-store.js';
 import {randomUUID} from 'node:crypto';
-import {freezeTurn,permissionsRevoked,trusted,allowedNow,permitted} from './policy.js';
+import {freezeTurn,applyTurnSelection,type TurnSelection,permissionsRevoked,trusted,allowedNow,permitted} from './policy.js';
 import {TaskProgress,progressFallback} from './progress.js';
 import {analysisEnabled} from './analysis.js';
 import {botSchema,modelSchema,skillNameSchema} from './types.js';
@@ -15,7 +15,7 @@ import {validateWorkingDirectory} from './workspaces.js';
 import {parseCommand,unescapeChat,commandHelp,type ParsedCommand} from './commands.js';
 import {parseDirectImageCommand,validateDirectImageInputs,directImageFailureText} from './direct-image-command.js';
 import {parseNaturalControl} from './natural-commands.js';
-import {CommandBus,managementCommand,type CommandServices,type ImageSelection,type VoiceCatalog,type VoiceCatalogEntry} from './command-bus.js';
+import {CommandBus,managementCommand,type CommandServices,type SelectionTurn,type ImageSelection,type VoiceCatalog,type VoiceCatalogEntry} from './command-bus.js';
 import {imageProtocolSchema,type ImageProtocol} from './image-service-config.js';
 import {imageSkillEnabled,imagePromptWithStyle} from './image-skill.js';
 import type {ChannelRegistry} from './channel-registry.js';
@@ -218,25 +218,41 @@ export class BotRuntime {
     if(this.busy(binding.key)||this.repos.sessions.binding(scope).sessionId!==binding.sessionId)throw new SystemMessageError('sessionChanged');
     authorize?.();await this.harness.dispose(binding.sessionId);authorize?.();clearSingingCandidates(this.repos.media.singing,binding.key);clearMusicState(this.repos.media.music,binding.key);return this.repos.sessions.activateSession(scope,id);
   }
-  async switchPersona(scope:CallerScope,id:string,authorize?:()=>void):Promise<SessionBinding>{
-    const binding=this.repos.sessions.binding(scope);this.repos.personas.config(id);await this.harness.validateModel(this.effectiveConfig({...binding,personaId:id}));
-    const current=this.repos.sessions.binding(scope);if(current.sessionId!==binding.sessionId||current.generation!==binding.generation)throw new SystemMessageError('sessionChanged');authorize?.();const next={...current,personaId:id};this.repos.sessions.updateSession(next);this.recheckPermissions();return next;
+  private saveSelection(binding:SessionBinding,field:TurnSelection,turn?:SelectionTurn):SessionBinding {
+    if(!turn)return this.repos.sessions.updateSession(binding);
+    const before=turn.snapshot,config=this.effectiveConfig(binding);
+    if(field==='model'&&!config.model)throw new SystemMessageError('modelRequired');
+    const updated=applyTurnSelection(before,config,field,this.profiles);
+    this.repos.unitOfWork.transaction(()=>{
+      this.repos.sessions.updateSession(binding);
+      this.repos.telemetry.snapshots.saveTurnSnapshot(binding.sessionId,updated);
+    });
+    this.harness.applyTurnSelection?.(binding,before,updated);
+    turn.snapshot=updated;
+    return binding;
   }
-  async setModel(scope:CallerScope,model:BotConfig['model'],authorize?:()=>void):Promise<SessionBinding>{
+  async switchPersona(scope:CallerScope,id:string,authorize?:()=>void,turn?:SelectionTurn):Promise<SessionBinding>{
+    const binding=this.repos.sessions.binding(scope);this.repos.personas.config(id);await this.harness.validateModel(this.effectiveConfig({...binding,personaId:id}));
+    const current=this.repos.sessions.binding(scope);if(current.sessionId!==binding.sessionId||current.generation!==binding.generation)throw new SystemMessageError('sessionChanged');authorize?.();const next=this.saveSelection({...current,personaId:id},'persona',turn);this.recheckPermissions();return next;
+  }
+  async setModel(scope:CallerScope,model:BotConfig['model'],authorize?:()=>void,turn?:SelectionTurn):Promise<SessionBinding>{
     const binding=this.repos.sessions.binding(scope);const next={...binding,modelOverride:model?modelSchema.parse(model):undefined};await this.harness.validateModel(this.effectiveConfig(next));
-    const current=this.repos.sessions.binding(scope);if(current.sessionId!==binding.sessionId||current.generation!==binding.generation||current.personaId!==binding.personaId)throw new SystemMessageError('sessionConfigChanged');authorize?.();return this.repos.sessions.updateSession({...current,modelOverride:next.modelOverride});
+    const current=this.repos.sessions.binding(scope);if(current.sessionId!==binding.sessionId||current.generation!==binding.generation||current.personaId!==binding.personaId)throw new SystemMessageError('sessionConfigChanged');authorize?.();return this.saveSelection({...current,modelOverride:next.modelOverride},'model',turn);
+  }
+  activeTurnSnapshot(binding:SessionBinding):TurnSnapshot|undefined {
+    return this.processing.get(binding.key)?.sessionId===binding.sessionId?this.repos.telemetry.snapshots.findTurnSnapshot(binding.sessionId):undefined;
   }
   imageSelection(binding:SessionBinding,snapshot?:TurnSnapshot):ImageSelection {
     const settings=this.media.imageSettings(),config=this.effectiveConfig(binding);
-    const active=snapshot??(this.busy(binding)?this.repos.telemetry.snapshots.findTurnSnapshot(binding.sessionId):undefined);
+    const active=snapshot??this.activeTurnSnapshot(binding);
     const nextTurnProtocol=config.media.image?.protocol??settings.imageProtocol;
     return{currentTurnProtocol:active?(active.config.media.image?.protocol??active.imageServiceSettings?.imageProtocol??settings.imageProtocol):nextTurnProtocol,nextTurnProtocol,override:binding.imageProtocolOverride!==undefined,protocols:imageProtocolSchema.options};
   }
-  async setImage(scope:CallerScope,protocol:ImageProtocol|null,authorize?:()=>void):Promise<SessionBinding>{
+  async setImage(scope:CallerScope,protocol:ImageProtocol|null,authorize?:()=>void,turn?:SelectionTurn):Promise<SessionBinding>{
     authorize?.();const binding=this.repos.sessions.binding(scope);
     const override=protocol===null?undefined:imageProtocolSchema.parse(protocol);
-    if(override!==undefined&&!imageSkillEnabled(this.effectiveConfig(binding)))throw new SystemMessageError('imageDisabled');
-    return this.repos.sessions.updateSession({...binding,imageProtocolOverride:override});
+    if(override!==undefined&&(!imageSkillEnabled(this.effectiveConfig(binding))||(turn&&!imageSkillEnabled(turn.snapshot.config))))throw new SystemMessageError('imageDisabled');
+    return this.saveSelection({...binding,imageProtocolOverride:override},'image',turn);
   }
   private voiceCatalogItems(role:'tts'|'sts'):VoiceCatalogEntry[] {
     const items:VoiceCatalogEntry[]=[];
@@ -258,23 +274,23 @@ export class BotRuntime {
     const ref=role==='tts'?voice?.profileRef:config.media.singing?.profileRef;
     return ref?`${ref.serviceId}/${ref.profileId}`:undefined;
   }
-  voiceCatalog(role:'tts'|'sts',binding?:SessionBinding):VoiceCatalog {
+  voiceCatalog(role:'tts'|'sts',binding?:SessionBinding,snapshot?:TurnSnapshot):VoiceCatalog {
     if(!binding)return{role,override:false,items:this.voiceCatalogItems(role)};
-    const effective=this.effectiveConfig(binding),base=this.effectiveConfig({...binding,ttsOverride:undefined,stsOverride:undefined}),override=role==='tts'?binding.ttsOverride:binding.stsOverride;
-    return{role,current:this.voiceSelectionId(role,base),next:this.voiceSelectionId(role,effective),override:!!override,items:this.voiceCatalogItems(role)};
+    const effective=this.effectiveConfig(binding),active=snapshot??this.activeTurnSnapshot(binding),override=role==='tts'?binding.ttsOverride:binding.stsOverride;
+    return{role,current:this.voiceSelectionId(role,active?.config??effective),next:this.voiceSelectionId(role,effective),override:!!override,items:this.voiceCatalogItems(role)};
   }
-  async setVoice(scope:CallerScope,role:'tts'|'sts',ref:string|null,authorize?:()=>void):Promise<SessionBinding>{
+  async setVoice(scope:CallerScope,role:'tts'|'sts',ref:string|null,authorize?:()=>void,turn?:SelectionTurn):Promise<SessionBinding>{
     const binding=this.repos.sessions.binding(scope),config=this.effectiveConfig(binding);
     let override:TtsOverride|StsOverride|undefined=undefined;
     if(ref!==null){
       const [service,profileId,...extra]=ref.split('/');
       if(extra.length||!service||!profileId)throw new SystemMessageError('voiceIdInvalid');
+      const mediaRole=role==='tts'?'voice':'singing';
+      if(config.media[mediaRole]?.enabled!==true||(turn&&turn.snapshot.config.media[mediaRole]?.enabled!==true))throw new SystemMessageError('voiceDisabled',{role:role.toUpperCase()});
       if(role==='tts'&&service==='edge'){
         if(!edgeTtsVoiceIds.includes(profileId as EdgeTtsVoiceId))throw new SystemMessageError('edgeVoiceUnavailable');
-        if(config.media.voice?.enabled!==true)throw new SystemMessageError('voiceDisabled',{role:'TTS'});
         override={kind:'edge',voice:profileId as EdgeTtsVoiceId};
       }else{
-        if(config.media[role==='tts'?'voice':'singing']?.enabled!==true)throw new SystemMessageError('voiceDisabled',{role:role==='tts'?'TTS':'STS'});
         if(!this.profiles)throw new SystemMessageError('voiceCatalogMissing');
         const profile=this.profiles.get({serviceId:service,profileId});
         const operation=role==='tts'?(service==='gpt-sovits'||service==='breeze-tts')?`${service}.speak`:undefined:(service==='rvc'?'rvc.convert':undefined);
@@ -283,7 +299,7 @@ export class BotRuntime {
       }
     }
     const current=this.repos.sessions.binding(scope);if(current.sessionId!==binding.sessionId||current.generation!==binding.generation||current.personaId!==binding.personaId)throw new SystemMessageError('sessionConfigChanged');authorize?.();
-    const next:SessionBinding=role==='tts'?{...current,ttsOverride:override as TtsOverride}:{...current,stsOverride:override as StsOverride};this.repos.sessions.updateSession(next);this.recheckPermissions();return next;
+    const next:SessionBinding=role==='tts'?{...current,ttsOverride:override as TtsOverride}:{...current,stsOverride:override as StsOverride};this.saveSelection(next,role,turn);this.recheckPermissions();return next;
   }
   async compactSession(scope:CallerScope):Promise<string>{
     if(!this.serviceRunning())throw Error('BOT_SERVICE_STOPPED');
@@ -459,7 +475,7 @@ export class BotRuntime {
         if(binding.scope.kind==='private'&&config.progressReply.enabled){
           progress=new TaskProgress({signal,active,systemLocale:snapshot.systemLocale,
             intervalMs:config.progressReply.intervalSeconds*1000,
-            format:(facts,progressSignal)=>(direct?undefined:this.harness.formatProgress?.(binding,snapshot,facts,progressSignal))??Promise.resolve(progressFallback(facts.stage,snapshot.systemLocale)),
+            format:(facts,progressSignal)=>(direct?undefined:this.harness.formatProgress?.(binding,this.activeTurnSnapshot(binding)??snapshot,facts,progressSignal))??Promise.resolve(progressFallback(facts.stage,snapshot.systemLocale)),
             deliver:async(text,runId,sequence,expiresAt)=>{
               if(!active())return;
               for(const delivery of this.repos.deliveries.deliveries(['pending']))if(delivery.purpose==='progress'&&delivery.progress?.runId===runId)this.repos.deliveries.deliveryState(delivery,'cancelled');
@@ -655,7 +671,7 @@ export class BotRuntime {
       }
       runSignal.throwIfAborted();const current=this.repos.sessions.findBinding(key);
       if(!current||current.sessionId!==binding.sessionId||current.generation!==binding.generation||permissionsRevoked(snapshot,this.effectiveConfig(current),this.repos.bots.bot(binding.scope.botId),binding.scope))throw Error('AUTOMATION_CONTEXT_CHANGED');
-      answer={turnId:result.turnId,outputs:await this.prepareReplyOutputs(binding,result,runSignal),snapshot};
+      answer={turnId:result.turnId,outputs:await this.prepareReplyOutputs(binding,result,runSignal),snapshot:result.snapshot};
     }).finally(()=>{this.processing.delete(key);this.resumeSessionActions(key);this.schedule(key);});
     this.processing.set(key,{controller,sessionId:binding.sessionId,sourceIds:[],done});
     await done;return answer!;

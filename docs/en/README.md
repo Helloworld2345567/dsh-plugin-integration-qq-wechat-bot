@@ -10,7 +10,8 @@ QQ official channels, WeChat iLink, multiple bots and personas, and image, voice
 - Image generation/editing and understanding, speech recognition, TTS replies, video analysis and media conversion.
 - Music search/download and RVC voice conversion through optional external services and models.
 - Scheduled tasks, proactive chat, controlled tools and progress reminders in trusted private chats.
-- Chinese/English management UI; configuration applies from the next turn, with separate UI and bot system-message languages.
+- In trusted private chats, the model can select a chat model, persona, image service or TTS/STS voice for a task, use it in the same turn and remember it for that session.
+- Chinese/English management UI with separate UI and bot system-message languages.
 - Standalone deployment with supervised startup, managed upgrades and rollback.
 
 ## Install and get started
