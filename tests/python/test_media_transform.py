@@ -174,7 +174,8 @@ class VideoTransformTests(TransformFixture):
         self.assertEqual(duration, 32250)
 
     def test_oversize_converges_without_changing_duration(self):
-        source = self.clip()
+        # Leave enough room above the 64-pixel minimum edge to halve the output size.
+        source = self.clip(size='320x180')
         first = video_transform.execute(self.job(source, fps=24))
         initial = json.loads(first['text'])
         with patch.object(video_transform, 'MAX_BYTES', initial['bytes']//2):
