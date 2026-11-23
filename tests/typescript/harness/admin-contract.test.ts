@@ -98,6 +98,30 @@ test('numeric and mixed-case bot IDs work in summary and bot list queries',async
   for(const result of [summary.data.bots,bots.data])for(const id of ['1','QQ_Bot'])assert.equal(result.find((bot:any)=>bot.id===id).credentialConfigured,false);
 });
 
+test('bot list provides current private sessions for its own channel account with the effective persona',async t=>{
+  const {admin,store}=await fixture(t);
+  const scope={botId:'bot',platform:'qq',accountId:'account',kind:'private' as const,channelId:'alice',senderId:'alice'};
+  store.sessions.binding(scope);
+  const alice=store.sessions.reset(scope);
+  const bob=store.sessions.binding({...scope,channelId:'bob',senderId:'bob'});
+  store.sessions.updateSession({...bob,personaId:'companion'});
+  store.sessions.binding({...scope,kind:'group',channelId:'group'});
+  store.sessions.binding({...scope,accountId:'previous-account'});
+  store.sessions.binding({...scope,platform:'weixin'});
+  store.bots.saveBot(botSchema.parse({id:'other',name:'Other',channel:'qq',accountId:'second-account'}));
+  const other=store.sessions.binding({...scope,botId:'other',accountId:'second-account'});
+
+  const result:any=await admin.query({version:1,kind:'query',name:'bots.list',input:{}});
+  const sessions=result.data.find((bot:any)=>bot.id==='bot').privateSessions;
+  assert.deepEqual(sessions.sort((a:any,b:any)=>a.senderId.localeCompare(b.senderId)),[
+    {senderId:'alice',sessionId:alice.sessionId,platform:'qq',personaId:'default'},
+    {senderId:'bob',sessionId:bob.sessionId,platform:'qq',personaId:'companion'},
+  ]);
+  assert.deepEqual(result.data.find((bot:any)=>bot.id==='other').privateSessions,[
+    {senderId:'alice',sessionId:other.sessionId,platform:'qq',personaId:'default'},
+  ]);
+});
+
 test('deleting a bot hides it from all bot queries and invalidates a pending login result',async t=>{
   const {admin,store}=await fixture(t);const runtime=admin.runtime as any;
   store.bots.saveBot({...store.bots.bot('bot'),enabled:false});store.bots.saveBot(botSchema.parse({id:'other',name:'Other',channel:'qq',accountId:'other'}));

@@ -116,9 +116,12 @@ export const panelStyles = `
 .bot-admin .detail-header { padding-bottom: 4px; border-bottom: 1px solid var(--line); }
 .bot-admin .detail-section { display: grid; gap: 10px; padding-bottom: 16px; border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
 .bot-admin .detail-section:last-child { padding-bottom: 0; border-bottom: 0; }
-.bot-admin .trusted-users { display: grid; gap: 6px; }
+.bot-admin .trusted-users { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .bot-admin .trusted-user { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; }
-.bot-admin .trusted-user > span { overflow-wrap: anywhere; }
+.bot-admin .trusted-user-info { display: grid; min-width: 0; gap: 2px; overflow-wrap: anywhere; }
+.bot-admin .trusted-user > button { flex-shrink: 0; }
+.bot-admin details.trusted-picker { margin: 0; padding: 0; border: 0; }
+.bot-admin .trusted-picker > summary { width: fit-content; padding: 7px 0; color: var(--accent); }
 .bot-admin .service-card { display: grid; gap: 14px; }
 .bot-admin .service-card .fields { margin: 0; }
 .bot-admin .service-config-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }

@@ -291,7 +291,7 @@ test('bot tabs expose independent media drafts, authorization and workspace with
   try{
     await harness.start('bot-tabs');let tree=harness.render();
     assert.ok(tree.some(n=>n.props?.role==='switch'&&n.props['aria-label']==='运行'));
-    assert.ok(tree.some(n=>n.type==='button'&&n.children.includes('添加')));
+    assert.ok(tree.some(n=>n.type==='summary'&&n.children.includes('从私聊中添加')));
     assert.ok(!tree.some(n=>n.props?.id==='bot-detail-bot-model'||n.props?.id==='bot-detail-bot-behavior'));
     tree=await clickSection('persona');
     assert.ok(tree.some(n=>n.type==='label'&&n.children[0]==='人格'));
@@ -303,7 +303,7 @@ test('bot tabs expose independent media drafts, authorization and workspace with
     tree=harness.render();assert.ok(tree.some(n=>n.type==='input'&&n.props.type==='password'));
     tree=await clickSection('workspace');
     assert.ok(tree.some(n=>n.type==='label'&&n.children[0]==='工作区根目录'));
-    assert.ok(!tree.some(n=>n.type==='button'&&n.children.includes('添加')));
+    assert.ok(!tree.some(n=>n.type==='summary'&&n.children.includes('从私聊中添加')));
     assert.ok(!tree.some(n=>n.type==='input'&&n.props.type==='password'));
     tree=await clickSection('run');assert.ok(tree.some(n=>n.props?.role==='switch'&&n.props['aria-label']==='运行'));
     assert.ok(tree.some(n=>n.type==='label'&&n.children[0]==='提供商'));
@@ -499,6 +499,50 @@ test('music directory uses the shared draft picker and saving discards its late 
   }finally{harness.restore();}
 });
 
+
+test('trusted users are added inline from this bot’s private sessions without saving a persona draft',async()=>{
+  const persona=configSchema.parse({id:'default',name:'Default',personaPrompt:'Prompt'});
+  const candidate={senderId:'user-to-trust',sessionId:'session-new',platform:'weixin',personaId:'chat-persona'};
+  const owner={...candidate,senderId:'owner',sessionId:'session-old',personaId:persona.id};
+  let bot={id:'one',name:'Bot one',channel:'weixin',configId:persona.id,settings:botSettingsFromConfig(persona),trustedUsers:[owner.senderId],privateSessions:[owner,candidate]};
+  const other={...bot,id:'two',name:'Bot two',privateSessions:[{...candidate,senderId:'other-user'}]};
+  const summary={bots:[bot,other].map(({id,name,channel,configId})=>({id,name,channel,configId})),configs:[persona,{id:'chat-persona',name:'Chat persona'},{id:'draft',name:'Draft persona'}],counts:{pendingDeliveries:0},health:{}};
+  const states:any[]=['bots',summary,'','','',false,null],writes:any[]=[];
+  const harness=panelHarness(states,body=>{
+    if(body.name==='bots.list')return{data:[bot,other]};
+    if(body.action==='bot.save'){writes.push(body.input);bot={...bot,...body.input};return bot;}
+    if(body.name==='overview.summary')return{data:summary};
+    if(body.action==='skill.image.status'||body.action==='skill.media.status')return{};
+    throw Error('Unexpected request');
+  });
+  const candidates=(tree:any[])=>tree.filter(node=>node.type==='button'&&/^(添加可信用户 |Add trusted user )/.test(node.props?.['aria-label']??''));
+  try{
+    await harness.start('trust-private-session');
+    assert.deepEqual(candidates(harness.render()),[]);
+    states[6]=[bot,other];
+    harness.render().find(node=>node.props?.id==='bot-detail-one-persona').props.onClick();await settlePanel();
+    harness.render().find(node=>node.type==='label'&&node.children[0]==='人格').children[1].props.onChange({target:{value:'draft'}});await settlePanel();
+    harness.render().find(node=>node.props?.id==='bot-detail-one-run').props.onClick();await settlePanel();
+
+    const tree=harness.render(),buttons=candidates(tree);
+    assert.deepEqual(buttons.map(node=>node.props['aria-label']),['添加可信用户 user-to-trust']);
+    assert.equal(buttons[0].props.type,'button');
+    const picker=tree.find(node=>node.type==='details'&&flattenPanel(node).includes(buttons[0]));
+    assert.ok(picker);
+    const pickerText=flattenPanel(picker).flatMap(node=>node.children.filter((child:any)=>typeof child==='string')).join(' ');
+    for(const value of [candidate.senderId,candidate.sessionId,'微信 iLink','Chat persona'])assert.ok(pickerText.includes(value),value);
+    assert.ok(tree.some(node=>node.children.some((child:any)=>typeof child==='string'&&child.includes(owner.sessionId))));
+    harness.setLocale('en');
+    const add=candidates(harness.render())[0];assert.equal(add.props['aria-label'],'Add trusted user user-to-trust');
+    bot={...bot,trustedUsers:['owner','newly-trusted']};
+    add.props.onClick();await settlePanel();
+    assert.equal(writes.length,1);
+    assert.deepEqual(writes[0].trustedUsers,['owner','newly-trusted',candidate.senderId]);
+    assert.ok(!('privateSessions' in writes[0]));
+    assert.equal(writes[0].configId,persona.id);assert.equal(states[29].configId,'draft');
+    const saved=harness.render();assert.deepEqual(candidates(saved),[]);assert.ok(!saved.some(node=>node.type==='dialog'));
+  }finally{harness.restore();}
+});
 
 test('workspace and trust writes do not submit a persona draft or revert a saved persona',async()=>{
   const persona=configSchema.parse({id:'default',name:'Default',personaPrompt:'Prompt'});

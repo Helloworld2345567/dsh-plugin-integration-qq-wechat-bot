@@ -8,6 +8,7 @@ This page documents only configuration read by current code/tests. Setting an un
 
 - Personas own prompts and files; each bot stores its model, replies, media, tool and skill permissions. Bots can share personas; switching preserves history, bot settings and session overrides.
 - Persona edits in the panel create revisions. Bot settings save independently. These edits apply next turn. Existing bots copy runtime settings once from their V4 persona and retain their own settings after that.
+- Under **Bots → Run → Trusted users**, expand **Add from private chats** to choose a user by ID, platform, current session and persona. **Add** and **Remove** update that bot’s trusted list immediately.
 - In trusted private chats the main agent can choose a listed chat model, persona, image service or TTS/STS voice to fulfill a task. It honors the user’s named choice and keeps the current selection when it meets the request. A successful switch saves the choice for the session and applies to the next model request or matching media operation in the current turn. Jobs already running keep their original settings.
 - Configure image services under Services and select them in bot media settings; other media use managed Service Profiles. Harness credentials owns QQ/WeChat, chat-model and media-analysis credentials.
 

@@ -7,6 +7,7 @@ import { z } from 'zod';
 import QRCode from 'qrcode';
 import type { Context } from '@deepseek-ai/cordis';
 import type { BotRuntime } from '../core/runtime.js';
+import type {PrivateSessionView} from '../core/client-contracts.js';
 import { ConflictError,localizedError } from '../core/errors.js';
 import {publicPersonaConfig,botSchema,botSettingsFromConfig,configWithBotSettings,type BotConfig,type Delivery} from '../core/types.js';
 import {sanitizeRemoteMessage} from '../core/network.js';
@@ -75,7 +76,21 @@ export class Admin {
     const repos=this.runtime.repos;
     if(value.name==='workspace.storage')return versioned(new WorkspaceStorageService(repos,scope=>this.runtime.busy(scope)).preview(value.input));
     if(value.name==='catalog.config'){const config=publicPersonaConfig(repos.personas.config(value.input.id));return versioned(config,value.input.changedSince);}
-    if(value.name==='bots.list'){const bots=await Promise.all(repos.bots.bots().filter(bot=>!bot.archived).map(async bot=>({...bot,status:this.runtime.states.get(bot.id)??'stopped',activeSessions:this.runtime.activeSessions(bot.id),credentialConfigured:!!await this.runtime.credentials.read(bot.id)})));return versioned(bots,value.input.changedSince);}
+    if(value.name==='bots.list'){
+      const bots=await Promise.all(repos.bots.bots().filter(bot=>!bot.archived).map(async bot=>({
+        ...bot,status:this.runtime.states.get(bot.id)??'stopped',activeSessions:this.runtime.activeSessions(bot.id),
+        credentialConfigured:!!await this.runtime.credentials.read(bot.id),
+        privateSessions:[] as PrivateSessionView[],
+      })));
+      const botsById=new Map(bots.map(bot=>[bot.id,bot]));
+      for(const {scope,sessionId,personaId} of repos.sessions.bindings()){
+        const bot=botsById.get(scope.botId);
+        if(scope.kind==='private'&&bot?.channel===scope.platform&&bot.accountId===scope.accountId){
+          bot.privateSessions.push({senderId:scope.senderId,sessionId,platform:scope.platform,personaId:personaId??bot.configId});
+        }
+      }
+      return versioned(bots,value.input.changedSince);
+    }
     if(value.name==='catalog.profiles'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.profilesPage(value.input);}
     if(value.name==='catalog.profile'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.profile(value.input);}
     if(value.name==='catalog.models'){if(!this.services)throw Error('SERVICE_MANAGEMENT_UNAVAILABLE');return this.services.models(value.input);}

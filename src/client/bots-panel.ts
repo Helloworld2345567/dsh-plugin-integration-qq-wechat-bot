@@ -1,6 +1,7 @@
 import {botStatus, list, pathPickerField} from './ui.js';
 import {panelSaveBar} from './layout.js';
 import type {Translate} from './locale.js';
+import type {PrivateSessionView} from '../core/client-contracts.js';
 
 export type BotEditorSection='run'|'media'|'persona'|'auth'|'workspace';
 
@@ -52,8 +53,9 @@ export interface BotsPanelProps {
   workspaceEdits?:Record<string,string>;
   workspaceDirectories?:Array<{botId:string;sessionId:string;scopeDirectory:string;directory:string}>;
   storagePanel?:any;
-  onAddTrustedUser:(bot:any)=>unknown;
-  onRemoveTrustedUser:(bot:any, user:string)=>unknown;
+  onTrustChange:(bot:any,user:string,trusted:boolean)=>unknown;
+  botListError?:string;
+  onRetryBotList:()=>unknown;
   credential?:any;
   credentialForm?:any;
 }
@@ -98,14 +100,33 @@ function listRow(React:any, props:BotsPanelProps, bot:any, selected:boolean, cha
 }
 
 function trustedUsers(React:any, props:BotsPanelProps, bot:any){
-  const users = list(bot.trustedUsers);
-  return h(React, 'section', {className:'detail-section'},
-    h(React, 'div', {className:'section-heading'}, h(React, 'h4', null, props.t('usersCount',{count:users.length}))),
-    users.length ? h(React, 'div', {className:'trusted-users'}, ...users.map((user:string)=>h(React, 'div', {className:'trusted-user', key:user},
-      h(React, 'span', null, user),
-      props.ui.button(props.t('delete'),()=>props.onRemoveTrustedUser(bot,user),{className:'quiet danger'}),
-    ))) : h(React, 'p', {className:'empty'}, props.t('none')),
-    props.ui.button(props.t('add'),()=>props.onAddTrustedUser(bot),{className:'quiet'}),
+  const {t,ui}=props;
+  const trusted=new Set(list(bot.trustedUsers));
+  const sessions:PrivateSessionView[]=bot.privateSessions??[];
+  const byUser=new Map(sessions.map(session=>[session.senderId,session]));
+  const candidates=[...byUser.keys()].filter(id=>!trusted.has(id));
+  const userRow=(id:string,isTrusted:boolean)=>{
+    const session=byUser.get(id);
+    const platform=props.channels.find(channel=>channel.id===(session?.platform??bot.channel))?.displayName??bot.channel;
+    const persona=session&&(props.configs.find(config=>config.id===session.personaId)?.name??session.personaId);
+    return h(React,'li',{className:'trusted-user',key:id},
+      h(React,'div',{className:'trusted-user-info'},h(React,'span',null,id),
+        h(React,'small',null,session?t('trustedSessionContext',{platform,persona,session:session.sessionId}):platform)),
+      ui.button(t(isTrusted?'removeTrust':'add'),()=>props.onTrustChange(bot,id,!isTrusted),{
+        className:isTrusted?'quiet danger':'quiet',disabled:props.busy||props.commandPending,
+        'aria-label':t(isTrusted?'removeTrustedUserLabel':'addTrustedUserLabel',{id}),
+      }),
+    );
+  };
+  return h(React,'section',{className:'detail-section',key:bot.id},
+    h(React,'h4',null,t('usersCount',{count:bot.trustedUsers?trusted.size:bot.trustedUserCount??0})),
+    trusted.size?h(React,'ul',{className:'trusted-users'},...[...trusted].map(id=>userRow(id,true))):null,
+    h(React,'details',{className:'trusted-picker'},
+      h(React,'summary',null,t('addFromPrivateChats')),
+      candidates.length?h(React,'ul',{className:'trusted-users'},...candidates.map(id=>userRow(id,false))):
+        bot.privateSessions?h(React,'p',{className:'muted'},t(sessions.length?'allPrivateUsersTrusted':'noPrivateChatsYet')):
+        props.botListError?null:h(React,'p',{role:'status'},t('loading')),
+    ),
   );
 }
 
@@ -176,6 +197,7 @@ export function BotsPanel(props:BotsPanelProps){
   const selected = props.bots.find(bot=>bot.id===props.selectedBotId) ?? props.bots[0];
   const selectedId = selected?.id;
   return h(React, 'section', {className:'panel-page bots-page', 'aria-label':props.t('bots')},
+    props.botListError?h(React,'div',{className:'error row',role:'alert'},props.botListError,props.ui.button(props.t('refresh'),props.onRetryBotList)):null,
     h(React, 'div', {className:'page-toolbar'},
       h(React, 'span', {className:'muted'}, props.t('botCount',{count:props.bots.length})),
       h(React, 'div', {className:'actions'},

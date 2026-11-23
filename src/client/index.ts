@@ -14,6 +14,7 @@ import {ServicesPanel,serviceSettingKeys,type ServiceDirectoryKey} from './servi
 import {loadPanelServiceHealth} from './service-health.js';
 import {personaPanel,type PersonaEditorSection} from './persona-panel.js';
 import {installHostLeaveGuard} from './host-leave-guard.js';
+import type {BotInstance} from '../core/client-contracts.js';
 
 /* Use the Harness module loader's React instance. */
 declare const window:Window & {__ModuleLoader__:any;__BOT_INTEGRATION__?:{endpoint:string;token:string}};
@@ -85,6 +86,7 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
     const serviceBaselineRef=React.useRef(voiceLibrary);serviceBaselineRef.current=voiceLibrary;
     const sessionCursor=React.useRef(null as string|null),moreSessionsPending=React.useRef(false);
     const [loadingSessions,setLoadingSessions]=React.useState(false);
+    const [botListError,setBotListError]=React.useState('' as DisplayText);
     const ui=createUI(React,busy,setError,t);
     const client=()=>{if(!clientRef.current){const boot=window.__BOT_INTEGRATION__;if(!boot)throw uiError('serviceNotReady',t);clientRef.current=new AdminClient(boot);}return clientRef.current as AdminClient;};
     const query=async(name:string,input:any={},signal?:AbortSignal)=>client().query(name,input,signal);
@@ -135,7 +137,14 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
       const health=await loadPanelServiceHealth(query,profiles,signal);
       if(!signal?.aborted)setServiceHealth(health);
     };
-    const refreshBots=async()=>{client().invalidate('bots.list');const next=await query('bots.list');if(next)setBots(next);};
+    const loadBots=async(signal?:AbortSignal)=>{
+      const next=await query('bots.list');
+      if(next&&!signal?.aborted){setBots(next);setBotListError('');}
+    };
+    const refreshBots=()=>{client().invalidate('bots.list');return loadBots();};
+    const loadBotListForPanel=(signal?:AbortSignal)=>loadBots(signal).catch((e:Error)=>{
+      if(!signal?.aborted&&e.name!=='AbortError')setBotListError(errorText(e));
+    });
     const refreshBotMediaStatus=async(signal?:AbortSignal)=>{
       const [image,media]=await Promise.all([api('skill.image.status',{scope:'bots'},signal),api('skill.media.status',{scope:'bots'},signal)]);
       if(!signal?.aborted){setImageSkills(image);setMediaSkills(media);}
@@ -204,7 +213,7 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
     };
     React.useEffect(()=>{let stopped=false,running=false;const poll=async()=>{if(running)return;running=true;try{await refresh();}catch(e){if(!stopped)setSummaryError(errorText(e));}finally{running=false;}};
       void poll();const timer=setInterval(()=>{if(!stopped)void poll();},4000);return()=>{stopped=true;clearInterval(timer);clientRef.current?.cancel('overview.summary');};},[]);
-    React.useEffect(()=>{if(tab!=='bots')return;const abort=new AbortController();void query('bots.list',{},abort.signal).then((next:any)=>{if(next&&!abort.signal.aborted)setBots(next);}).catch((e:Error)=>{if(!abort.signal.aborted)setError(errorText(e));});void api('directories',{},abort.signal).then(setDirectories).catch(()=>{});return()=>abort.abort();},[tab]);
+    React.useEffect(()=>{if(tab!=='bots')return;const abort=new AbortController();void loadBotListForPanel(abort.signal);return()=>abort.abort();},[tab,summary?.sessionRevision]);
     React.useEffect(()=>{if(!['catalog','bots','services'].includes(tab))return;const abort=new AbortController();if(tab==='catalog'||tab==='bots')for(const [action,set] of [['directories',setDirectories],['skill.image.status',setImageSkills],['skill.media.status',setMediaSkills]] as const){void api(action,action.startsWith('skill.')?{scope:'bots'}:{},abort.signal).then((next:any)=>{if(abort.signal.aborted)return;if(action==='skill.media.status')setMediaSkills((old:any)=>Object.fromEntries(Object.entries(next).map(([id,status])=>[id,{...(old[id]??{}),...(status as any)}])));else set(next);}).catch((e:Error)=>{if(!abort.signal.aborted)setError(errorText(e));});}
       if(tab==='bots'){
         void query('catalog.models',{},abort.signal).then((next:any)=>{if(!next||abort.signal.aborted)return;const groups=new Map();for(const model of next.data??next){const rows=groups.get(model.provider)??[];rows.push({id:model.model,name:model.model,inputModalities:model.inputModalities,reasoning:model.reasoning});groups.set(model.provider,rows);}setModels([...groups].map(([id,models])=>({id,models})));}).catch((e:Error)=>{if(!abort.signal.aborted)setError(errorText(e));});
@@ -291,25 +300,34 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
         setBotDraft(null);
       };
       if(botDraft)draftActionsRef.current.bot={save:saveBotSettings,discard:()=>setBotDraft(null)};
-      const saveBotPatch=async(bot:any,patch:any,noticeMessage:DisplayText=message('saved'))=>{
+      const saveBotPatch=async(bot:any,patch:Partial<BotInstance>|((saved:BotInstance)=>Partial<BotInstance>),noticeMessage:DisplayText=message('saved'))=>{
         if(commandRef.current?.has(bot.id))throw uiError('operationBusy',t);
         const result=await mutate('bot.save',async()=>{
           client().invalidate('bots.list');
           const records:any=await query('bots.list'),baseline=records?.find((item:any)=>item.id===bot.id);
           if(!baseline)throw uiError('selectBotPersona',t);
-          const next={...baseline,...patch};if(!('settings' in patch))delete next.settings;
+          const changes=typeof patch==='function'?patch(baseline):patch;
+          const next={...baseline,...changes};
+          delete next.privateSessions;
+          if(!('settings' in changes))delete next.settings;
           return next;
         },noticeMessage);
         if(result?.id)setBots((current:any[]) => (current??displayBots).map(item=>item.id===result.id?{...item,...result}:item));
         return result;
       };
+      const changeTrust=(bot:any,id:string,grant:boolean)=>saveBotPatch(bot,saved=>({
+        trustedUsers:grant?[...new Set([...saved.trustedUsers,id])]:saved.trustedUsers.filter(user=>user!==id),
+      }));
       const updateWorkspace=(bot:any,value:string)=>setWorkspaceEdits((current:any)=>{const next={...current};if(value===(bot.workingDirectory??''))delete next[bot.id];else next[bot.id]=value;return next;});
       const saveWorkspace=async(bot:any)=>{if(!(bot.id in workspaceEdits))return;cancelPathPick();await saveBotPatch(bot,{workingDirectory:workspaceEdits[bot.id]});setWorkspaceEdits((old:any)=>{const next={...old};delete next[bot.id];return next;});try{setDirectories(await api('directories'));}catch{setError(message('refreshFailed'));}};
       for(const id of Object.keys(workspaceEdits)){const bot=displayBots.find((item:any)=>item.id===id);if(bot)draftActionsRef.current[`workspace:${id}`]={save:()=>saveWorkspace(bot),discard:()=>updateWorkspace(bot,bot.workingDirectory??'')};}
       const createBot=async(authorize=true)=>{
         if(!newBot.id.trim()||!newBot.name.trim()){setFieldErrors({[!newBot.id.trim()?'id':'name']:message('requiredBotFields')});throw uiError('requiredBotFields',t);}
         const bot=await mutate('bot.save',newBot,message('created'));
-        setBots((current:any[])=>[...(current??displayBots).filter(item=>item.id!==bot.id),bot]);
+        setBots((current:any[])=>{
+          const rows=current??displayBots;
+          return rows.some(item=>item.id===bot.id)?rows:[...rows,{...bot,privateSessions:[]}];
+        });
         cancelPathPick();setSelectedBotId(bot.id);setBotSection('auth');setBotDraft(null);setWorkspaceEdits({});
         setNewOpen(false);setNewBot(emptyBot());
         if(authorize)await login(bot);
@@ -327,7 +345,9 @@ window.__ModuleLoader__.load({id:'dsh-plugin-integration-qq-wechat-bot',factory(
         h('form',{onSubmit:(event:any)=>{event.preventDefault();void saveCredentials().catch(validationError);}},h('h3',null,t('qqCredentials')),
           h('div',{className:'fields'},ui.field('AppID',credential.accountId,v=>setCredential({...credential,accountId:v}),'text',{required:true,autoFocus:true}),ui.field('AppSecret',credential.appSecret,v=>setCredential({...credential,appSecret:v}),'password',{required:true,autoComplete:'new-password'})),
           h('div',{className:'actions'},ui.button(t('cancel'),closeCredentials),h('button',{type:'submit',className:'primary',disabled:busy},t('save'))))):null;
-      body=BotsPanel({React,ui,t,bots:displayBots.map((bot:any)=>botDraft?.id===bot.id?{...bot,configId:botDraft.configId??bot.configId}:bot),configs,channels,summary,busy,commandPending:commands.includes(activeBot?.id),selectedBotId,section:botSection,onSectionChange:(next:any)=>{cancelPathPick();setBotSection(next);},configSections,configLoading:false,configDirty:botDraft?.id===activeBot?.id&&!!botDraft,onSaveConfig:saveBotSettings,onDiscardConfig:()=>setBotDraft(null),onSelect:selectBot,onCreate:async()=>{if((botDraft||Object.keys(workspaceEdits).length)&&!await resolveDraft(saveDrafts,discardDrafts))return;setFieldErrors({});setNewOpen(true);},createForm,onServiceToggle:()=>mutate(summary?.health?.serviceRunning===true?'bot.service.stop':'bot.service.start',{},summary?.health?.serviceRunning===true?message('botServiceStopped'):message('botServiceStarted')),onBotToggle:(bot:any,running:boolean)=>runCommand(bot.id,running?'bot.stop':'bot.start',{id:bot.id},running?message('stopped'):message('connectionStarted')),onPersonaChange:(_bot:any,configId:string)=>updateBotDraft({configId}),onReconnect:(bot:any)=>runCommand(bot.id,'bot.reconnect',{id:bot.id},message('reconnected')),onAuthorize:login,onCredentials:(bot:any)=>setCredential({id:bot.id,accountId:bot.accountId??'',baselineAccountId:bot.accountId??'',appSecret:''}),onDelete:async(bot:any)=>{if(!await confirm(message('deleteBotConfirm',{name:bot.name,id:bot.id})))return;if(pickingPath===`workspace:${bot.id}`)cancelPathPick();setQr((current:any)=>current?.botId===bot.id?null:current);setCredential((current:any)=>current?.id===bot.id?null:current);await mutate('bot.delete',{id:bot.id},message('botDeleted'));setBots((current:any[]) => (current??displayBots).filter(item=>item.id!==bot.id));if(activeBot?.id===bot.id){setSelectedBotId('');setBotDraft(null);}setWorkspaceEdits((current:any)=>{const next={...current};delete next[bot.id];return next;});},onWorkingDirectoryChange:(bot:any,value:string)=>{if(pickingPath===`workspace:${bot.id}`||pickError?.key===`workspace:${bot.id}`)cancelPathPick();updateWorkspace(bot,value);},onBrowseDirectory:(bot:any)=>choosePath('directory',`workspace:${bot.id}`,workspaceEdits[bot.id]??bot.workingDirectory,value=>updateWorkspace(bot,value)),onDefaultDirectory:(bot:any)=>{cancelPathPick();updateWorkspace(bot,'');},onSaveWorkingDirectory:saveWorkspace,onRevertWorkingDirectory:(bot:any)=>{cancelPathPick();updateWorkspace(bot,bot.workingDirectory??'');},workspacePicking:pickingPath===`workspace:${activeBot?.id}`,onCancelPick:cancelPathPick,workspacePickError:pickError?.key===`workspace:${activeBot?.id}`?text(pickError?.message):undefined,workspaceEdits,workspaceDirectories:directories.sessions??[],storagePanel:activeBot&&botSection==='workspace'?h(WorkspaceStoragePanel,{key:activeBot.id,React,t,botId:activeBot.id,query,api,confirm,onError:setError,onNotice:setNotice}):null,onAddTrustedUser:async(bot:any)=>{const users=list(bot.trustedUsers);const value=await ask(message('userId'));const next=value?.trim();if(next&&!users.includes(next))await saveBotPatch(bot,{trustedUsers:[...users,next]},message('saved'));},onRemoveTrustedUser:(bot:any,user:string)=>{const users=list(bot.trustedUsers).filter(item=>item!==user);return saveBotPatch(bot,{trustedUsers:users},message('saved'));},credential,credentialForm});
+      body=BotsPanel({React,ui,t,bots:displayBots.map((bot:any)=>botDraft?.id===bot.id?{...bot,configId:botDraft.configId??bot.configId}:bot),configs,channels,summary,busy,commandPending:commands.includes(activeBot?.id),selectedBotId,section:botSection,onSectionChange:(next:any)=>{cancelPathPick();setBotSection(next);},configSections,configLoading:false,configDirty:botDraft?.id===activeBot?.id&&!!botDraft,onSaveConfig:saveBotSettings,onDiscardConfig:()=>setBotDraft(null),onSelect:selectBot,onCreate:async()=>{if((botDraft||Object.keys(workspaceEdits).length)&&!await resolveDraft(saveDrafts,discardDrafts))return;setFieldErrors({});setNewOpen(true);},createForm,onServiceToggle:()=>mutate(summary?.health?.serviceRunning===true?'bot.service.stop':'bot.service.start',{},summary?.health?.serviceRunning===true?message('botServiceStopped'):message('botServiceStarted')),onBotToggle:(bot:any,running:boolean)=>runCommand(bot.id,running?'bot.stop':'bot.start',{id:bot.id},running?message('stopped'):message('connectionStarted')),onPersonaChange:(_bot:any,configId:string)=>updateBotDraft({configId}),onReconnect:(bot:any)=>runCommand(bot.id,'bot.reconnect',{id:bot.id},message('reconnected')),onAuthorize:login,onCredentials:(bot:any)=>setCredential({id:bot.id,accountId:bot.accountId??'',baselineAccountId:bot.accountId??'',appSecret:''}),onDelete:async(bot:any)=>{if(!await confirm(message('deleteBotConfirm',{name:bot.name,id:bot.id})))return;if(pickingPath===`workspace:${bot.id}`)cancelPathPick();setQr((current:any)=>current?.botId===bot.id?null:current);setCredential((current:any)=>current?.id===bot.id?null:current);await mutate('bot.delete',{id:bot.id},message('botDeleted'));setBots((current:any[]) => (current??displayBots).filter(item=>item.id!==bot.id));if(activeBot?.id===bot.id){setSelectedBotId('');setBotDraft(null);}setWorkspaceEdits((current:any)=>{const next={...current};delete next[bot.id];return next;});},onWorkingDirectoryChange:(bot:any,value:string)=>{if(pickingPath===`workspace:${bot.id}`||pickError?.key===`workspace:${bot.id}`)cancelPathPick();updateWorkspace(bot,value);},onBrowseDirectory:(bot:any)=>choosePath('directory',`workspace:${bot.id}`,workspaceEdits[bot.id]??bot.workingDirectory,value=>updateWorkspace(bot,value)),onDefaultDirectory:(bot:any)=>{cancelPathPick();updateWorkspace(bot,'');},onSaveWorkingDirectory:saveWorkspace,onRevertWorkingDirectory:(bot:any)=>{cancelPathPick();updateWorkspace(bot,bot.workingDirectory??'');},workspacePicking:pickingPath===`workspace:${activeBot?.id}`,onCancelPick:cancelPathPick,workspacePickError:pickError?.key===`workspace:${activeBot?.id}`?text(pickError?.message):undefined,workspaceEdits,workspaceDirectories:directories.sessions??[],storagePanel:activeBot&&botSection==='workspace'?h(WorkspaceStoragePanel,{key:activeBot.id,React,t,botId:activeBot.id,query,api,confirm,onError:setError,onNotice:setNotice}):null,
+        onTrustChange:changeTrust,botListError:text(botListError),onRetryBotList:loadBotListForPanel,credential,credentialForm,
+      });
     }
     if(tab==='catalog'){
       const selected=edit;
